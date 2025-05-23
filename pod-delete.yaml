@@ -1,0 +1,16 @@
+# pod-delete.yaml
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: pod-delete-test
+  namespace: litmus
+spec:
+  appinfo:
+    appns: default
+    applabel: "app=nginx"
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  engineState: active
+  experiments:
+    - name: pod-delete
+
