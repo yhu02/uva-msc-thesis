@@ -21,7 +21,7 @@ data:
   containerRuntimeExecutor: k8sapi
   executor: |
     imagePullPolicy: IfNotPresent
-  instanceID: cb895852-84fa-47a7-a63c-22f0b237e017
+  instanceID: ecee9f85-8150-4b05-a3ed-f381581987bf
 ---
 apiVersion: v1
 kind: Service
@@ -4174,10 +4174,10 @@ metadata:
   name: subscriber-config
   namespace: litmus
 data:
-  SERVER_ADDR: http://172.30.126.200:30598/api/query
+  SERVER_ADDR: http://172.30.126.200:32411/api/query
   INFRA_SCOPE: cluster
   VERSION: 3.19.0
-  START_TIME: "1747979322810"
+  START_TIME: "1748694586683"
   SKIP_SSL_VERIFY: "false"
   CUSTOM_TLS_CERT: ""
   IS_INFRA_CONFIRMED: "false"
@@ -4190,8 +4190,8 @@ metadata:
   name: subscriber-secret
   namespace: litmus
 stringData:
-  INFRA_ID: cb895852-84fa-47a7-a63c-22f0b237e017
-  ACCESS_KEY: 74ZzRVF-SgLKvsXz2Rj1PPDETsVRQPEc
+  INFRA_ID: ecee9f85-8150-4b05-a3ed-f381581987bf
+  ACCESS_KEY: 4HcQkxjYcJu8EERwlhubj9tvtctGwpnM
 ---
 apiVersion: apps/v1
 kind: Deployment
