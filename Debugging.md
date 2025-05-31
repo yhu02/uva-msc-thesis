@@ -2,7 +2,7 @@
 
 Replace in yaml
 - name: SOCKET_PATH
-    value: /run/containerd/containerd.sock
-By
+value: /run/containerd/containerd.sock
+with
 - name: SOCKET_PATH
-  value: /run/k3s/containerd/containerd.sock
+value: /run/k3s/containerd/containerd.sock
