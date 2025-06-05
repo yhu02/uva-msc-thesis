@@ -51,7 +51,6 @@ spec:
       labels:
         app: workflow-controller
     spec:
-      tolerations: []
       
       #{NODE_SELECTOR}
       containers:
@@ -117,7 +116,6 @@ spec:
         name: chaos-operator
     spec:
       serviceAccountName: litmus
-      tolerations: []
       
       #{NODE_SELECTOR}
       containers:
@@ -175,7 +173,6 @@ spec:
         app: chaos-exporter
         release: prometheus-stack
     spec:
-      tolerations: []
       
       #{NODE_SELECTOR}
       containers:
@@ -4180,7 +4177,7 @@ data:
   START_TIME: "1748694586683"
   SKIP_SSL_VERIFY: "false"
   CUSTOM_TLS_CERT: ""
-  IS_INFRA_CONFIRMED: "false"
+  IS_INFRA_CONFIRMED: "true"
   COMPONENTS: |
     DEPLOYMENTS: ["app=chaos-exporter", "name=chaos-operator", "app=event-tracker", "app=workflow-controller"]
 ---
@@ -4191,7 +4188,7 @@ metadata:
   namespace: litmus
 stringData:
   INFRA_ID: ecee9f85-8150-4b05-a3ed-f381581987bf
-  ACCESS_KEY: 4HcQkxjYcJu8EERwlhubj9tvtctGwpnM
+  ACCESS_KEY: gdpoDrgESyyl1ENQp1IbJdlmFORj_3vc0KoLSm7pTj0=
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -4210,7 +4207,6 @@ spec:
         app: subscriber
     spec:
       serviceAccountName: litmus
-      tolerations: []
       
       #{NODE_SELECTOR}
       containers:
@@ -4257,7 +4253,6 @@ spec:
       labels:
         app: event-tracker
     spec:
-      tolerations: []
       
       #{NODE_SELECTOR}
       serviceAccountName: litmus
