@@ -1,0 +1,63 @@
+[project]
+name = "chaosprobe"
+version = "0.1.0"
+description = "A configurable framework for provisioning Kubernetes infrastructure with anomalies using LitmusChaos"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Yvo Hu", email = "yvo.hu@student.uva.nl"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "kubernetes>=28.0.0",
+    "click>=8.0.0",
+    "pyyaml>=6.0",
+    "jsonschema>=4.0.0",
+    "jinja2>=3.0.0",
+]
+
+[project.scripts]
+chaosprobe = "chaosprobe.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yvohu/chaosprobe"
+Repository = "https://github.com/yvohu/chaosprobe"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["chaosprobe"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true

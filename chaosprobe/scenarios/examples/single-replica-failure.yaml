@@ -1,0 +1,113 @@
+# Example: Single Replica Failure Scenario
+# This scenario demonstrates the impact of running with insufficient replicas.
+
+apiVersion: chaosprobe.io/v1alpha1
+kind: ChaosScenario
+metadata:
+  name: single-replica-failure
+  description: "Test impact of single replica deployment during pod failures"
+
+spec:
+  infrastructure:
+    namespace: chaosprobe-replicas
+    resources:
+      - name: api-server
+        type: deployment
+        spec:
+          replicas: 3  # Will be reduced to 1 when anomaly is injected
+          image: nginx:1.21
+          labels:
+            app: api-server
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+        anomaly:
+          enabled: true
+          type: insufficient-replicas
+          description: "Single replica deployment with no redundancy"
+
+      - name: api-service
+        type: service
+        spec:
+          selector:
+            app: api-server
+          ports:
+            - port: 80
+              targetPort: 80
+
+  experiments:
+    - name: pod-delete-single-replica
+      type: pod-delete
+      target:
+        appLabel: "app=api-server"
+        appKind: deployment
+        namespace: chaosprobe-replicas
+      parameters:
+        TOTAL_CHAOS_DURATION: "60"
+        CHAOS_INTERVAL: "20"
+        FORCE: "true"
+        PODS_AFFECTED_PERC: "100"
+      probes:
+        - name: api-availability
+          type: httpProbe
+          mode: Continuous
+          httpProbe:
+            url: "http://api-service.chaosprobe-replicas.svc.cluster.local:80"
+            method:
+              get:
+                criteria: "=="
+                responseCode: "200"
+          runProperties:
+            probeTimeout: "5s"
+            interval: "1s"
+            retry: 2
+
+        - name: pod-count-check
+          type: cmdProbe
+          mode: Continuous
+          cmdProbe:
+            command: "kubectl get pods -n chaosprobe-replicas -l app=api-server --field-selector=status.phase=Running --no-headers | wc -l"
+            comparator:
+              type: int
+              criteria: ">="
+              value: "1"
+          runProperties:
+            probeTimeout: "10s"
+            interval: "5s"
+            retry: 1
+
+  successCriteria:
+    minResilienceScore: 90
+    requireAllPass: true
+    experimentCriteria:
+      - experimentName: pod-delete-single-replica
+        minProbeSuccessPercentage: 95
+        expectedVerdict: Pass
+
+  comparison:
+    enabled: true
+    improvementCriteria:
+      resilienceScoreIncrease: 20
+      probeSuccessIncrease: 30
+
+  output:
+    format: json
+    includeRawResults: true
