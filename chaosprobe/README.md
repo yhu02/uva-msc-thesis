@@ -4,12 +4,15 @@ A configurable framework for provisioning Kubernetes infrastructure with anomali
 
 ## Overview
 
-ChaosProbe enables automated chaos testing with AI-consumable output. It **automatically handles all setup** including LitmusChaos installation:
+ChaosProbe enables automated chaos testing with AI-consumable output. It supports:
 
-1. **Auto-Setup**: Automatically installs LitmusChaos and configures RBAC
-2. **Provisions Infrastructure**: Deploys Kubernetes resources with configurable anomalies
-3. **Runs Chaos Experiments**: Executes LitmusChaos experiments against the infrastructure
-4. **Generates AI Output**: Produces structured JSON for AI systems to determine fix effectiveness
+1. **Cluster Deployment**: Deploy Kubernetes clusters via:
+   - **Vagrant**: Local VMs for development and testing
+   - **Kubespray**: Production-grade clusters on bare metal or cloud VMs
+2. **Auto-Setup**: Installs Helm and LitmusChaos automatically
+3. **Provisions Infrastructure**: Deploys Kubernetes resources with configurable anomalies
+4. **Runs Chaos Experiments**: Executes LitmusChaos experiments against the infrastructure
+5. **Generates AI Output**: Produces structured JSON for AI systems to determine fix effectiveness
 
 ## Installation
 
@@ -22,35 +25,137 @@ uv sync
 
 ## Prerequisites
 
-- Kubernetes cluster (k3s, minikube, kind, or cloud-managed)
-- `kubectl` configured with cluster access
-- `helm` (for automatic LitmusChaos installation)
+- `kubectl`
 - Python 3.9+
 - [uv](https://docs.astral.sh/uv/) package manager
+- SSH access to target nodes (for cluster deployment)
+
+> **Note:** Helm and LitmusChaos are automatically installed if not present.
+
+### For Local Development (Vagrant)
+
+Requirements for local cluster development:
+- [Vagrant](https://www.vagrantup.com/downloads)
+- VirtualBox or libvirt provider
+- `git`
+- Python 3 with `venv` module
+
+**For WSL2 or Linux without VirtualBox**, use libvirt:
+```bash
+# Automatically install libvirt, KVM, and vagrant-libvirt plugin
+uv run chaosprobe cluster vagrant setup
+
+# Log out and back in for group changes, or run: newgrp libvirt
+
+# Start libvirtd service (required after each WSL restart)
+sudo service libvirtd start
+
+# Then use libvirt provider
+uv run chaosprobe cluster vagrant up --provider libvirt
+```
+
+### For Production Deployment (Kubespray)
+
+Additional requirements for deploying clusters on bare metal/cloud:
+- `git`
+- `ssh`
+- Python 3 with `venv` module (`apt install python3-venv`)
+
+Kubespray will automatically:
+- Clone the Kubespray repository
+- Create a Python virtual environment
+- Install Ansible and other dependencies
 
 ## Quick Start
 
+### With Existing Cluster
+
+If you already have a Kubernetes cluster configured in kubectl:
+
 ```bash
-# Run a scenario (everything is automatic)
+# Initialize ChaosProbe (installs LitmusChaos)
+uv run chaosprobe init
+
+# Run a scenario
 uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
 ```
 
-That's it! ChaosProbe will automatically:
-- Install LitmusChaos if not present
-- Configure RBAC permissions
-- Install required chaos experiments
-- Provision infrastructure with anomalies
-- Run chaos experiments
-- Generate AI-consumable output
+### Local Development with Vagrant
+
+Create a local Kubernetes cluster using Vagrant VMs:
+
+```bash
+# 1. Initialize Vagrantfile (1 control plane + 2 workers)
+uv run chaosprobe cluster vagrant init --control-planes 1 --workers 2
+
+# 2. (WSL2/Linux) Setup libvirt provider - run once
+uv run chaosprobe cluster vagrant setup
+# Note: Log out and back in after setup for group changes to take effect
+# Note: Start libvirtd after each WSL restart: 
+sudo service libvirtd start
+
+# 3. Start the VMs (may take several minutes)
+uv run chaosprobe cluster vagrant up                      # VirtualBox (default)
+uv run chaosprobe cluster vagrant up --provider libvirt   # WSL2/Linux
+
+# 4. Deploy Kubernetes on the VMs (takes 15-30 minutes)
+uv run chaosprobe cluster vagrant deploy
+
+# 5. Fetch kubeconfig (auto-detects SSH key from Vagrant)
+uv run chaosprobe cluster vagrant kubeconfig
+
+# 6. Export kubeconfig
+export KUBECONFIG=~/.kube/config-chaosprobe
+
+# 7. Initialize ChaosProbe
+uv run chaosprobe init
+
+# 8. Run scenarios
+uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
+
+# When done, destroy the VMs
+uv run chaosprobe cluster vagrant destroy
+```
+
+### Deploy on Bare Metal / Cloud VMs (Kubespray)
+
+To deploy a Kubernetes cluster on bare metal or cloud VMs:
+
+```bash
+# 1. Create a hosts file defining your nodes
+cat > hosts.yaml << EOF
+hosts:
+  - name: master1
+    ip: 192.168.1.10
+    ansible_user: ubuntu
+    roles: [control_plane, worker]
+  - name: worker1
+    ip: 192.168.1.11
+    ansible_user: ubuntu
+    roles: [worker]
+  - name: worker2
+    ip: 192.168.1.12
+    ansible_user: ubuntu
+    roles: [worker]
+EOF
+
+# 2. Deploy the cluster (takes 15-30 minutes)
+uv run chaosprobe cluster create --hosts-file hosts.yaml
+
+# 3. Fetch kubeconfig
+uv run chaosprobe cluster kubeconfig --host 192.168.1.10 --user ubuntu
+
+# 4. Export kubeconfig
+export KUBECONFIG=~/.kube/config-chaosprobe
+
+# 5. Initialize ChaosProbe
+uv run chaosprobe init
+
+# 6. Run scenarios
+uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
+```
 
 ## Commands
-
-### Initialize (Optional)
-
-Pre-install LitmusChaos before running scenarios:
-```bash
-uv run chaosprobe init
-```
 
 ### Check Status
 
@@ -59,9 +164,16 @@ Verify all dependencies are ready:
 uv run chaosprobe status
 ```
 
+### Initialize (Install LitmusChaos)
+
+Install LitmusChaos on an existing cluster:
+```bash
+uv run chaosprobe init
+```
+
 ### Run Scenario
 
-Run a chaos scenario with automatic setup:
+Run a chaos scenario:
 ```bash
 # With anomaly (baseline)
 uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o baseline.json
@@ -101,6 +213,101 @@ uv run chaosprobe cleanup chaosprobe-test -s scenarios/examples/nginx-resilience
 # Cleanup entire namespace
 uv run chaosprobe cleanup chaosprobe-test --all
 ```
+
+### Local Cluster with Vagrant
+
+Create and manage local development clusters:
+
+```bash
+# Setup libvirt for WSL2/Linux (run once, requires sudo)
+uv run chaosprobe cluster vagrant setup
+
+# Check libvirt status only
+uv run chaosprobe cluster vagrant setup --check-only
+
+# Initialize a Vagrantfile
+uv run chaosprobe cluster vagrant init --name mycluster --control-planes 1 --workers 2
+
+# Customize VM resources
+uv run chaosprobe cluster vagrant init --memory 4096 --cpus 4 --box generic/ubuntu2204
+
+# Start VMs (use --provider libvirt for WSL2/Linux)
+uv run chaosprobe cluster vagrant up --name mycluster
+uv run chaosprobe cluster vagrant up --name mycluster --provider libvirt
+
+# Check VM status
+uv run chaosprobe cluster vagrant status --name mycluster
+
+# Deploy Kubernetes on running VMs
+uv run chaosprobe cluster vagrant deploy --name mycluster
+
+# Fetch kubeconfig (auto-detects SSH key from Vagrant)
+uv run chaosprobe cluster vagrant kubeconfig --name mycluster
+
+# SSH into a VM
+uv run chaosprobe cluster vagrant ssh cp1 --name mycluster
+
+# Destroy VMs (preserves Vagrantfile)
+uv run chaosprobe cluster vagrant destroy --name mycluster
+```
+
+#### Vagrant Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--control-planes` | 1 | Number of control plane nodes |
+| `--workers` | 2 | Number of worker nodes |
+| `--memory` | 2048 | Memory per VM in MB |
+| `--cpus` | 2 | CPUs per VM |
+| `--box` | generic/ubuntu2204 | Vagrant box image |
+| `--network-prefix` | 192.168.56 | Private network prefix |
+| `--provider` | virtualbox | Vagrant provider (virtualbox, libvirt) |
+
+### Cluster Management (Kubespray)
+
+Deploy and manage Kubernetes clusters on bare metal or cloud VMs:
+
+```bash
+# Create a cluster from hosts file
+uv run chaosprobe cluster create --hosts-file hosts.yaml --name mycluster
+
+# Create using existing Kubespray inventory
+uv run chaosprobe cluster create --inventory ~/.chaosprobe/kubespray/inventory/mycluster/hosts.yaml
+
+# Fetch kubeconfig from control plane
+uv run chaosprobe cluster kubeconfig --host 192.168.1.10 --user ubuntu
+
+# Fetch kubeconfig with SSH key (for key-based auth)
+uv run chaosprobe cluster kubeconfig --host 192.168.1.10 --user ubuntu --ssh-key ~/.ssh/id_rsa
+
+# Destroy a cluster
+uv run chaosprobe cluster destroy --inventory ~/.chaosprobe/kubespray/inventory/mycluster
+```
+
+#### Hosts File Format
+
+```yaml
+hosts:
+  - name: master1
+    ip: 192.168.1.10
+    ansible_host: 192.168.1.10  # Optional, defaults to ip
+    ansible_user: ubuntu
+    roles: [control_plane, worker]
+  - name: worker1
+    ip: 192.168.1.11
+    ansible_user: ubuntu
+    roles: [worker]
+  - name: worker2
+    ip: 192.168.1.12
+    ansible_user: ubuntu
+    roles: [worker]
+```
+
+**Roles:**
+- `control_plane`: Kubernetes control plane node (runs etcd, API server)
+- `worker`: Kubernetes worker node (runs workloads)
+
+A node can have both roles (single-node or small clusters).
 
 ## Scenario Configuration
 
@@ -228,7 +435,13 @@ ChaosProbe generates structured JSON output for AI consumption:
 ```
 ChaosProbe CLI
       │
-      ├── Setup Manager (auto-installs LitmusChaos)
+      ├── Cluster Manager
+      │   ├── Vagrant (local development)
+      │   │   └── Vagrantfile Generator
+      │   └── Kubespray (production)
+      │       └── Inventory Generator
+      │
+      ├── Setup Manager (installs LitmusChaos)
       │
       ├── Config Loader & Validator
       │
