@@ -415,12 +415,15 @@ end
 
         print(f"Fetching kubeconfig from {control_plane_host}...")
         try:
-            scp_cmd = ["scp"]
+            # Use ssh + sudo cat instead of scp, because admin.conf is
+            # owned by root and the SSH user may not have read access.
+            ssh_cmd = ["ssh"]
             if ssh_key:
-                scp_cmd.extend(["-i", str(ssh_key), "-o", "StrictHostKeyChecking=no"])
-            scp_cmd.append(f"{ansible_user}@{control_plane_host}:/etc/kubernetes/admin.conf")
-            scp_cmd.append(str(output_path))
-            subprocess.run(scp_cmd, check=True)
+                ssh_cmd.extend(["-i", str(ssh_key), "-o", "StrictHostKeyChecking=no"])
+            ssh_cmd.append(f"{ansible_user}@{control_plane_host}")
+            ssh_cmd.append("sudo cat /etc/kubernetes/admin.conf")
+            result = subprocess.run(ssh_cmd, check=True, capture_output=True, text=True)
+            output_path.write_text(result.stdout)
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to fetch kubeconfig: {e}")
 
@@ -1263,17 +1266,21 @@ end
         Returns:
             True if installation succeeded.
         """
+        GITHUB_RAW_BASE = "https://raw.githubusercontent.com/litmuschaos/chaos-charts/master/faults/kubernetes"
         experiment_urls = {
-            "pod-delete": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/pod-delete/experiment.yaml",
-            "container-kill": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/container-kill/experiment.yaml",
-            "pod-cpu-hog": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/pod-cpu-hog/experiment.yaml",
-            "pod-memory-hog": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/pod-memory-hog/experiment.yaml",
-            "pod-network-loss": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/pod-network-loss/experiment.yaml",
-            "pod-network-latency": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/pod-network-latency/experiment.yaml",
-            "pod-io-stress": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/pod-io-stress/experiment.yaml",
-            "node-drain": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/node-drain/experiment.yaml",
-            "node-cpu-hog": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/node-cpu-hog/experiment.yaml",
-            "node-memory-hog": "https://hub.litmuschaos.io/api/chaos/3.0.0?file=charts/generic/node-memory-hog/experiment.yaml",
+            "pod-delete": f"{GITHUB_RAW_BASE}/pod-delete/fault.yaml",
+            "container-kill": f"{GITHUB_RAW_BASE}/container-kill/fault.yaml",
+            "pod-cpu-hog": f"{GITHUB_RAW_BASE}/pod-cpu-hog/fault.yaml",
+            "pod-memory-hog": f"{GITHUB_RAW_BASE}/pod-memory-hog/fault.yaml",
+            "pod-network-loss": f"{GITHUB_RAW_BASE}/pod-network-loss/fault.yaml",
+            "pod-network-latency": f"{GITHUB_RAW_BASE}/pod-network-latency/fault.yaml",
+            "pod-network-corruption": f"{GITHUB_RAW_BASE}/pod-network-corruption/fault.yaml",
+            "pod-network-duplication": f"{GITHUB_RAW_BASE}/pod-network-duplication/fault.yaml",
+            "pod-io-stress": f"{GITHUB_RAW_BASE}/pod-io-stress/fault.yaml",
+            "node-drain": f"{GITHUB_RAW_BASE}/node-drain/fault.yaml",
+            "node-cpu-hog": f"{GITHUB_RAW_BASE}/node-cpu-hog/fault.yaml",
+            "node-memory-hog": f"{GITHUB_RAW_BASE}/node-memory-hog/fault.yaml",
+            "node-taint": f"{GITHUB_RAW_BASE}/node-taint/fault.yaml",
         }
 
         url = experiment_urls.get(experiment_type)

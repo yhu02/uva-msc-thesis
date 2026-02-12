@@ -36,8 +36,14 @@ class ResultCollector:
         """Get the experiment configurations."""
         return self.scenario["spec"]["experiments"]
 
-    def collect(self) -> List[Dict[str, Any]]:
+    def collect(
+        self, engine_name_map: Optional[Dict[str, str]] = None
+    ) -> List[Dict[str, Any]]:
         """Collect results for all experiments in the scenario.
+
+        Args:
+            engine_name_map: Mapping of experiment name to ChaosEngine name.
+                If not provided, falls back to the default naming convention.
 
         Returns:
             List of experiment result dictionaries.
@@ -46,7 +52,10 @@ class ResultCollector:
 
         for exp_config in self.experiments:
             exp_name = exp_config["name"]
-            engine_name = f"chaosprobe-{exp_name}"
+            if engine_name_map and exp_name in engine_name_map:
+                engine_name = engine_name_map[exp_name]
+            else:
+                engine_name = f"chaosprobe-{exp_name}"
 
             result = self._collect_experiment_result(engine_name, exp_config)
             results.append(result)
@@ -121,7 +130,8 @@ class ResultCollector:
             ChaosResult or None if not found.
         """
         try:
-            # ChaosResult name is typically the same as the engine name
+            # ChaosResult name follows the pattern: <engine-name>-<experiment-type>
+            # Try to get by that convention first, then fall back to listing by engine label
             result = self.custom_api.get_namespaced_custom_object(
                 group="litmuschaos.io",
                 version="v1alpha1",
@@ -132,17 +142,18 @@ class ResultCollector:
             return result
         except ApiException as e:
             if e.status == 404:
-                # Try alternative naming convention
+                # Search for ChaosResults whose spec.engine matches the engine name
                 try:
                     results = self.custom_api.list_namespaced_custom_object(
                         group="litmuschaos.io",
                         version="v1alpha1",
                         namespace=self.namespace,
                         plural="chaosresults",
-                        label_selector=f"chaosUID={engine_name}",
                     )
-                    items = results.get("items", [])
-                    return items[0] if items else None
+                    for item in results.get("items", []):
+                        if item.get("spec", {}).get("engine") == engine_name:
+                            return item
+                    return None
                 except ApiException:
                     return None
             raise

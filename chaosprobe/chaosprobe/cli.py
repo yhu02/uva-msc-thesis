@@ -84,7 +84,8 @@ def ensure_litmus_setup(namespace: str, experiments: list, auto_setup: bool = Tr
     exp_types = list(set(exp.get("type") for exp in experiments))
     for exp_type in exp_types:
         click.echo(f"  Installing experiment: {exp_type}")
-        setup.install_experiment(exp_type, namespace)
+        if not setup.install_experiment(exp_type, namespace):
+            click.echo(f"  WARNING: Failed to install experiment '{exp_type}'", err=True)
 
     return True
 
@@ -934,8 +935,14 @@ def run(
     # Phase 3: Collect results
     click.echo("\n[3/4] Collecting results...")
     collector = ResultCollector(scenario)
+    # Build engine name map from the runner so the collector looks up the right engines
+    engine_name_map = {
+        exp["name"]: exp["engineName"]
+        for exp in runner.get_executed_experiments()
+        if "engineName" in exp
+    }
     try:
-        results = collector.collect()
+        results = collector.collect(engine_name_map=engine_name_map)
         click.echo(f"  Collected results from {len(results)} experiments")
     except Exception as e:
         click.echo(f"  Error collecting results: {e}", err=True)

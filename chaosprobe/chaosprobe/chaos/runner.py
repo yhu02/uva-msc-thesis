@@ -64,8 +64,10 @@ class ChaosRunner:
             List of executed experiment metadata.
         """
         engine_generator = ChaosEngineGenerator(self.namespace, self.service_account)
+        total = len(self.experiments)
 
-        for exp_config in self.experiments:
+        for idx, exp_config in enumerate(self.experiments, 1):
+            print(f"  [{idx}/{total}] Experiment: {exp_config['name']} (type: {exp_config['type']})")
             engine = engine_generator.generate(exp_config)
             self._run_single_experiment(engine, exp_config)
 
@@ -87,6 +89,7 @@ class ChaosRunner:
         self._delete_chaos_engine(engine_name)
 
         # Create the ChaosEngine
+        print(f"    Creating ChaosEngine '{engine_name}'...")
         try:
             self.custom_api.create_namespaced_custom_object(
                 group="litmuschaos.io",
@@ -96,6 +99,7 @@ class ChaosRunner:
                 body=engine,
             )
         except ApiException as e:
+            print(f"    ERROR: Failed to create ChaosEngine: {e.reason}")
             self._executed_experiments.append({
                 "name": exp_name,
                 "engineName": engine_name,
@@ -105,14 +109,19 @@ class ChaosRunner:
             return
 
         # Wait for completion
+        print(f"    Waiting for experiment to complete (timeout: {self.timeout}s)...")
         start_time = time.time()
         final_status = self._wait_for_engine(engine_name, start_time)
+
+        phase = final_status.get("phase", "unknown")
+        elapsed = int(time.time() - start_time)
+        print(f"    Result: {phase} ({elapsed}s elapsed)")
 
         self._executed_experiments.append({
             "name": exp_name,
             "engineName": engine_name,
             "type": exp_config["type"],
-            "status": final_status.get("phase", "unknown"),
+            "status": phase,
             "startTime": start_time,
             "endTime": time.time(),
         })
@@ -127,7 +136,9 @@ class ChaosRunner:
         Returns:
             Final status of the engine.
         """
+        last_phase = None
         while time.time() - start_time < self.timeout:
+            elapsed = int(time.time() - start_time)
             try:
                 engine = self.custom_api.get_namespaced_custom_object(
                     group="litmuschaos.io",
@@ -140,6 +151,11 @@ class ChaosRunner:
                 status = engine.get("status", {})
                 phase = status.get("engineStatus", "")
 
+                # Log phase transitions
+                if phase and phase != last_phase:
+                    print(f"    [{elapsed}s] Engine status: {phase}")
+                    last_phase = phase
+
                 if phase in [self.PHASE_COMPLETED, self.PHASE_STOPPED, self.PHASE_ERROR]:
                     return {"phase": phase, "status": status}
 
@@ -147,19 +163,30 @@ class ChaosRunner:
                 experiments = status.get("experiments", [])
                 if experiments:
                     exp_status = experiments[0].get("status", "")
+                    exp_verdict = experiments[0].get("verdict", "")
+                    if exp_status and exp_status != last_phase:
+                        detail = f" (verdict: {exp_verdict})" if exp_verdict else ""
+                        print(f"    [{elapsed}s] Experiment status: {exp_status}{detail}")
+                        last_phase = exp_status
                     if exp_status in ["Completed", "Failed", "Stopped"]:
                         return {"phase": exp_status, "status": status}
 
             except ApiException as e:
                 if e.status == 404:
+                    print(f"    [{elapsed}s] Engine not found (may have been deleted)")
                     return {"phase": "not_found", "error": "Engine not found"}
+
+            # Print a heartbeat every 30 seconds if no phase change
+            if elapsed > 0 and elapsed % 30 == 0:
+                print(f"    [{elapsed}s] Still waiting...")
 
             time.sleep(5)
 
+        print(f"    Timed out after {self.timeout}s")
         return {"phase": "timeout", "error": f"Timeout after {self.timeout}s"}
 
     def _delete_chaos_engine(self, engine_name: str):
-        """Delete a ChaosEngine if it exists.
+        """Delete a ChaosEngine if it exists, waiting until it's fully removed.
 
         Args:
             engine_name: Name of the ChaosEngine to delete.
@@ -172,7 +199,41 @@ class ChaosRunner:
                 plural="chaosengines",
                 name=engine_name,
             )
-            # Wait a bit for deletion
+            print(f"    Deleting previous ChaosEngine '{engine_name}'...")
+        except ApiException as e:
+            if e.status == 404:
+                return  # Already gone
+            raise
+
+        # Wait for the engine to be fully deleted (finalizers may delay this)
+        max_wait = 60
+        start = time.time()
+        while time.time() - start < max_wait:
+            try:
+                self.custom_api.get_namespaced_custom_object(
+                    group="litmuschaos.io",
+                    version="v1alpha1",
+                    namespace=self.namespace,
+                    plural="chaosengines",
+                    name=engine_name,
+                )
+                time.sleep(2)
+            except ApiException as e:
+                if e.status == 404:
+                    return  # Successfully deleted
+                raise
+
+        # If still not deleted after max_wait, force-remove the finalizer
+        print(f"    Engine still has finalizers after {max_wait}s, force-removing...")
+        try:
+            self.custom_api.patch_namespaced_custom_object(
+                group="litmuschaos.io",
+                version="v1alpha1",
+                namespace=self.namespace,
+                plural="chaosengines",
+                name=engine_name,
+                body={"metadata": {"finalizers": []}},
+            )
             time.sleep(2)
         except ApiException as e:
             if e.status != 404:

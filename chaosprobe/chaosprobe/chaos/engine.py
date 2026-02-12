@@ -1,5 +1,6 @@
 """ChaosEngine CRD generator for LitmusChaos experiments."""
 
+import uuid
 from typing import Any, Dict, List, Optional
 
 
@@ -113,6 +114,8 @@ class ChaosEngineGenerator:
         """
         self.namespace = namespace
         self.service_account = service_account
+        # Unique suffix per run so engines don't collide across concurrent/consecutive runs
+        self._run_suffix = uuid.uuid4().hex[:6]
 
     def generate(self, experiment_config: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a ChaosEngine CRD from experiment configuration.
@@ -153,7 +156,7 @@ class ChaosEngineGenerator:
             "apiVersion": "litmuschaos.io/v1alpha1",
             "kind": "ChaosEngine",
             "metadata": {
-                "name": f"chaosprobe-{name}",
+                "name": f"chaosprobe-{name}-{self._run_suffix}",
                 "namespace": self.namespace,
                 "labels": {
                     "managed-by": "chaosprobe",
