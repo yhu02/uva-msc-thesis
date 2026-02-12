@@ -40,19 +40,7 @@ Requirements for local cluster development:
 - `git`
 - Python 3 with `venv` module
 
-**For WSL2 or Linux without VirtualBox**, use libvirt:
-```bash
-# Automatically install libvirt, KVM, and vagrant-libvirt plugin
-uv run chaosprobe cluster vagrant setup
-
-# Log out and back in for group changes, or run: newgrp libvirt
-
-# Start libvirtd service (required after each WSL restart)
-sudo service libvirtd start
-
-# Then use libvirt provider
-uv run chaosprobe cluster vagrant up --provider libvirt
-```
+**For WSL2 or Linux without VirtualBox**, use the libvirt provider. See the [Vagrant Quick Start](#local-development-with-vagrant) for setup steps.
 
 ### For Production Deployment (Kubespray)
 
@@ -286,28 +274,10 @@ uv run chaosprobe cluster destroy --inventory ~/.chaosprobe/kubespray/inventory/
 
 #### Hosts File Format
 
-```yaml
-hosts:
-  - name: master1
-    ip: 192.168.1.10
-    ansible_host: 192.168.1.10  # Optional, defaults to ip
-    ansible_user: ubuntu
-    roles: [control_plane, worker]
-  - name: worker1
-    ip: 192.168.1.11
-    ansible_user: ubuntu
-    roles: [worker]
-  - name: worker2
-    ip: 192.168.1.12
-    ansible_user: ubuntu
-    roles: [worker]
-```
+See the [Kubespray Quick Start](#deploy-on-bare-metal--cloud-vms-kubespray) for an example hosts file.
 
-**Roles:**
-- `control_plane`: Kubernetes control plane node (runs etcd, API server)
-- `worker`: Kubernetes worker node (runs workloads)
-
-A node can have both roles (single-node or small clusters).
+- `ansible_host` (optional): Defaults to `ip`
+- **Roles:** `control_plane` (runs etcd, API server) and/or `worker` (runs workloads). A node can have both roles.
 
 ## Scenario Configuration
 
