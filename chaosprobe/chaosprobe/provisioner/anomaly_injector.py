@@ -133,19 +133,17 @@ class AnomalyInjector:
         self,
         manifest: Dict[str, Any],
         anomaly_config: Optional[Dict[str, Any]],
-        with_anomaly: bool = True,
     ) -> Dict[str, Any]:
         """Inject an anomaly into a manifest.
 
         Args:
             manifest: The Kubernetes resource manifest.
             anomaly_config: The anomaly configuration from the scenario.
-            with_anomaly: Whether to actually inject the anomaly.
 
         Returns:
-            The modified manifest (or original if with_anomaly=False).
+            The modified manifest (or original if anomaly not configured/enabled).
         """
-        if not with_anomaly or not anomaly_config:
+        if not anomaly_config:
             return manifest
 
         if not anomaly_config.get("enabled", True):

@@ -1,6 +1,8 @@
 # Example: Nginx Resilience Test Scenario
-# This scenario provisions an nginx deployment with a missing readiness probe
+# This scenario provisions an nginx deployment with a single replica (no redundancy)
 # and runs a pod-delete chaos experiment to test service resilience.
+# With the anomaly, the single replica is deleted and the service goes down.
+# Without the anomaly, 3 replicas survive pod deletion gracefully.
 
 apiVersion: chaosprobe.io/v1alpha1
 kind: ChaosScenario
@@ -29,7 +31,6 @@ spec:
             limits:
               memory: "128Mi"
               cpu: "100m"
-          # This readiness probe will be removed when running with anomaly
           readinessProbe:
             httpGet:
               path: /
@@ -42,11 +43,11 @@ spec:
               port: 80
             initialDelaySeconds: 10
             periodSeconds: 10
-        # Anomaly configuration
+        # Anomaly: reduce to 1 replica so pod deletion causes total outage
         anomaly:
           enabled: true
-          type: missing-readiness-probe
-          description: "Deployment lacks readiness probe, causing traffic to unready pods"
+          type: insufficient-replicas
+          description: "Single replica deployment has no redundancy, causing outage during pod deletion"
 
       - name: nginx-service
         type: service
@@ -68,8 +69,8 @@ spec:
       parameters:
         TOTAL_CHAOS_DURATION: "30"
         CHAOS_INTERVAL: "10"
-        FORCE: "false"
-        PODS_AFFECTED_PERC: "50"
+        FORCE: "true"
+        PODS_AFFECTED_PERC: "100"
       probes:
         - name: nginx-http-probe
           type: httpProbe

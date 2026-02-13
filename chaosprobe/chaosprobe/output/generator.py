@@ -17,21 +17,24 @@ class OutputGenerator:
         self,
         scenario: Dict[str, Any],
         results: List[Dict[str, Any]],
-        with_anomaly: bool = True,
         injected_anomalies: Optional[List[Dict[str, Any]]] = None,
+        scenario_file: Optional[str] = None,
+        deployed_manifests: Optional[List[str]] = None,
     ):
         """Initialize the output generator.
 
         Args:
             scenario: The scenario configuration dictionary.
             results: Collected experiment results.
-            with_anomaly: Whether anomalies were injected.
             injected_anomalies: List of injected anomalies.
+            scenario_file: Path to the scenario YAML file.
+            deployed_manifests: List of deployed Kubernetes manifest YAML strings.
         """
         self.scenario = scenario
         self.results = results
-        self.with_anomaly = with_anomaly
         self.injected_anomalies = injected_anomalies or []
+        self.scenario_file = scenario_file
+        self.deployed_manifests = deployed_manifests or []
 
     def generate(self) -> Dict[str, Any]:
         """Generate the complete AI output structure.
@@ -53,6 +56,10 @@ class OutputGenerator:
             "aiAnalysisHints": self._generate_analysis_hints(),
         }
 
+        # Include deployed manifests so AI can see exactly what was deployed
+        if self.deployed_manifests:
+            output["deployedManifests"] = self.deployed_manifests
+
         return output
 
     def generate_minimal(self) -> Dict[str, Any]:
@@ -71,7 +78,7 @@ class OutputGenerator:
             "issueDetected": summary["overallVerdict"] == "FAIL",
             "anomaly": {
                 "type": anomaly.get("type") if anomaly else None,
-                "likelyRootCause": anomaly is not None and self.with_anomaly,
+                "configured": anomaly is not None,
             } if anomaly else None,
             "actionRequired": summary["overallVerdict"] == "FAIL",
         }
@@ -79,10 +86,13 @@ class OutputGenerator:
     def _generate_scenario_metadata(self) -> Dict[str, Any]:
         """Generate scenario metadata section."""
         metadata = self.scenario.get("metadata", {})
-        return {
+        result = {
             "name": metadata.get("name", "unknown"),
             "description": metadata.get("description", ""),
         }
+        if self.scenario_file:
+            result["scenarioFile"] = self.scenario_file
+        return result
 
     def _generate_infrastructure_section(self) -> Dict[str, Any]:
         """Generate infrastructure section."""
@@ -98,7 +108,7 @@ class OutputGenerator:
 
             # Add anomaly information
             anomaly = resource.get("anomaly")
-            if anomaly and anomaly.get("enabled", True) and self.with_anomaly:
+            if anomaly and anomaly.get("enabled", True):
                 anomaly_type = anomaly.get("type")
                 anomaly_def = ANOMALY_DEFINITIONS.get(anomaly_type, {})
                 resource_info["anomaly"] = {
@@ -116,7 +126,6 @@ class OutputGenerator:
         return {
             "namespace": infra_config["namespace"],
             "resources": resources,
-            "anomalyInjected": self.with_anomaly,
         }
 
     def _generate_experiments_section(self) -> List[Dict[str, Any]]:
@@ -210,6 +219,7 @@ class OutputGenerator:
             "primaryIssue": None,
             "anomalyCorrelation": None,
             "suggestedFixes": [],
+            "howToFix": None,
         }
 
         # Find the primary issue
@@ -219,17 +229,22 @@ class OutputGenerator:
             fail_step = primary_failure.get("chaosResult", {}).get("failStep", "")
             hints["primaryIssue"] = self._describe_failure(primary_failure, fail_step)
 
-        # Correlate with anomaly
-        if self.with_anomaly:
-            anomaly = self._get_primary_anomaly()
-            if anomaly and failed_experiments:
-                correlation = self._correlate_anomaly_with_failure(
-                    anomaly, failed_experiments[0]
-                )
-                hints["anomalyCorrelation"] = correlation
+            hints["howToFix"] = (
+                "To fix the deployment, modify the scenario YAML file listed in "
+                "scenario.scenarioFile. Apply the changes described in suggestedFixes, "
+                "then re-run with: chaosprobe run <scenario-file> -o after-fix.json"
+            )
 
-                # Generate suggested fixes
-                hints["suggestedFixes"] = self._generate_suggested_fixes(anomaly)
+        # Correlate with anomaly from scenario config
+        anomaly = self._get_primary_anomaly()
+        if anomaly and failed_experiments:
+            correlation = self._correlate_anomaly_with_failure(
+                anomaly, failed_experiments[0]
+            )
+            hints["anomalyCorrelation"] = correlation
+
+            # Generate suggested fixes
+            hints["suggestedFixes"] = self._generate_suggested_fixes(anomaly)
 
         return hints
 
@@ -349,72 +364,120 @@ class OutputGenerator:
     def _generate_suggested_fixes(
         self, anomaly: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Generate suggested fixes for an anomaly."""
+        """Generate suggested fixes for an anomaly.
+
+        Each fix includes:
+        - A description of what to change
+        - The scenario YAML path (under spec.infrastructure.resources[])
+        - The Kubernetes manifest path
+        - The exact value to set
+        - A verification command to re-run
+        """
+        resource_name = anomaly.get("resource", "unknown")
+
         fixes_map = {
             "missing-readiness-probe": {
                 "priority": 1,
                 "fix": "Add readiness probe to deployment",
-                "expectedImprovement": "Prevent traffic to unready pods",
-                "configChange": {
-                    "path": "spec.template.spec.containers[0].readinessProbe",
+                "expectedImprovement": "Prevent traffic to unready pods during restarts",
+                "scenarioChange": {
+                    "description": f"In the scenario YAML, add a readinessProbe to the resource '{resource_name}'",
+                    "location": f"spec.infrastructure.resources[name={resource_name}].spec.readinessProbe",
                     "value": {
                         "httpGet": {"path": "/", "port": 80},
                         "initialDelaySeconds": 5,
                         "periodSeconds": 5,
                     },
                 },
+                "kubernetesManifestPath": "spec.template.spec.containers[0].readinessProbe",
             },
             "missing-liveness-probe": {
                 "priority": 1,
                 "fix": "Add liveness probe to deployment",
                 "expectedImprovement": "Automatically restart hung pods",
-                "configChange": {
-                    "path": "spec.template.spec.containers[0].livenessProbe",
+                "scenarioChange": {
+                    "description": f"In the scenario YAML, add a livenessProbe to the resource '{resource_name}'",
+                    "location": f"spec.infrastructure.resources[name={resource_name}].spec.livenessProbe",
                     "value": {
                         "httpGet": {"path": "/", "port": 80},
                         "initialDelaySeconds": 10,
                         "periodSeconds": 10,
                     },
                 },
+                "kubernetesManifestPath": "spec.template.spec.containers[0].livenessProbe",
+            },
+            "missing-all-probes": {
+                "priority": 1,
+                "fix": "Add both readiness and liveness probes to deployment",
+                "expectedImprovement": "Full health checking for pods",
+                "scenarioChange": {
+                    "description": f"In the scenario YAML, add readinessProbe and livenessProbe to the resource '{resource_name}'",
+                    "location": f"spec.infrastructure.resources[name={resource_name}].spec",
+                    "value": {
+                        "readinessProbe": {
+                            "httpGet": {"path": "/", "port": 80},
+                            "initialDelaySeconds": 5,
+                            "periodSeconds": 5,
+                        },
+                        "livenessProbe": {
+                            "httpGet": {"path": "/", "port": 80},
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 10,
+                        },
+                    },
+                },
+                "kubernetesManifestPath": "spec.template.spec.containers[0]",
             },
             "insufficient-replicas": {
                 "priority": 1,
-                "fix": "Increase replica count to at least 2",
-                "expectedImprovement": "Provide redundancy during failures",
-                "configChange": {
-                    "path": "spec.replicas",
+                "fix": "Increase replica count to at least 3",
+                "expectedImprovement": "Provide redundancy so service survives pod failures",
+                "scenarioChange": {
+                    "description": f"In the scenario YAML, set replicas to 3 for resource '{resource_name}'",
+                    "location": f"spec.infrastructure.resources[name={resource_name}].spec.replicas",
                     "value": 3,
                 },
+                "kubernetesManifestPath": "spec.replicas",
             },
             "no-resource-limits": {
                 "priority": 2,
                 "fix": "Add resource limits to containers",
                 "expectedImprovement": "Prevent unbounded resource consumption",
-                "configChange": {
-                    "path": "spec.template.spec.containers[0].resources.limits",
+                "scenarioChange": {
+                    "description": f"In the scenario YAML, add resources.limits to the resource '{resource_name}'",
+                    "location": f"spec.infrastructure.resources[name={resource_name}].spec.resources.limits",
                     "value": {"cpu": "500m", "memory": "256Mi"},
                 },
+                "kubernetesManifestPath": "spec.template.spec.containers[0].resources.limits",
             },
             "no-pod-disruption-budget": {
                 "priority": 2,
-                "fix": "Create PodDisruptionBudget",
+                "fix": "Create a PodDisruptionBudget resource",
                 "expectedImprovement": "Prevent simultaneous pod eviction",
-                "configChange": {
-                    "path": "new:PodDisruptionBudget",
+                "scenarioChange": {
+                    "description": "Add a new PDB resource to the scenario YAML under spec.infrastructure.resources",
+                    "location": "spec.infrastructure.resources[] (add new entry)",
                     "value": {
-                        "minAvailable": 1,
-                        "selector": {"matchLabels": {"app": "target-app"}},
+                        "name": f"{resource_name}-pdb",
+                        "type": "pdb",
+                        "spec": {
+                            "minAvailable": 1,
+                            "selector": {"matchLabels": {"app": resource_name}},
+                        },
                     },
                 },
+                "kubernetesManifestPath": "new PodDisruptionBudget resource",
             },
             "service-selector-mismatch": {
                 "priority": 1,
                 "fix": "Fix service selector to match pod labels",
                 "expectedImprovement": "Service will have endpoints and route traffic correctly",
-                "configChange": {
-                    "path": "spec.selector",
-                    "value": "Match pod labels exactly",
+                "scenarioChange": {
+                    "description": f"In the scenario YAML, ensure the service selector matches the deployment's labels",
+                    "location": f"spec.infrastructure.resources[name={resource_name}].spec.selector",
+                    "value": "Must match the labels defined in the deployment resource",
                 },
+                "kubernetesManifestPath": "spec.selector",
             },
         }
 
@@ -422,6 +485,12 @@ class OutputGenerator:
         fix = fixes_map.get(anomaly_type)
 
         if fix:
+            # Add verification instructions
+            fix["verification"] = {
+                "command": f"chaosprobe run <scenario-file> -o after-fix.json",
+                "compareCommand": "chaosprobe compare results.json after-fix.json -o comparison.json",
+                "expectedResult": "Resilience score should increase and verdict should change to PASS",
+            }
             return [fix]
 
         return []

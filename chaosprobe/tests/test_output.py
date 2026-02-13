@@ -57,7 +57,7 @@ class TestOutputGenerator:
             }
         ]
 
-        generator = OutputGenerator(scenario, results, with_anomaly=True)
+        generator = OutputGenerator(scenario, results)
         output = generator.generate()
 
         assert "schemaVersion" in output
@@ -98,7 +98,7 @@ class TestOutputGenerator:
             }
         ]
 
-        generator = OutputGenerator(scenario, results, with_anomaly=True)
+        generator = OutputGenerator(scenario, results)
         output = generator.generate_minimal()
 
         assert "runId" in output
@@ -139,7 +139,7 @@ class TestOutputGenerator:
             }
         ]
 
-        generator = OutputGenerator(scenario, results, with_anomaly=True)
+        generator = OutputGenerator(scenario, results)
         output = generator.generate()
 
         hints = output["aiAnalysisHints"]
@@ -158,7 +158,6 @@ class TestComparison:
             "timestamp": "2025-01-18T10:00:00Z",
             "scenario": {"name": "test"},
             "infrastructure": {
-                "anomalyInjected": True,
                 "resources": [
                     {
                         "name": "test-deployment",
@@ -188,7 +187,6 @@ class TestComparison:
             "timestamp": "2025-01-18T11:00:00Z",
             "scenario": {"name": "test"},
             "infrastructure": {
-                "anomalyInjected": False,
                 "resources": [
                     {
                         "name": "test-deployment",
@@ -225,7 +223,6 @@ class TestComparison:
             "timestamp": "2025-01-18T10:00:00Z",
             "scenario": {"name": "test"},
             "infrastructure": {
-                "anomalyInjected": True,
                 "resources": [],
             },
             "experiments": [
@@ -248,7 +245,6 @@ class TestComparison:
             "timestamp": "2025-01-18T11:00:00Z",
             "scenario": {"name": "test"},
             "infrastructure": {
-                "anomalyInjected": False,
                 "resources": [],
             },
             "experiments": [

@@ -163,11 +163,11 @@ uv run chaosprobe init
 
 Run a chaos scenario:
 ```bash
-# With anomaly (baseline)
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o baseline.json
+# Run the scenario (deploys infrastructure and runs experiments)
+uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
 
-# Without anomaly (after fix)
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o after-fix.json --without-anomaly
+# After modifying the scenario YAML to fix the issue, run again
+uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o after-fix.json
 
 # Disable auto-setup (requires manual LitmusChaos installation)
 uv run chaosprobe run scenarios/examples/nginx-resilience.yaml --no-auto-setup
@@ -187,8 +187,8 @@ Deploy infrastructure without running experiments:
 # Preview manifests (dry run)
 uv run chaosprobe provision scenarios/examples/nginx-resilience.yaml --dry-run
 
-# Provision with anomaly
-uv run chaosprobe provision scenarios/examples/nginx-resilience.yaml --with-anomaly
+# Deploy infrastructure
+uv run chaosprobe provision scenarios/examples/nginx-resilience.yaml
 ```
 
 ### Cleanup

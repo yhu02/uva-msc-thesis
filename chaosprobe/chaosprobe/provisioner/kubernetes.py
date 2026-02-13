@@ -13,15 +13,13 @@ from chaosprobe.provisioner.anomaly_injector import AnomalyInjector
 class KubernetesProvisioner:
     """Provisions Kubernetes resources from scenario configurations."""
 
-    def __init__(self, scenario: Dict[str, Any], with_anomaly: bool = True):
+    def __init__(self, scenario: Dict[str, Any]):
         """Initialize the provisioner.
 
         Args:
             scenario: The scenario configuration dictionary.
-            with_anomaly: Whether to inject anomalies into resources.
         """
         self.scenario = scenario
-        self.with_anomaly = with_anomaly
         self.anomaly_injector = AnomalyInjector()
 
         # Load kubernetes config
@@ -146,7 +144,7 @@ class KubernetesProvisioner:
         manifest = generator(name, spec)
 
         # Inject anomaly if configured
-        manifest = self.anomaly_injector.inject(manifest, anomaly, self.with_anomaly)
+        manifest = self.anomaly_injector.inject(manifest, anomaly)
 
         return manifest
 

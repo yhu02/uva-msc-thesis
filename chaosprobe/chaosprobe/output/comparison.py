@@ -10,11 +10,11 @@ def compare_runs(
     after_fix: Dict[str, Any],
     improvement_criteria: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Compare baseline results with after-fix results.
+    """Compare two run results to evaluate improvement.
 
     Args:
-        baseline: Baseline run output (with anomaly).
-        after_fix: After-fix run output (without anomaly).
+        baseline: First run output (before fix).
+        after_fix: Second run output (after fix).
         improvement_criteria: Optional custom improvement criteria.
 
     Returns:
@@ -74,7 +74,6 @@ def compare_runs(
         "baseline": {
             "runId": baseline.get("runId", ""),
             "timestamp": baseline.get("timestamp", ""),
-            "anomalyPresent": baseline.get("infrastructure", {}).get("anomalyInjected", True),
             "anomalyType": _get_anomaly_type(baseline),
             "results": {
                 "resilienceScore": baseline_score,
@@ -85,7 +84,6 @@ def compare_runs(
         "afterFix": {
             "runId": after_fix.get("runId", ""),
             "timestamp": after_fix.get("timestamp", ""),
-            "anomalyPresent": after_fix.get("infrastructure", {}).get("anomalyInjected", False),
             "fixApplied": {
                 "type": _infer_fix_type(baseline, after_fix),
                 "description": _describe_fix(baseline, after_fix),

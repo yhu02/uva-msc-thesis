@@ -44,7 +44,7 @@ class TestAnomalyInjector:
         }
 
         injector = AnomalyInjector()
-        modified = injector.inject(manifest, anomaly_config, with_anomaly=True)
+        modified = injector.inject(manifest, anomaly_config)
 
         # Readiness probe should be removed
         container = modified["spec"]["template"]["spec"]["containers"][0]
@@ -84,7 +84,7 @@ class TestAnomalyInjector:
         }
 
         injector = AnomalyInjector()
-        modified = injector.inject(manifest, anomaly_config, with_anomaly=True)
+        modified = injector.inject(manifest, anomaly_config)
 
         container = modified["spec"]["template"]["spec"]["containers"][0]
         assert "livenessProbe" not in container
@@ -112,12 +112,12 @@ class TestAnomalyInjector:
         }
 
         injector = AnomalyInjector()
-        modified = injector.inject(manifest, anomaly_config, with_anomaly=True)
+        modified = injector.inject(manifest, anomaly_config)
 
         assert modified["spec"]["replicas"] == 1
 
-    def test_no_injection_when_disabled(self):
-        """Test that no injection occurs when with_anomaly=False."""
+    def test_no_injection_when_no_config(self):
+        """Test that no injection occurs when anomaly_config is None."""
         manifest = {
             "apiVersion": "apps/v1",
             "kind": "Deployment",
@@ -140,13 +140,8 @@ class TestAnomalyInjector:
             },
         }
 
-        anomaly_config = {
-            "enabled": True,
-            "type": "missing-readiness-probe",
-        }
-
         injector = AnomalyInjector()
-        modified = injector.inject(manifest, anomaly_config, with_anomaly=False)
+        modified = injector.inject(manifest, None)
 
         # Should be unchanged
         container = modified["spec"]["template"]["spec"]["containers"][0]
@@ -174,7 +169,7 @@ class TestAnomalyInjector:
         }
 
         injector = AnomalyInjector()
-        modified = injector.inject(manifest, anomaly_config, with_anomaly=True)
+        modified = injector.inject(manifest, anomaly_config)
 
         assert modified["spec"]["replicas"] == 3
 
@@ -200,7 +195,7 @@ class TestAnomalyInjector:
         }
 
         injector = AnomalyInjector()
-        injector.inject(manifest, anomaly_config, with_anomaly=True)
+        injector.inject(manifest, anomaly_config)
 
         anomalies = injector.get_injected_anomalies()
         assert len(anomalies) == 1

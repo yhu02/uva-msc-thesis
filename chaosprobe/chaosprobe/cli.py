@@ -855,7 +855,6 @@ def vagrant_ssh(vm_name: Optional[str], name: str, vagrant_dir: Optional[str]):
 @main.command()
 @click.argument("scenario_file", type=click.Path(exists=True))
 @click.option("--output", "-o", type=click.Path(), help="Output file for results JSON")
-@click.option("--with-anomaly/--without-anomaly", default=True, help="Run with or without anomaly")
 @click.option("--namespace", "-n", default=None, help="Override namespace from scenario")
 @click.option("--timeout", "-t", default=300, help="Timeout in seconds for experiment completion")
 @click.option("--dry-run", is_flag=True, help="Print manifests without applying")
@@ -863,7 +862,6 @@ def vagrant_ssh(vm_name: Optional[str], name: str, vagrant_dir: Optional[str]):
 def run(
     scenario_file: str,
     output: Optional[str],
-    with_anomaly: bool,
     namespace: Optional[str],
     timeout: int,
     dry_run: bool,
@@ -896,7 +894,7 @@ def run(
 
     if dry_run:
         click.echo("Dry run mode - printing manifests...")
-        provisioner = KubernetesProvisioner(scenario, with_anomaly=with_anomaly)
+        provisioner = KubernetesProvisioner(scenario)
         manifests = provisioner.generate_manifests()
         for manifest in manifests:
             click.echo("---")
@@ -909,12 +907,11 @@ def run(
         sys.exit(1)
 
     click.echo(f"\nRunning scenario: {scenario['metadata']['name']}")
-    click.echo(f"  With anomaly: {with_anomaly}")
     click.echo(f"  Namespace: {target_namespace}")
 
     # Phase 1: Provision infrastructure
     click.echo("\n[1/4] Provisioning infrastructure...")
-    provisioner = KubernetesProvisioner(scenario, with_anomaly=with_anomaly)
+    provisioner = KubernetesProvisioner(scenario)
     try:
         provisioner.provision()
         click.echo("  Infrastructure provisioned successfully")
@@ -950,7 +947,13 @@ def run(
 
     # Phase 4: Generate output
     click.echo("\n[4/4] Generating AI output...")
-    generator = OutputGenerator(scenario, results, with_anomaly=with_anomaly)
+    deployed_manifests = provisioner.generate_manifests()
+    generator = OutputGenerator(
+        scenario,
+        results,
+        scenario_file=str(Path(scenario_file).resolve()),
+        deployed_manifests=deployed_manifests,
+    )
     output_data = generator.generate()
 
     if output:
@@ -971,12 +974,10 @@ def run(
 @main.command()
 @click.argument("scenario_file", type=click.Path(exists=True))
 @click.option("--namespace", "-n", default=None, help="Override namespace from scenario")
-@click.option("--with-anomaly/--without-anomaly", default=True, help="Provision with or without anomaly")
 @click.option("--dry-run", is_flag=True, help="Print manifests without applying")
 def provision(
     scenario_file: str,
     namespace: Optional[str],
-    with_anomaly: bool,
     dry_run: bool,
 ):
     """Provision infrastructure from a scenario without running experiments.
@@ -995,7 +996,7 @@ def provision(
     if namespace:
         scenario["spec"]["infrastructure"]["namespace"] = namespace
 
-    provisioner = KubernetesProvisioner(scenario, with_anomaly=with_anomaly)
+    provisioner = KubernetesProvisioner(scenario)
 
     if dry_run:
         click.echo("Dry run mode - printing manifests...")
@@ -1006,7 +1007,6 @@ def provision(
         return
 
     click.echo(f"Provisioning infrastructure...")
-    click.echo(f"  With anomaly: {with_anomaly}")
     click.echo(f"  Namespace: {scenario['spec']['infrastructure']['namespace']}")
 
     try:
@@ -1067,7 +1067,7 @@ def cleanup(namespace: str, scenario: Optional[str], cleanup_all: bool):
     if scenario:
         try:
             scenario_data = load_scenario(scenario)
-            provisioner = KubernetesProvisioner(scenario_data, with_anomaly=False)
+            provisioner = KubernetesProvisioner(scenario_data)
             provisioner.cleanup()
             click.echo("Scenario resources cleaned up successfully")
         except Exception as e:
@@ -1075,8 +1075,7 @@ def cleanup(namespace: str, scenario: Optional[str], cleanup_all: bool):
             sys.exit(1)
     elif cleanup_all:
         provisioner = KubernetesProvisioner(
-            {"spec": {"infrastructure": {"namespace": namespace, "resources": []}}},
-            with_anomaly=False
+            {"spec": {"infrastructure": {"namespace": namespace, "resources": []}}}
         )
         provisioner.cleanup_namespace()
         click.echo("All resources cleaned up successfully")
