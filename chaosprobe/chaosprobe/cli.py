@@ -18,18 +18,21 @@ from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.output.comparison import compare_runs
 
 
-def ensure_litmus_setup(namespace: str, experiments: list, auto_setup: bool = True) -> bool:
+def ensure_litmus_setup(
+    namespace: str,
+    experiment_types: list,
+    auto_setup: bool = True,
+) -> bool:
     """Ensure LitmusChaos is installed and configured.
 
     Args:
         namespace: Target namespace for experiments.
-        experiments: List of experiment configurations.
+        experiment_types: List of experiment type names (e.g. ["pod-delete"]).
         auto_setup: Whether to automatically install if missing.
 
     Returns:
         True if setup is ready.
     """
-    # Initialize setup - may not have cluster access yet
     setup = LitmusSetup(skip_k8s_init=True)
     prereqs = setup.check_prerequisites()
 
@@ -37,7 +40,6 @@ def ensure_litmus_setup(namespace: str, experiments: list, auto_setup: bool = Tr
         click.echo("Error: kubectl not found. Please install kubectl.", err=True)
         return False
 
-    # Validate cluster
     click.echo("Validating cluster...")
     is_valid, message = setup.validate_cluster()
     if not is_valid:
@@ -45,15 +47,15 @@ def ensure_litmus_setup(namespace: str, experiments: list, auto_setup: bool = Tr
         return False
     click.echo(f"  {message}")
 
-    # Initialize k8s client now that we have a valid cluster
     setup._init_k8s_client()
-
-    # Re-check prerequisites
     prereqs = setup.check_prerequisites()
 
     if not prereqs["litmus_installed"]:
         if not auto_setup:
-            click.echo("Error: LitmusChaos not installed. Run 'chaosprobe init' first.", err=True)
+            click.echo(
+                "Error: LitmusChaos not installed. Run 'chaosprobe init' first.",
+                err=True,
+            )
             return False
 
         if not prereqs["helm"]:
@@ -81,13 +83,26 @@ def ensure_litmus_setup(namespace: str, experiments: list, auto_setup: bool = Tr
         click.echo(f"Error setting up RBAC: {e}", err=True)
         return False
 
-    exp_types = list(set(exp.get("type") for exp in experiments))
-    for exp_type in exp_types:
+    for exp_type in set(experiment_types):
         click.echo(f"  Installing experiment: {exp_type}")
         if not setup.install_experiment(exp_type, namespace):
-            click.echo(f"  WARNING: Failed to install experiment '{exp_type}'", err=True)
+            click.echo(
+                f"  WARNING: Failed to install experiment '{exp_type}'", err=True
+            )
 
     return True
+
+
+def _extract_experiment_types(scenario: dict) -> list:
+    """Extract experiment type names from a loaded scenario."""
+    types = []
+    for exp in scenario.get("experiments", []):
+        spec = exp.get("spec", {})
+        for experiment in spec.get("spec", {}).get("experiments", []):
+            name = experiment.get("name", "")
+            if name:
+                types.append(name)
+    return types
 
 
 @click.group()
@@ -95,16 +110,19 @@ def ensure_litmus_setup(namespace: str, experiments: list, auto_setup: bool = Tr
 def main():
     """ChaosProbe - Kubernetes chaos testing framework with AI-consumable output.
 
-    Provisions infrastructure, installs LitmusChaos, runs chaos experiments,
-    and generates AI-consumable output for analysis.
-
-    Use 'chaosprobe cluster create' to deploy a Kubernetes cluster with Kubespray.
+    Deploys Kubernetes manifests, runs native LitmusChaos experiments,
+    Scenarios are directories containing K8s manifests and ChaosEngine YAML.
     """
     pass
 
 
 @main.command()
-@click.option("--namespace", "-n", default="chaosprobe-test", help="Namespace for chaos experiments")
+@click.option(
+    "--namespace",
+    "-n",
+    default="chaosprobe-test",
+    help="Namespace for chaos experiments",
+)
 @click.option("--skip-litmus", is_flag=True, help="Skip LitmusChaos installation")
 def init(namespace: str, skip_litmus: bool):
     """Initialize ChaosProbe and install LitmusChaos on existing cluster.
@@ -127,15 +145,22 @@ def init(namespace: str, skip_litmus: bool):
     click.echo(f"  helm: {'OK' if prereqs['helm'] else 'MISSING'}")
     click.echo(f"  git: {'OK' if prereqs['git'] else 'MISSING'}")
     click.echo(f"  ssh: {'OK' if prereqs['ssh'] else 'MISSING'}")
-    click.echo(f"  ansible: {'OK' if prereqs['ansible'] else 'Not installed (optional for cluster creation)'}")
-    click.echo(f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}")
-    click.echo(f"  LitmusChaos: {'Installed' if prereqs['litmus_installed'] else 'Not installed'}")
+    click.echo(
+        f"  ansible: {'OK' if prereqs['ansible'] else 'Not installed (optional)'}"
+    )
+    click.echo(
+        f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}"
+    )
+    click.echo(
+        f"  LitmusChaos: {'Installed' if prereqs['litmus_installed'] else 'Not installed'}"
+    )
 
     if not prereqs["kubectl"]:
-        click.echo("\nError: kubectl is required. Please install it first.", err=True)
+        click.echo(
+            "\nError: kubectl is required. Please install it first.", err=True
+        )
         sys.exit(1)
 
-    # Validate cluster
     click.echo("\nValidating cluster...")
     is_valid, message = setup.validate_cluster()
     if not is_valid:
@@ -146,10 +171,7 @@ def init(namespace: str, skip_litmus: bool):
         sys.exit(1)
     click.echo(f"  {message}")
 
-    # Initialize k8s client now that we have a valid cluster
     setup._init_k8s_client()
-
-    # Re-check prerequisites
     prereqs = setup.check_prerequisites()
 
     if not skip_litmus and not prereqs["litmus_installed"]:
@@ -179,8 +201,8 @@ def init(namespace: str, skip_litmus: bool):
         sys.exit(1)
 
     click.echo("\nChaosProbe initialized successfully!")
-    click.echo(f"\nYou can now run scenarios with:")
-    click.echo(f"  chaosprobe run <scenario.yaml> --output results.json")
+    click.echo("\nYou can now run scenarios with:")
+    click.echo("  chaosprobe run <scenario-dir> --output results.json")
 
 
 @main.command()
@@ -188,10 +210,9 @@ def init(namespace: str, skip_litmus: bool):
 def status(json_output: bool):
     """Check the status of ChaosProbe and its dependencies."""
     setup = LitmusSetup(skip_k8s_init=True)
-    setup._init_k8s_client()  # Try to init, may fail if no cluster
+    setup._init_k8s_client()
     prereqs = setup.check_prerequisites()
 
-    # Add cluster info
     cluster_info = setup.get_cluster_info()
     prereqs["cluster_context"] = cluster_info.get("context")
     prereqs["cluster_server"] = cluster_info.get("server")
@@ -212,74 +233,84 @@ def status(json_output: bool):
     if prereqs["vagrant"] and not prereqs["libvirt"]:
         libvirt_status = prereqs.get("libvirt_status", {})
         if not libvirt_status.get("kvm_available"):
-            click.echo(f"    KVM not available (check BIOS/WSL2 settings)")
+            click.echo("    KVM not available (check BIOS/WSL2 settings)")
         elif not libvirt_status.get("libvirtd_installed"):
-            click.echo(f"    Run: chaosprobe cluster vagrant setup")
-    click.echo(f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}")
+            click.echo("    Run: chaosprobe cluster vagrant setup")
+    click.echo(
+        f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}"
+    )
     if prereqs["cluster_access"]:
         click.echo(f"    Context: {prereqs['cluster_context']}")
         click.echo(f"    Server: {prereqs['cluster_server']}")
-    click.echo(f"  LitmusChaos installed: {'Yes' if prereqs['litmus_installed'] else 'No'}")
-    click.echo(f"  LitmusChaos ready: {'Yes' if prereqs['litmus_ready'] else 'No'}")
+    click.echo(
+        f"  LitmusChaos installed: {'Yes' if prereqs['litmus_installed'] else 'No'}"
+    )
+    click.echo(
+        f"  LitmusChaos ready: {'Yes' if prereqs['litmus_ready'] else 'No'}"
+    )
 
     if prereqs["all_ready"]:
         click.echo("\nAll systems ready!")
     else:
         if not prereqs["cluster_access"]:
-            click.echo("\nNo cluster configured. Use 'chaosprobe cluster create' or configure kubectl.")
+            click.echo(
+                "\nNo cluster configured. Use 'chaosprobe cluster create' or configure kubectl."
+            )
         else:
             click.echo("\nRun 'chaosprobe init' to complete setup.")
 
 
-# -----------------------------------------------------------------------------
-# Cluster management commands (Kubespray)
-# -----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────
+# Cluster management commands (Kubespray) — unchanged
+# ─────────────────────────────────────────────────────────────
+
 
 @main.group()
 def cluster():
-    """Manage Kubernetes clusters with Kubespray.
-
-    Deploy production-grade Kubernetes clusters on bare metal or cloud VMs.
-    """
+    """Manage Kubernetes clusters with Kubespray."""
     pass
 
 
 @cluster.command("create")
-@click.option("--inventory", "-i", type=click.Path(exists=True), help="Path to existing inventory file (hosts.yaml)")
-@click.option("--hosts-file", "-f", type=click.Path(exists=True), help="Path to hosts definition file (JSON/YAML)")
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True),
+    help="Path to existing inventory file (hosts.yaml)",
+)
+@click.option(
+    "--hosts-file",
+    "-f",
+    type=click.Path(exists=True),
+    help="Path to hosts definition file (JSON/YAML)",
+)
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--become-pass", envvar="ANSIBLE_BECOME_PASS", help="Sudo password for ansible become")
-def cluster_create(inventory: Optional[str], hosts_file: Optional[str], name: str, become_pass: Optional[str]):
-    """Create a Kubernetes cluster using Kubespray.
-
-    Provide hosts either via an existing inventory file or a hosts definition file.
-
-    Example hosts definition file (hosts.yaml):
-
-    \b
-    hosts:
-      - name: node1
-        ip: 192.168.1.10
-        ansible_user: ubuntu
-        roles: [control_plane, worker]
-      - name: node2
-        ip: 192.168.1.11
-        ansible_user: ubuntu
-        roles: [worker]
-      - name: node3
-        ip: 192.168.1.12
-        ansible_user: ubuntu
-        roles: [worker]
-    """
+@click.option(
+    "--become-pass",
+    envvar="ANSIBLE_BECOME_PASS",
+    help="Sudo password for ansible become",
+)
+def cluster_create(
+    inventory: Optional[str],
+    hosts_file: Optional[str],
+    name: str,
+    become_pass: Optional[str],
+):
+    """Create a Kubernetes cluster using Kubespray."""
     setup = LitmusSetup(skip_k8s_init=True)
     prereqs = setup.check_prerequisites()
 
     if not prereqs["git"]:
-        click.echo("Error: git is required for Kubespray. Please install it.", err=True)
+        click.echo(
+            "Error: git is required for Kubespray. Please install it.", err=True
+        )
         sys.exit(1)
 
     if not prereqs["python_venv"]:
-        click.echo("Error: python3-venv is required. Install with: apt install python3-venv", err=True)
+        click.echo(
+            "Error: python3-venv is required. Install with: apt install python3-venv",
+            err=True,
+        )
         sys.exit(1)
 
     if inventory:
@@ -306,20 +337,10 @@ def cluster_create(inventory: Optional[str], hosts_file: Optional[str], name: st
         inventory_dir = setup.generate_inventory(hosts, cluster_name=name)
     else:
         click.echo("Error: Provide --inventory or --hosts-file", err=True)
-        click.echo("\nExample hosts file (hosts.yaml):")
-        click.echo("  hosts:")
-        click.echo("    - name: node1")
-        click.echo("      ip: 192.168.1.10")
-        click.echo("      ansible_user: ubuntu")
-        click.echo("      roles: [control_plane, worker]")
-        click.echo("    - name: node2")
-        click.echo("      ip: 192.168.1.11")
-        click.echo("      ansible_user: ubuntu")
-        click.echo("      roles: [worker]")
         sys.exit(1)
 
     click.echo("\nDeploying Kubernetes cluster...")
-    click.echo("This will take 15-30 minutes. Output will be shown below.\n")
+    click.echo("This will take 15-30 minutes.\n")
 
     try:
         setup.deploy_cluster(inventory_dir, become_pass=become_pass)
@@ -328,19 +349,28 @@ def cluster_create(inventory: Optional[str], hosts_file: Optional[str], name: st
         sys.exit(1)
 
     click.echo("\nCluster deployed successfully!")
-    click.echo(f"\nTo get kubeconfig, run:")
-    click.echo(f"  chaosprobe cluster kubeconfig --host <control-plane-ip>")
+    click.echo("\nTo get kubeconfig, run:")
+    click.echo("  chaosprobe cluster kubeconfig --host <control-plane-ip>")
 
 
 @cluster.command("destroy")
-@click.option("--inventory", "-i", type=click.Path(exists=True), required=True, help="Path to inventory directory")
-@click.option("--become-pass", envvar="ANSIBLE_BECOME_PASS", help="Sudo password for ansible become")
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to inventory directory",
+)
+@click.option(
+    "--become-pass",
+    envvar="ANSIBLE_BECOME_PASS",
+    help="Sudo password for ansible become",
+)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation")
-def cluster_destroy(inventory: str, become_pass: Optional[str], force: bool):
-    """Destroy a Kubernetes cluster using Kubespray reset.
-
-    This runs the Kubespray reset playbook to remove Kubernetes from all nodes.
-    """
+def cluster_destroy(
+    inventory: str, become_pass: Optional[str], force: bool
+):
+    """Destroy a Kubernetes cluster using Kubespray reset."""
     inventory_dir = Path(inventory)
     if not (inventory_dir / "hosts.yaml").exists():
         click.echo(f"Error: No hosts.yaml found in {inventory_dir}", err=True)
@@ -349,7 +379,7 @@ def cluster_destroy(inventory: str, become_pass: Optional[str], force: bool):
     if not force:
         click.confirm(
             "This will destroy the Kubernetes cluster on all nodes. Continue?",
-            abort=True
+            abort=True,
         )
 
     setup = LitmusSetup(skip_k8s_init=True)
@@ -367,16 +397,16 @@ def cluster_destroy(inventory: str, become_pass: Optional[str], force: bool):
 @click.option("--host", "-h", required=True, help="Control plane host IP or hostname")
 @click.option("--user", "-u", default="root", help="SSH user")
 @click.option("--output", "-o", type=click.Path(), help="Output path for kubeconfig")
-@click.option("--ssh-key", "-k", type=click.Path(exists=True), help="SSH private key file (for Vagrant/key-based auth)")
-def cluster_kubeconfig(host: str, user: str, output: Optional[str], ssh_key: Optional[str]):
-    """Fetch kubeconfig from a control plane node.
-
-    After fetching, the kubeconfig will be saved and instructions
-    for using it will be displayed.
-
-    For Vagrant VMs, use --ssh-key to specify the SSH key, or use
-    'chaosprobe cluster vagrant kubeconfig' for auto-detection.
-    """
+@click.option(
+    "--ssh-key",
+    "-k",
+    type=click.Path(exists=True),
+    help="SSH private key file",
+)
+def cluster_kubeconfig(
+    host: str, user: str, output: Optional[str], ssh_key: Optional[str]
+):
+    """Fetch kubeconfig from a control plane node."""
     setup = LitmusSetup(skip_k8s_init=True)
 
     output_path = Path(output) if output else None
@@ -391,37 +421,35 @@ def cluster_kubeconfig(host: str, user: str, output: Optional[str], ssh_key: Opt
         )
         click.echo(f"\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
-        click.echo(f"\nOr merge with default config:")
-        click.echo(f"  KUBECONFIG=~/.kube/config:{kubeconfig_path} kubectl config view --flatten > ~/.kube/config.new")
-        click.echo(f"  mv ~/.kube/config.new ~/.kube/config")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)
         sys.exit(1)
 
 
-# -----------------------------------------------------------------------------
-# Vagrant cluster commands
-# -----------------------------------------------------------------------------
+# ── Vagrant cluster commands ─────────────────────────────────
+
 
 @cluster.group("vagrant")
 def cluster_vagrant():
-    """Manage local Vagrant VMs for development clusters.
-
-    Use Vagrant to create local VMs, then deploy Kubernetes with Kubespray.
-    This provides a local development environment similar to production.
-    """
+    """Manage local Vagrant VMs for development clusters."""
     pass
 
 
 @cluster_vagrant.command("init")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--control-planes", "-c", default=1, help="Number of control plane nodes")
+@click.option(
+    "--control-planes", "-c", default=1, help="Number of control plane nodes"
+)
 @click.option("--workers", "-w", default=2, help="Number of worker nodes")
 @click.option("--memory", "-m", default=2048, help="Memory per VM in MB")
 @click.option("--cpus", default=2, help="CPUs per VM")
 @click.option("--box", default="generic/ubuntu2204", help="Vagrant box image")
-@click.option("--network-prefix", default="192.168.56", help="Network prefix for private IPs")
-@click.option("--output", "-o", type=click.Path(), help="Output directory for Vagrantfile")
+@click.option(
+    "--network-prefix", default="192.168.56", help="Network prefix for private IPs"
+)
+@click.option(
+    "--output", "-o", type=click.Path(), help="Output directory for Vagrantfile"
+)
 def vagrant_init(
     name: str,
     control_planes: int,
@@ -432,23 +460,14 @@ def vagrant_init(
     network_prefix: str,
     output: Optional[str],
 ):
-    """Initialize a Vagrantfile for local cluster VMs.
-
-    Creates a Vagrantfile that defines the VMs for your cluster.
-    After init, use 'vagrant up' or 'chaosprobe cluster vagrant up' to start.
-
-    \b
-    Example:
-      chaosprobe cluster vagrant init --control-planes 1 --workers 2
-      cd ~/.chaosprobe/vagrant/chaosprobe
-      vagrant up
-    """
+    """Initialize a Vagrantfile for local cluster VMs."""
     setup = LitmusSetup(skip_k8s_init=True)
     prereqs = setup.check_prerequisites()
 
     if not prereqs["vagrant"]:
-        click.echo("Error: Vagrant not found. Please install Vagrant first.", err=True)
-        click.echo("  https://www.vagrantup.com/downloads", err=True)
+        click.echo(
+            "Error: Vagrant not found. Please install Vagrant first.", err=True
+        )
         sys.exit(1)
 
     output_dir = Path(output) if output else None
@@ -465,13 +484,6 @@ def vagrant_init(
             output_dir=output_dir,
         )
         click.echo(f"\nVagrantfile created at: {vagrant_dir}")
-        click.echo(f"\nVM Configuration:")
-        click.echo(f"  Control planes: {control_planes}")
-        click.echo(f"  Workers: {workers}")
-        click.echo(f"  Memory: {memory} MB")
-        click.echo(f"  CPUs: {cpus}")
-        click.echo(f"  Box: {box}")
-        click.echo(f"  Network: {network_prefix}.0/24")
         click.echo(f"\nNext steps:")
         click.echo(f"  1. Start VMs: chaosprobe cluster vagrant up --name {name}")
         click.echo(f"  2. Deploy K8s: chaosprobe cluster vagrant deploy --name {name}")
@@ -483,46 +495,45 @@ def vagrant_init(
 @cluster_vagrant.command("setup")
 @click.option("--check-only", is_flag=True, help="Only check status, don't install")
 def vagrant_setup(check_only: bool):
-    """Setup libvirt/KVM for Vagrant on Linux.
-
-    Installs all dependencies needed to run Vagrant with the libvirt provider:
-    - qemu-kvm, libvirt-daemon-system, libvirt-clients
-    - Adds current user to libvirt and kvm groups
-    - Starts libvirtd service
-    - Installs vagrant-libvirt plugin
-
-    Use this on WSL2 or Linux systems where VirtualBox is not available.
-    """
+    """Setup libvirt/KVM for Vagrant on Linux."""
     setup = LitmusSetup(skip_k8s_init=True)
 
     click.echo("Checking libvirt/KVM status...")
     status = setup._check_libvirt()
 
     click.echo(f"\nLibvirt Status:")
-    click.echo(f"  KVM available (/dev/kvm): {'OK' if status['kvm_available'] else 'MISSING'}")
-    click.echo(f"  libvirtd installed: {'OK' if status['libvirtd_installed'] else 'MISSING'}")
-    click.echo(f"  libvirtd running: {'OK' if status['libvirtd_running'] else 'NOT RUNNING'}")
-    click.echo(f"  User in libvirt/kvm groups: {'OK' if status['user_in_groups'] else 'MISSING'}")
-    click.echo(f"  vagrant-libvirt plugin: {'OK' if status['vagrant_libvirt_plugin'] else 'MISSING'}")
+    click.echo(
+        f"  KVM available (/dev/kvm): {'OK' if status['kvm_available'] else 'MISSING'}"
+    )
+    click.echo(
+        f"  libvirtd installed: {'OK' if status['libvirtd_installed'] else 'MISSING'}"
+    )
+    click.echo(
+        f"  libvirtd running: {'OK' if status['libvirtd_running'] else 'NOT RUNNING'}"
+    )
+    click.echo(
+        f"  User in libvirt/kvm groups: {'OK' if status['user_in_groups'] else 'MISSING'}"
+    )
+    click.echo(
+        f"  vagrant-libvirt plugin: {'OK' if status['vagrant_libvirt_plugin'] else 'MISSING'}"
+    )
 
     if status["all_ready"]:
         click.echo(click.style("\nLibvirt is fully configured!", fg="green"))
-        click.echo("\nYou can now use: chaosprobe cluster vagrant up --provider libvirt")
         return
 
     if check_only:
         click.echo(click.style("\nLibvirt is not fully configured.", fg="yellow"))
-        click.echo("Run 'chaosprobe cluster vagrant setup' to install missing components.")
+        click.echo(
+            "Run 'chaosprobe cluster vagrant setup' to install missing components."
+        )
         sys.exit(1)
 
     if not status["kvm_available"]:
-        click.echo(click.style("\nError: KVM is not available.", fg="red"), err=True)
-        click.echo("Make sure:", err=True)
-        click.echo("  - CPU virtualization is enabled in BIOS", err=True)
-        click.echo("  - For WSL2: Add to %USERPROFILE%\\.wslconfig:", err=True)
-        click.echo("    [wsl2]", err=True)
-        click.echo("    nestedVirtualization=true", err=True)
-        click.echo("  Then restart WSL: wsl --shutdown", err=True)
+        click.echo(
+            click.style("\nError: KVM is not available.", fg="red"), err=True
+        )
+        click.echo("Enable CPU virtualisation in BIOS/WSL2.", err=True)
         sys.exit(1)
 
     click.echo(click.style("\nInstalling libvirt dependencies...", fg="yellow"))
@@ -533,15 +544,14 @@ def vagrant_setup(check_only: bool):
 
         if result["needs_relogin"]:
             click.echo(click.style("\nInstallation complete!", fg="green"))
-            click.echo(click.style("\nIMPORTANT: You need to log out and log back in", fg="yellow"))
-            click.echo("for group membership changes to take effect.")
-            click.echo("\nAlternatively, run: newgrp libvirt")
-            click.echo("\nAfter that, you can use:")
-            click.echo("  chaosprobe cluster vagrant up --provider libvirt")
+            click.echo(
+                click.style(
+                    "\nIMPORTANT: Log out and log back in for group changes.",
+                    fg="yellow",
+                )
+            )
         else:
             click.echo(click.style("\nLibvirt setup complete!", fg="green"))
-            click.echo("\nYou can now use:")
-            click.echo("  chaosprobe cluster vagrant up --provider libvirt")
     except Exception as e:
         click.echo(f"\nError during installation: {e}", err=True)
         sys.exit(1)
@@ -549,17 +559,22 @@ def vagrant_setup(check_only: bool):
 
 @cluster_vagrant.command("up")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--provider", "-p", default="virtualbox", type=click.Choice(["virtualbox", "libvirt"]), help="Vagrant provider")
-@click.option("--dir", "-d", "vagrant_dir", type=click.Path(exists=True), help="Vagrant directory (overrides --name)")
+@click.option(
+    "--provider",
+    "-p",
+    default="virtualbox",
+    type=click.Choice(["virtualbox", "libvirt"]),
+    help="Vagrant provider",
+)
+@click.option(
+    "--dir",
+    "-d",
+    "vagrant_dir",
+    type=click.Path(exists=True),
+    help="Vagrant directory",
+)
 def vagrant_up(name: str, provider: str, vagrant_dir: Optional[str]):
-    """Start Vagrant VMs.
-
-    Starts all VMs defined in the Vagrantfile. This may take several minutes
-    as Vagrant downloads the box image and creates the VMs.
-
-    Use --provider libvirt on WSL2 or Linux without VirtualBox.
-    Run 'chaosprobe cluster vagrant setup' first to install libvirt dependencies.
-    """
+    """Start Vagrant VMs."""
     setup = LitmusSetup(skip_k8s_init=True)
 
     if vagrant_dir:
@@ -569,40 +584,30 @@ def vagrant_up(name: str, provider: str, vagrant_dir: Optional[str]):
 
     if not (vdir / "Vagrantfile").exists():
         click.echo(f"Error: No Vagrantfile found at {vdir}", err=True)
-        click.echo(f"\nRun 'chaosprobe cluster vagrant init --name {name}' first.", err=True)
         sys.exit(1)
 
-    # Check libvirt if using libvirt provider
     if provider == "libvirt":
         click.echo("Checking libvirt configuration...")
         libvirt_status = setup._check_libvirt()
-
         if not libvirt_status["all_ready"]:
-            click.echo(click.style("\nLibvirt is not fully configured.", fg="yellow"))
-            if not libvirt_status["kvm_available"]:
-                click.echo("  - KVM is not available")
-            if not libvirt_status["libvirtd_installed"]:
-                click.echo("  - libvirtd is not installed")
-            if not libvirt_status["libvirtd_running"]:
-                click.echo("  - libvirtd is not running")
-            if not libvirt_status["user_in_groups"]:
-                click.echo("  - User not in libvirt/kvm groups")
-            if not libvirt_status["vagrant_libvirt_plugin"]:
-                click.echo("  - vagrant-libvirt plugin not installed")
-
-            click.echo("\nRun 'chaosprobe cluster vagrant setup' to install libvirt.")
+            click.echo(
+                click.style("\nLibvirt is not fully configured.", fg="yellow")
+            )
+            click.echo(
+                "\nRun 'chaosprobe cluster vagrant setup' to install libvirt."
+            )
             sys.exit(1)
-
         click.echo("  Libvirt: OK")
 
     click.echo(f"\nStarting Vagrant VMs from {vdir}...")
     click.echo(f"  Provider: {provider}")
-    click.echo("  This may take several minutes...\n")
 
     try:
         setup.vagrant_up(vdir, provider=provider)
         click.echo(f"\nVMs are running. Next steps:")
-        click.echo(f"  Deploy K8s: chaosprobe cluster vagrant deploy --name {name}")
+        click.echo(
+            f"  Deploy K8s: chaosprobe cluster vagrant deploy --name {name}"
+        )
     except Exception as e:
         click.echo(f"\nError starting VMs: {e}", err=True)
         sys.exit(1)
@@ -610,7 +615,13 @@ def vagrant_up(name: str, provider: str, vagrant_dir: Optional[str]):
 
 @cluster_vagrant.command("status")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--dir", "-d", "vagrant_dir", type=click.Path(exists=True), help="Vagrant directory (overrides --name)")
+@click.option(
+    "--dir",
+    "-d",
+    "vagrant_dir",
+    type=click.Path(exists=True),
+    help="Vagrant directory",
+)
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
 def vagrant_status(name: str, vagrant_dir: Optional[str], json_output: bool):
     """Show status of Vagrant VMs."""
@@ -626,14 +637,14 @@ def vagrant_status(name: str, vagrant_dir: Optional[str], json_output: bool):
         sys.exit(1)
 
     try:
-        status = setup.vagrant_status(vdir)
+        vm_status = setup.vagrant_status(vdir)
 
         if json_output:
-            click.echo(json.dumps(status, indent=2))
+            click.echo(json.dumps(vm_status, indent=2))
             return
 
         click.echo(f"Vagrant VMs in {vdir}:")
-        for vm_name, info in status.items():
+        for vm_name, info in vm_status.items():
             state = info["state"]
             if state == "running":
                 state_str = click.style(state, fg="green")
@@ -649,26 +660,29 @@ def vagrant_status(name: str, vagrant_dir: Optional[str], json_output: bool):
 
 @cluster_vagrant.command("deploy")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--dir", "-d", "vagrant_dir", type=click.Path(exists=True), help="Vagrant directory (overrides --name)")
+@click.option(
+    "--dir",
+    "-d",
+    "vagrant_dir",
+    type=click.Path(exists=True),
+    help="Vagrant directory",
+)
 def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
-    """Deploy Kubernetes on running Vagrant VMs using Kubespray.
-
-    This command:
-    1. Reads VM information from Vagrant
-    2. Generates Kubespray inventory
-    3. Deploys Kubernetes cluster
-
-    VMs must be running first (use 'vagrant up' or 'chaosprobe cluster vagrant up').
-    """
+    """Deploy Kubernetes on running Vagrant VMs using Kubespray."""
     setup = LitmusSetup(skip_k8s_init=True)
     prereqs = setup.check_prerequisites()
 
     if not prereqs["git"]:
-        click.echo("Error: git is required for Kubespray. Please install it.", err=True)
+        click.echo(
+            "Error: git is required for Kubespray. Please install it.", err=True
+        )
         sys.exit(1)
 
     if not prereqs["python_venv"]:
-        click.echo("Error: python3-venv is required. Install with: apt install python3-venv", err=True)
+        click.echo(
+            "Error: python3-venv is required. Install with: apt install python3-venv",
+            err=True,
+        )
         sys.exit(1)
 
     if vagrant_dir:
@@ -680,13 +694,11 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
         click.echo(f"Error: No Vagrantfile found at {vdir}", err=True)
         sys.exit(1)
 
-    # Check if VMs are running
     try:
-        status = setup.vagrant_status(vdir)
-        running = [n for n, i in status.items() if i["state"] == "running"]
+        vm_status = setup.vagrant_status(vdir)
+        running = [n for n, i in vm_status.items() if i["state"] == "running"]
         if not running:
-            click.echo("Error: No running VMs found. Start them with:", err=True)
-            click.echo(f"  chaosprobe cluster vagrant up --name {name}", err=True)
+            click.echo("Error: No running VMs found.", err=True)
             sys.exit(1)
         click.echo(f"Found {len(running)} running VMs: {', '.join(running)}")
     except Exception as e:
@@ -701,14 +713,15 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
         click.echo(f"\nCluster deployed successfully!")
         click.echo(f"Inventory: {inventory_dir}")
 
-        # Get control plane IP for kubeconfig
         hosts = setup.get_vagrant_ssh_config(vdir)
         cp_hosts = [h for h in hosts if "control_plane" in h.get("roles", [])]
         if cp_hosts:
             cp_ip = cp_hosts[0]["ip"]
             cp_user = cp_hosts[0]["ansible_user"]
             click.echo(f"\nTo get kubeconfig:")
-            click.echo(f"  chaosprobe cluster kubeconfig --host {cp_ip} --user {cp_user}")
+            click.echo(
+                f"  chaosprobe cluster kubeconfig --host {cp_ip} --user {cp_user}"
+            )
     except Exception as e:
         click.echo(f"\nError deploying cluster: {e}", err=True)
         sys.exit(1)
@@ -716,14 +729,16 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
 
 @cluster_vagrant.command("destroy")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--dir", "-d", "vagrant_dir", type=click.Path(exists=True), help="Vagrant directory (overrides --name)")
+@click.option(
+    "--dir",
+    "-d",
+    "vagrant_dir",
+    type=click.Path(exists=True),
+    help="Vagrant directory",
+)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation")
 def vagrant_destroy(name: str, vagrant_dir: Optional[str], force: bool):
-    """Destroy Vagrant VMs.
-
-    This destroys all VMs defined in the Vagrantfile. The Vagrantfile
-    itself is preserved so you can recreate the VMs later.
-    """
+    """Destroy Vagrant VMs."""
     setup = LitmusSetup(skip_k8s_init=True)
 
     if vagrant_dir:
@@ -738,13 +753,12 @@ def vagrant_destroy(name: str, vagrant_dir: Optional[str], force: bool):
     if not force:
         click.confirm(
             f"This will destroy all VMs for cluster '{name}'. Continue?",
-            abort=True
+            abort=True,
         )
 
     try:
         setup.vagrant_destroy(vdir, force=True)
         click.echo("\nVMs destroyed. Vagrantfile preserved.")
-        click.echo(f"  To recreate: chaosprobe cluster vagrant up --name {name}")
     except Exception as e:
         click.echo(f"Error destroying VMs: {e}", err=True)
         sys.exit(1)
@@ -752,18 +766,16 @@ def vagrant_destroy(name: str, vagrant_dir: Optional[str], force: bool):
 
 @cluster_vagrant.command("kubeconfig")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--dir", "-d", "vagrant_dir", type=click.Path(exists=True), help="Vagrant directory (overrides --name)")
+@click.option(
+    "--dir",
+    "-d",
+    "vagrant_dir",
+    type=click.Path(exists=True),
+    help="Vagrant directory",
+)
 @click.option("--output", "-o", type=click.Path(), help="Output path for kubeconfig")
 def vagrant_kubeconfig(name: str, vagrant_dir: Optional[str], output: Optional[str]):
-    """Fetch kubeconfig from Vagrant control plane VM.
-
-    Auto-detects the control plane IP and SSH key from Vagrant.
-    This is the easiest way to get kubeconfig for Vagrant clusters.
-
-    \b
-    Example:
-      chaosprobe cluster vagrant kubeconfig --name chaosprobe
-    """
+    """Fetch kubeconfig from Vagrant control plane VM."""
     setup = LitmusSetup(skip_k8s_init=True)
 
     if vagrant_dir:
@@ -773,17 +785,13 @@ def vagrant_kubeconfig(name: str, vagrant_dir: Optional[str], output: Optional[s
 
     if not (vdir / "Vagrantfile").exists():
         click.echo(f"Error: No Vagrantfile found at {vdir}", err=True)
-        click.echo(f"\nMake sure VMs are running with:")
-        click.echo(f"  chaosprobe cluster vagrant up --name {name}")
         sys.exit(1)
 
-    # Check if VMs are running
     try:
-        status = setup.vagrant_status(vdir)
-        running = [n for n, i in status.items() if i["state"] == "running"]
+        vm_status = setup.vagrant_status(vdir)
+        running = [n for n, i in vm_status.items() if i["state"] == "running"]
         if not running:
-            click.echo("Error: No running VMs found. Start them with:", err=True)
-            click.echo(f"  chaosprobe cluster vagrant up --name {name}", err=True)
+            click.echo("Error: No running VMs found.", err=True)
             sys.exit(1)
     except Exception as e:
         click.echo(f"Error checking VM status: {e}", err=True)
@@ -792,12 +800,11 @@ def vagrant_kubeconfig(name: str, vagrant_dir: Optional[str], output: Optional[s
     output_path = Path(output) if output else None
 
     try:
-        kubeconfig_path = setup.vagrant_fetch_kubeconfig(vdir, output_path=output_path)
+        kubeconfig_path = setup.vagrant_fetch_kubeconfig(
+            vdir, output_path=output_path
+        )
         click.echo(f"\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
-        click.echo(f"\nOr merge with default config:")
-        click.echo(f"  KUBECONFIG=~/.kube/config:{kubeconfig_path} kubectl config view --flatten > ~/.kube/config.new")
-        click.echo(f"  mv ~/.kube/config.new ~/.kube/config")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)
         sys.exit(1)
@@ -806,17 +813,15 @@ def vagrant_kubeconfig(name: str, vagrant_dir: Optional[str], output: Optional[s
 @cluster_vagrant.command("ssh")
 @click.argument("vm_name", required=False)
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--dir", "-d", "vagrant_dir", type=click.Path(exists=True), help="Vagrant directory (overrides --name)")
+@click.option(
+    "--dir",
+    "-d",
+    "vagrant_dir",
+    type=click.Path(exists=True),
+    help="Vagrant directory",
+)
 def vagrant_ssh(vm_name: Optional[str], name: str, vagrant_dir: Optional[str]):
-    """SSH into a Vagrant VM.
-
-    If VM_NAME is not specified, lists available VMs.
-
-    \b
-    Examples:
-      chaosprobe cluster vagrant ssh cp1      # SSH to control plane
-      chaosprobe cluster vagrant ssh worker1  # SSH to worker
-    """
+    """SSH into a Vagrant VM."""
     setup = LitmusSetup(skip_k8s_init=True)
 
     if vagrant_dir:
@@ -829,101 +834,113 @@ def vagrant_ssh(vm_name: Optional[str], name: str, vagrant_dir: Optional[str]):
         sys.exit(1)
 
     if not vm_name:
-        # List available VMs
         try:
-            status = setup.vagrant_status(vdir)
+            vm_status = setup.vagrant_status(vdir)
             click.echo("Available VMs:")
-            for vname, info in status.items():
-                state = info["state"]
-                click.echo(f"  {vname} ({state})")
-            click.echo(f"\nUsage: chaosprobe cluster vagrant ssh <vm_name>")
+            for vname, info in vm_status.items():
+                click.echo(f"  {vname} ({info['state']})")
+            click.echo("\nUsage: chaosprobe cluster vagrant ssh <vm_name>")
         except Exception as e:
             click.echo(f"Error getting VM list: {e}", err=True)
             sys.exit(1)
         return
 
-    # SSH to the specified VM
     import os
+
     os.chdir(vdir)
     os.execvp("vagrant", ["vagrant", "ssh", vm_name])
 
 
-# -----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────
 # Scenario commands
-# -----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────
+
 
 @main.command()
-@click.argument("scenario_file", type=click.Path(exists=True))
+@click.argument("scenario_path", type=click.Path(exists=True))
 @click.option("--output", "-o", type=click.Path(), help="Output file for results JSON")
-@click.option("--namespace", "-n", default=None, help="Override namespace from scenario")
-@click.option("--timeout", "-t", default=300, help="Timeout in seconds for experiment completion")
-@click.option("--dry-run", is_flag=True, help="Print manifests without applying")
-@click.option("--no-auto-setup", is_flag=True, help="Disable automatic LitmusChaos installation")
+@click.option(
+    "--namespace", "-n", default=None, help="Override namespace (default: from scenario)"
+)
+@click.option(
+    "--timeout",
+    "-t",
+    default=300,
+    help="Timeout in seconds for experiment completion",
+)
+@click.option(
+    "--no-auto-setup",
+    is_flag=True,
+    help="Disable automatic LitmusChaos installation",
+)
 def run(
-    scenario_file: str,
+    scenario_path: str,
     output: Optional[str],
     namespace: Optional[str],
     timeout: int,
-    dry_run: bool,
     no_auto_setup: bool,
 ):
     """Run a chaos scenario and generate AI-consumable output.
 
-    SCENARIO_FILE: Path to the scenario YAML configuration file.
+    SCENARIO_PATH is a directory containing Kubernetes manifests and
+    ChaosEngine YAML files, or a single YAML file.
 
-    This command automatically:
-    - Installs LitmusChaos if not present
-    - Provisions the infrastructure defined in the scenario
-    - Runs chaos experiments
-    - Collects results and generates AI-consumable output
+    \b
+    Example scenario directory:
+      scenarios/nginx-pod-delete/
+        deployment.yaml     # K8s Deployment
+        service.yaml        # K8s Service
+        experiment.yaml     # ChaosEngine YAML
+
+    ChaosProbe automatically:
+    - Classifies files by kind (ChaosEngine vs regular K8s resources)
+    - Deploys K8s manifests to the cluster
+    - Runs ChaosEngine experiments
+    - Generates structured AI-consumable output
     """
-    click.echo(f"Loading scenario from {scenario_file}...")
+    click.echo(f"Loading scenario from {scenario_path}...")
 
     try:
-        scenario = load_scenario(scenario_file)
+        scenario = load_scenario(scenario_path)
         validate_scenario(scenario)
     except Exception as e:
         click.echo(f"Error loading scenario: {e}", err=True)
         sys.exit(1)
 
+    # Override namespace if specified
     if namespace:
-        scenario["spec"]["infrastructure"]["namespace"] = namespace
+        scenario["namespace"] = namespace
 
-    target_namespace = scenario["spec"]["infrastructure"]["namespace"]
-    experiments = scenario["spec"].get("experiments", [])
+    target_namespace = scenario.get("namespace", "default")
+    experiment_types = _extract_experiment_types(scenario)
 
-    if dry_run:
-        click.echo("Dry run mode - printing manifests...")
-        provisioner = KubernetesProvisioner(scenario)
-        manifests = provisioner.generate_manifests()
-        for manifest in manifests:
-            click.echo("---")
-            click.echo(manifest)
-        return
+    click.echo(f"  Manifests: {len(scenario.get('manifests', []))} files")
+    click.echo(f"  Experiments: {len(scenario.get('experiments', []))} ChaosEngine(s)")
+    click.echo(f"  Experiment types: {', '.join(experiment_types) or 'none'}")
+    click.echo(f"  Namespace: {target_namespace}")
 
     # Phase 0: Ensure LitmusChaos is set up
     click.echo("\n[0/4] Checking prerequisites...")
-    if not ensure_litmus_setup(target_namespace, experiments, auto_setup=not no_auto_setup):
+    if not ensure_litmus_setup(
+        target_namespace, experiment_types, auto_setup=not no_auto_setup
+    ):
         sys.exit(1)
 
-    click.echo(f"\nRunning scenario: {scenario['metadata']['name']}")
-    click.echo(f"  Namespace: {target_namespace}")
-
-    # Phase 1: Provision infrastructure
-    click.echo("\n[1/4] Provisioning infrastructure...")
-    provisioner = KubernetesProvisioner(scenario)
+    # Phase 1: Deploy K8s manifests
+    click.echo("\n[1/4] Deploying manifests...")
+    provisioner = KubernetesProvisioner(target_namespace)
     try:
-        provisioner.provision()
-        click.echo("  Infrastructure provisioned successfully")
+        provisioner.provision(scenario.get("manifests", []))
+        click.echo("  Manifests deployed successfully")
     except Exception as e:
-        click.echo(f"  Error provisioning infrastructure: {e}", err=True)
+        click.echo(f"  Error deploying manifests: {e}", err=True)
         sys.exit(1)
 
     # Phase 2: Run chaos experiments
     click.echo("\n[2/4] Running chaos experiments...")
-    runner = ChaosRunner(scenario, timeout=timeout)
+    runner = ChaosRunner(target_namespace, timeout=timeout)
     try:
-        runner.run_experiments()
+        runner.run_experiments(scenario.get("experiments", []))
         click.echo("  Experiments completed")
     except Exception as e:
         click.echo(f"  Error running experiments: {e}", err=True)
@@ -931,29 +948,18 @@ def run(
 
     # Phase 3: Collect results
     click.echo("\n[3/4] Collecting results...")
-    collector = ResultCollector(scenario)
-    # Build engine name map from the runner so the collector looks up the right engines
-    engine_name_map = {
-        exp["name"]: exp["engineName"]
-        for exp in runner.get_executed_experiments()
-        if "engineName" in exp
-    }
+    collector = ResultCollector(target_namespace)
     try:
-        results = collector.collect(engine_name_map=engine_name_map)
+        executed = runner.get_executed_experiments()
+        results = collector.collect(executed)
         click.echo(f"  Collected results from {len(results)} experiments")
     except Exception as e:
         click.echo(f"  Error collecting results: {e}", err=True)
-        sys.exit(1)
+        results = []
 
-    # Phase 4: Generate output
+    # Phase 4: Generate AI output
     click.echo("\n[4/4] Generating AI output...")
-    deployed_manifests = provisioner.generate_manifests()
-    generator = OutputGenerator(
-        scenario,
-        results,
-        scenario_file=str(Path(scenario_file).resolve()),
-        deployed_manifests=deployed_manifests,
-    )
+    generator = OutputGenerator(scenario, results)
     output_data = generator.generate()
 
     if output:
@@ -964,63 +970,61 @@ def run(
         click.echo(json.dumps(output_data, indent=2))
 
     # Print summary
-    click.echo(f"\n{'='*50}")
+    summary = output_data["summary"]
+    click.echo(f"\n{'=' * 50}")
     click.echo("Summary:")
-    click.echo(f"  Verdict: {output_data['summary']['overallVerdict']}")
-    click.echo(f"  Resilience Score: {output_data['summary']['resilienceScore']:.1f}")
-    click.echo(f"  Experiments: {output_data['summary']['passed']}/{output_data['summary']['totalExperiments']} passed")
+    click.echo(f"  Verdict: {summary['overallVerdict']}")
+    click.echo(f"  Resilience Score: {summary['resilienceScore']:.1f}")
+    click.echo(
+        f"  Experiments: {summary['passed']}/{summary['totalExperiments']} passed"
+    )
+
+    if output:
+        click.echo(f"\n  Output: {output}")
 
 
 @main.command()
-@click.argument("scenario_file", type=click.Path(exists=True))
-@click.option("--namespace", "-n", default=None, help="Override namespace from scenario")
-@click.option("--dry-run", is_flag=True, help="Print manifests without applying")
-def provision(
-    scenario_file: str,
-    namespace: Optional[str],
-    dry_run: bool,
-):
-    """Provision infrastructure from a scenario without running experiments.
+@click.argument("scenario_path", type=click.Path(exists=True))
+@click.option(
+    "--namespace", "-n", default=None, help="Override namespace (default: from scenario)"
+)
+def provision(scenario_path: str, namespace: Optional[str]):
+    """Deploy manifests from a scenario without running experiments.
 
-    SCENARIO_FILE: Path to the scenario YAML configuration file.
+    SCENARIO_PATH: Directory or file containing K8s manifests.
     """
-    click.echo(f"Loading scenario from {scenario_file}...")
+    click.echo(f"Loading scenario from {scenario_path}...")
 
     try:
-        scenario = load_scenario(scenario_file)
+        scenario = load_scenario(scenario_path)
         validate_scenario(scenario)
     except Exception as e:
         click.echo(f"Error loading scenario: {e}", err=True)
         sys.exit(1)
 
     if namespace:
-        scenario["spec"]["infrastructure"]["namespace"] = namespace
+        scenario["namespace"] = namespace
 
-    provisioner = KubernetesProvisioner(scenario)
+    target_namespace = scenario.get("namespace", "default")
 
-    if dry_run:
-        click.echo("Dry run mode - printing manifests...")
-        manifests = provisioner.generate_manifests()
-        for manifest in manifests:
-            click.echo("---")
-            click.echo(manifest)
-        return
+    click.echo(f"Deploying {len(scenario.get('manifests', []))} manifest(s)...")
+    click.echo(f"  Namespace: {target_namespace}")
 
-    click.echo(f"Provisioning infrastructure...")
-    click.echo(f"  Namespace: {scenario['spec']['infrastructure']['namespace']}")
-
+    provisioner = KubernetesProvisioner(target_namespace)
     try:
-        provisioner.provision()
-        click.echo("Infrastructure provisioned successfully")
+        provisioner.provision(scenario.get("manifests", []))
+        click.echo("Manifests deployed successfully")
     except Exception as e:
-        click.echo(f"Error provisioning infrastructure: {e}", err=True)
+        click.echo(f"Error deploying manifests: {e}", err=True)
         sys.exit(1)
 
 
 @main.command()
 @click.argument("baseline_file", type=click.Path(exists=True))
 @click.argument("afterfix_file", type=click.Path(exists=True))
-@click.option("--output", "-o", type=click.Path(), help="Output file for comparison JSON")
+@click.option(
+    "--output", "-o", type=click.Path(), help="Output file for comparison JSON"
+)
 def compare(baseline_file: str, afterfix_file: str, output: Optional[str]):
     """Compare baseline results with after-fix results.
 
@@ -1045,43 +1049,36 @@ def compare(baseline_file: str, afterfix_file: str, output: Optional[str]):
     else:
         click.echo(json.dumps(comparison, indent=2))
 
-    # Print summary
-    click.echo(f"\n{'='*50}")
+    click.echo(f"\n{'=' * 50}")
     click.echo("Comparison Summary:")
     click.echo(f"  Fix Effective: {comparison['conclusion']['fixEffective']}")
     click.echo(f"  Confidence: {comparison['conclusion']['confidence']:.2f}")
-    click.echo(f"  Resilience Score Change: {comparison['comparison']['resilienceScoreChange']:+.1f}")
+    click.echo(
+        f"  Resilience Score Change: "
+        f"{comparison['comparison']['resilienceScoreChange']:+.1f}"
+    )
+
+
 
 
 @main.command()
 @click.argument("namespace")
-@click.option("--scenario", "-s", type=click.Path(exists=True), help="Scenario file to cleanup resources for")
-@click.option("--all", "cleanup_all", is_flag=True, help="Cleanup all chaosprobe resources in namespace")
-def cleanup(namespace: str, scenario: Optional[str], cleanup_all: bool):
+@click.option("--all", "cleanup_all", is_flag=True, help="Cleanup all resources")
+def cleanup(namespace: str, cleanup_all: bool):
     """Cleanup provisioned resources in a namespace.
 
     NAMESPACE: The Kubernetes namespace to cleanup.
     """
     click.echo(f"Cleaning up resources in namespace: {namespace}")
 
-    if scenario:
-        try:
-            scenario_data = load_scenario(scenario)
-            provisioner = KubernetesProvisioner(scenario_data)
-            provisioner.cleanup()
-            click.echo("Scenario resources cleaned up successfully")
-        except Exception as e:
-            click.echo(f"Error cleaning up: {e}", err=True)
-            sys.exit(1)
-    elif cleanup_all:
-        provisioner = KubernetesProvisioner(
-            {"spec": {"infrastructure": {"namespace": namespace, "resources": []}}}
-        )
+    provisioner = KubernetesProvisioner(namespace)
+
+    if cleanup_all:
         provisioner.cleanup_namespace()
         click.echo("All resources cleaned up successfully")
     else:
-        click.echo("Please specify --scenario or --all", err=True)
-        sys.exit(1)
+        provisioner.cleanup()
+        click.echo("Resources cleaned up successfully")
 
 
 if __name__ == "__main__":

@@ -1,122 +1,96 @@
-"""Pytest configuration and fixtures."""
+"""Pytest configuration and fixtures for the new ChaosCenter-native format."""
 
 import pytest
 
 
 @pytest.fixture
 def sample_scenario():
-    """Fixture providing a sample scenario configuration."""
+    """Scenario as returned by config.loader.load_scenario()."""
     return {
-        "apiVersion": "chaosprobe.io/v1alpha1",
-        "kind": "ChaosScenario",
-        "metadata": {
-            "name": "sample-scenario",
-            "description": "A sample scenario for testing",
-        },
-        "spec": {
-            "infrastructure": {
-                "namespace": "test-namespace",
-                "resources": [
-                    {
-                        "name": "nginx-deployment",
-                        "type": "deployment",
-                        "spec": {
-                            "replicas": 3,
-                            "image": "nginx:1.21",
-                            "labels": {"app": "nginx"},
-                            "ports": [{"containerPort": 80}],
-                        },
-                        "anomaly": {
-                            "enabled": True,
-                            "type": "missing-readiness-probe",
-                            "description": "Missing readiness probe",
-                        },
-                    },
-                    {
-                        "name": "nginx-service",
-                        "type": "service",
-                        "spec": {
-                            "selector": {"app": "nginx"},
-                            "ports": [{"port": 80, "targetPort": 80}],
-                        },
-                    },
-                ],
-            },
-            "experiments": [
-                {
-                    "name": "pod-delete-test",
-                    "type": "pod-delete",
-                    "target": {
-                        "appLabel": "app=nginx",
-                        "appKind": "deployment",
-                        "namespace": "test-namespace",
-                    },
-                    "parameters": {
-                        "TOTAL_CHAOS_DURATION": "30",
-                        "CHAOS_INTERVAL": "10",
-                    },
-                    "probes": [
-                        {
-                            "name": "http-probe",
-                            "type": "httpProbe",
-                            "mode": "Continuous",
-                            "httpProbe": {
-                                "url": "http://nginx-service:80",
-                                "method": {
-                                    "get": {
-                                        "criteria": "==",
-                                        "responseCode": "200",
+        "path": "/tmp/scenarios/nginx-pod-delete",
+        "namespace": "test-namespace",
+        "manifests": [
+            {
+                "file": "/tmp/scenarios/nginx-pod-delete/deployment.yaml",
+                "spec": {
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": {"name": "nginx", "labels": {"app": "nginx"}},
+                    "spec": {
+                        "replicas": 1,
+                        "selector": {"matchLabels": {"app": "nginx"}},
+                        "template": {
+                            "metadata": {"labels": {"app": "nginx"}},
+                            "spec": {
+                                "containers": [
+                                    {
+                                        "name": "nginx",
+                                        "image": "nginx:1.21",
+                                        "ports": [{"containerPort": 80}],
                                     }
-                                },
+                                ]
                             },
-                            "runProperties": {
-                                "probeTimeout": "5s",
-                                "interval": "2s",
-                                "retry": 3,
-                            },
-                        }
-                    ],
-                }
-            ],
-            "successCriteria": {
-                "minResilienceScore": 80,
-                "requireAllPass": True,
-                "experimentCriteria": [
-                    {
-                        "experimentName": "pod-delete-test",
-                        "minProbeSuccessPercentage": 90,
-                        "expectedVerdict": "Pass",
-                    }
-                ],
-            },
-            "comparison": {
-                "enabled": True,
-                "improvementCriteria": {
-                    "resilienceScoreIncrease": 10,
-                    "probeSuccessIncrease": 15,
+                        },
+                    },
                 },
             },
-            "output": {
-                "format": "json",
-                "includeRawResults": True,
+            {
+                "file": "/tmp/scenarios/nginx-pod-delete/service.yaml",
+                "spec": {
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "metadata": {"name": "nginx-service"},
+                    "spec": {
+                        "selector": {"app": "nginx"},
+                        "ports": [{"port": 80, "targetPort": 80}],
+                    },
+                },
             },
-        },
+        ],
+        "experiments": [
+            {
+                "file": "/tmp/scenarios/nginx-pod-delete/experiment.yaml",
+                "spec": {
+                    "apiVersion": "litmuschaos.io/v1alpha1",
+                    "kind": "ChaosEngine",
+                    "metadata": {"name": "nginx-pod-delete"},
+                    "spec": {
+                        "engineState": "active",
+                        "appinfo": {
+                            "appns": "test-namespace",
+                            "applabel": "app=nginx",
+                            "appkind": "deployment",
+                        },
+                        "chaosServiceAccount": "litmus-admin",
+                        "experiments": [
+                            {
+                                "name": "pod-delete",
+                                "spec": {
+                                    "components": {
+                                        "env": [
+                                            {
+                                                "name": "TOTAL_CHAOS_DURATION",
+                                                "value": "30",
+                                            }
+                                        ]
+                                    }
+                                },
+                            }
+                        ],
+                    },
+                },
+            }
+        ],
     }
 
 
 @pytest.fixture
 def sample_results():
-    """Fixture providing sample experiment results."""
+    """Sample passing experiment results from ResultCollector."""
     return [
         {
-            "name": "pod-delete-test",
-            "type": "pod-delete",
-            "engineName": "chaosprobe-pod-delete-test",
-            "target": {
-                "appLabel": "app=nginx",
-                "appKind": "deployment",
-                "namespace": "test-namespace",
-            },
+            "name": "pod-delete",
+            "engineName": "nginx-pod-delete-abc123",
             "verdict": "Pass",
             "probeSuccessPercentage": 95.0,
             "chaosResult": {
@@ -143,23 +117,17 @@ def sample_results():
 
 @pytest.fixture
 def failed_results():
-    """Fixture providing sample failed experiment results."""
+    """Sample failing experiment results from ResultCollector."""
     return [
         {
-            "name": "pod-delete-test",
-            "type": "pod-delete",
-            "engineName": "chaosprobe-pod-delete-test",
-            "target": {
-                "appLabel": "app=nginx",
-                "appKind": "deployment",
-                "namespace": "test-namespace",
-            },
+            "name": "pod-delete",
+            "engineName": "nginx-pod-delete-abc123",
             "verdict": "Fail",
-            "probeSuccessPercentage": 65.0,
+            "probeSuccessPercentage": 0.0,
             "chaosResult": {
                 "phase": "Completed",
                 "verdict": "Fail",
-                "probeSuccessPercentage": 65.0,
+                "probeSuccessPercentage": 0.0,
                 "failStep": "ChaosInject",
                 "history": {
                     "passedRuns": 0,

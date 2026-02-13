@@ -1,18 +1,25 @@
 # ChaosProbe
 
-A configurable framework for provisioning Kubernetes infrastructure with anomalies using LitmusChaos, producing structured output for AI-driven infrastructure analysis.
+A framework for running native LitmusChaos experiments against Kubernetes deployments, producing structured AI-consumable output.
 
 ## Overview
 
-ChaosProbe enables automated chaos testing with AI-consumable output. It supports:
+ChaosProbe enables automated chaos testing with an AI feedback loop:
 
-1. **Cluster Deployment**: Deploy Kubernetes clusters via:
-   - **Vagrant**: Local VMs for development and testing
-   - **Kubespray**: Production-grade clusters on bare metal or cloud VMs
+1. **Cluster Deployment**: Deploy Kubernetes clusters via Vagrant (local) or Kubespray (production)
 2. **Auto-Setup**: Installs Helm and LitmusChaos automatically
-3. **Provisions Infrastructure**: Deploys Kubernetes resources with configurable anomalies
-4. **Runs Chaos Experiments**: Executes LitmusChaos experiments against the infrastructure
-5. **Generates AI Output**: Produces structured JSON for AI systems to determine fix effectiveness
+3. **Deploy Manifests**: Applies standard K8s manifests to the cluster
+4. **Run Experiments**: Executes native ChaosEngine experiments
+5. **Generate AI Output**: Produces structured JSON with experiment results and resilience scores
+6. **Compare Runs**: Diffs before/after results to evaluate fix effectiveness
+
+### AI Feedback Loop
+
+```
+AI reads output → edits K8s manifests → re-runs ChaosProbe → compares results → repeats
+```
+
+The output contains experiment results and resilience scores so an AI agent can diagnose issues, edit manifests, re-run, and verify improvements.
 
 ## Installation
 
@@ -28,49 +35,114 @@ uv sync
 - `kubectl`
 - Python 3.9+
 - [uv](https://docs.astral.sh/uv/) package manager
-- SSH access to target nodes (for cluster deployment)
 
 > **Note:** Helm and LitmusChaos are automatically installed if not present.
 
 ### For Local Development (Vagrant)
 
-Requirements for local cluster development:
 - [Vagrant](https://www.vagrantup.com/downloads)
 - VirtualBox or libvirt provider
-- `git`
-- Python 3 with `venv` module
-
-**For WSL2 or Linux without VirtualBox**, use the libvirt provider. See the [Vagrant Quick Start](#local-development-with-vagrant) for setup steps.
+- `git`, Python 3 with `venv` module
 
 ### For Production Deployment (Kubespray)
 
-Additional requirements for deploying clusters on bare metal/cloud:
-- `git`
-- `ssh`
-- Python 3 with `venv` module (`apt install python3-venv`)
+- `git`, `ssh`, Python 3 with `venv` module (`apt install python3-venv`)
 
-Kubespray will automatically:
-- Clone the Kubespray repository
-- Create a Python virtual environment
-- Install Ansible and other dependencies
+## Scenario Format
+
+Scenarios are **directories** containing standard Kubernetes manifests and native ChaosEngine YAML files. ChaosProbe auto-classifies files by their `kind` field.
+
+```
+scenarios/nginx-pod-delete/
+  deployment.yaml     # Standard K8s Deployment
+  service.yaml        # Standard K8s Service
+  experiment.yaml     # Native LitmusChaos ChaosEngine
+```
+
+### Example: deployment.yaml
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.21
+          ports:
+            - containerPort: 80
+```
+
+### Example: experiment.yaml (Native ChaosEngine)
+
+```yaml
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: nginx-pod-delete
+spec:
+  engineState: active
+  appinfo:
+    appns: chaosprobe-test
+    applabel: app=nginx
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "30"
+            - name: CHAOS_INTERVAL
+              value: "10"
+        probe:
+          - name: http-probe
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://nginx-service.chaosprobe-test.svc.cluster.local
+              method:
+                get:
+                  criteria: "=="
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 2s
+              retry: 3
+```
 
 ## Quick Start
 
 ### With Existing Cluster
 
-If you already have a Kubernetes cluster configured in kubectl:
-
 ```bash
 # Initialize ChaosProbe (installs LitmusChaos)
 uv run chaosprobe init
 
-# Run a scenario
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
+# Run a scenario directory
+uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
+
+# AI edits the deployment.yaml to fix issues, then re-run
+uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o after-fix.json
+
+# Compare before and after
+uv run chaosprobe compare results.json after-fix.json -o comparison.json
 ```
 
 ### Local Development with Vagrant
-
-Create a local Kubernetes cluster using Vagrant VMs:
 
 ```bash
 # 1. Initialize Vagrantfile (1 control plane + 2 workers)
@@ -78,39 +150,30 @@ uv run chaosprobe cluster vagrant init --control-planes 1 --workers 2
 
 # 2. (WSL2/Linux) Setup libvirt provider - run once
 uv run chaosprobe cluster vagrant setup
-# Note: Log out and back in after setup for group changes to take effect
-# Note: Start libvirtd after each WSL restart: 
-sudo service libvirtd start
 
-# 3. Start the VMs (may take several minutes)
+# 3. Start the VMs
 uv run chaosprobe cluster vagrant up                      # VirtualBox (default)
 uv run chaosprobe cluster vagrant up --provider libvirt   # WSL2/Linux
 
-# 4. Deploy Kubernetes on the VMs (takes 15-30 minutes)
+# 4. Deploy Kubernetes (takes 15-30 minutes)
 uv run chaosprobe cluster vagrant deploy
 
-# 5. Fetch kubeconfig (auto-detects SSH key from Vagrant)
+# 5. Fetch kubeconfig
 uv run chaosprobe cluster vagrant kubeconfig
-
-# 6. Export kubeconfig
 export KUBECONFIG=~/.kube/config-chaosprobe
 
-# 7. Initialize ChaosProbe
+# 6. Initialize ChaosProbe and run
 uv run chaosprobe init
+uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
 
-# 8. Run scenarios
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
-
-# When done, destroy the VMs
+# Destroy VMs when done
 uv run chaosprobe cluster vagrant destroy
 ```
 
 ### Deploy on Bare Metal / Cloud VMs (Kubespray)
 
-To deploy a Kubernetes cluster on bare metal or cloud VMs:
-
 ```bash
-# 1. Create a hosts file defining your nodes
+# 1. Create a hosts file
 cat > hosts.yaml << EOF
 hosts:
   - name: master1
@@ -127,257 +190,120 @@ hosts:
     roles: [worker]
 EOF
 
-# 2. Deploy the cluster (takes 15-30 minutes)
+# 2. Deploy cluster (15-30 minutes)
 uv run chaosprobe cluster create --hosts-file hosts.yaml
 
 # 3. Fetch kubeconfig
 uv run chaosprobe cluster kubeconfig --host 192.168.1.10 --user ubuntu
-
-# 4. Export kubeconfig
 export KUBECONFIG=~/.kube/config-chaosprobe
 
-# 5. Initialize ChaosProbe
+# 4. Run scenarios
 uv run chaosprobe init
-
-# 6. Run scenarios
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
+uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
 ```
 
 ## Commands
 
-### Check Status
+### Core Commands
 
-Verify all dependencies are ready:
 ```bash
+# Check status of all dependencies
 uv run chaosprobe status
-```
 
-### Initialize (Install LitmusChaos)
-
-Install LitmusChaos on an existing cluster:
-```bash
+# Initialize (install LitmusChaos)
 uv run chaosprobe init
-```
 
-### Run Scenario
+# Run a scenario (directory or single file)
+uv run chaosprobe run <scenario-dir> -o results.json
 
-Run a chaos scenario:
-```bash
-# Run the scenario (deploys infrastructure and runs experiments)
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o results.json
+# Deploy manifests only (no experiments)
+uv run chaosprobe provision <scenario-dir>
 
-# After modifying the scenario YAML to fix the issue, run again
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml -o after-fix.json
-
-# Disable auto-setup (requires manual LitmusChaos installation)
-uv run chaosprobe run scenarios/examples/nginx-resilience.yaml --no-auto-setup
-```
-
-### Compare Results
-
-Compare baseline and after-fix runs:
-```bash
+# Compare before/after results
 uv run chaosprobe compare baseline.json after-fix.json -o comparison.json
+
+# Cleanup resources
+uv run chaosprobe cleanup <namespace> --all
 ```
 
-### Provision Only
-
-Deploy infrastructure without running experiments:
-```bash
-# Preview manifests (dry run)
-uv run chaosprobe provision scenarios/examples/nginx-resilience.yaml --dry-run
-
-# Deploy infrastructure
-uv run chaosprobe provision scenarios/examples/nginx-resilience.yaml
-```
-
-### Cleanup
-
-Remove provisioned resources:
-```bash
-# Cleanup specific scenario
-uv run chaosprobe cleanup chaosprobe-test -s scenarios/examples/nginx-resilience.yaml
-
-# Cleanup entire namespace
-uv run chaosprobe cleanup chaosprobe-test --all
-```
-
-### Local Cluster with Vagrant
-
-Create and manage local development clusters:
+### Cluster Commands
 
 ```bash
-# Setup libvirt for WSL2/Linux (run once, requires sudo)
-uv run chaosprobe cluster vagrant setup
+# Vagrant
+uv run chaosprobe cluster vagrant init
+uv run chaosprobe cluster vagrant setup          # libvirt for WSL2/Linux
+uv run chaosprobe cluster vagrant up
+uv run chaosprobe cluster vagrant deploy
+uv run chaosprobe cluster vagrant kubeconfig
+uv run chaosprobe cluster vagrant status
+uv run chaosprobe cluster vagrant ssh <vm-name>
+uv run chaosprobe cluster vagrant destroy
 
-# Check libvirt status only
-uv run chaosprobe cluster vagrant setup --check-only
-
-# Initialize a Vagrantfile
-uv run chaosprobe cluster vagrant init --name mycluster --control-planes 1 --workers 2
-
-# Customize VM resources
-uv run chaosprobe cluster vagrant init --memory 4096 --cpus 4 --box generic/ubuntu2204
-
-# Start VMs (use --provider libvirt for WSL2/Linux)
-uv run chaosprobe cluster vagrant up --name mycluster
-uv run chaosprobe cluster vagrant up --name mycluster --provider libvirt
-
-# Check VM status
-uv run chaosprobe cluster vagrant status --name mycluster
-
-# Deploy Kubernetes on running VMs
-uv run chaosprobe cluster vagrant deploy --name mycluster
-
-# Fetch kubeconfig (auto-detects SSH key from Vagrant)
-uv run chaosprobe cluster vagrant kubeconfig --name mycluster
-
-# SSH into a VM
-uv run chaosprobe cluster vagrant ssh cp1 --name mycluster
-
-# Destroy VMs (preserves Vagrantfile)
-uv run chaosprobe cluster vagrant destroy --name mycluster
+# Kubespray
+uv run chaosprobe cluster create --hosts-file hosts.yaml
+uv run chaosprobe cluster kubeconfig --host <ip> --user <user>
+uv run chaosprobe cluster destroy --inventory <path>
 ```
-
-#### Vagrant Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--control-planes` | 1 | Number of control plane nodes |
-| `--workers` | 2 | Number of worker nodes |
-| `--memory` | 2048 | Memory per VM in MB |
-| `--cpus` | 2 | CPUs per VM |
-| `--box` | generic/ubuntu2204 | Vagrant box image |
-| `--network-prefix` | 192.168.56 | Private network prefix |
-| `--provider` | virtualbox | Vagrant provider (virtualbox, libvirt) |
-
-### Cluster Management (Kubespray)
-
-Deploy and manage Kubernetes clusters on bare metal or cloud VMs:
-
-```bash
-# Create a cluster from hosts file
-uv run chaosprobe cluster create --hosts-file hosts.yaml --name mycluster
-
-# Create using existing Kubespray inventory
-uv run chaosprobe cluster create --inventory ~/.chaosprobe/kubespray/inventory/mycluster/hosts.yaml
-
-# Fetch kubeconfig from control plane
-uv run chaosprobe cluster kubeconfig --host 192.168.1.10 --user ubuntu
-
-# Fetch kubeconfig with SSH key (for key-based auth)
-uv run chaosprobe cluster kubeconfig --host 192.168.1.10 --user ubuntu --ssh-key ~/.ssh/id_rsa
-
-# Destroy a cluster
-uv run chaosprobe cluster destroy --inventory ~/.chaosprobe/kubespray/inventory/mycluster
-```
-
-#### Hosts File Format
-
-See the [Kubespray Quick Start](#deploy-on-bare-metal--cloud-vms-kubespray) for an example hosts file.
-
-- `ansible_host` (optional): Defaults to `ip`
-- **Roles:** `control_plane` (runs etcd, API server) and/or `worker` (runs workloads). A node can have both roles.
-
-## Scenario Configuration
-
-Scenarios are defined in YAML:
-
-```yaml
-apiVersion: chaosprobe.io/v1alpha1
-kind: ChaosScenario
-metadata:
-  name: my-scenario
-  description: "Description of the scenario"
-
-spec:
-  infrastructure:
-    namespace: test-namespace
-    resources:
-      - name: my-deployment
-        type: deployment
-        spec:
-          replicas: 3
-          image: nginx:1.21
-        anomaly:
-          enabled: true
-          type: missing-readiness-probe
-
-  experiments:
-    - name: pod-delete-test
-      type: pod-delete
-      target:
-        appLabel: "app=my-app"
-        appKind: deployment
-      parameters:
-        TOTAL_CHAOS_DURATION: "30"
-      probes:
-        - name: http-probe
-          type: httpProbe
-          mode: Continuous
-          httpProbe:
-            url: "http://my-service:80"
-            method:
-              get:
-                criteria: "=="
-                responseCode: "200"
-
-  successCriteria:
-    minResilienceScore: 80
-    requireAllPass: true
-```
-
-## Supported Anomaly Types
-
-| Anomaly | Description | Severity |
-|---------|-------------|----------|
-| `missing-readiness-probe` | Deployment lacks readiness probe | Medium |
-| `missing-liveness-probe` | Deployment lacks liveness probe | High |
-| `no-resource-limits` | Container has no resource limits | High |
-| `insufficient-replicas` | Single replica deployment | Critical |
-| `no-pod-disruption-budget` | Missing PodDisruptionBudget | Medium |
-| `service-selector-mismatch` | Service selector doesn't match pod labels | Critical |
 
 ## Supported Chaos Experiments
 
+Any LitmusChaos experiment can be used via native ChaosEngine YAML. Common ones:
+
 ### Pod Chaos
-- `pod-delete` - Delete application pods
-- `container-kill` - Kill containers
-- `pod-cpu-hog` - CPU stress
-- `pod-memory-hog` - Memory stress
-- `pod-io-stress` - I/O stress
+- `pod-delete` — Delete application pods
+- `container-kill` — Kill containers
+- `pod-cpu-hog` — CPU stress
+- `pod-memory-hog` — Memory stress
+- `pod-io-stress` — I/O stress
 
 ### Network Chaos
-- `pod-network-loss` - Network packet loss
-- `pod-network-latency` - Network latency injection
-- `pod-network-corruption` - Network packet corruption
-- `pod-network-duplication` - Network packet duplication
+- `pod-network-loss` — Packet loss
+- `pod-network-latency` — Latency injection
+- `pod-network-corruption` — Packet corruption
 
 ### Node Chaos
-- `node-cpu-hog` - Node CPU stress
-- `node-memory-hog` - Node memory stress
-- `node-drain` - Node drain
-- `node-taint` - Node taint
+- `node-cpu-hog` — Node CPU stress
+- `node-memory-hog` — Node memory stress
+- `node-drain` — Node drain
 
 ## Output Format
 
-ChaosProbe generates structured JSON output for AI consumption:
+ChaosProbe generates structured JSON (schema v2.0.0) for AI consumption:
 
 ```json
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "2.0.0",
   "runId": "run-2025-01-18-143052-abc123",
-  "verdict": "FAIL",
-  "resilienceScore": 65.0,
-  "experiments": [...],
-  "aiAnalysisHints": {
-    "primaryIssue": "Service unavailable during pod deletion",
-    "anomalyCorrelation": {
-      "anomalyType": "missing-readiness-probe",
-      "likelyContributed": true,
-      "confidence": 0.85
-    },
-    "suggestedFixes": [...]
+  "scenario": {
+    "directory": "scenarios/nginx-pod-delete",
+    "manifestFiles": ["deployment.yaml", "service.yaml"],
+    "experimentFiles": ["experiment.yaml"]
+  },
+  "infrastructure": {
+    "namespace": "chaosprobe-test",
+    "resources": [
+      { "file": "deployment.yaml", "kind": "Deployment", "name": "nginx" },
+      { "file": "service.yaml", "kind": "Service", "name": "nginx-service" }
+    ]
+  },
+  "experiments": [
+    {
+      "name": "pod-delete",
+      "engineName": "nginx-pod-delete-a02e6e",
+      "result": {
+        "phase": "Completed",
+        "verdict": "Fail",
+        "probeSuccessPercentage": 0,
+        "failStep": ""
+      },
+      "probes": [...]
+    }
+  ],
+  "summary": {
+    "overallVerdict": "FAIL",
+    "resilienceScore": 0.0,
+    "passed": 0,
+    "failed": 1
   }
 }
 ```
@@ -386,16 +312,18 @@ ChaosProbe generates structured JSON output for AI consumption:
 
 ```json
 {
+  "schemaVersion": "2.0.0",
   "comparison": {
-    "resilienceScoreChange": 30.0,
+    "resilienceScoreChange": 95.0,
     "verdictChanged": true,
     "previousVerdict": "FAIL",
-    "newVerdict": "PASS"
+    "newVerdict": "PASS",
+    "experimentImprovements": [...]
   },
   "conclusion": {
     "fixEffective": true,
-    "confidence": 0.95,
-    "summary": "The applied fix successfully resolved the resilience issue..."
+    "confidence": 0.90,
+    "summary": "The applied fix successfully improved resilience. Score: 0.0% → 95.0%..."
   }
 }
 ```
@@ -407,24 +335,21 @@ ChaosProbe CLI
       │
       ├── Cluster Manager
       │   ├── Vagrant (local development)
-      │   │   └── Vagrantfile Generator
       │   └── Kubespray (production)
-      │       └── Inventory Generator
       │
       ├── Setup Manager (installs LitmusChaos)
       │
-      ├── Config Loader & Validator
+      ├── Config Loader (directory-based, auto-classifies by kind)
+      │   └── Validator (ChaosEngine + K8s manifest validation)
       │
-      ├── Infrastructure Provisioner
-      │   └── Anomaly Injector
+      ├── Infrastructure Provisioner (applies raw K8s manifests)
       │
-      ├── Chaos Runner
-      │   └── ChaosEngine Generator
+      ├── Chaos Runner (applies native ChaosEngine CRDs)
       │
-      ├── Result Collector
+      ├── Result Collector (ChaosResult CRDs)
       │
       └── Output Generator
-          └── Comparison Engine
+          └── Comparison Engine (diffs before/after runs)
 ```
 
 ## Development
