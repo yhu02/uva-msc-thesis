@@ -1,0 +1,43 @@
+# Execution → Contention → Critical Path / Scheduling
+# Target: checkoutservice (orchestrator that calls 5+ downstream services)
+# Goal: Kill the single checkout pod to test scheduling recovery time and
+#        critical-path resilience. With 1 replica, the entire checkout flow
+#        breaks until the pod is rescheduled.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: contention-scheduling-checkoutservice
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=checkoutservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: CHAOS_INTERVAL
+              value: "15"
+            - name: FORCE
+              value: "true"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3

@@ -1,0 +1,46 @@
+# Execution → Saturation → Stack Height
+# Target: currencyservice (highest QPS service, Node.js single-threaded)
+# Goal: Stress CPU on the hottest service to observe cascading latency
+#        across checkout, frontend, and all services that call currency conversion.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: contention-cpu-currencyservice
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=currencyservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-cpu-hog
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: CPU_CORES
+              value: "1"
+            - name: CPU_LOAD
+              value: "100"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3

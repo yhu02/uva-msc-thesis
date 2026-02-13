@@ -1,0 +1,44 @@
+# Execution → Saturation → Stack Height (Memory)
+# Target: recommendationservice (Python, loads product catalog into memory)
+# Goal: Exhaust memory on a Python service to trigger OOMKill and observe
+#        how the frontend degrades when recommendations are unavailable.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: contention-memory-recommendationservice
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=recommendationservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-memory-hog
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: MEMORY_CONSUMPTION
+              value: "300"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3

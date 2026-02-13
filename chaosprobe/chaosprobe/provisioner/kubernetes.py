@@ -107,6 +107,7 @@ class KubernetesProvisioner:
         api_version = spec.get("apiVersion", "")
 
         appliers = {
+            "ServiceAccount": self._apply_service_account,
             "Deployment": self._apply_deployment,
             "Service": self._apply_service,
             "ConfigMap": self._apply_configmap,
@@ -127,6 +128,17 @@ class KubernetesProvisioner:
             })
         else:
             print(f"    WARNING: Unsupported resource kind '{kind}' in {filepath}, skipping")
+
+    def _apply_service_account(self, name: str, spec: Dict[str, Any]):
+        """Apply a ServiceAccount."""
+        try:
+            self.core_api.read_namespaced_service_account(name, self.namespace)
+            self.core_api.replace_namespaced_service_account(name, self.namespace, spec)
+        except ApiException as e:
+            if e.status == 404:
+                self.core_api.create_namespaced_service_account(self.namespace, spec)
+            else:
+                raise
 
     def _apply_deployment(self, name: str, spec: Dict[str, Any]):
         """Apply a Deployment."""
@@ -205,6 +217,7 @@ class KubernetesProvisioner:
         delete_opts = client.V1DeleteOptions(propagation_policy="Foreground")
 
         deleters = {
+            "ServiceAccount": lambda: self.core_api.delete_namespaced_service_account(name, self.namespace, body=delete_opts),
             "Deployment": lambda: self.apps_api.delete_namespaced_deployment(name, self.namespace, body=delete_opts),
             "Service": lambda: self.core_api.delete_namespaced_service(name, self.namespace, body=delete_opts),
             "ConfigMap": lambda: self.core_api.delete_namespaced_config_map(name, self.namespace, body=delete_opts),

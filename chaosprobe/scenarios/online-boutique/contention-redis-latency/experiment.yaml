@@ -1,0 +1,52 @@
+# I/O → Contention → Critical Sections (In-cluster storage)
+# Target: cartservice (C#, gRPC:7070, depends on redis-cart for session state)
+# Goal: Inject network latency between cartservice and its Redis dependency
+#        to simulate in-cluster storage contention. This tests whether the
+#        cart service handles slow Redis responses gracefully or cascades
+#        failures to the checkout and frontend.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: contention-redis-latency-cartservice
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=cartservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-network-latency
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: NETWORK_LATENCY
+              value: "300"
+            - name: NETWORK_INTERFACE
+              value: eth0
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+            - name: DESTINATION_IPS
+              value: ""
+            - name: DESTINATION_HOSTS
+              value: redis-cart.online-boutique.svc.cluster.local
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3
