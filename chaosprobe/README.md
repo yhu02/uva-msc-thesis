@@ -276,27 +276,47 @@ ChaosProbe generates structured JSON (schema v2.0.0) for AI consumption:
   "runId": "run-2025-01-18-143052-abc123",
   "scenario": {
     "directory": "scenarios/nginx-pod-delete",
-    "manifestFiles": ["deployment.yaml", "service.yaml"],
-    "experimentFiles": ["experiment.yaml"]
+    "manifests": [
+      {
+        "file": "deployment.yaml",
+        "content": { "kind": "Deployment", "metadata": { "name": "nginx" }, "..." : "..." }
+      },
+      {
+        "file": "service.yaml",
+        "content": { "kind": "Service", "metadata": { "name": "nginx-service" }, "...": "..." }
+      }
+    ],
+    "experiments": [
+      {
+        "file": "experiment.yaml",
+        "content": { "kind": "ChaosEngine", "metadata": { "name": "nginx-pod-delete" }, "...": "..." }
+      }
+    ]
   },
   "infrastructure": {
-    "namespace": "chaosprobe-test",
-    "resources": [
-      { "file": "deployment.yaml", "kind": "Deployment", "name": "nginx" },
-      { "file": "service.yaml", "kind": "Service", "name": "nginx-service" }
-    ]
+    "namespace": "chaosprobe-test"
   },
   "experiments": [
     {
       "name": "pod-delete",
       "engineName": "nginx-pod-delete-a02e6e",
       "result": {
-        "phase": "Completed",
+        "phase": "Completed_With_Probe_Failure",
         "verdict": "Fail",
         "probeSuccessPercentage": 0,
         "failStep": ""
       },
-      "probes": [...]
+      "probes": [
+        {
+          "name": "http-probe",
+          "type": "httpProbe",
+          "mode": "Continuous",
+          "status": {
+            "verdict": "Failed",
+            "description": "connection refused"
+          }
+        }
+      ]
     }
   ],
   "summary": {

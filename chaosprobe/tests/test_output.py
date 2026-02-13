@@ -23,22 +23,29 @@ class TestOutputGenerator:
         assert "summary" in output
 
     def test_generate_scenario_section(self, sample_scenario, sample_results):
-        """Test scenario section references files correctly."""
+        """Test scenario section includes file contents."""
         generator = OutputGenerator(sample_scenario, sample_results)
         output = generator.generate()
 
         assert output["scenario"]["directory"] == sample_scenario["path"]
-        assert len(output["scenario"]["manifestFiles"]) == 2
-        assert len(output["scenario"]["experimentFiles"]) == 1
+        assert len(output["scenario"]["manifests"]) == 2
+        assert len(output["scenario"]["experiments"]) == 1
+        # Verify manifest content is included
+        manifest = output["scenario"]["manifests"][0]
+        assert "file" in manifest
+        assert "content" in manifest
+        assert manifest["content"]["kind"] == "Deployment"
+        # Verify experiment content is included
+        experiment = output["scenario"]["experiments"][0]
+        assert experiment["content"]["kind"] == "ChaosEngine"
 
     def test_generate_infrastructure_section(self, sample_scenario, sample_results):
-        """Test infrastructure section lists deployed resources."""
+        """Test infrastructure section contains namespace."""
         generator = OutputGenerator(sample_scenario, sample_results)
         output = generator.generate()
 
         infra = output["infrastructure"]
         assert infra["namespace"] == "test-namespace"
-        assert len(infra["resources"]) == 2
 
     def test_generate_passing_summary(self, sample_scenario, sample_results):
         """Test summary for passing experiments."""

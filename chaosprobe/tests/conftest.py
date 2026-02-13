@@ -107,7 +107,8 @@ def sample_results():
                     {
                         "name": "http-probe",
                         "type": "httpProbe",
-                        "status": {"phase": "Completed", "verdict": "Pass"},
+                        "mode": "Continuous",
+                        "status": {"verdict": "Pass"},
                     }
                 ],
             },
@@ -138,7 +139,8 @@ def failed_results():
                     {
                         "name": "http-probe",
                         "type": "httpProbe",
-                        "status": {"phase": "Completed", "verdict": "Fail"},
+                        "mode": "Continuous",
+                        "status": {"verdict": "Fail", "description": "connection refused"},
                     }
                 ],
             },

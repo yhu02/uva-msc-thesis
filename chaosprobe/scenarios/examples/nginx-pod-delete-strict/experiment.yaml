@@ -21,7 +21,7 @@ spec:
             - name: FORCE
               value: "true"
             - name: PODS_AFFECTED_PERC
-              value: "100"
+              value: "50"
         probe:
           - name: http-probe
             type: httpProbe
@@ -35,5 +35,5 @@ spec:
             runProperties:
               probeTimeout: 2s
               interval: 1s
-              retry: 0
+              retry: 1
               probePollingInterval: 1s

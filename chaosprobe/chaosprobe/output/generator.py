@@ -68,31 +68,33 @@ class OutputGenerator:
     # ── Scenario section ─────────────────────────────────────
 
     def _generate_scenario_section(self) -> Dict[str, Any]:
-        """Generate scenario metadata section."""
+        """Generate scenario metadata section with file contents."""
+        manifests = []
+        for m in self.scenario.get("manifests", []):
+            manifests.append({
+                "file": m["file"],
+                "content": m.get("spec", {}),
+            })
+
+        experiments = []
+        for e in self.scenario.get("experiments", []):
+            experiments.append({
+                "file": e["file"],
+                "content": e.get("spec", {}),
+            })
+
         return {
             "directory": self.scenario.get("path", ""),
-            "manifestFiles": [m["file"] for m in self.scenario.get("manifests", [])],
-            "experimentFiles": [e["file"] for e in self.scenario.get("experiments", [])],
+            "manifests": manifests,
+            "experiments": experiments,
         }
 
     # ── Infrastructure section ────────────────────────────────
 
-    def _generate_infrastructure_section(
-        self,
-    ) -> Dict[str, Any]:
-        """Generate infrastructure section with deployed resources."""
-        resources = []
-        for manifest in self.scenario.get("manifests", []):
-            spec = manifest.get("spec", {})
-            resources.append({
-                "file": manifest["file"],
-                "kind": spec.get("kind", "Unknown"),
-                "name": spec.get("metadata", {}).get("name", "unknown"),
-            })
-
+    def _generate_infrastructure_section(self) -> Dict[str, Any]:
+        """Generate infrastructure section."""
         return {
             "namespace": self.scenario.get("namespace", "default"),
-            "resources": resources,
         }
 
     # ── Experiments section ───────────────────────────────────

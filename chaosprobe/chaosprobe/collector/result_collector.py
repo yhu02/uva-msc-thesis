@@ -162,12 +162,13 @@ class ResultCollector:
                 "totalRuns": passed_runs + failed_runs,
             }
 
-        probe_statuses = status.get("experimentStatus", {}).get("probeStatuses", [])
+        probe_statuses = status.get("probeStatuses", [])
         if probe_statuses:
             parsed["probes"] = [
                 {
                     "name": p.get("name", ""),
                     "type": p.get("type", ""),
+                    "mode": p.get("mode", ""),
                     "status": p.get("status", {}),
                 }
                 for p in probe_statuses
