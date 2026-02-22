@@ -126,7 +126,7 @@ class OutputGenerator:
         passed = sum(1 for r in self.results if r.get("verdict") == "Pass")
         failed = sum(1 for r in self.results if r.get("verdict") == "Fail")
         resilience_score = calculate_resilience_score(self.results)
-        overall_verdict = "PASS" if failed == 0 and total > 0 else "FAIL"
+        overall_verdict = "PASS" if passed == total and total > 0 else "FAIL"
 
         return {
             "totalExperiments": total,

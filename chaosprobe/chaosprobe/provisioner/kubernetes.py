@@ -234,15 +234,17 @@ class KubernetesProvisioner:
                 if e.status != 404:
                     raise
 
-    def _wait_for_deployments(self, timeout: int = 120):
+    def _wait_for_deployments(self, timeout: int = 300):
         """Wait for all applied Deployments to become ready."""
         deployments = [r for r in self._applied_resources if r["kind"] == "Deployment"]
         if not deployments:
             return
 
+        print(f"  Waiting for {len(deployments)} deployment(s) to become ready (timeout: {timeout}s)...")
         start = time.time()
         for dep in deployments:
             name = dep["name"]
+            ready = False
             while time.time() - start < timeout:
                 try:
                     d = self.apps_api.read_namespaced_deployment(name, self.namespace)
@@ -251,7 +253,14 @@ class KubernetesProvisioner:
                         and d.status.ready_replicas
                         and d.status.ready_replicas >= (d.spec.replicas or 1)
                     ):
+                        ready = True
                         break
                 except ApiException:
                     pass
                 time.sleep(3)
+            if ready:
+                elapsed = int(time.time() - start)
+                print(f"    {name}: ready ({elapsed}s)")
+            else:
+                elapsed = int(time.time() - start)
+                print(f"    WARNING: {name}: not ready after {elapsed}s")
