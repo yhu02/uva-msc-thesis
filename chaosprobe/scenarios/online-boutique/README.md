@@ -134,9 +134,9 @@ chaosprobe run scenarios/online-boutique/deploy/
 
 This deploys all services to the `online-boutique` namespace and verifies the deployment with a frontend health check.
 
-### Step 2: Run contention experiments
+### Step 2: Run experiments
 
-Each experiment-only scenario targets already-deployed services:
+Run contention experiments individually against already-deployed services:
 
 ```bash
 # Pick one:
@@ -146,6 +146,12 @@ chaosprobe run scenarios/online-boutique/contention-scheduling/
 chaosprobe run scenarios/online-boutique/contention-redis-latency/
 chaosprobe run scenarios/online-boutique/contention-network-loss/
 chaosprobe run scenarios/online-boutique/contention-io-stress/
+```
+
+Or run the full placement experiment matrix automatically (see [Automated Experiment Runner](#automated-experiment-runner)):
+
+```bash
+chaosprobe run-all -n online-boutique
 ```
 
 ### Step 3: AI fix-and-verify loop
@@ -160,8 +166,83 @@ The AI reads the output, diagnoses the root cause, modifies the deployment manif
 ### Step 4: Cleanup
 
 ```bash
-chaosprobe cleanup --namespace online-boutique
+chaosprobe cleanup online-boutique --all
 ```
+
+## Placement Scenarios
+
+Placement experiments control pod scheduling to study how co-location affects performance under chaos. Each uses a corresponding placement strategy applied via `chaosprobe placement apply`.
+
+### 8. Baseline Placement
+
+**Directory:** `placement-baseline/`
+
+Default Kubernetes scheduling — no placement constraints. Serves as the control for comparing other strategies.
+
+```bash
+chaosprobe run scenarios/online-boutique/placement-baseline/ -o baseline.json
+```
+
+### 9. Colocate Placement
+
+**Directory:** `placement-colocate/`
+
+Pins all pods to a single node, maximising CPU, memory, IO, and network bandwidth contention.
+
+```bash
+chaosprobe placement apply colocate -n online-boutique
+chaosprobe run scenarios/online-boutique/placement-colocate/ -o colocate.json
+```
+
+### 10. Spread Placement
+
+**Directory:** `placement-spread/`
+
+Distributes pods evenly across nodes, minimising resource contention but increasing inter-node network latency.
+
+```bash
+chaosprobe placement apply spread -n online-boutique
+chaosprobe run scenarios/online-boutique/placement-spread/ -o spread.json
+```
+
+### 11. Antagonistic Placement
+
+**Directory:** `placement-antagonistic/`
+
+Intentionally co-locates resource-heavy pods on the same node to create worst-case contention for IO and execution.
+
+```bash
+chaosprobe placement apply antagonistic -n online-boutique
+chaosprobe run scenarios/online-boutique/placement-antagonistic/ -o antagonistic.json
+```
+
+### 12. Random Placement
+
+**Directory:** `placement-random/`
+
+Assigns each deployment to a random node. Use `--seed` for reproducible assignments.
+
+```bash
+chaosprobe placement apply random -n online-boutique --seed 42
+chaosprobe run scenarios/online-boutique/placement-random/ -o random.json
+```
+
+## Automated Experiment Runner
+
+Use `run-all` to execute the full placement experiment matrix automatically:
+
+```bash
+# Run all strategies (baseline, colocate, spread, antagonistic, random)
+chaosprobe run-all -n online-boutique
+
+# Run specific strategies only
+chaosprobe run-all -n online-boutique -s colocate,spread
+
+# Custom output directory
+chaosprobe run-all -n online-boutique -o results/my-run
+```
+
+This iterates through each strategy — clearing placement, applying the strategy, waiting for workloads to settle, running the chaos experiment, and collecting results. Output goes to a timestamped `results/` directory with individual JSON files per strategy and an overall `summary.json`.
 
 ## Cluster Requirements
 

@@ -226,6 +226,40 @@ uv run chaosprobe compare baseline.json after-fix.json -o comparison.json
 uv run chaosprobe cleanup <namespace> --all
 ```
 
+### Placement Commands
+
+```bash
+# Apply a placement strategy to deployments
+uv run chaosprobe placement apply colocate -n online-boutique
+uv run chaosprobe placement apply spread -n online-boutique
+uv run chaosprobe placement apply random -n online-boutique --seed 42
+uv run chaosprobe placement apply antagonistic -n online-boutique
+
+# Show current pod placement
+uv run chaosprobe placement show -n online-boutique
+
+# Show cluster node information
+uv run chaosprobe placement nodes
+
+# Clear all ChaosProbe placement constraints
+uv run chaosprobe placement clear -n online-boutique
+```
+
+### Run-All Command
+
+```bash
+# Run the full placement experiment matrix automatically
+uv run chaosprobe run-all -n online-boutique
+
+# Run specific strategies only
+uv run chaosprobe run-all -n online-boutique -s colocate,spread
+
+# Custom output directory and settings
+uv run chaosprobe run-all -n online-boutique -o results/my-run --timeout 600 --seed 42
+```
+
+Iterates through placement strategies (baseline, colocate, spread, antagonistic, random), applies each, runs the corresponding chaos experiment, and saves results to a timestamped directory.
+
 ### Cluster Commands
 
 ```bash
@@ -320,10 +354,11 @@ ChaosProbe generates structured JSON (schema v2.0.0) for AI consumption:
     }
   ],
   "summary": {
-    "overallVerdict": "FAIL",
-    "resilienceScore": 0.0,
+    "totalExperiments": 1,
     "passed": 0,
-    "failed": 1
+    "failed": 1,
+    "resilienceScore": 0.0,
+    "overallVerdict": "FAIL"
   }
 }
 ```
@@ -333,17 +368,42 @@ ChaosProbe generates structured JSON (schema v2.0.0) for AI consumption:
 ```json
 {
   "schemaVersion": "2.0.0",
+  "comparisonId": "compare-2025-01-18-150000-abc123",
+  "timestamp": "2025-01-18T15:00:00+00:00",
+  "scenario": { "..." : "..." },
+  "baseline": {
+    "runId": "run-2025-01-18-143052-abc123",
+    "timestamp": "2025-01-18T14:30:52+00:00",
+    "results": {
+      "resilienceScore": 0.0,
+      "overallVerdict": "FAIL",
+      "experiments": [{ "name": "pod-delete", "verdict": "Fail", "probeSuccessPercentage": 0 }]
+    }
+  },
+  "afterFix": {
+    "runId": "run-2025-01-18-145000-def456",
+    "timestamp": "2025-01-18T14:50:00+00:00",
+    "results": {
+      "resilienceScore": 95.0,
+      "overallVerdict": "PASS",
+      "experiments": [{ "name": "pod-delete", "verdict": "Pass", "probeSuccessPercentage": 100 }]
+    }
+  },
   "comparison": {
     "resilienceScoreChange": 95.0,
     "verdictChanged": true,
     "previousVerdict": "FAIL",
     "newVerdict": "PASS",
-    "experimentImprovements": [...]
+    "experimentImprovements": [...],
+    "improvementCriteriaMet": {
+      "resilienceScoreIncrease": { "required": 10, "actual": 95.0, "met": true },
+      "probeSuccessIncrease": { "required": 15, "actual": 100.0, "met": true }
+    }
   },
   "conclusion": {
     "fixEffective": true,
     "confidence": 0.90,
-    "summary": "The applied fix successfully improved resilience. Score: 0.0% → 95.0%..."
+    "summary": "The applied fix successfully improved resilience. Score: 0.0% → 95.0%, verdict: FAIL → PASS."
   }
 }
 ```
@@ -363,6 +423,10 @@ ChaosProbe CLI
       │   └── Validator (ChaosEngine + K8s manifest validation)
       │
       ├── Infrastructure Provisioner (applies raw K8s manifests)
+      │
+      ├── Placement Engine
+      │   ├── Strategy (colocate, spread, random, antagonistic)
+      │   └── Mutator (nodeSelector injection, rollout management)
       │
       ├── Chaos Runner (applies native ChaosEngine CRDs)
       │

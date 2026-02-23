@@ -29,8 +29,8 @@ dependencies = [
 chaosprobe = "chaosprobe.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yvohu/chaosprobe"
-Repository = "https://github.com/yvohu/chaosprobe"
+Homepage = "https://github.com/yhu02/uva-msc-thesis"
+Repository = "https://github.com/yhu02/uva-msc-thesis"
 
 [dependency-groups]
 dev = [

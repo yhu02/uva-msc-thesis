@@ -1,7 +1,10 @@
 """ChaosProbe CLI - Main entry point for the chaos testing framework."""
 
 import json
+import os
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +19,8 @@ from chaosprobe.chaos.runner import ChaosRunner
 from chaosprobe.collector.result_collector import ResultCollector
 from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.output.comparison import compare_runs
+from chaosprobe.placement.strategy import PlacementStrategy
+from chaosprobe.placement.mutator import PlacementMutator
 
 
 def ensure_litmus_setup(
@@ -1079,6 +1084,551 @@ def cleanup(namespace: str, cleanup_all: bool):
     else:
         provisioner.cleanup()
         click.echo("Resources cleaned up successfully")
+
+
+# ─────────────────────────────────────────────────────────────
+# Placement commands — chaotic pod scheduling
+# ─────────────────────────────────────────────────────────────
+
+
+@main.group()
+def placement():
+    """Manipulate pod placement for contention experiments.
+
+    Apply placement strategies to control which nodes pods run on,
+    creating deterministic contention patterns for studying the effects
+    of pod co-location on IO and execution performance.
+
+    \b
+    Strategies:
+      colocate      Pin all pods to a single node (max contention)
+      spread        Distribute evenly across nodes (min contention)
+      random        Random node per deployment (chaotic, --seed for reproducibility)
+      antagonistic  Group resource-heavy pods on same node (worst-case)
+
+    \b
+    Typical workflow:
+      1. Deploy your application:
+         chaosprobe provision scenarios/online-boutique/deploy/
+      2. Apply a placement strategy:
+         chaosprobe placement apply colocate -n online-boutique
+      3. Run chaos experiments under that placement:
+         chaosprobe run scenarios/online-boutique/placement-colocate/ -o results.json
+      4. Clear placement and try another strategy:
+         chaosprobe placement clear -n online-boutique
+    """
+    pass
+
+
+@placement.command("apply")
+@click.argument(
+    "strategy",
+    type=click.Choice([s.value for s in PlacementStrategy], case_sensitive=False),
+)
+@click.option(
+    "--namespace", "-n", default="online-boutique",
+    help="Namespace containing deployments",
+)
+@click.option(
+    "--target-node", "-t", default=None,
+    help="For 'colocate': pin to this specific node",
+)
+@click.option(
+    "--seed", "-s", default=None, type=int,
+    help="For 'random': seed for reproducible assignments",
+)
+@click.option(
+    "--deployments", "-d", default=None,
+    help="Comma-separated list of deployment names (default: all in namespace)",
+)
+@click.option(
+    "--no-wait", is_flag=True,
+    help="Don't wait for rollouts to complete",
+)
+@click.option(
+    "--timeout", default=300, type=int,
+    help="Timeout in seconds for rollout completion",
+)
+@click.option(
+    "--output", "-o", type=click.Path(),
+    help="Save assignment to JSON file",
+)
+def placement_apply(
+    strategy: str,
+    namespace: str,
+    target_node: Optional[str],
+    seed: Optional[int],
+    deployments: Optional[str],
+    no_wait: bool,
+    timeout: int,
+    output: Optional[str],
+):
+    """Apply a pod placement strategy to deployments.
+
+    Forces pods onto specific nodes to create contention patterns.
+    Uses nodeSelector to deterministically control scheduling.
+
+    \b
+    Examples:
+      # Pack everything onto one node
+      chaosprobe placement apply colocate -n online-boutique
+
+      # Spread across all nodes
+      chaosprobe placement apply spread -n online-boutique
+
+      # Random placement with reproducible seed
+      chaosprobe placement apply random -n online-boutique --seed 42
+
+      # Worst-case: heavy pods together
+      chaosprobe placement apply antagonistic -n online-boutique
+    """
+    strat = PlacementStrategy(strategy)
+    click.echo(f"Applying placement strategy: {strat.value}")
+    click.echo(f"  {strat.describe()}")
+    click.echo(f"  Namespace: {namespace}")
+
+    dep_list = [d.strip() for d in deployments.split(",")] if deployments else None
+
+    mutator = PlacementMutator(namespace)
+
+    # Show available nodes
+    nodes = mutator.get_nodes()
+    schedulable = [n for n in nodes if n.is_schedulable]
+    click.echo(f"\nCluster nodes ({len(schedulable)} schedulable):")
+    for node in schedulable:
+        cpu_cores = node.allocatable_cpu_millicores / 1000
+        mem_gib = node.allocatable_memory_bytes / (1024 ** 3)
+        click.echo(f"  {node.name}: {cpu_cores:.1f} CPU, {mem_gib:.1f} GiB RAM")
+
+    # Show target deployments
+    deps = mutator.get_deployments()
+    if dep_list:
+        deps = [d for d in deps if d.name in dep_list]
+    click.echo(f"\nDeployments ({len(deps)}):")
+    for d in deps:
+        cpu = d.cpu_request_millicores
+        mem_mib = d.memory_request_bytes / (1024 ** 2)
+        current = d.current_node or "unknown"
+        click.echo(f"  {d.name}: {cpu}m CPU, {mem_mib:.0f}Mi RAM (node: {current})")
+
+    # Apply
+    click.echo(f"\nApplying {strat.value} placement...")
+    try:
+        assignment = mutator.apply_strategy(
+            strategy=strat,
+            target_node=target_node,
+            seed=seed,
+            deployments=dep_list,
+            wait=not no_wait,
+            timeout=timeout,
+        )
+    except Exception as e:
+        click.echo(f"Error applying placement: {e}", err=True)
+        sys.exit(1)
+
+    # Summary
+    click.echo(f"\nPlacement applied:")
+    click.echo(f"  Strategy: {assignment.strategy.value}")
+    click.echo(f"  Description: {assignment.metadata.get('description', '')}")
+    for dep_name, node_name in sorted(assignment.assignments.items()):
+        click.echo(f"    {dep_name} → {node_name}")
+
+    if output:
+        output_path = Path(output)
+        output_path.write_text(json.dumps(assignment.to_dict(), indent=2))
+        click.echo(f"\n  Assignment saved to {output}")
+
+
+@placement.command("clear")
+@click.option(
+    "--namespace", "-n", default="online-boutique",
+    help="Namespace containing deployments",
+)
+@click.option(
+    "--deployments", "-d", default=None,
+    help="Comma-separated list of deployment names (default: all managed)",
+)
+@click.option(
+    "--no-wait", is_flag=True,
+    help="Don't wait for rollouts to complete",
+)
+def placement_clear(
+    namespace: str,
+    deployments: Optional[str],
+    no_wait: bool,
+):
+    """Clear all ChaosProbe placement constraints.
+
+    Removes nodeSelector rules and node labels set by 'placement apply',
+    restoring default Kubernetes scheduling.
+    """
+    click.echo(f"Clearing placement constraints in namespace: {namespace}")
+
+    dep_list = [d.strip() for d in deployments.split(",")] if deployments else None
+
+    mutator = PlacementMutator(namespace)
+
+    try:
+        cleared = mutator.clear_placement(
+            deployments=dep_list,
+            wait=not no_wait,
+        )
+    except Exception as e:
+        click.echo(f"Error clearing placement: {e}", err=True)
+        sys.exit(1)
+
+    if cleared:
+        click.echo(f"\nCleared placement for {len(cleared)} deployment(s):")
+        for name in cleared:
+            click.echo(f"  {name}")
+    else:
+        click.echo("No managed placement constraints found.")
+
+
+@placement.command("show")
+@click.option(
+    "--namespace", "-n", default="online-boutique",
+    help="Namespace containing deployments",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+def placement_show(namespace: str, json_output: bool):
+    """Show current pod placement state.
+
+    Displays where each deployment's pods are running and
+    any active ChaosProbe placement constraints.
+    """
+    mutator = PlacementMutator(namespace)
+
+    try:
+        placement_state = mutator.get_current_placement()
+    except Exception as e:
+        click.echo(f"Error reading placement: {e}", err=True)
+        sys.exit(1)
+
+    if json_output:
+        click.echo(json.dumps(placement_state, indent=2))
+        return
+
+    click.echo(f"Pod placement in namespace: {namespace}\n")
+
+    managed_count = sum(1 for v in placement_state.values() if v["managed"])
+    click.echo(f"  Managed by ChaosProbe: {managed_count}/{len(placement_state)}")
+    click.echo("")
+
+    for dep_name, info in sorted(placement_state.items()):
+        node = info["currentNode"] or "unknown"
+        strategy = info["strategy"] or "default"
+        marker = "*" if info["managed"] else " "
+        click.echo(f"  {marker} {dep_name:30s} node={node:15s} strategy={strategy}")
+
+    if managed_count > 0:
+        click.echo("\n  * = managed by ChaosProbe placement")
+
+
+@placement.command("nodes")
+def placement_nodes():
+    """Show cluster nodes with scheduling information.
+
+    Lists all nodes with their allocatable resources, readiness,
+    and any taints that affect scheduling.
+    """
+    # Use a dummy namespace, we only need node info
+    mutator = PlacementMutator("default")
+
+    try:
+        nodes = mutator.get_nodes()
+    except Exception as e:
+        click.echo(f"Error reading nodes: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Cluster nodes ({len(nodes)} total):\n")
+
+    for node in nodes:
+        cpu_cores = node.allocatable_cpu_millicores / 1000
+        mem_gib = node.allocatable_memory_bytes / (1024 ** 3)
+        status = "Ready" if node.conditions_ready else "NotReady"
+        schedulable = "schedulable" if node.is_schedulable else "unschedulable"
+
+        click.echo(f"  {node.name}")
+        click.echo(f"    Status: {status} ({schedulable})")
+        click.echo(f"    Resources: {cpu_cores:.1f} CPU, {mem_gib:.1f} GiB RAM")
+        if node.taints:
+            taints_str = ", ".join(
+                f"{t['key']}={t.get('value', '')}:{t['effect']}" for t in node.taints
+            )
+            click.echo(f"    Taints: {taints_str}")
+        zone = node.labels.get("chaosprobe.io/placement-zone")
+        if zone:
+            click.echo(f"    Placement zone: {zone}")
+        click.echo("")
+
+
+# ─────────────────────────────────────────────────────────────
+# run-all — automated full experiment matrix
+# ─────────────────────────────────────────────────────────────
+
+
+@main.command("run-all")
+@click.option(
+    "--namespace", "-n", default="online-boutique",
+    help="Namespace containing the application",
+)
+@click.option(
+    "--output-dir", "-o", default=None,
+    help="Directory for results (default: results/<timestamp>)",
+)
+@click.option(
+    "--strategies", "-s", default="baseline,colocate,spread,antagonistic,random",
+    help="Comma-separated strategies to test (default: all)",
+)
+@click.option(
+    "--timeout", "-t", default=300, type=int,
+    help="Timeout per experiment in seconds",
+)
+@click.option(
+    "--seed", default=42, type=int,
+    help="Seed for the random strategy",
+)
+@click.option(
+    "--settle-time", default=30, type=int,
+    help="Seconds to wait after placement before running experiment",
+)
+@click.option(
+    "--no-auto-setup", is_flag=True,
+    help="Disable automatic LitmusChaos installation",
+)
+def run_all(
+    namespace: str,
+    output_dir: Optional[str],
+    strategies: str,
+    timeout: int,
+    seed: int,
+    settle_time: int,
+    no_auto_setup: bool,
+):
+    """Run all placement experiments automatically.
+
+    Iterates through placement strategies (baseline, colocate, spread,
+    antagonistic, random), applies each placement, runs the corresponding
+    chaos experiment, collects results, and saves everything to a
+    timestamped results directory.
+
+    \b
+    Example:
+      chaosprobe run-all -n online-boutique
+      chaosprobe run-all -n online-boutique -s colocate,spread
+      chaosprobe run-all -n online-boutique -o results/my-run
+
+    Results structure:
+      results/<timestamp>/
+        summary.json          # Overall summary with all strategies
+        baseline.json         # Individual result files
+        colocate.json
+        spread.json
+        antagonistic.json
+        random.json
+    """
+    strategy_list = [s.strip() for s in strategies.split(",")]
+    valid_strategies = {"baseline", "colocate", "spread", "antagonistic", "random"}
+    for s in strategy_list:
+        if s not in valid_strategies:
+            click.echo(f"Error: Unknown strategy '{s}'. Valid: {', '.join(sorted(valid_strategies))}", err=True)
+            sys.exit(1)
+
+    # Create output directory
+    if output_dir:
+        results_dir = Path(output_dir)
+    else:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        results_dir = Path("results") / ts
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    scenarios_base = Path("scenarios/online-boutique")
+
+    click.echo("=" * 60)
+    click.echo("ChaosProbe — Automated Placement Experiment Runner")
+    click.echo("=" * 60)
+    click.echo(f"  Namespace:  {namespace}")
+    click.echo(f"  Strategies: {', '.join(strategy_list)}")
+    click.echo(f"  Output:     {results_dir}")
+    click.echo(f"  Timeout:    {timeout}s per experiment")
+    click.echo(f"  Settle:     {settle_time}s between placement and experiment")
+    click.echo("")
+
+    overall_results = {
+        "runId": f"run-all-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "namespace": namespace,
+        "strategies": {},
+    }
+
+    total = len(strategy_list)
+    passed = 0
+    failed = 0
+
+    for idx, strategy_name in enumerate(strategy_list, 1):
+        click.echo(f"\n{'─' * 60}")
+        click.echo(f"[{idx}/{total}] Strategy: {strategy_name}")
+        click.echo(f"{'─' * 60}")
+
+        strategy_result = {
+            "strategy": strategy_name,
+            "status": "pending",
+            "placement": None,
+            "experiment": None,
+            "error": None,
+        }
+
+        try:
+            # ── Step 1: Clear any existing placement ──
+            click.echo("\n  Step 1/4: Clearing existing placement...")
+            mutator = PlacementMutator(namespace)
+            mutator.clear_placement(wait=True)
+            click.echo("    Placement cleared.")
+
+            # ── Step 2: Apply placement (skip for baseline) ──
+            if strategy_name == "baseline":
+                click.echo("\n  Step 2/4: Baseline — using default scheduling")
+                strategy_result["placement"] = {"strategy": "baseline", "description": "Default Kubernetes scheduling"}
+            else:
+                click.echo(f"\n  Step 2/4: Applying {strategy_name} placement...")
+                strat = PlacementStrategy(strategy_name)
+                assignment = mutator.apply_strategy(
+                    strategy=strat,
+                    seed=seed if strategy_name == "random" else None,
+                    wait=True,
+                    timeout=timeout,
+                )
+                strategy_result["placement"] = assignment.to_dict()
+
+                # Show summary
+                nodes_used = set(assignment.assignments.values())
+                click.echo(f"    Placed {len(assignment.assignments)} deployments across {len(nodes_used)} node(s)")
+                for node in sorted(nodes_used):
+                    count = sum(1 for n in assignment.assignments.values() if n == node)
+                    click.echo(f"      {node}: {count} deployment(s)")
+
+            # ── Step 3: Wait for workloads to settle ──
+            if settle_time > 0:
+                click.echo(f"\n  Step 3/4: Waiting {settle_time}s for workloads to settle...")
+                time.sleep(settle_time)
+                click.echo("    Ready.")
+            else:
+                click.echo("\n  Step 3/4: Skipping settle time.")
+
+            # ── Step 4: Run chaos experiment ──
+            scenario_dir = scenarios_base / f"placement-{strategy_name}"
+            if not scenario_dir.exists():
+                raise FileNotFoundError(f"Scenario directory not found: {scenario_dir}")
+
+            click.echo(f"\n  Step 4/4: Running experiment from {scenario_dir}...")
+
+            scenario = load_scenario(str(scenario_dir))
+            validate_scenario(scenario)
+            scenario["namespace"] = namespace
+
+            target_namespace = namespace
+            experiment_types = _extract_experiment_types(scenario)
+
+            # Ensure Litmus is ready
+            if not ensure_litmus_setup(target_namespace, experiment_types, auto_setup=not no_auto_setup):
+                raise RuntimeError("LitmusChaos setup failed")
+
+            # Deploy manifests (if any)
+            provisioner = KubernetesProvisioner(target_namespace)
+            provisioner.provision(scenario.get("manifests", []))
+
+            # Run experiments
+            runner = ChaosRunner(target_namespace, timeout=timeout)
+            runner.run_experiments(scenario.get("experiments", []))
+
+            # Collect results
+            collector = ResultCollector(target_namespace)
+            executed = runner.get_executed_experiments()
+            results = collector.collect(executed)
+
+            # Generate output
+            generator = OutputGenerator(scenario, results)
+            output_data = generator.generate()
+
+            # Save individual result
+            result_file = results_dir / f"{strategy_name}.json"
+            result_file.write_text(json.dumps(output_data, indent=2))
+            click.echo(f"\n    Results saved to {result_file}")
+
+            # Record
+            strategy_result["experiment"] = output_data.get("summary", {})
+            strategy_result["status"] = "completed"
+            strategy_result["resultFile"] = str(result_file)
+
+            verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
+            score = output_data.get("summary", {}).get("resilienceScore", 0)
+            click.echo(f"    Verdict: {verdict} | Resilience Score: {score:.1f}")
+
+            if verdict == "PASS":
+                passed += 1
+            else:
+                failed += 1
+
+        except Exception as e:
+            click.echo(f"\n    ERROR: {e}", err=True)
+            strategy_result["status"] = "error"
+            strategy_result["error"] = str(e)
+            failed += 1
+
+        overall_results["strategies"][strategy_name] = strategy_result
+
+    # ── Final cleanup: clear placement ──
+    click.echo(f"\n{'─' * 60}")
+    click.echo("Cleanup: Clearing placement constraints...")
+    try:
+        mutator = PlacementMutator(namespace)
+        mutator.clear_placement(wait=True)
+        click.echo("  Placement cleared.")
+    except Exception as e:
+        click.echo(f"  Warning: cleanup failed: {e}")
+
+    # ── Write overall summary ──
+    overall_results["summary"] = {
+        "totalStrategies": total,
+        "passed": passed,
+        "failed": failed,
+        "completedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Build comparison table
+    comparison_table = []
+    for sname, sdata in overall_results["strategies"].items():
+        exp = sdata.get("experiment", {}) or {}
+        comparison_table.append({
+            "strategy": sname,
+            "verdict": exp.get("overallVerdict", "ERROR"),
+            "resilienceScore": exp.get("resilienceScore", 0),
+            "passed": exp.get("passed", 0),
+            "failed": exp.get("failed", 0),
+            "status": sdata["status"],
+        })
+    overall_results["comparison"] = comparison_table
+
+    summary_file = results_dir / "summary.json"
+    summary_file.write_text(json.dumps(overall_results, indent=2))
+
+    # ── Print final summary ──
+    click.echo(f"\n{'=' * 60}")
+    click.echo("EXPERIMENT RESULTS")
+    click.echo(f"{'=' * 60}")
+    click.echo(f"\n  {'Strategy':<20s} {'Verdict':<10s} {'Score':<10s} {'Status'}")
+    click.echo(f"  {'─' * 55}")
+    for row in comparison_table:
+        click.echo(
+            f"  {row['strategy']:<20s} {row['verdict']:<10s} "
+            f"{row['resilienceScore']:<10.1f} {row['status']}"
+        )
+
+    click.echo(f"\n  Results directory: {results_dir}")
+    click.echo(f"  Summary:          {summary_file}")
+    click.echo(f"\n  Total: {total} | Passed: {passed} | Failed: {failed}")
+    click.echo("")
 
 
 if __name__ == "__main__":

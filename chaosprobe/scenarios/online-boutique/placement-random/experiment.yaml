@@ -1,0 +1,58 @@
+# Placement: Random — Each pod randomly assigned to a node
+# Combined with pod-delete on checkoutservice to measure recovery under
+# unpredictable contention patterns. Use --seed for reproducibility.
+#
+# Usage:
+#   1. Deploy online-boutique first:
+#      uv run chaosprobe provision scenarios/online-boutique/deploy/
+#   2. Apply random placement (with seed for reproducibility):
+#      uv run chaosprobe placement apply random -n online-boutique --seed 42
+#   3. Run this experiment:
+#      uv run chaosprobe run scenarios/online-boutique/placement-random/ -o random-results.json
+#
+# Run multiple times with different seeds to build a statistical picture:
+#   for seed in 1 2 3 4 5; do
+#     uv run chaosprobe placement apply random -n online-boutique --seed $seed
+#     uv run chaosprobe run scenarios/online-boutique/placement-random/ -o random-seed${seed}.json
+#   done
+#
+# Hypothesis: Results will vary significantly between seeds, demonstrating
+# how pod placement affects resilience stochastically.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-random-pod-delete
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=checkoutservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: CHAOS_INTERVAL
+              value: "20"
+            - name: FORCE
+              value: "true"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3
