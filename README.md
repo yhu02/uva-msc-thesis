@@ -20,6 +20,8 @@ uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
 - `chaosprobe/` — ChaosProbe CLI tool (Python package)
 - `thesis.latex` — Thesis document
 - `main.bib` — Bibliography
+- `Debugging.md` — Debugging tips (containerd socket paths)
+- `LICENSE` — MIT License
 - `litmus-admin.yaml` — LitmusChaos RBAC manifest
 - `infra-litmus-chaos-enable.yml` — Litmus infrastructure enablement
 - `dashboard-admin.yaml` — Kubernetes dashboard admin service account

@@ -1,0 +1,67 @@
+# Placement Experiment — Pod-delete on checkoutservice
+# Used by all placement strategies (baseline, colocate, spread, antagonistic, random).
+# The runner adds a unique suffix to metadata.name automatically.
+#
+# Usage (automated):
+#   chaosprobe run-all -n online-boutique
+#
+# Usage (manual):
+#   chaosprobe placement apply colocate -n online-boutique
+#   chaosprobe run scenarios/online-boutique/placement-experiment.yaml -o colocate.json
+#   chaosprobe placement clear -n online-boutique
+#
+# Hypothesis: Pod scheduling recovery time varies with placement strategy due
+# to differences in resource contention on the target node.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-pod-delete
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=checkoutservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: CHAOS_INTERVAL
+              value: "10"
+            - name: FORCE
+              value: "true"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 1s
+              retry: 1
+          - name: checkout-pod-ready
+            type: k8sProbe
+            mode: Continuous
+            k8sProbe/inputs:
+              group: ""
+              version: v1
+              resource: pods
+              namespace: online-boutique
+              fieldSelector: status.phase=Running
+              labelSelector: app=checkoutservice
+              operation: present
+            runProperties:
+              probeTimeout: 2s
+              interval: 1s
+              retry: 1

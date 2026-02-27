@@ -5,7 +5,7 @@ Produces structured JSON output with experiment results.
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from chaosprobe.collector.result_collector import calculate_resilience_score
 
@@ -26,6 +26,7 @@ class OutputGenerator:
         self,
         scenario: Dict[str, Any],
         results: List[Dict[str, Any]],
+        metrics: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the output generator.
 
@@ -33,9 +34,11 @@ class OutputGenerator:
             scenario: Loaded scenario from config.loader.load_scenario().
                       Contains: path, manifests, experiments, namespace.
             results: Collected experiment results from ResultCollector.
+            metrics: Optional experiment metrics (recovery, pod status, etc.).
         """
         self.scenario = scenario
         self.results = results
+        self.metrics = metrics
 
     def generate(self) -> Dict[str, Any]:
         """Generate the complete AI output structure."""
@@ -52,6 +55,9 @@ class OutputGenerator:
             "experiments": self._generate_experiments_section(),
             "summary": self._generate_summary(),
         }
+
+        if self.metrics:
+            output["metrics"] = self.metrics
 
         return output
 

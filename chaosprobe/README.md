@@ -254,11 +254,17 @@ uv run chaosprobe run-all -n online-boutique
 # Run specific strategies only
 uv run chaosprobe run-all -n online-boutique -s colocate,spread
 
+# Run multiple iterations per strategy for statistical significance
+uv run chaosprobe run-all -n online-boutique -i 3
+
+# Use a custom experiment file
+uv run chaosprobe run-all -n online-boutique -e scenarios/online-boutique/placement-experiment.yaml
+
 # Custom output directory and settings
 uv run chaosprobe run-all -n online-boutique -o results/my-run --timeout 600 --seed 42
 ```
 
-Iterates through placement strategies (baseline, colocate, spread, antagonistic, random), applies each, runs the corresponding chaos experiment, and saves results to a timestamped directory.
+Iterates through placement strategies (baseline, colocate, spread, antagonistic, random), applies each, runs the corresponding chaos experiment, collects recovery and pod metrics, and saves results to a timestamped directory.
 
 ### Cluster Commands
 

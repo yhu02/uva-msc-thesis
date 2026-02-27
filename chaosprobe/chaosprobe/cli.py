@@ -1,12 +1,14 @@
 """ChaosProbe CLI - Main entry point for the chaos testing framework."""
 
+import copy
 import json
 import os
+import statistics
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import click
 import yaml
@@ -21,6 +23,7 @@ from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.output.comparison import compare_runs
 from chaosprobe.placement.strategy import PlacementStrategy
 from chaosprobe.placement.mutator import PlacementMutator
+from chaosprobe.metrics.collector import MetricsCollector
 
 
 def ensure_litmus_setup(
@@ -1113,7 +1116,7 @@ def placement():
       2. Apply a placement strategy:
          chaosprobe placement apply colocate -n online-boutique
       3. Run chaos experiments under that placement:
-         chaosprobe run scenarios/online-boutique/placement-colocate/ -o results.json
+         chaosprobe run scenarios/online-boutique/placement-experiment.yaml -o results.json
       4. Clear placement and try another strategy:
          chaosprobe placement clear -n online-boutique
     """
@@ -1357,9 +1360,6 @@ def placement_nodes():
                 f"{t['key']}={t.get('value', '')}:{t['effect']}" for t in node.taints
             )
             click.echo(f"    Taints: {taints_str}")
-        zone = node.labels.get("chaosprobe.io/placement-zone")
-        if zone:
-            click.echo(f"    Placement zone: {zone}")
         click.echo("")
 
 
@@ -1397,6 +1397,15 @@ def placement_nodes():
     "--no-auto-setup", is_flag=True,
     help="Disable automatic LitmusChaos installation",
 )
+@click.option(
+    "--experiment", "-e",
+    default="scenarios/online-boutique/placement-experiment.yaml",
+    help="Path to the placement experiment YAML file",
+)
+@click.option(
+    "--iterations", "-i", default=1, type=int,
+    help="Number of iterations per strategy (default: 1)",
+)
 def run_all(
     namespace: str,
     output_dir: Optional[str],
@@ -1405,28 +1414,22 @@ def run_all(
     seed: int,
     settle_time: int,
     no_auto_setup: bool,
+    experiment: str,
+    iterations: int,
 ):
     """Run all placement experiments automatically.
 
     Iterates through placement strategies (baseline, colocate, spread,
-    antagonistic, random), applies each placement, runs the corresponding
-    chaos experiment, collects results, and saves everything to a
-    timestamped results directory.
+    antagonistic, random), applies each placement, runs the shared
+    experiment, collects results (including pod recovery metrics), and
+    saves everything to a timestamped results directory.
 
     \b
     Example:
       chaosprobe run-all -n online-boutique
       chaosprobe run-all -n online-boutique -s colocate,spread
       chaosprobe run-all -n online-boutique -o results/my-run
-
-    Results structure:
-      results/<timestamp>/
-        summary.json          # Overall summary with all strategies
-        baseline.json         # Individual result files
-        colocate.json
-        spread.json
-        antagonistic.json
-        random.json
+      chaosprobe run-all -n online-boutique -i 3  # 3 iterations per strategy
     """
     strategy_list = [s.strip() for s in strategies.split(",")]
     valid_strategies = {"baseline", "colocate", "spread", "antagonistic", "random"}
@@ -1434,6 +1437,10 @@ def run_all(
         if s not in valid_strategies:
             click.echo(f"Error: Unknown strategy '{s}'. Valid: {', '.join(sorted(valid_strategies))}", err=True)
             sys.exit(1)
+
+    if iterations < 1:
+        click.echo("Error: --iterations must be >= 1", err=True)
+        sys.exit(1)
 
     # Create output directory
     if output_dir:
@@ -1443,22 +1450,46 @@ def run_all(
         results_dir = Path("results") / ts
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    scenarios_base = Path("scenarios/online-boutique")
+    # Load the shared experiment file once
+    experiment_file = Path(experiment)
+    try:
+        shared_scenario = load_scenario(str(experiment_file))
+        validate_scenario(shared_scenario)
+        shared_scenario["namespace"] = namespace
+    except Exception as e:
+        click.echo(f"Error loading experiment: {e}", err=True)
+        sys.exit(1)
+
+    # Ensure LitmusChaos is ready once (all placement experiments use the same types)
+    experiment_types = _extract_experiment_types(shared_scenario)
+    if not ensure_litmus_setup(namespace, experiment_types, auto_setup=not no_auto_setup):
+        click.echo("Error: LitmusChaos setup failed", err=True)
+        sys.exit(1)
+
+    # Create reusable instances
+    mutator = PlacementMutator(namespace)
+    metrics_collector = MetricsCollector(namespace)
 
     click.echo("=" * 60)
     click.echo("ChaosProbe — Automated Placement Experiment Runner")
     click.echo("=" * 60)
     click.echo(f"  Namespace:  {namespace}")
+    click.echo(f"  Experiment: {experiment_file}")
     click.echo(f"  Strategies: {', '.join(strategy_list)}")
+    click.echo(f"  Iterations: {iterations}")
     click.echo(f"  Output:     {results_dir}")
     click.echo(f"  Timeout:    {timeout}s per experiment")
     click.echo(f"  Settle:     {settle_time}s between placement and experiment")
     click.echo("")
 
-    overall_results = {
+    # Extract target deployment from experiment spec for recovery metrics
+    target_deployment = _extract_target_deployment(shared_scenario)
+
+    overall_results: Dict[str, Any] = {
         "runId": f"run-all-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "namespace": namespace,
+        "iterations": iterations,
         "strategies": {},
     }
 
@@ -1471,27 +1502,27 @@ def run_all(
         click.echo(f"[{idx}/{total}] Strategy: {strategy_name}")
         click.echo(f"{'─' * 60}")
 
-        strategy_result = {
+        strategy_result: Dict[str, Any] = {
             "strategy": strategy_name,
             "status": "pending",
             "placement": None,
             "experiment": None,
+            "metrics": None,
             "error": None,
         }
 
         try:
             # ── Step 1: Clear any existing placement ──
-            click.echo("\n  Step 1/4: Clearing existing placement...")
-            mutator = PlacementMutator(namespace)
+            click.echo("\n  Step 1: Clearing existing placement...")
             mutator.clear_placement(wait=True)
             click.echo("    Placement cleared.")
 
             # ── Step 2: Apply placement (skip for baseline) ──
             if strategy_name == "baseline":
-                click.echo("\n  Step 2/4: Baseline — using default scheduling")
+                click.echo("\n  Step 2: Baseline — using default scheduling")
                 strategy_result["placement"] = {"strategy": "baseline", "description": "Default Kubernetes scheduling"}
             else:
-                click.echo(f"\n  Step 2/4: Applying {strategy_name} placement...")
+                click.echo(f"\n  Step 2: Applying {strategy_name} placement...")
                 strat = PlacementStrategy(strategy_name)
                 assignment = mutator.apply_strategy(
                     strategy=strat,
@@ -1508,67 +1539,116 @@ def run_all(
                     count = sum(1 for n in assignment.assignments.values() if n == node)
                     click.echo(f"      {node}: {count} deployment(s)")
 
-            # ── Step 3: Wait for workloads to settle ──
-            if settle_time > 0:
-                click.echo(f"\n  Step 3/4: Waiting {settle_time}s for workloads to settle...")
-                time.sleep(settle_time)
-                click.echo("    Ready.")
+            # ── Run iterations ──
+            iteration_results: List[Dict[str, Any]] = []
+
+            for iter_num in range(1, iterations + 1):
+                if iterations > 1:
+                    click.echo(f"\n  ── Iteration {iter_num}/{iterations} ──")
+
+                # Settle
+                step_label = f"  Step 3" if iterations == 1 else f"    Step A"
+                if settle_time > 0:
+                    click.echo(f"\n{step_label}: Waiting {settle_time}s for workloads to settle...")
+                    time.sleep(settle_time)
+                    click.echo("    Ready.")
+                else:
+                    click.echo(f"\n{step_label}: Skipping settle time.")
+
+                # Run chaos experiment
+                step_label = f"  Step 4" if iterations == 1 else f"    Step B"
+                click.echo(f"\n{step_label}: Running experiment...")
+
+                scenario = copy.deepcopy(shared_scenario)
+                for exp in scenario.get("experiments", []):
+                    orig_name = exp["spec"].get("metadata", {}).get("name", "placement-pod-delete")
+                    if iterations > 1:
+                        exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}-i{iter_num}"
+                    else:
+                        exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}"
+
+                experiment_start = time.time()
+                runner = ChaosRunner(namespace, timeout=timeout)
+                runner.run_experiments(scenario.get("experiments", []))
+                experiment_end = time.time()
+
+                # Collect results
+                collector = ResultCollector(namespace)
+                executed = runner.get_executed_experiments()
+                results = collector.collect(executed)
+
+                # Collect recovery metrics
+                recovery = metrics_collector.collect(
+                    deployment_name=target_deployment,
+                    since_time=experiment_start,
+                    until_time=experiment_end,
+                )
+
+                # Generate output
+                generator = OutputGenerator(scenario, results, metrics=recovery)
+                output_data = generator.generate()
+
+                # Save result file
+                if iterations > 1:
+                    result_file = results_dir / f"{strategy_name}-iter-{iter_num}.json"
+                else:
+                    result_file = results_dir / f"{strategy_name}.json"
+                result_file.write_text(json.dumps(output_data, indent=2))
+
+                verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
+                score = output_data.get("summary", {}).get("resilienceScore", 0)
+                rec_summary = recovery.get("recovery", {}).get("summary", {})
+                avg_recovery = rec_summary.get("meanRecovery_ms")
+                recovery_str = f" | Avg Recovery: {avg_recovery:.0f}ms" if avg_recovery else ""
+
+                click.echo(f"\n    Results saved to {result_file}")
+                click.echo(f"    Verdict: {verdict} | Resilience Score: {score:.1f}{recovery_str}")
+
+                iteration_results.append({
+                    "iteration": iter_num,
+                    "verdict": verdict,
+                    "resilienceScore": score,
+                    "metrics": recovery,
+                    "resultFile": str(result_file),
+                })
+
+            # Aggregate results across iterations
+            if iterations > 1:
+                strategy_result["iterations"] = iteration_results
+                strategy_result["aggregated"] = _aggregate_iterations(iteration_results)
+                strategy_result["experiment"] = strategy_result["aggregated"]
+                strategy_result["status"] = "completed"
+
+                agg = strategy_result["aggregated"]
+                iter_passed = sum(1 for ir in iteration_results if ir["verdict"] == "PASS")
+                click.echo(f"\n    Aggregated: {iter_passed}/{iterations} passed | "
+                           f"Mean Score: {agg['meanResilienceScore']:.1f}")
+                if agg.get("meanRecoveryTime_ms") is not None:
+                    click.echo(f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
+                               f"Max: {agg['maxRecoveryTime_ms']:.0f}ms")
+
+                if agg["passRate"] == 1.0:
+                    passed += 1
+                else:
+                    failed += 1
             else:
-                click.echo("\n  Step 3/4: Skipping settle time.")
+                # Single iteration — keep backward-compatible structure
+                ir = iteration_results[0]
+                strategy_result["experiment"] = {
+                    "overallVerdict": ir["verdict"],
+                    "resilienceScore": ir["resilienceScore"],
+                    "passed": 1 if ir["verdict"] == "PASS" else 0,
+                    "failed": 0 if ir["verdict"] == "PASS" else 1,
+                    "totalExperiments": 1,
+                }
+                strategy_result["metrics"] = ir["metrics"]
+                strategy_result["status"] = "completed"
+                strategy_result["resultFile"] = ir["resultFile"]
 
-            # ── Step 4: Run chaos experiment ──
-            scenario_dir = scenarios_base / f"placement-{strategy_name}"
-            if not scenario_dir.exists():
-                raise FileNotFoundError(f"Scenario directory not found: {scenario_dir}")
-
-            click.echo(f"\n  Step 4/4: Running experiment from {scenario_dir}...")
-
-            scenario = load_scenario(str(scenario_dir))
-            validate_scenario(scenario)
-            scenario["namespace"] = namespace
-
-            target_namespace = namespace
-            experiment_types = _extract_experiment_types(scenario)
-
-            # Ensure Litmus is ready
-            if not ensure_litmus_setup(target_namespace, experiment_types, auto_setup=not no_auto_setup):
-                raise RuntimeError("LitmusChaos setup failed")
-
-            # Deploy manifests (if any)
-            provisioner = KubernetesProvisioner(target_namespace)
-            provisioner.provision(scenario.get("manifests", []))
-
-            # Run experiments
-            runner = ChaosRunner(target_namespace, timeout=timeout)
-            runner.run_experiments(scenario.get("experiments", []))
-
-            # Collect results
-            collector = ResultCollector(target_namespace)
-            executed = runner.get_executed_experiments()
-            results = collector.collect(executed)
-
-            # Generate output
-            generator = OutputGenerator(scenario, results)
-            output_data = generator.generate()
-
-            # Save individual result
-            result_file = results_dir / f"{strategy_name}.json"
-            result_file.write_text(json.dumps(output_data, indent=2))
-            click.echo(f"\n    Results saved to {result_file}")
-
-            # Record
-            strategy_result["experiment"] = output_data.get("summary", {})
-            strategy_result["status"] = "completed"
-            strategy_result["resultFile"] = str(result_file)
-
-            verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
-            score = output_data.get("summary", {}).get("resilienceScore", 0)
-            click.echo(f"    Verdict: {verdict} | Resilience Score: {score:.1f}")
-
-            if verdict == "PASS":
-                passed += 1
-            else:
-                failed += 1
+                if ir["verdict"] == "PASS":
+                    passed += 1
+                else:
+                    failed += 1
 
         except Exception as e:
             click.echo(f"\n    ERROR: {e}", err=True)
@@ -1582,7 +1662,6 @@ def run_all(
     click.echo(f"\n{'─' * 60}")
     click.echo("Cleanup: Clearing placement constraints...")
     try:
-        mutator = PlacementMutator(namespace)
         mutator.clear_placement(wait=True)
         click.echo("  Placement cleared.")
     except Exception as e:
@@ -1597,17 +1676,7 @@ def run_all(
     }
 
     # Build comparison table
-    comparison_table = []
-    for sname, sdata in overall_results["strategies"].items():
-        exp = sdata.get("experiment", {}) or {}
-        comparison_table.append({
-            "strategy": sname,
-            "verdict": exp.get("overallVerdict", "ERROR"),
-            "resilienceScore": exp.get("resilienceScore", 0),
-            "passed": exp.get("passed", 0),
-            "failed": exp.get("failed", 0),
-            "status": sdata["status"],
-        })
+    comparison_table = _build_comparison_table(overall_results["strategies"], iterations)
     overall_results["comparison"] = comparison_table
 
     summary_file = results_dir / "summary.json"
@@ -1617,18 +1686,128 @@ def run_all(
     click.echo(f"\n{'=' * 60}")
     click.echo("EXPERIMENT RESULTS")
     click.echo(f"{'=' * 60}")
-    click.echo(f"\n  {'Strategy':<20s} {'Verdict':<10s} {'Score':<10s} {'Status'}")
-    click.echo(f"  {'─' * 55}")
-    for row in comparison_table:
-        click.echo(
-            f"  {row['strategy']:<20s} {row['verdict']:<10s} "
-            f"{row['resilienceScore']:<10.1f} {row['status']}"
-        )
+
+    has_recovery = any(r.get("avgRecovery_ms") is not None for r in comparison_table)
+    if has_recovery:
+        click.echo(f"\n  {'Strategy':<16s} {'Verdict':<8s} {'Score':<8s} "
+                    f"{'Avg Rec.':<10s} {'Max Rec.':<10s} {'Status'}")
+        click.echo(f"  {'─' * 68}")
+        for row in comparison_table:
+            avg_r = f"{row['avgRecovery_ms']:.0f}ms" if row.get("avgRecovery_ms") is not None else "n/a"
+            max_r = f"{row['maxRecovery_ms']:.0f}ms" if row.get("maxRecovery_ms") is not None else "n/a"
+            click.echo(
+                f"  {row['strategy']:<16s} {row['verdict']:<8s} "
+                f"{row['resilienceScore']:<8.1f} {avg_r:<10s} {max_r:<10s} {row['status']}"
+            )
+    else:
+        click.echo(f"\n  {'Strategy':<20s} {'Verdict':<10s} {'Score':<10s} {'Status'}")
+        click.echo(f"  {'─' * 55}")
+        for row in comparison_table:
+            click.echo(
+                f"  {row['strategy']:<20s} {row['verdict']:<10s} "
+                f"{row['resilienceScore']:<10.1f} {row['status']}"
+            )
 
     click.echo(f"\n  Results directory: {results_dir}")
     click.echo(f"  Summary:          {summary_file}")
     click.echo(f"\n  Total: {total} | Passed: {passed} | Failed: {failed}")
     click.echo("")
+
+
+def _extract_target_deployment(scenario: Dict[str, Any]) -> str:
+    """Extract the target deployment name from experiment appinfo."""
+    for exp in scenario.get("experiments", []):
+        appinfo = exp.get("spec", {}).get("spec", {}).get("appinfo", {})
+        applabel = appinfo.get("applabel", "")
+        if applabel.startswith("app="):
+            return applabel.split("=", 1)[1]
+    return "checkoutservice"
+
+
+def _aggregate_iterations(
+    iteration_results: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Compute aggregated statistics across multiple iterations."""
+    scores = [ir["resilienceScore"] for ir in iteration_results]
+    verdicts = [ir["verdict"] for ir in iteration_results]
+    pass_count = sum(1 for v in verdicts if v == "PASS")
+
+    agg: Dict[str, Any] = {
+        "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
+        "passRate": round(pass_count / len(verdicts), 2),
+        "meanResilienceScore": round(statistics.mean(scores), 1),
+        "totalExperiments": len(iteration_results),
+        "passed": pass_count,
+        "failed": len(verdicts) - pass_count,
+    }
+
+    # Aggregate recovery metrics from metrics.recovery.summary
+    all_recovery_times: List[float] = []
+    for ir in iteration_results:
+        rm = ir.get("metrics", {})
+        if rm:
+            summary = rm.get("recovery", {}).get("summary", {})
+            mean_r = summary.get("meanRecovery_ms")
+            if mean_r is not None:
+                all_recovery_times.append(mean_r)
+
+    if all_recovery_times:
+        all_max = []
+        for ir in iteration_results:
+            rm = ir.get("metrics", {})
+            if rm:
+                max_r = rm.get("recovery", {}).get("summary", {}).get("maxRecovery_ms")
+                if max_r is not None:
+                    all_max.append(max_r)
+
+        agg["meanRecoveryTime_ms"] = round(statistics.mean(all_recovery_times), 1)
+        agg["medianRecoveryTime_ms"] = round(statistics.median(all_recovery_times), 1)
+        agg["maxRecoveryTime_ms"] = max(all_max) if all_max else None
+    else:
+        agg["meanRecoveryTime_ms"] = None
+        agg["medianRecoveryTime_ms"] = None
+        agg["maxRecoveryTime_ms"] = None
+
+    return agg
+
+
+def _build_comparison_table(
+    strategies: Dict[str, Any],
+    iterations: int,
+) -> List[Dict[str, Any]]:
+    """Build comparison table with recovery metrics."""
+    table = []
+    for sname, sdata in strategies.items():
+        exp = sdata.get("experiment", {}) or {}
+
+        row: Dict[str, Any] = {
+            "strategy": sname,
+            "verdict": exp.get("overallVerdict", "ERROR"),
+            "resilienceScore": exp.get("resilienceScore", 0),
+            "passed": exp.get("passed", 0),
+            "failed": exp.get("failed", 0),
+            "status": sdata["status"],
+        }
+
+        # Extract recovery metrics
+        if iterations > 1:
+            agg = sdata.get("aggregated", {})
+            row["avgRecovery_ms"] = agg.get("meanRecoveryTime_ms")
+            row["maxRecovery_ms"] = agg.get("maxRecoveryTime_ms")
+            row["passRate"] = agg.get("passRate")
+        else:
+            rm = sdata.get("metrics", {})
+            if rm:
+                summary = rm.get("recovery", {}).get("summary", {})
+                row["avgRecovery_ms"] = summary.get("meanRecovery_ms")
+                row["maxRecovery_ms"] = summary.get("maxRecovery_ms")
+            else:
+                row["avgRecovery_ms"] = None
+                row["maxRecovery_ms"] = None
+
+        table.append(row)
+
+    return table
 
 
 if __name__ == "__main__":

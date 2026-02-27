@@ -1,16 +1,15 @@
 """Placement mutator — applies and clears pod placement constraints.
 
 Uses the Kubernetes API to:
-- Label nodes for placement targeting
 - Patch deployments with nodeSelector to pin pods to specific nodes
 - Clear placement constraints to restore default scheduling
 - Query current placement state
 """
 
-import json
 import time
 from typing import Any, Dict, List, Optional
 
+import click
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
@@ -23,9 +22,12 @@ from chaosprobe.placement.strategy import (
 )
 
 
-# Label used on nodes and in nodeSelector to control placement
-PLACEMENT_LABEL_KEY = "chaosprobe.io/placement-zone"
+# Built-in Kubernetes label for targeting nodes by hostname
+PLACEMENT_LABEL_KEY = "kubernetes.io/hostname"
+# Annotation to track which deployments are managed by ChaosProbe placement
 MANAGED_ANNOTATION = "chaosprobe.io/placement-strategy"
+# Legacy label from previous versions (cleaned up on clear)
+_LEGACY_LABEL = "chaosprobe.io/placement-zone"
 
 
 class PlacementMutator:
@@ -176,7 +178,7 @@ class PlacementMutator:
             seed=seed,
         )
 
-        self._apply_assignment(assignment, nodes)
+        self._apply_assignment(assignment)
 
         if wait:
             self._wait_for_rollouts(
@@ -198,8 +200,7 @@ class PlacementMutator:
             wait: Wait for rollouts to complete.
             timeout: Timeout for rollout completion.
         """
-        nodes = self.get_nodes()
-        self._apply_assignment(assignment, nodes)
+        self._apply_assignment(assignment)
 
         if wait:
             self._wait_for_rollouts(
@@ -236,7 +237,7 @@ class PlacementMutator:
             if MANAGED_ANNOTATION not in annotations:
                 continue
 
-            # Remove nodeSelector placement label
+            # Remove kubernetes.io/hostname from nodeSelector
             node_selector = dep.spec.template.spec.node_selector or {}
             if PLACEMENT_LABEL_KEY in node_selector:
                 del node_selector[PLACEMENT_LABEL_KEY]
@@ -257,10 +258,10 @@ class PlacementMutator:
                     name, self.namespace, patch
                 )
                 cleared.append(name)
-                print(f"  Cleared placement for: {name}")
+                click.echo(f"  Cleared placement for: {name}")
 
-        # Clean up node labels
-        self._cleanup_node_labels()
+        # Clean up legacy labels from previous ChaosProbe versions
+        self._cleanup_legacy_labels()
 
         if wait and cleared:
             self._wait_for_rollouts(cleared, timeout)
@@ -282,13 +283,13 @@ class PlacementMutator:
             node_selector = dep.spec.template.spec.node_selector or {}
 
             strategy = annotations.get(MANAGED_ANNOTATION)
-            target_zone = node_selector.get(PLACEMENT_LABEL_KEY)
+            target_node = node_selector.get(PLACEMENT_LABEL_KEY)
 
             current_node = self._get_pod_node(name)
 
             placement[name] = {
                 "strategy": strategy,
-                "targetZone": target_zone,
+                "targetNode": target_node,
                 "currentNode": current_node,
                 "managed": strategy is not None,
             }
@@ -299,50 +300,34 @@ class PlacementMutator:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _apply_assignment(
-        self, assignment: NodeAssignment, nodes: List[NodeInfo]
-    ) -> None:
-        """Apply a NodeAssignment by labelling nodes and patching deployments."""
-        # 1. Label target nodes with placement zones
-        node_zones: Dict[str, str] = {}
-        for dep_name, node_name in assignment.assignments.items():
-            if node_name not in node_zones:
-                zone = f"zone-{node_name}"
-                node_zones[node_name] = zone
+    def _apply_assignment(self, assignment: NodeAssignment) -> None:
+        """Apply a NodeAssignment by patching deployments with nodeSelector.
 
-        for node_name, zone in node_zones.items():
-            self._label_node(node_name, PLACEMENT_LABEL_KEY, zone)
-
-        # 2. Patch each deployment with nodeSelector
+        Uses the built-in kubernetes.io/hostname label — no custom node
+        labeling needed.
+        """
         for dep_name, node_name in assignment.assignments.items():
-            zone = node_zones[node_name]
             self._patch_deployment_placement(
-                dep_name, zone, assignment.strategy.value
+                dep_name, node_name, assignment.strategy.value
             )
 
-    def _label_node(self, node_name: str, label_key: str, label_value: str) -> None:
-        """Add a label to a node."""
-        patch = {"metadata": {"labels": {label_key: label_value}}}
+    def _cleanup_legacy_labels(self) -> None:
+        """Remove legacy chaosprobe.io/placement-zone labels from nodes."""
         try:
-            self.core_api.patch_node(node_name, patch)
-        except ApiException as e:
-            print(f"  WARNING: Failed to label node '{node_name}': {e.reason}")
-
-    def _cleanup_node_labels(self) -> None:
-        """Remove ChaosProbe placement labels from all nodes."""
-        nodes = self.core_api.list_node()
-        for node in nodes.items:
-            labels = node.metadata.labels or {}
-            if PLACEMENT_LABEL_KEY in labels:
-                # Strategic merge patch: setting a label to None removes it
-                patch = {"metadata": {"labels": {PLACEMENT_LABEL_KEY: None}}}
-                try:
-                    self.core_api.patch_node(node.metadata.name, patch)
-                except ApiException:
-                    pass  # Label may already be gone
+            nodes = self.core_api.list_node()
+            for node in nodes.items:
+                labels = node.metadata.labels or {}
+                if _LEGACY_LABEL in labels:
+                    patch = {"metadata": {"labels": {_LEGACY_LABEL: None}}}
+                    try:
+                        self.core_api.patch_node(node.metadata.name, patch)
+                    except ApiException:
+                        pass
+        except ApiException:
+            pass
 
     def _patch_deployment_placement(
-        self, deployment_name: str, zone: str, strategy_name: str
+        self, deployment_name: str, node_name: str, strategy_name: str
     ) -> None:
         """Patch a deployment with nodeSelector for placement."""
         patch = {
@@ -352,7 +337,7 @@ class PlacementMutator:
             "spec": {
                 "template": {
                     "spec": {
-                        "nodeSelector": {PLACEMENT_LABEL_KEY: zone},
+                        "nodeSelector": {PLACEMENT_LABEL_KEY: node_name},
                     }
                 }
             },
@@ -361,9 +346,9 @@ class PlacementMutator:
             self.apps_api.patch_namespaced_deployment(
                 deployment_name, self.namespace, patch
             )
-            print(f"  Pinned '{deployment_name}' → zone '{zone}'")
+            click.echo(f"  Pinned '{deployment_name}' -> node '{node_name}'")
         except ApiException as e:
-            print(f"  WARNING: Failed to patch '{deployment_name}': {e.reason}")
+            click.echo(f"  WARNING: Failed to patch '{deployment_name}': {e.reason}")
 
     def _get_pod_node(self, deployment_name: str) -> Optional[str]:
         """Get the node name where a deployment's pod is running."""
@@ -386,7 +371,7 @@ class PlacementMutator:
         generation AND that all replicas are updated and ready.
         This prevents false positives from stale pod status.
         """
-        print(f"  Waiting for {len(deployment_names)} rollout(s) (timeout: {timeout}s)...")
+        click.echo(f"  Waiting for {len(deployment_names)} rollout(s) (timeout: {timeout}s)...")
         start = time.time()
 
         # Brief pause to let the controller start processing the patch
@@ -420,7 +405,7 @@ class PlacementMutator:
                         and available >= desired
                     ):
                         elapsed = int(time.time() - start)
-                        print(f"    {name}: ready ({elapsed}s)")
+                        click.echo(f"    {name}: ready ({elapsed}s)")
                     else:
                         still_pending.add(name)
                 except ApiException:
@@ -433,7 +418,7 @@ class PlacementMutator:
         if pending:
             elapsed = int(time.time() - start)
             for name in pending:
-                print(f"    WARNING: {name}: not ready after {elapsed}s")
+                click.echo(f"    WARNING: {name}: not ready after {elapsed}s")
 
     @staticmethod
     def _parse_cpu(cpu_str: str) -> int:
