@@ -314,6 +314,7 @@ ChaosProbe generates structured JSON (schema v2.0.0) for AI consumption:
 {
   "schemaVersion": "2.0.0",
   "runId": "run-2025-01-18-143052-abc123",
+  "timestamp": "2025-01-18T14:30:52+00:00",
   "scenario": {
     "directory": "scenarios/nginx-pod-delete",
     "manifests": [
@@ -365,6 +366,26 @@ ChaosProbe generates structured JSON (schema v2.0.0) for AI consumption:
     "failed": 1,
     "resilienceScore": 0.0,
     "overallVerdict": "FAIL"
+  },
+  "metrics": {
+    "deploymentName": "nginx",
+    "timeWindow": { "start": "...", "end": "...", "duration_s": 30.0 },
+    "recovery": {
+      "recoveryEvents": [
+        {
+          "deletionTime": "...", "scheduledTime": "...", "readyTime": "...",
+          "deletionToScheduled_ms": 120, "scheduledToReady_ms": 880, "totalRecovery_ms": 1000
+        }
+      ],
+      "summary": {
+        "count": 3, "completedCycles": 3,
+        "meanRecovery_ms": 1050.0, "medianRecovery_ms": 1000.0,
+        "minRecovery_ms": 950, "maxRecovery_ms": 1200, "p95Recovery_ms": 1200.0
+      }
+    },
+    "podStatus": { "pods": ["..."], "totalRestarts": 0 },
+    "eventTimeline": ["..."],
+    "nodeInfo": { "nodeName": "worker1", "allocatable": { "cpu": "2", "memory": "1908500Ki" }, "capacity": { "cpu": "2", "memory": "2010900Ki" } }
   }
 }
 ```
@@ -437,6 +458,10 @@ ChaosProbe CLI
       ├── Chaos Runner (applies native ChaosEngine CRDs)
       │
       ├── Result Collector (ChaosResult CRDs)
+      │
+      ├── Metrics Collection
+      │   ├── RecoveryWatcher (real-time pod watch during chaos)
+      │   └── MetricsCollector (pod status, node info, unified output)
       │
       └── Output Generator
           └── Comparison Engine (diffs before/after runs)

@@ -24,6 +24,7 @@ from chaosprobe.output.comparison import compare_runs
 from chaosprobe.placement.strategy import PlacementStrategy
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.metrics.collector import MetricsCollector
+from chaosprobe.metrics.recovery import RecoveryWatcher
 
 
 def ensure_litmus_setup(
@@ -1567,21 +1568,30 @@ def run_all(
                     else:
                         exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}"
 
+                # Start real-time recovery watcher before experiment
+                watcher = RecoveryWatcher(namespace, target_deployment)
+                watcher.start()
+
                 experiment_start = time.time()
                 runner = ChaosRunner(namespace, timeout=timeout)
                 runner.run_experiments(scenario.get("experiments", []))
                 experiment_end = time.time()
+
+                # Stop watcher and collect its data
+                watcher.stop()
+                recovery_data = watcher.result()
 
                 # Collect results
                 collector = ResultCollector(namespace)
                 executed = runner.get_executed_experiments()
                 results = collector.collect(executed)
 
-                # Collect recovery metrics
+                # Collect metrics (pod status, node info) + merge watcher data
                 recovery = metrics_collector.collect(
                     deployment_name=target_deployment,
                     since_time=experiment_start,
                     until_time=experiment_end,
+                    recovery_data=recovery_data,
                 )
 
                 # Generate output

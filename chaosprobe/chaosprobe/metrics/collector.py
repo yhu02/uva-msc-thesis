@@ -1,7 +1,7 @@
 """General-purpose metrics collector for chaos experiments.
 
 Collects multiple categories of metrics during a chaos experiment window:
-- Recovery timing (pod deletion → scheduling → ready)
+- Recovery timing (from RecoveryWatcher real-time data)
 - Pod restart counts
 - Resource pressure on the target node
 - Event timeline (all pod lifecycle events)
@@ -13,13 +13,14 @@ from typing import Any, Dict, List, Optional
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
-from chaosprobe.metrics.recovery import RecoveryMetricsCollector
-
 
 class MetricsCollector:
     """Collects comprehensive metrics from a chaos experiment run.
 
     Orchestrates multiple metric sources and returns a unified result.
+    The recovery data comes from a RecoveryWatcher that ran during the
+    experiment (real-time), while pod status and node info are collected
+    after the experiment ends.
     """
 
     def __init__(self, namespace: str):
@@ -32,13 +33,13 @@ class MetricsCollector:
 
         self.core_api = client.CoreV1Api()
         self.apps_api = client.AppsV1Api()
-        self._recovery = RecoveryMetricsCollector(namespace)
 
     def collect(
         self,
         deployment_name: str,
         since_time: float,
         until_time: float,
+        recovery_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Collect all available metrics for a deployment during an experiment.
 
@@ -46,14 +47,33 @@ class MetricsCollector:
             deployment_name: Target deployment name.
             since_time: Unix timestamp for experiment start.
             until_time: Unix timestamp for experiment end.
+            recovery_data: Pre-collected recovery data from RecoveryWatcher.
+                           If None, the recovery section will be empty.
 
         Returns:
             Unified metrics dictionary with all collected data.
         """
-        recovery = self._recovery.collect(deployment_name, since_time, until_time)
         pod_status = self._collect_pod_status(deployment_name)
-        event_timeline = self._collect_event_timeline(deployment_name, since_time, until_time)
         node_info = self._collect_node_info(deployment_name)
+
+        # Use watcher data if provided, otherwise empty
+        if recovery_data is None:
+            recovery_data = {
+                "deploymentName": deployment_name,
+                "recoveryEvents": [],
+                "summary": {
+                    "count": 0,
+                    "completedCycles": 0,
+                    "meanRecovery_ms": None,
+                    "medianRecovery_ms": None,
+                    "minRecovery_ms": None,
+                    "maxRecovery_ms": None,
+                    "p95Recovery_ms": None,
+                },
+            }
+
+        # Extract raw events from watcher for the timeline
+        event_timeline = recovery_data.pop("rawEvents", [])
 
         return {
             "deploymentName": deployment_name,
@@ -62,7 +82,7 @@ class MetricsCollector:
                 "end": datetime.fromtimestamp(until_time, tz=timezone.utc).isoformat(),
                 "duration_s": round(until_time - since_time, 1),
             },
-            "recovery": recovery,
+            "recovery": recovery_data,
             "podStatus": pod_status,
             "eventTimeline": event_timeline,
             "nodeInfo": node_info,
@@ -109,51 +129,6 @@ class MetricsCollector:
             "pods": pod_list,
             "totalRestarts": total_restarts,
         }
-
-    def _collect_event_timeline(
-        self,
-        deployment_name: str,
-        since_time: float,
-        until_time: float,
-    ) -> List[Dict[str, Any]]:
-        """Collect all pod events during the experiment window."""
-        try:
-            events_resp = self.core_api.list_namespaced_event(
-                namespace=self.namespace,
-                field_selector="involvedObject.kind=Pod",
-            )
-        except ApiException:
-            return []
-
-        since_dt = datetime.fromtimestamp(since_time, tz=timezone.utc)
-        until_dt = datetime.fromtimestamp(until_time, tz=timezone.utc)
-
-        timeline = []
-        for event in events_resp.items:
-            obj_name = event.involved_object.name or ""
-            if deployment_name not in obj_name:
-                continue
-
-            event_time = event.last_timestamp or event.event_time
-            if event_time is None:
-                continue
-
-            if hasattr(event_time, "tzinfo") and event_time.tzinfo is None:
-                event_time = event_time.replace(tzinfo=timezone.utc)
-
-            if event_time < since_dt or event_time > until_dt:
-                continue
-
-            timeline.append({
-                "time": event_time.isoformat(),
-                "reason": event.reason,
-                "pod": obj_name,
-                "message": event.message or "",
-                "type": event.type,
-            })
-
-        timeline.sort(key=lambda e: e["time"])
-        return timeline
 
     def _collect_node_info(self, deployment_name: str) -> Optional[Dict[str, Any]]:
         """Collect resource info for the node running the target deployment."""
