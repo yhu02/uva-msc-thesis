@@ -114,12 +114,15 @@ def generate_from_summary(
     strategies = {}
     for name, sdata in raw_strategies.items():
         exp = sdata.get("experiment", {}) or {}
+        # Recovery metrics live in experiment for multi-iteration (aggregated),
+        # but in metrics.recovery.summary for single-iteration runs.
+        rec_summary = (sdata.get("metrics") or {}).get("recovery", {}).get("summary", {})
         strategies[name] = {
             "avgResilienceScore": exp.get("meanResilienceScore", exp.get("resilienceScore", 0)),
             "passRate": exp.get("passRate", 0.0),
-            "avgMeanRecovery_ms": exp.get("meanRecoveryTime_ms"),
-            "avgP95Recovery_ms": exp.get("maxRecoveryTime_ms"),
-            "medianRecovery_ms": exp.get("medianRecoveryTime_ms"),
+            "avgMeanRecovery_ms": exp.get("meanRecoveryTime_ms") or rec_summary.get("meanRecovery_ms"),
+            "avgP95Recovery_ms": exp.get("maxRecoveryTime_ms") or rec_summary.get("p95Recovery_ms"),
+            "medianRecovery_ms": exp.get("medianRecoveryTime_ms") or rec_summary.get("medianRecovery_ms"),
             "runCount": exp.get("totalExperiments", iterations_count),
         }
 
