@@ -2061,7 +2061,8 @@ def _build_comparison_table(
         row: Dict[str, Any] = {
             "strategy": sname,
             "verdict": exp.get("overallVerdict", "ERROR"),
-            "resilienceScore": exp.get("resilienceScore", 0),
+            "resilienceScore": exp.get("resilienceScore",
+                                       exp.get("meanResilienceScore", 0)),
             "passed": exp.get("passed", 0),
             "failed": exp.get("failed", 0),
             "status": sdata["status"],
