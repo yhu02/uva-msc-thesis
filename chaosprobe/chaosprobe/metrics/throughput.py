@@ -111,6 +111,7 @@ class ThroughputProber:
 
         self.core_api = client.CoreV1Api()
         self._exec_pod_cache: Dict[str, Optional[str]] = {}
+        self._cache_lock = threading.Lock()
 
     @staticmethod
     def _nano_time_cmd() -> str:
@@ -295,8 +296,9 @@ class ThroughputProber:
         known to have a shell. Results are cached to avoid repeated
         exec checks.
         """
-        if target_service in self._exec_pod_cache:
-            return self._exec_pod_cache[target_service]
+        with self._cache_lock:
+            if target_service in self._exec_pod_cache:
+                return self._exec_pod_cache[target_service]
 
         candidates = [target_service, "redis-cart", "loadgenerator",
                        "currencyservice", "emailservice"]
@@ -305,9 +307,11 @@ class ThroughputProber:
             if pod:
                 resp = self._exec_in_pod(pod, ["sh", "-c", "echo ok"])
                 if not resp.startswith("ERROR:") and "ok" in resp:
-                    self._exec_pod_cache[target_service] = pod
+                    with self._cache_lock:
+                        self._exec_pod_cache[target_service] = pod
                     return pod
-        self._exec_pod_cache[target_service] = None
+        with self._cache_lock:
+            self._exec_pod_cache[target_service] = None
         return None
 
     def _exec_in_pod(self, pod_name: str, command: List[str]) -> str:
