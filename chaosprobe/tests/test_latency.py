@@ -1,6 +1,7 @@
 """Tests for the inter-service latency measurement module."""
 
 import statistics
+import threading
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -204,6 +205,7 @@ class TestContinuousLatencyProber:
     def test_current_phase_transitions(self):
         import time
         prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
+        prober._lock = threading.Lock()
         prober._chaos_start_time = None
         prober._chaos_end_time = None
 

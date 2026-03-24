@@ -552,11 +552,13 @@ class ContinuousLatencyProber:
 
     def mark_chaos_start(self) -> None:
         """Mark the start of the chaos injection phase."""
-        self._chaos_start_time = time.time()
+        with self._lock:
+            self._chaos_start_time = time.time()
 
     def mark_chaos_end(self) -> None:
         """Mark the end of the chaos injection phase."""
-        self._chaos_end_time = time.time()
+        with self._lock:
+            self._chaos_end_time = time.time()
 
     def stop(self) -> None:
         """Stop the probing thread."""
@@ -620,9 +622,12 @@ class ContinuousLatencyProber:
 
     def _current_phase(self, now: float) -> str:
         """Determine the current experiment phase."""
-        if self._chaos_start_time is None:
+        with self._lock:
+            chaos_start = self._chaos_start_time
+            chaos_end = self._chaos_end_time
+        if chaos_start is None:
             return "pre-chaos"
-        if self._chaos_end_time is None:
+        if chaos_end is None:
             return "during-chaos"
         return "post-chaos"
 

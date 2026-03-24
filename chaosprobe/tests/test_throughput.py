@@ -194,6 +194,7 @@ class TestContinuousThroughputProber:
     def test_current_phase_transitions(self):
         import time
         prober = ContinuousThroughputProber.__new__(ContinuousThroughputProber)
+        prober._lock = threading.Lock()
         prober._chaos_start_time = None
         prober._chaos_end_time = None
 

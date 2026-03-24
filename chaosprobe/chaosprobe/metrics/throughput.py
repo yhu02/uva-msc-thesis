@@ -531,10 +531,12 @@ class ContinuousThroughputProber:
         self._thread.start()
 
     def mark_chaos_start(self) -> None:
-        self._chaos_start_time = time.time()
+        with self._lock:
+            self._chaos_start_time = time.time()
 
     def mark_chaos_end(self) -> None:
-        self._chaos_end_time = time.time()
+        with self._lock:
+            self._chaos_end_time = time.time()
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -622,9 +624,12 @@ class ContinuousThroughputProber:
             self._stop_event.wait(timeout=self.interval)
 
     def _current_phase(self, now: float) -> str:
-        if self._chaos_start_time is None:
+        with self._lock:
+            chaos_start = self._chaos_start_time
+            chaos_end = self._chaos_end_time
+        if chaos_start is None:
             return "pre-chaos"
-        if self._chaos_end_time is None:
+        if chaos_end is None:
             return "during-chaos"
         return "post-chaos"
 
