@@ -216,11 +216,6 @@ def _chart_resilience_scores(
 
     # Add value labels on bars
     for bar, score in zip(bars, scores):
-        n_runs = None
-        for name in names:
-            if strategies[name].get("avgResilienceScore", 0) == score:
-                n_runs = strategies[name].get("runCount")
-                break
         label = f"{score:.1f}"
         ax.text(
             bar.get_x() + bar.get_width() / 2,
