@@ -5,12 +5,15 @@ deployment.  The watcher records deletion and ready timestamps as they happen,
 guaranteeing capture regardless of Kubernetes event-store retention.
 """
 
+import logging
 import statistics
 import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from kubernetes import client, config, watch
+
+logger = logging.getLogger(__name__)
 
 
 class RecoveryWatcher:
@@ -50,6 +53,8 @@ class RecoveryWatcher:
         self._cycles: List[Dict[str, Any]] = []
         # Raw events for the timeline
         self._events: List[Dict[str, Any]] = []
+        # Watch errors surfaced through result()
+        self._watch_errors: List[str] = []
 
     # ── Lifecycle ────────────────────────────────────────────
 
@@ -84,14 +89,18 @@ class RecoveryWatcher:
         with self._lock:
             cycles = list(self._cycles)
             events = list(self._events)
+            errors = list(self._watch_errors)
 
         summary = self._compute_summary(cycles)
-        return {
+        data: Dict[str, Any] = {
             "deploymentName": self.deployment_name,
             "recoveryEvents": cycles,
             "summary": summary,
             "rawEvents": events,
         }
+        if errors:
+            data["watchErrors"] = errors
+        return data
 
     # ── Watch loop ───────────────────────────────────────────
 
@@ -103,62 +112,83 @@ class RecoveryWatcher:
             )
             for pod in pods.items:
                 self._pod_ready[pod.metadata.name] = self._is_pod_ready(pod)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to snapshot pods: %s", exc)
 
     def _watch_loop(self) -> None:
-        """Main watch loop running in background thread."""
-        w = watch.Watch()
-        try:
-            for event in w.stream(
-                self.core_api.list_namespaced_pod,
-                namespace=self.namespace,
-                label_selector=self._label_selector,
-                timeout_seconds=0,  # server-side: no timeout
-            ):
-                if self._stop_event.is_set():
-                    break
+        """Main watch loop running in background thread.
 
-                event_type = event["type"]  # ADDED, MODIFIED, DELETED
-                pod = event["object"]
-                pod_name = pod.metadata.name
-                pod_phase = pod.status.phase
-                now = datetime.now(timezone.utc)
+        Retries on transient errors (API disconnects, network blips) which
+        are common during chaos experiments.
+        """
+        max_retries = 5
+        retry_delay = 1.0
 
+        for attempt in range(max_retries):
+            if self._stop_event.is_set():
+                return
+
+            w = watch.Watch()
+            try:
+                for event in w.stream(
+                    self.core_api.list_namespaced_pod,
+                    namespace=self.namespace,
+                    label_selector=self._label_selector,
+                    timeout_seconds=0,  # server-side: no timeout
+                ):
+                    if self._stop_event.is_set():
+                        return
+
+                    event_type = event["type"]  # ADDED, MODIFIED, DELETED
+                    pod = event["object"]
+                    pod_name = pod.metadata.name
+                    pod_phase = pod.status.phase
+                    now = datetime.now(timezone.utc)
+
+                    with self._lock:
+                        self._events.append({
+                            "time": now.isoformat(),
+                            "type": event_type,
+                            "pod": pod_name,
+                            "phase": pod_phase,
+                        })
+
+                        if event_type == "DELETED":
+                            self._pod_ready.pop(pod_name, None)
+                            # Pod deleted — start or extend a recovery cycle
+                            if self._pending_deletion is None:
+                                self._pending_deletion = now
+
+                        elif event_type in ("ADDED", "MODIFIED"):
+                            was_ready = self._pod_ready.get(pod_name, False)
+                            is_ready = (
+                                pod_phase == "Running" and self._is_pod_ready(pod)
+                            )
+                            self._pod_ready[pod_name] = is_ready
+
+                            # Trigger on not-ready → ready transition
+                            if is_ready and not was_ready and self._pending_deletion is not None:
+                                scheduled_time = self._get_scheduled_time(pod)
+                                self._cycles.append(self._finalize_cycle({
+                                    "deletionTime": self._pending_deletion,
+                                    "scheduledTime": scheduled_time,
+                                    "readyTime": now,
+                                }))
+                                self._pending_deletion = None
+            except Exception as exc:
+                logger.warning(
+                    "Watch stream interrupted (attempt %d/%d): %s",
+                    attempt + 1, max_retries, exc,
+                )
                 with self._lock:
-                    self._events.append({
-                        "time": now.isoformat(),
-                        "type": event_type,
-                        "pod": pod_name,
-                        "phase": pod_phase,
-                    })
-
-                    if event_type == "DELETED":
-                        self._pod_ready.pop(pod_name, None)
-                        # Pod deleted — start or extend a recovery cycle
-                        if self._pending_deletion is None:
-                            self._pending_deletion = now
-
-                    elif event_type in ("ADDED", "MODIFIED"):
-                        was_ready = self._pod_ready.get(pod_name, False)
-                        is_ready = (
-                            pod_phase == "Running" and self._is_pod_ready(pod)
-                        )
-                        self._pod_ready[pod_name] = is_ready
-
-                        # Trigger on not-ready → ready transition
-                        if is_ready and not was_ready and self._pending_deletion is not None:
-                            scheduled_time = self._get_scheduled_time(pod)
-                            self._cycles.append(self._finalize_cycle({
-                                "deletionTime": self._pending_deletion,
-                                "scheduledTime": scheduled_time,
-                                "readyTime": now,
-                            }))
-                            self._pending_deletion = None
-        except Exception:
-            pass
-        finally:
-            w.stop()
+                    self._watch_errors.append(
+                        f"attempt {attempt + 1}: {exc}"
+                    )
+                if attempt < max_retries - 1 and not self._stop_event.is_set():
+                    self._stop_event.wait(timeout=retry_delay)
+                    retry_delay = min(retry_delay * 2, 10.0)
+            finally:
+                w.stop()
 
     # ── Helpers ──────────────────────────────────────────────
 
