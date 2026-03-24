@@ -118,24 +118,47 @@ class TestChartGeneration:
 class TestGenerateFromSummary:
     def test_generate_from_summary_file(self, tmp_path):
         summary = {
-            "comparison": [
-                {
+            "iterations": 1,
+            "strategies": {
+                "baseline": {
                     "strategy": "baseline",
-                    "verdict": "PASS",
-                    "resilienceScore": 90.0,
-                    "avgRecovery_ms": 1500.0,
-                    "maxRecovery_ms": 2500.0,
                     "status": "completed",
+                    "experiment": {
+                        "resilienceScore": 90.0,
+                        "overallVerdict": "PASS",
+                        "passed": 1,
+                        "failed": 0,
+                        "totalExperiments": 1,
+                    },
+                    "metrics": {
+                        "recovery": {
+                            "summary": {
+                                "meanRecovery_ms": 1500.0,
+                                "p95Recovery_ms": 2500.0,
+                            }
+                        }
+                    },
                 },
-                {
+                "colocate": {
                     "strategy": "colocate",
-                    "verdict": "FAIL",
-                    "resilienceScore": 60.0,
-                    "avgRecovery_ms": 3000.0,
-                    "maxRecovery_ms": 5000.0,
                     "status": "completed",
+                    "experiment": {
+                        "resilienceScore": 60.0,
+                        "overallVerdict": "FAIL",
+                        "passed": 0,
+                        "failed": 1,
+                        "totalExperiments": 1,
+                    },
+                    "metrics": {
+                        "recovery": {
+                            "summary": {
+                                "meanRecovery_ms": 3000.0,
+                                "p95Recovery_ms": 5000.0,
+                            }
+                        }
+                    },
                 },
-            ]
+            },
         }
 
         summary_file = tmp_path / "summary.json"
@@ -148,7 +171,7 @@ class TestGenerateFromSummary:
         assert any(p.endswith(".png") for p in generated)
 
     def test_generate_from_empty_summary(self, tmp_path):
-        summary = {"comparison": []}
+        summary = {"strategies": {}}
         summary_file = tmp_path / "summary.json"
         summary_file.write_text(json.dumps(summary))
 
