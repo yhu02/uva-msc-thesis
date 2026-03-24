@@ -265,7 +265,7 @@ def _chart_recovery_times(
     )
     bars2 = ax.bar(
         [i + width / 2 for i in x], p95_times, width,
-        label="Max Recovery", color="#FF9800", edgecolor="black", linewidth=0.5, alpha=0.7,
+        label="P95 Recovery", color="#FF9800", edgecolor="black", linewidth=0.5, alpha=0.7,
     )
 
     # Overlay per-iteration recovery data points
@@ -428,8 +428,8 @@ def _generate_html_summary(
         avg_rec_str = f"{avg_rec:.1f}" if avg_rec is not None else "n/a"
         median_rec = data.get('medianRecovery_ms')
         median_str = f"{median_rec:.1f}" if median_rec is not None else "n/a"
-        max_rec = data.get('avgP95Recovery_ms')
-        max_str = f"{max_rec:.1f}" if max_rec is not None else "n/a"
+        p95_rec = data.get('avgP95Recovery_ms')
+        p95_str = f"{p95_rec:.1f}" if p95_rec is not None else "n/a"
         run_count = data.get('runCount', iterations)
         rows += f"""
         <tr>
@@ -439,7 +439,7 @@ def _generate_html_summary(
             <td>{data.get('passRate', 0):.0%}</td>
             <td>{avg_rec_str}</td>
             <td>{median_str}</td>
-            <td>{max_str}</td>
+            <td>{p95_str}</td>
         </tr>"""
 
     # Build latency summary table if data is available
@@ -597,7 +597,7 @@ def _generate_html_summary(
             <th>Pass Rate</th>
             <th>Mean Recovery (ms)</th>
             <th>Median Recovery (ms)</th>
-            <th>Max Recovery (ms)</th>
+            <th>P95 Recovery (ms)</th>
         </tr>
         {rows}
     </table>
