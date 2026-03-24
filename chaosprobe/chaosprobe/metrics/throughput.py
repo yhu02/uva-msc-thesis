@@ -8,6 +8,7 @@ Runs benchmark commands inside pods via kubectl exec and collects
 operations-per-second and latency statistics.
 """
 
+import logging
 import statistics
 import threading
 import time
@@ -19,6 +20,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -517,6 +520,7 @@ class ContinuousThroughputProber:
         self._start_time: Optional[float] = None
         self._chaos_start_time: Optional[float] = None
         self._chaos_end_time: Optional[float] = None
+        self._probe_errors: int = 0
 
     def start(self) -> None:
         """Start continuous throughput probing in background."""
@@ -543,7 +547,7 @@ class ContinuousThroughputProber:
             series = list(self._time_series)
 
         phases = self._split_phases(series)
-        return {
+        data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
             "config": {
@@ -553,6 +557,9 @@ class ContinuousThroughputProber:
                 "diskTarget": self._disk_target,
             },
         }
+        if self._probe_errors > 0:
+            data["probeErrors"] = self._probe_errors
+        return data
 
     def _probe_loop(self) -> None:
         """Main probe loop."""
@@ -607,8 +614,10 @@ class ContinuousThroughputProber:
                 with self._lock:
                     self._time_series.append(entry)
 
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Throughput probe failed: %s", exc)
+                with self._lock:
+                    self._probe_errors += 1
 
             self._stop_event.wait(timeout=self.interval)
 

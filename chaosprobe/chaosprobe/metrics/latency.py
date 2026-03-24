@@ -9,6 +9,7 @@ The prober runs a configurable number of samples for each service pair and
 computes statistics (mean, median, p95, p99, min, max).
 """
 
+import logging
 import statistics
 import threading
 import time
@@ -18,6 +19,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from kubernetes import client, config
+
+logger = logging.getLogger(__name__)
 from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
@@ -537,6 +540,7 @@ class ContinuousLatencyProber:
         self._start_time: Optional[float] = None
         self._chaos_start_time: Optional[float] = None
         self._chaos_end_time: Optional[float] = None
+        self._probe_errors: int = 0
 
     def start(self) -> None:
         """Start continuous latency probing in background."""
@@ -566,7 +570,7 @@ class ContinuousLatencyProber:
             series = list(self._time_series)
 
         phases = self._split_phases(series)
-        return {
+        data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
             "config": {
@@ -574,6 +578,9 @@ class ContinuousLatencyProber:
                 "namespace": self.namespace,
             },
         }
+        if self._probe_errors > 0:
+            data["probeErrors"] = self._probe_errors
+        return data
 
     def _probe_loop(self) -> None:
         """Main probe loop running in the background."""
@@ -604,8 +611,10 @@ class ContinuousLatencyProber:
                 with self._lock:
                     self._time_series.append(entry)
 
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Latency probe failed: %s", exc)
+                with self._lock:
+                    self._probe_errors += 1
 
             self._stop_event.wait(timeout=self.interval)
 
