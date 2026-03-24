@@ -1006,12 +1006,16 @@ def run(
 
     # Stop Locust and collect stats
     if locust_runner:
-        locust_runner.stop()
-        load_stats = locust_runner.collect_stats()
-        locust_runner.cleanup()
-        click.echo(f"  Load stats: {load_stats.total_requests} requests, "
-                    f"p95={load_stats.p95_response_time_ms:.0f}ms, "
-                    f"error_rate={load_stats.error_rate:.2%}")
+        try:
+            locust_runner.stop()
+            load_stats = locust_runner.collect_stats()
+            click.echo(f"  Load stats: {load_stats.total_requests} requests, "
+                        f"p95={load_stats.p95_response_time_ms:.0f}ms, "
+                        f"error_rate={load_stats.error_rate:.2%}")
+        except Exception as e:
+            click.echo(f"  Warning: failed to collect load stats: {e}", err=True)
+        finally:
+            locust_runner.cleanup()
 
     # Phase 3: Collect results
     click.echo("\n[3/4] Collecting results...")
@@ -1776,28 +1780,39 @@ def run_all(
                         click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
                         time.sleep(post_chaos_window)
                 finally:
-                    # Always stop Locust, latency prober, and watcher even if experiment fails
+                    # Always stop Locust, latency prober, and watcher even if experiment fails.
+                    # Each block is independent so one failure doesn't skip the rest.
                     if iter_locust_runner:
-                        iter_locust_runner.stop()
-                        iter_load_stats = iter_locust_runner.collect_stats()
-                        iter_locust_runner.cleanup()
-                        click.echo(f"    Load: {iter_load_stats.total_requests} reqs, "
-                                   f"p95={iter_load_stats.p95_response_time_ms:.0f}ms, "
-                                   f"err={iter_load_stats.error_rate:.2%}")
+                        try:
+                            iter_locust_runner.stop()
+                            iter_load_stats = iter_locust_runner.collect_stats()
+                            click.echo(f"    Load: {iter_load_stats.total_requests} reqs, "
+                                       f"p95={iter_load_stats.p95_response_time_ms:.0f}ms, "
+                                       f"err={iter_load_stats.error_rate:.2%}")
+                        except Exception as e:
+                            click.echo(f"    Warning: failed to collect load stats: {e}", err=True)
+                        finally:
+                            iter_locust_runner.cleanup()
                     if latency_prober:
-                        latency_prober.stop()
-                        latency_data = latency_prober.result()
-                        phase_data = latency_data.get("phases", {})
-                        during = phase_data.get("during-chaos", {})
-                        n_samples = during.get("sampleCount", 0)
-                        click.echo(f"    Latency: {n_samples} samples during chaos")
+                        try:
+                            latency_prober.stop()
+                            latency_data = latency_prober.result()
+                            phase_data = latency_data.get("phases", {})
+                            during = phase_data.get("during-chaos", {})
+                            n_samples = during.get("sampleCount", 0)
+                            click.echo(f"    Latency: {n_samples} samples during chaos")
+                        except Exception as e:
+                            click.echo(f"    Warning: failed to collect latency data: {e}", err=True)
                     if throughput_prober:
-                        throughput_prober.stop()
-                        throughput_data = throughput_prober.result()
-                        tp_phases = throughput_data.get("phases", {})
-                        tp_during = tp_phases.get("during-chaos", {})
-                        tp_samples = tp_during.get("sampleCount", 0)
-                        click.echo(f"    Throughput: {tp_samples} samples during chaos")
+                        try:
+                            throughput_prober.stop()
+                            throughput_data = throughput_prober.result()
+                            tp_phases = throughput_data.get("phases", {})
+                            tp_during = tp_phases.get("during-chaos", {})
+                            tp_samples = tp_during.get("sampleCount", 0)
+                            click.echo(f"    Throughput: {tp_samples} samples during chaos")
+                        except Exception as e:
+                            click.echo(f"    Warning: failed to collect throughput data: {e}", err=True)
                     watcher.stop()
 
                 recovery_data = watcher.result()
