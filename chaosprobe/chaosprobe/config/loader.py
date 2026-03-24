@@ -8,7 +8,7 @@ Files are auto-classified by their ``kind`` field.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -129,7 +129,7 @@ def _detect_namespace(experiments: List[Dict]) -> str:
     return "default"
 
 
-def _load_cluster_config(scenario_dir: Path) -> Dict[str, Any] | None:
+def _load_cluster_config(scenario_dir: Path) -> Optional[Dict[str, Any]]:
     """Load cluster configuration from cluster.yaml in the scenario directory.
 
     Returns:
