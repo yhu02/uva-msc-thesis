@@ -40,6 +40,8 @@ class MetricsCollector:
         since_time: float,
         until_time: float,
         recovery_data: Optional[Dict[str, Any]] = None,
+        latency_data: Optional[Dict[str, Any]] = None,
+        throughput_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Collect all available metrics for a deployment during an experiment.
 
@@ -49,6 +51,12 @@ class MetricsCollector:
             until_time: Unix timestamp for experiment end.
             recovery_data: Pre-collected recovery data from RecoveryWatcher.
                            If None, the recovery section will be empty.
+            latency_data: Pre-collected inter-service latency data from
+                          ContinuousLatencyProber. If None, the latency
+                          section will be omitted.
+            throughput_data: Pre-collected throughput data from
+                             ContinuousThroughputProber. If None, the
+                             throughput section will be omitted.
 
         Returns:
             Unified metrics dictionary with all collected data.
@@ -75,7 +83,7 @@ class MetricsCollector:
         # Extract raw events from watcher for the timeline
         event_timeline = recovery_data.pop("rawEvents", [])
 
-        return {
+        result = {
             "deploymentName": deployment_name,
             "timeWindow": {
                 "start": datetime.fromtimestamp(since_time, tz=timezone.utc).isoformat(),
@@ -87,6 +95,14 @@ class MetricsCollector:
             "eventTimeline": event_timeline,
             "nodeInfo": node_info,
         }
+
+        if latency_data is not None:
+            result["latency"] = latency_data
+
+        if throughput_data is not None:
+            result["throughput"] = throughput_data
+
+        return result
 
     def _collect_pod_status(self, deployment_name: str) -> Dict[str, Any]:
         """Collect current pod status and restart counts."""

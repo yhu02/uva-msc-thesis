@@ -25,6 +25,17 @@ from chaosprobe.placement.strategy import PlacementStrategy
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.metrics.recovery import RecoveryWatcher
+from chaosprobe.metrics.latency import LatencyProber, ContinuousLatencyProber
+from chaosprobe.metrics.throughput import ThroughputProber, ContinuousThroughputProber
+from chaosprobe.loadgen.runner import LocustRunner, LoadProfile, LoadStats
+
+
+def _get_store(db_path: Optional[str] = None):
+    """Lazily get a SQLiteStore instance if db_path is given."""
+    if db_path is None:
+        return None
+    from chaosprobe.storage.sqlite import SQLiteStore
+    return SQLiteStore(db_path=db_path)
 
 
 def ensure_litmus_setup(
@@ -175,8 +186,9 @@ def init(namespace: str, skip_litmus: bool):
     if not is_valid:
         click.echo(f"  Error: {message}", err=True)
         click.echo("\nNo cluster configured. Options:")
-        click.echo("  1. Use 'chaosprobe cluster create' to deploy with Kubespray")
-        click.echo("  2. Configure kubectl to connect to an existing cluster")
+        click.echo("  1. Use 'chaosprobe cluster vagrant up' to start a local libvirt/Vagrant cluster")
+        click.echo("  2. Use 'chaosprobe cluster create' to deploy with Kubespray")
+        click.echo("  3. Configure kubectl to connect to an existing cluster")
         sys.exit(1)
     click.echo(f"  {message}")
 
@@ -882,12 +894,38 @@ def vagrant_ssh(vm_name: Optional[str], name: str, vagrant_dir: Optional[str]):
     is_flag=True,
     help="Disable automatic LitmusChaos installation",
 )
+@click.option(
+    "--load-profile",
+    type=click.Choice(["steady", "ramp", "spike"]),
+    default=None,
+    help="Run Locust load generation during experiment (steady/ramp/spike)",
+)
+@click.option(
+    "--locustfile",
+    type=click.Path(exists=True),
+    default=None,
+    help="Custom Locust file for load generation",
+)
+@click.option(
+    "--target-url",
+    default=None,
+    help="Target URL for load generation (e.g. http://frontend.ns.svc.cluster.local)",
+)
+@click.option(
+    "--db",
+    default=None,
+    help="Path to SQLite database for persisting results",
+)
 def run(
     scenario_path: str,
     output: Optional[str],
     namespace: Optional[str],
     timeout: int,
     no_auto_setup: bool,
+    load_profile: Optional[str],
+    locustfile: Optional[str],
+    target_url: Optional[str],
+    db: Optional[str],
 ):
     """Run a chaos scenario and generate AI-consumable output.
 
@@ -947,6 +985,17 @@ def run(
 
     # Phase 2: Run chaos experiments
     click.echo("\n[2/4] Running chaos experiments...")
+
+    # Start Locust load generation if requested
+    locust_runner = None
+    load_stats = None
+    if load_profile:
+        profile = LoadProfile.from_name(load_profile)
+        url = target_url or f"http://frontend.{target_namespace}.svc.cluster.local"
+        click.echo(f"  Starting Locust load generation ({load_profile}: {profile.users} users)")
+        locust_runner = LocustRunner(target_url=url, locustfile=locustfile)
+        locust_runner.start(profile)
+
     runner = ChaosRunner(target_namespace, timeout=timeout)
     try:
         runner.run_experiments(scenario.get("experiments", []))
@@ -954,6 +1003,15 @@ def run(
     except Exception as e:
         click.echo(f"  Error running experiments: {e}", err=True)
         # Continue to collect results even if experiments fail
+
+    # Stop Locust and collect stats
+    if locust_runner:
+        locust_runner.stop()
+        load_stats = locust_runner.collect_stats()
+        locust_runner.cleanup()
+        click.echo(f"  Load stats: {load_stats.total_requests} requests, "
+                    f"p95={load_stats.p95_response_time_ms:.0f}ms, "
+                    f"error_rate={load_stats.error_rate:.2%}")
 
     # Phase 3: Collect results
     click.echo("\n[3/4] Collecting results...")
@@ -968,8 +1026,28 @@ def run(
 
     # Phase 4: Generate AI output
     click.echo("\n[4/4] Generating AI output...")
-    generator = OutputGenerator(scenario, results)
-    output_data = generator.generate()
+    store = _get_store(db)
+    try:
+        generator = OutputGenerator(scenario, results, store=store)
+        output_data = generator.generate()
+
+        # Merge load stats into output
+        if load_stats:
+            output_data["loadGeneration"] = {
+                "profile": load_profile,
+                "stats": load_stats.to_dict(),
+            }
+            # Re-save with load stats included
+            if store:
+                try:
+                    store.save_run(output_data)
+                except Exception:
+                    pass
+    finally:
+        if store:
+            store.close()
+        if locust_runner:
+            locust_runner.cleanup()
 
     if output:
         output_path = Path(output)
@@ -1407,6 +1485,46 @@ def placement_nodes():
     "--iterations", "-i", default=1, type=int,
     help="Number of iterations per strategy (default: 1)",
 )
+@click.option(
+    "--provision", is_flag=True,
+    help="Provision a fresh cluster from scenario cluster config before running",
+)
+@click.option(
+    "--load-profile",
+    type=click.Choice(["steady", "ramp", "spike"]),
+    default=None,
+    help="Run Locust load generation during each experiment",
+)
+@click.option(
+    "--locustfile",
+    type=click.Path(exists=True),
+    default=None,
+    help="Custom Locust file for load generation",
+)
+@click.option(
+    "--target-url",
+    default=None,
+    help="Target URL for load generation (e.g. http://frontend.ns.svc.cluster.local)",
+)
+@click.option(
+    "--db",
+    default=None,
+    help="Path to SQLite database for persisting results",
+)
+@click.option(
+    "--visualize", "do_visualize", is_flag=True,
+    help="Generate visualization charts after experiments complete",
+)
+@click.option(
+    "--measure-latency/--no-measure-latency", "measure_latency",
+    default=True, show_default=True,
+    help="Measure inter-service latency during each experiment",
+)
+@click.option(
+    "--measure-throughput/--no-measure-throughput", "measure_throughput",
+    default=True, show_default=True,
+    help="Measure Redis and disk I/O throughput during each experiment",
+)
 def run_all(
     namespace: str,
     output_dir: Optional[str],
@@ -1417,6 +1535,14 @@ def run_all(
     no_auto_setup: bool,
     experiment: str,
     iterations: int,
+    provision: bool,
+    load_profile: Optional[str],
+    locustfile: Optional[str],
+    target_url: Optional[str],
+    db: Optional[str],
+    do_visualize: bool,
+    measure_latency: bool,
+    measure_throughput: bool,
 ):
     """Run all placement experiments automatically.
 
@@ -1461,6 +1587,25 @@ def run_all(
         click.echo(f"Error loading experiment: {e}", err=True)
         sys.exit(1)
 
+    # Optionally provision cluster from scenario's cluster config
+    if provision:
+        cluster_config = shared_scenario.get("cluster")
+        if cluster_config:
+            click.echo("\nProvisioning cluster from scenario config...")
+            setup = LitmusSetup(skip_k8s_init=True)
+            try:
+                vagrant_dir = setup.provision_from_cluster_config(cluster_config)
+                click.echo(f"  Cluster provisioned at {vagrant_dir}")
+                click.echo("  Deploying Kubernetes on Vagrant VMs...")
+                setup.vagrant_deploy_cluster(vagrant_dir)
+                setup.vagrant_fetch_kubeconfig(vagrant_dir)
+                click.echo("  Cluster ready.")
+            except Exception as e:
+                click.echo(f"Error provisioning cluster: {e}", err=True)
+                sys.exit(1)
+        else:
+            click.echo("Warning: --provision specified but no cluster config in scenario", err=True)
+
     # Ensure LitmusChaos is ready once (all placement experiments use the same types)
     experiment_types = _extract_experiment_types(shared_scenario)
     if not ensure_litmus_setup(namespace, experiment_types, auto_setup=not no_auto_setup):
@@ -1481,6 +1626,10 @@ def run_all(
     click.echo(f"  Output:     {results_dir}")
     click.echo(f"  Timeout:    {timeout}s per experiment")
     click.echo(f"  Settle:     {settle_time}s between placement and experiment")
+    if measure_latency:
+        click.echo(f"  Latency:    Measuring inter-service latency during experiments")
+    if measure_throughput:
+        click.echo(f"  Throughput: Measuring Redis and disk I/O throughput")
     click.echo("")
 
     # Extract target deployment from experiment spec for recovery metrics
@@ -1497,6 +1646,7 @@ def run_all(
     total = len(strategy_list)
     passed = 0
     failed = 0
+    run_store = _get_store(db)
 
     for idx, strategy_name in enumerate(strategy_list, 1):
         click.echo(f"\n{'─' * 60}")
@@ -1572,13 +1722,84 @@ def run_all(
                 watcher = RecoveryWatcher(namespace, target_deployment)
                 watcher.start()
 
-                experiment_start = time.time()
-                runner = ChaosRunner(namespace, timeout=timeout)
-                runner.run_experiments(scenario.get("experiments", []))
-                experiment_end = time.time()
+                # Start continuous latency prober if requested
+                latency_prober = None
+                latency_data = None
+                if measure_latency:
+                    click.echo("    Starting inter-service latency probing...")
+                    latency_prober = ContinuousLatencyProber(namespace)
+                    latency_prober.start()
 
-                # Stop watcher and collect its data
-                watcher.stop()
+                # Start continuous throughput prober if requested
+                throughput_prober = None
+                throughput_data = None
+                if measure_throughput:
+                    click.echo("    Starting throughput probing (Redis + disk)...")
+                    throughput_prober = ContinuousThroughputProber(
+                        namespace, disk_target=target_deployment,
+                    )
+                    throughput_prober.start()
+
+                # Start Locust load generation if requested
+                iter_locust_runner = None
+                iter_load_stats = None
+                if load_profile:
+                    profile = LoadProfile.from_name(load_profile)
+                    url = target_url or f"http://frontend.{namespace}.svc.cluster.local"
+                    click.echo(f"    Starting Locust ({load_profile}: {profile.users} users)")
+                    iter_locust_runner = LocustRunner(target_url=url, locustfile=locustfile)
+                    iter_locust_runner.start(profile)
+
+                try:
+                    # Collect pre-chaos baseline samples
+                    pre_chaos_window = min(settle_time, 15)
+                    if (latency_prober or throughput_prober) and pre_chaos_window > 0:
+                        click.echo(f"    Collecting pre-chaos baseline ({pre_chaos_window}s)...")
+                        time.sleep(pre_chaos_window)
+
+                    experiment_start = time.time()
+                    if latency_prober:
+                        latency_prober.mark_chaos_start()
+                    if throughput_prober:
+                        throughput_prober.mark_chaos_start()
+                    runner = ChaosRunner(namespace, timeout=timeout)
+                    runner.run_experiments(scenario.get("experiments", []))
+                    experiment_end = time.time()
+                    if latency_prober:
+                        latency_prober.mark_chaos_end()
+                    if throughput_prober:
+                        throughput_prober.mark_chaos_end()
+
+                    # Collect post-chaos recovery samples
+                    post_chaos_window = min(settle_time, 15)
+                    if (latency_prober or throughput_prober) and post_chaos_window > 0:
+                        click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
+                        time.sleep(post_chaos_window)
+                finally:
+                    # Always stop Locust, latency prober, and watcher even if experiment fails
+                    if iter_locust_runner:
+                        iter_locust_runner.stop()
+                        iter_load_stats = iter_locust_runner.collect_stats()
+                        iter_locust_runner.cleanup()
+                        click.echo(f"    Load: {iter_load_stats.total_requests} reqs, "
+                                   f"p95={iter_load_stats.p95_response_time_ms:.0f}ms, "
+                                   f"err={iter_load_stats.error_rate:.2%}")
+                    if latency_prober:
+                        latency_prober.stop()
+                        latency_data = latency_prober.result()
+                        phase_data = latency_data.get("phases", {})
+                        during = phase_data.get("during-chaos", {})
+                        n_samples = during.get("sampleCount", 0)
+                        click.echo(f"    Latency: {n_samples} samples during chaos")
+                    if throughput_prober:
+                        throughput_prober.stop()
+                        throughput_data = throughput_prober.result()
+                        tp_phases = throughput_data.get("phases", {})
+                        tp_during = tp_phases.get("during-chaos", {})
+                        tp_samples = tp_during.get("sampleCount", 0)
+                        click.echo(f"    Throughput: {tp_samples} samples during chaos")
+                    watcher.stop()
+
                 recovery_data = watcher.result()
 
                 # Collect results
@@ -1592,11 +1813,20 @@ def run_all(
                     since_time=experiment_start,
                     until_time=experiment_end,
                     recovery_data=recovery_data,
+                    latency_data=latency_data,
+                    throughput_data=throughput_data,
                 )
 
                 # Generate output
-                generator = OutputGenerator(scenario, results, metrics=recovery)
+                generator = OutputGenerator(scenario, results, metrics=recovery, store=run_store)
                 output_data = generator.generate()
+
+                # Merge load stats into output
+                if iter_load_stats:
+                    output_data["loadGeneration"] = {
+                        "profile": load_profile,
+                        "stats": iter_load_stats.to_dict(),
+                    }
 
                 # Save result file
                 if iterations > 1:
@@ -1721,6 +1951,29 @@ def run_all(
     click.echo(f"\n  Results directory: {results_dir}")
     click.echo(f"  Summary:          {summary_file}")
     click.echo(f"\n  Total: {total} | Passed: {passed} | Failed: {failed}")
+
+    # ── Generate visualizations if requested ──
+    if do_visualize:
+        click.echo(f"\n{'─' * 60}")
+        click.echo("Generating visualizations...")
+        try:
+            from chaosprobe.output.visualize import generate_from_summary
+            charts_dir = str(results_dir / "charts")
+            generated = generate_from_summary(str(summary_file), charts_dir)
+            if generated:
+                click.echo(f"  Generated {len(generated)} file(s) in {charts_dir}")
+                html_files = [p for p in generated if p.endswith(".html")]
+                if html_files:
+                    click.echo(f"  Report: {html_files[0]}")
+            else:
+                click.echo("  No data available to visualize.")
+        except ImportError as e:
+            click.echo(f"  Skipping visualization: {e}", err=True)
+
+    # Close shared database connection
+    if run_store:
+        run_store.close()
+
     click.echo("")
 
 
@@ -1818,6 +2071,196 @@ def _build_comparison_table(
         table.append(row)
 
     return table
+
+
+# ─────────────────────────────────────────────────────────────
+# Database query commands
+# ─────────────────────────────────────────────────────────────
+
+
+@main.group()
+def query():
+    """Query stored experiment results from the database."""
+    pass
+
+
+@query.command("runs")
+@click.option("--scenario", "-s", default=None, help="Filter by scenario path")
+@click.option("--strategy", default=None, help="Filter by strategy name")
+@click.option("--limit", "-l", default=20, type=int, help="Max results to return")
+@click.option("--db", default=None, help="Path to database file")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+def query_runs(
+    scenario: Optional[str],
+    strategy: Optional[str],
+    limit: int,
+    db: Optional[str],
+    json_output: bool,
+):
+    """List experiment runs stored in the database."""
+    from chaosprobe.storage.sqlite import SQLiteStore
+
+    store = SQLiteStore(db_path=db)
+    runs = store.list_runs(scenario=scenario, strategy=strategy, limit=limit)
+    store.close()
+
+    if json_output:
+        click.echo(json.dumps(runs, indent=2))
+        return
+
+    if not runs:
+        click.echo("No runs found.")
+        return
+
+    click.echo(f"{'Run ID':<40s} {'Timestamp':<22s} {'Strategy':<14s} {'Verdict':<8s} {'Score'}")
+    click.echo("─" * 95)
+    for r in runs:
+        click.echo(
+            f"{r['id']:<40s} {r['timestamp'][:19]:<22s} "
+            f"{(r['strategy'] or 'n/a'):<14s} {r['overall_verdict']:<8s} "
+            f"{r['resilience_score']:.1f}"
+        )
+
+
+@query.command("compare")
+@click.option("--scenario", "-s", default=None, help="Filter by scenario path")
+@click.option("--db", default=None, help="Path to database file")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+def query_compare(
+    scenario: Optional[str],
+    db: Optional[str],
+    json_output: bool,
+):
+    """Compare strategies across stored runs."""
+    from chaosprobe.storage.sqlite import SQLiteStore
+
+    store = SQLiteStore(db_path=db)
+    comparison = store.compare_strategies(scenario=scenario)
+    store.close()
+
+    if json_output:
+        click.echo(json.dumps(comparison, indent=2))
+        return
+
+    strategies = comparison.get("strategies", {})
+    if not strategies:
+        click.echo("No data found.")
+        return
+
+    click.echo(f"\n{'Strategy':<16s} {'Runs':<6s} {'Pass%':<7s} {'Avg Score':<10s} "
+               f"{'Avg Rec.':<10s} {'P95 Rec.':<10s}")
+    click.echo("─" * 65)
+    for name, data in strategies.items():
+        avg_rec = f"{data['avgMeanRecovery_ms']:.0f}ms" if data.get("avgMeanRecovery_ms") else "n/a"
+        p95_rec = f"{data['avgP95Recovery_ms']:.0f}ms" if data.get("avgP95Recovery_ms") else "n/a"
+        click.echo(
+            f"{name:<16s} {data['runCount']:<6d} {data['passRate']:<7.0%} "
+            f"{data['avgResilienceScore']:<10.1f} {avg_rec:<10s} {p95_rec:<10s}"
+        )
+
+
+@query.command("export")
+@click.option("--output", "-o", required=True, type=click.Path(), help="Output CSV file path")
+@click.option("--db", default=None, help="Path to database file")
+def query_export(output: str, db: Optional[str]):
+    """Export all runs to CSV."""
+    from chaosprobe.storage.sqlite import SQLiteStore
+
+    store = SQLiteStore(db_path=db)
+    path = store.export_csv(output)
+    store.close()
+    click.echo(f"Exported to {path}")
+
+
+@query.command("show")
+@click.argument("run_id")
+@click.option("--db", default=None, help="Path to database file")
+def query_show(run_id: str, db: Optional[str]):
+    """Show full details of a specific run."""
+    from chaosprobe.storage.sqlite import SQLiteStore
+
+    store = SQLiteStore(db_path=db)
+    run = store.get_run(run_id)
+    store.close()
+
+    if not run:
+        click.echo(f"Run '{run_id}' not found.", err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(run, indent=2))
+
+
+# ─────────────────────────────────────────────────────────────
+# Visualization commands
+# ─────────────────────────────────────────────────────────────
+
+
+@main.command("visualize")
+@click.option(
+    "--db", default=None,
+    help="Path to SQLite database (uses default if not set)",
+)
+@click.option(
+    "--summary", "-s", type=click.Path(exists=True), default=None,
+    help="Path to a summary.json file (alternative to database)",
+)
+@click.option(
+    "--output-dir", "-o", default="charts",
+    help="Directory to save generated charts",
+)
+@click.option(
+    "--scenario", default=None,
+    help="Filter by scenario path (database mode only)",
+)
+def visualize(
+    db: Optional[str],
+    summary: Optional[str],
+    output_dir: str,
+    scenario: Optional[str],
+):
+    """Generate visualization charts from experiment results.
+
+    Can read from the SQLite database or directly from a summary.json file
+    produced by the run-all command.
+
+    \b
+    Examples:
+      chaosprobe visualize --db results.db -o charts/
+      chaosprobe visualize --summary results/20260227-140237/summary.json
+      chaosprobe visualize --db results.db --scenario online-boutique
+    """
+    from chaosprobe.output.visualize import generate_all_charts, generate_from_summary
+
+    if summary:
+        click.echo(f"Generating charts from {summary}...")
+        try:
+            generated = generate_from_summary(summary, output_dir)
+        except ImportError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+    elif db or True:  # Default to DB mode
+        click.echo(f"Generating charts from database...")
+        from chaosprobe.storage.sqlite import SQLiteStore
+        store = SQLiteStore(db_path=db)
+        try:
+            generated = generate_all_charts(store, output_dir, scenario=scenario)
+        except ImportError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        finally:
+            store.close()
+
+    if not generated:
+        click.echo("No data available to visualize.")
+        return
+
+    click.echo(f"\nGenerated {len(generated)} file(s):")
+    for path in generated:
+        click.echo(f"  {path}")
+
+    html_files = [p for p in generated if p.endswith(".html")]
+    if html_files:
+        click.echo(f"\nOpen the report: {html_files[0]}")
 
 
 if __name__ == "__main__":

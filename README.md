@@ -13,6 +13,7 @@ cd chaosprobe
 uv sync
 uv run chaosprobe init
 uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
+uv run chaosprobe run-all -n online-boutique --load-profile steady --db results.db --visualize
 ```
 
 ## Repository Structure

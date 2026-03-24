@@ -1,0 +1,92 @@
+# I/O → Saturation → Disk Write/Read Throughput
+# Target: productcatalogservice (Go, gRPC:3550, reads product catalog JSON)
+# Goal: Inject aggressive disk I/O stress on the product catalog pod to
+#        saturate the node's disk bandwidth. This measures how disk throughput
+#        degrades under each placement strategy and whether co-located
+#        services suffer from shared I/O bandwidth saturation.
+#
+# Hypothesis: Under colocate placement, all services share a single node's
+# disk bandwidth. I/O stress on productcatalog starves co-located services
+# of disk I/O, causing cascading degradation. Under spread, I/O stress is
+# isolated to one node, protecting other services.
+#
+# The --measure-throughput flag captures disk write/read ops/sec and
+# bytes/sec during pre-chaos, during-chaos, and post-chaos phases.
+#
+# Usage:
+#   chaosprobe run-all -n online-boutique \
+#     -e scenarios/online-boutique/contention-disk-throughput/experiment.yaml \
+#     --measure-throughput --visualize
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: contention-disk-throughput-productcatalog
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=productcatalogservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-io-stress
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "90"
+            - name: FILESYSTEM_UTILIZATION_PERCENTAGE
+              value: "90"
+            - name: NUMBER_OF_WORKERS
+              value: "4"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          # Homepage — depends on productcatalog for product listing
+          - name: frontend-homepage
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Product page — direct dependency on productcatalog
+          - name: frontend-product
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Cart page — control (no productcatalog dependency)
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2

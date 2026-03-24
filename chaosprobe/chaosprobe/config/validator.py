@@ -48,6 +48,12 @@ def validate_scenario(scenario: Dict[str, Any]) -> bool:
         m_errors = _validate_manifest(spec, manifest.get("file", "unknown"))
         errors.extend(m_errors)
 
+    # Validate cluster config if present
+    cluster = scenario.get("cluster")
+    if cluster:
+        c_errors = _validate_cluster_config(cluster)
+        errors.extend(c_errors)
+
     if errors:
         raise ValidationError("Scenario validation failed", errors)
 
@@ -98,5 +104,42 @@ def _validate_manifest(spec: Dict[str, Any], filepath: str) -> List[str]:
 
     if not spec.get("metadata", {}).get("name"):
         errors.append(f"{filepath}: manifest missing metadata.name")
+
+    return errors
+
+
+def _validate_cluster_config(cluster: Dict[str, Any]) -> List[str]:
+    """Validate the cluster configuration section of a scenario."""
+    errors = []
+
+    workers = cluster.get("workers", {})
+    if not workers:
+        errors.append("cluster: workers section is required")
+        return errors
+
+    count = workers.get("count")
+    if count is not None:
+        if not isinstance(count, int) or count < 1:
+            errors.append("cluster.workers.count must be a positive integer")
+
+    cpu = workers.get("cpu")
+    if cpu is not None:
+        if not isinstance(cpu, int) or cpu < 1:
+            errors.append("cluster.workers.cpu must be a positive integer")
+
+    memory = workers.get("memory")
+    if memory is not None:
+        if not isinstance(memory, int) or memory < 256:
+            errors.append("cluster.workers.memory must be an integer >= 256 (MB)")
+
+    disk = workers.get("disk")
+    if disk is not None:
+        if not isinstance(disk, int) or disk < 1:
+            errors.append("cluster.workers.disk must be a positive integer (GB)")
+
+    # Validate optional provider field
+    provider = cluster.get("provider")
+    if provider is not None and provider not in ("vagrant", "kubespray"):
+        errors.append(f"cluster.provider must be 'vagrant' or 'kubespray', got '{provider}'")
 
     return errors

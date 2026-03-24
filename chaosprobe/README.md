@@ -124,6 +124,21 @@ spec:
               retry: 3
 ```
 
+### Example: cluster.yaml (Optional Cluster Config)
+
+Scenarios can include a `cluster.yaml` to couple cluster provisioning with the experiment:
+
+```yaml
+provider: vagrant
+workers:
+  count: 3
+  cpu: 2
+  memory: 2048
+  disk: "20GB"
+```
+
+When `--provision` is passed to `run-all`, this config is used to automatically provision the cluster before running experiments.
+
 ## Quick Start
 
 ### With Existing Cluster
@@ -262,9 +277,67 @@ uv run chaosprobe run-all -n online-boutique -e scenarios/online-boutique/placem
 
 # Custom output directory and settings
 uv run chaosprobe run-all -n online-boutique -o results/my-run --timeout 600 --seed 42
+
+# With load generation and database storage
+uv run chaosprobe run-all -n online-boutique --load-profile steady --db results.db
+
+# Auto-provision cluster from scenario cluster.yaml
+uv run chaosprobe run-all -n online-boutique --provision
+
+# Generate visualization charts after run
+uv run chaosprobe run-all -n online-boutique --visualize
 ```
 
 Iterates through placement strategies (baseline, colocate, spread, antagonistic, random), applies each, runs the corresponding chaos experiment, collects recovery and pod metrics, and saves results to a timestamped directory.
+
+### Load Generation
+
+```bash
+# Run a scenario with Locust load generation
+uv run chaosprobe run <scenario-dir> -o results.json --load-profile steady
+
+# Available profiles: steady (50 users), ramp (100 users), spike (200 users)
+uv run chaosprobe run <scenario-dir> --load-profile ramp --target-url http://frontend:8080
+
+# Use a custom locustfile
+uv run chaosprobe run <scenario-dir> --load-profile steady --locustfile my_locustfile.py
+```
+
+### Query & Database Commands
+
+Results can be persisted to a SQLite database with `--db`:
+
+```bash
+# Run with database storage
+uv run chaosprobe run <scenario-dir> -o results.json --db results.db
+
+# List stored runs
+uv run chaosprobe query runs --db results.db
+
+# Compare strategies across runs
+uv run chaosprobe query compare --db results.db
+
+# Show details of a specific run
+uv run chaosprobe query show <run-id> --db results.db
+
+# Export all runs to CSV
+uv run chaosprobe query export --db results.db -o export.csv
+```
+
+### Visualization
+
+```bash
+# Generate charts from a summary.json file
+uv run chaosprobe visualize results/20260227-140237/summary.json -o charts/
+
+# Generate charts from database
+uv run chaosprobe visualize --db results.db -o charts/
+
+# Auto-generate charts after run-all
+uv run chaosprobe run-all -n online-boutique --visualize
+```
+
+Generates resilience score bar charts, recovery time comparisons, load metric overlays, pod-node heatmaps, and an HTML summary report.
 
 ### Cluster Commands
 

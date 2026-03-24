@@ -1,0 +1,92 @@
+# I/O → Contention → Database Write/Read Throughput
+# Target: redis-cart (Redis:6379, in-memory key-value store for cart sessions)
+# Goal: Inject CPU and memory stress on the Redis pod to degrade database
+#        throughput. This tests how placement strategy affects the ability
+#        of dependent services (cartservice, checkoutservice) to perform
+#        cart read/write operations under resource contention.
+#
+# Hypothesis: Under colocate placement, Redis shares node resources with
+# high-traffic services (frontend, cartservice), amplifying contention.
+# Under spread placement, Redis has dedicated node resources but cross-node
+# latency adds overhead to each operation.
+#
+# The --measure-throughput flag captures Redis SET/GET ops/sec and disk
+# I/O throughput during pre-chaos, during-chaos, and post-chaos phases.
+#
+# Usage:
+#   chaosprobe run-all -n online-boutique \
+#     -e scenarios/online-boutique/contention-db-throughput/experiment.yaml \
+#     --measure-throughput --visualize
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: contention-db-throughput-redis
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=redis-cart
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-cpu-hog
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "90"
+            - name: CPU_CORES
+              value: "1"
+            - name: CPU_LOAD
+              value: "80"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          # Cart page — depends on redis via cartservice
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Homepage — control (does not depend on redis)
+          - name: frontend-homepage
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Health check — control
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/_healthz
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 3s
+              retry: 2

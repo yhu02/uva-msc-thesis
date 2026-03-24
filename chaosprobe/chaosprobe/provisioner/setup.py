@@ -178,15 +178,20 @@ end
                 "or configure kubectl to connect to an existing cluster."
             )
 
-        # Try to actually access the cluster
-        if self._k8s_initialized:
-            try:
-                self.core_api.list_namespace()
-                return True, f"Connected to: {info['context']} ({info['server']})"
-            except ApiException as e:
-                return False, f"Cluster access error: {e.reason}"
+        # Initialize k8s client if needed to test connectivity
+        if not self._k8s_initialized:
+            self._init_k8s_client()
 
-        return True, f"Connected to: {info['context']} ({info['server']})"
+        if not self._k8s_initialized:
+            return False, "Could not initialize Kubernetes client."
+
+        try:
+            self.core_api.list_namespace()
+            return True, f"Connected to: {info['context']} ({info['server']})"
+        except ApiException as e:
+            return False, f"Cluster access error: {e.reason}"
+        except Exception:
+            return False, f"Cluster unreachable at {info['server']}"
 
     # -------------------------------------------------------------------------
     # Kubespray cluster management
@@ -771,6 +776,47 @@ end
         print(f"Created Vagrantfile at: {output_dir}")
         return output_dir
 
+    def provision_from_cluster_config(
+        self,
+        cluster_config: dict,
+        cluster_name: str = "chaosprobe",
+        provider: str = "libvirt",
+    ) -> Path:
+        """Provision a cluster from a scenario's cluster configuration.
+
+        Reads worker specs (count, cpu, memory, disk) from the scenario's
+        cluster config and creates/starts Vagrant VMs with those specs.
+
+        Args:
+            cluster_config: Cluster configuration dict with keys:
+                - workers: {count, cpu, memory, disk}
+                - provider: Optional provider override
+            cluster_name: Name for the cluster.
+            provider: Vagrant provider to use (overridden by cluster_config).
+
+        Returns:
+            Path to the Vagrant directory.
+        """
+        workers = cluster_config.get("workers", {})
+        num_workers = workers.get("count", 2)
+        vm_cpus = workers.get("cpu", 2)
+        vm_memory = workers.get("memory", 2048)
+        config_provider = cluster_config.get("provider", provider)
+
+        vagrant_dir = self.create_vagrantfile(
+            cluster_name=cluster_name,
+            num_control_planes=1,
+            num_workers=num_workers,
+            vm_memory=vm_memory,
+            vm_cpus=vm_cpus,
+        )
+
+        print(f"Provisioning cluster from scenario config: "
+              f"{num_workers} workers, {vm_cpus} CPU, {vm_memory}MB RAM")
+
+        self.vagrant_up(vagrant_dir, provider=config_provider)
+        return vagrant_dir
+
     def vagrant_up(
         self,
         vagrant_dir: Path,
@@ -1063,7 +1109,7 @@ end
                 if crd.metadata.name.endswith(".litmuschaos.io")
             ]
             return len(litmus_crds) > 0
-        except (ApiException, AttributeError):
+        except Exception:
             return False
 
     def is_litmus_ready(self) -> bool:
@@ -1093,7 +1139,7 @@ end
                     if dep.status.ready_replicas == dep.spec.replicas:
                         return True
             return False
-        except ApiException:
+        except Exception:
             return False
 
     def install_litmus(self, wait: bool = True, timeout: int = 180) -> bool:
@@ -1497,5 +1543,5 @@ end
         try:
             self.core_api.list_namespace()
             return True
-        except (ApiException, AttributeError):
+        except Exception:
             return False

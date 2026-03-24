@@ -1,0 +1,87 @@
+# Inter-Service Latency — Frontend edge latency injection
+# Target: frontend (Go, HTTP:8080, user-facing edge service)
+# Goal: Inject network latency on the frontend service to measure how
+#        placement strategy affects end-to-end user experience when the
+#        edge service has degraded network connectivity to all backends.
+#        This simulates network congestion at the ingress layer.
+#
+# Hypothesis: Since frontend calls all backend services, placement strategy
+# determines how many of those calls traverse the physical network. Colocate
+# minimizes network hops but concentrates resource contention. Spread
+# maximizes network hops but distributes load.
+#
+# Usage:
+#   chaosprobe run-all -n online-boutique -e scenarios/online-boutique/contention-frontend-latency/experiment.yaml --measure-latency
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: interservice-latency-frontend
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=frontend
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-network-latency
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: NETWORK_LATENCY
+              value: "100"
+            - name: JITTER
+              value: "25"
+            - name: NETWORK_INTERFACE
+              value: eth0
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          # All probes will be affected since they go through frontend
+          - name: frontend-homepage
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 15s
+              interval: 3s
+              retry: 2
+
+          - name: frontend-product
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 15s
+              interval: 3s
+              retry: 2
+
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 15s
+              interval: 3s
+              retry: 2

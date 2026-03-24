@@ -7,7 +7,7 @@ ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-
 **Core loop**: deploy manifests -> run chaos experiments -> collect metrics -> generate structured output -> AI reads output, edits manifests, re-runs, compares.
 
 ```
-ChaosProbe CLI (cli.py, 1824 lines)
+ChaosProbe CLI (cli.py, 2182 lines)
       |
       +-- Cluster Manager (provisioner/setup.py)
       |     +-- Vagrant (local dev: 3-node KVM/libvirt cluster)
@@ -19,6 +19,7 @@ ChaosProbe CLI (cli.py, 1824 lines)
       +-- Config Loader (config/loader.py)
       |     +-- Validator (config/validator.py)
       |     Auto-classifies YAML files by kind field
+      |     Loads optional cluster.yaml for provisioning config
       |
       +-- Infrastructure Provisioner (provisioner/kubernetes.py)
       |     Applies raw K8s manifests (Deployment, Service, etc.)
@@ -32,6 +33,10 @@ ChaosProbe CLI (cli.py, 1824 lines)
       +-- Chaos Runner (chaos/runner.py)
       |     Creates ChaosEngine CRDs, polls for completion
       |
+      +-- Load Generator (loadgen/runner.py)
+      |     Locust-based load generation with preset profiles
+      |     (steady, ramp, spike) and CSV stats collection
+      |
       +-- Metrics Collection
       |     +-- RecoveryWatcher (metrics/recovery.py)
       |     |   Real-time pod watch during chaos
@@ -42,7 +47,12 @@ ChaosProbe CLI (cli.py, 1824 lines)
       |     ChaosResult CRDs, probe verdicts, resilience score
       |
       +-- Output Generator (output/generator.py)
-            +-- Comparison Engine (output/comparison.py)
+      |     +-- Comparison Engine (output/comparison.py)
+      |     +-- Visualizer (output/visualize.py)
+      |         Charts, heatmaps, HTML reports
+      |
+      +-- Storage (storage/sqlite.py)
+            SQLite persistence: runs, metrics, placements, load stats
 ```
 
 ---
@@ -57,13 +67,14 @@ Loads scenario directories or single YAML files. Auto-classifies resources by th
 
 | Function | Signature | Purpose |
 |---|---|---|
-| `load_scenario` | `(scenario_path: str) -> Dict` | Main entry point. Returns `{path, manifests, experiments, namespace}` |
+| `load_scenario` | `(scenario_path: str) -> Dict` | Main entry point. Returns `{path, manifests, experiments, namespace, cluster (optional)}` |
 | `_load_yaml_file` | `(filepath: Path) -> Tuple[List, List]` | Parses multi-document YAML, classifies by kind |
 | `_load_yaml_directory` | `(dirpath: Path) -> Tuple[List, List]` | Loads all .yaml/.yml from directory |
 | `_detect_namespace` | `(experiments: List) -> str` | Extracts namespace from ChaosEngine appinfo. Default: `"default"` |
+| `_load_cluster_config` | `(dirpath: Path) -> Optional[Dict]` | Loads `cluster.yaml` if present in scenario dir |
 | `merge_configs` | `(*configs) -> Dict` | Deep-merges configuration dictionaries |
 
-**Constants**: `CHAOS_KINDS = {"ChaosEngine"}`
+**Constants**: `CHAOS_KINDS = {"ChaosEngine"}`, `CLUSTER_CONFIG_FILE = "cluster.yaml"`
 
 #### validator.py
 
@@ -74,6 +85,7 @@ Validates loaded scenarios for structural correctness before execution.
 | `validate_scenario(scenario)` | Validates entire scenario. Raises `ValidationError` with aggregated errors |
 | `_validate_chaos_engine(spec, filepath)` | Checks: apiVersion, kind, experiments list, applabel, chaosServiceAccount |
 | `_validate_manifest(spec, filepath)` | Checks: apiVersion, kind, metadata.name |
+| `_validate_cluster_config(config, filepath)` | Checks: provider (vagrant/kubespray), workers.count/cpu/memory/disk |
 
 ---
 
@@ -225,14 +237,14 @@ Applies placement constraints to Kubernetes deployments via patch operations.
 
 #### generator.py
 
-**Class: `OutputGenerator(scenario, results, metrics=None)`**
+**Class: `OutputGenerator(scenario, results, metrics=None, store=None)`**
 
 | Method | Purpose |
 |---|---|
-| `generate()` | Full output: scenario files, infrastructure, experiments, summary, metrics |
+| `generate()` | Full output: scenario files, infrastructure, experiments, summary, metrics. Persists to DB if store provided. |
 | `generate_minimal()` | Quick format: runId, verdict, resilienceScore, issueDetected |
 
-**Schema version**: `2.0.0`. Top-level keys: `schemaVersion`, `runId`, `timestamp`, `scenario`, `infrastructure`, `experiments`, `summary`, `metrics` (optional).
+**Schema version**: `2.0.0`. Top-level keys: `schemaVersion`, `runId`, `timestamp`, `scenario`, `infrastructure`, `experiments`, `summary`, `metrics` (optional), `loadGeneration` (optional).
 
 #### comparison.py
 
@@ -244,9 +256,88 @@ Compares two experiment runs and evaluates fix effectiveness.
 - `fixEffective = True` if verdict FAIL->PASS, or score change >= 20, or all criteria met
 - Confidence: base 0.5, +0.25 if verdict changed, +min(0.15, score_change/100), +0.10 if all experiments improved
 
+#### visualize.py
+
+Generates charts correlating placement strategies with performance metrics. Requires `matplotlib`.
+
+| Function | Purpose |
+|---|---|
+| `generate_all_charts(store, output_dir)` | Generate all charts from database runs |
+| `generate_from_summary(summary_path, output_dir)` | Generate charts from a summary.json file |
+| `_resilience_score_chart(data, output_dir)` | Bar chart of resilience scores per strategy |
+| `_recovery_time_chart(data, output_dir)` | Mean/max recovery time comparison |
+| `_load_metrics_chart(data, output_dir)` | p95 latency and error rate overlay |
+| `_pod_node_heatmap(data, output_dir)` | Pod-to-node placement heatmap |
+| `_generate_html_summary(data, charts, output_dir)` | HTML report combining all charts |
+
 ---
 
-### 2.7 Infrastructure (`chaosprobe/provisioner/`)
+### 2.7 Load Generation (`chaosprobe/loadgen/`)
+
+#### runner.py
+
+Locust-based load generator with preset profiles and CSV stats parsing.
+
+**Dataclass: `LoadProfile(name, users, spawn_rate, duration_seconds)`**
+
+| Profile | Users | Spawn Rate | Duration |
+|---|---|---|---|
+| `steady` | 50 | 10/s | 120s |
+| `ramp` | 100 | 5/s | 180s |
+| `spike` | 200 | 50/s | 90s |
+
+**Dataclass: `LoadStats`** — Collected statistics: total requests/failures, avg/min/max/p50/p95/p99 response times, RPS, error rate, per-endpoint breakdown.
+
+**Class: `LocustRunner(target_url, locustfile=None)`**
+
+| Method | Purpose |
+|---|---|
+| `start(profile)` | Start headless Locust with the given profile |
+| `stop()` | Terminate the Locust process |
+| `wait()` | Wait for Locust to complete |
+| `collect_stats()` | Parse CSV output into `LoadStats` |
+| `cleanup()` | Remove temporary directories |
+
+Supports context manager protocol (`with LocustRunner(...) as runner:`).
+
+**Default locustfile**: Simulates Online Boutique browsing (index, browse, cart, checkout).
+
+---
+
+### 2.8 Storage (`chaosprobe/storage/`)
+
+#### base.py
+
+**Abstract class: `ResultStore`**
+
+| Method | Purpose |
+|---|---|
+| `save_run(run_data)` | Persist a complete run result |
+| `get_run(run_id)` | Retrieve a run by ID |
+| `list_runs(scenario, strategy, limit)` | List runs with optional filters |
+| `get_metrics(run_id, metric_name)` | Get metrics for a run |
+| `compare_strategies(scenario, limit_per_strategy)` | Compare strategies across runs |
+| `export_csv(output_path)` | Export all runs to CSV |
+
+#### sqlite.py
+
+**Class: `SQLiteStore(db_path=None)`**
+
+SQLite-based implementation of `ResultStore`. Default path: `~/.chaosprobe/results.db`.
+
+**Tables**:
+| Table | Purpose |
+|---|---|
+| `runs` | Run metadata, verdict, resilience score, raw JSON |
+| `metrics` | Per-run metrics (recovery times, etc.) |
+| `pod_placements` | Pod-to-node assignments per run |
+| `load_stats` | Locust load generation statistics per run |
+
+Uses WAL journal mode and foreign keys. Schema version: 1.
+
+---
+
+### 2.9 Infrastructure (`chaosprobe/provisioner/`)
 
 #### kubernetes.py
 
@@ -315,8 +406,32 @@ chaosprobe run-all -n <namespace> [options]
 | `-t, --timeout` | 300 | Engine timeout (seconds) |
 | `--seed` | None | Random strategy seed |
 | `--settle-time` | 30 | Wait between placement and experiment |
+| `--provision` | off | Auto-provision cluster from scenario cluster.yaml |
+| `--load-profile` | None | Locust load profile (steady/ramp/spike) |
+| `--locustfile` | built-in | Custom locustfile path |
+| `--target-url` | auto-detected | URL for Locust load generation |
+| `--db` | None | SQLite database path for persistence |
+| `--visualize` | off | Generate charts after run |
 
-**Workflow per strategy**: apply placement -> settle -> start RecoveryWatcher -> run experiment -> stop watcher -> collect results + metrics -> clear placement -> next strategy.
+**Workflow per strategy**: apply placement -> settle -> start RecoveryWatcher -> (optional) start Locust -> run experiment -> stop Locust/watcher -> collect results + metrics -> clear placement -> next strategy.
+
+### Query (Database)
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe query runs [--db path]` | List stored runs |
+| `chaosprobe query compare [--db path]` | Compare strategies across runs |
+| `chaosprobe query show <run-id> [--db path]` | Show details of a specific run |
+| `chaosprobe query export [--db path] -o file.csv` | Export all runs to CSV |
+
+### Visualize
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe visualize <summary.json> -o <dir>` | Generate charts from summary file |
+| `chaosprobe visualize --db <path> -o <dir>` | Generate charts from database |
+
+Generated charts: resilience score bars, recovery time comparison, load metrics overlay, pod-node heatmap, HTML summary report.
 
 ### Cluster Management
 
@@ -340,25 +455,30 @@ chaosprobe run-all -n <namespace> [options]
 1. Load shared scenario (placement-experiment.yaml)
 2. Extract target deployment from ChaosEngine appinfo
 3. Create MetricsCollector for namespace
+4. Open shared SQLiteStore (if --db specified)
 
 For each strategy in [baseline, colocate, spread, antagonistic, random]:
-    4. Apply placement via PlacementMutator
-    5. Wait settle-time (30s default)
+    5. Apply placement via PlacementMutator
+    6. Wait settle-time (30s default)
 
     For each iteration (1..N):
-        6. Start RecoveryWatcher(namespace, target_deployment)
-        7. Record experiment_start = time.time()
-        8. ChaosRunner.run_experiments() -- blocks until engine completes
-        9. Record experiment_end = time.time()
-        10. RecoveryWatcher.stop()
-        11. ResultCollector.collect() -- ChaosResult CRDs
-        12. MetricsCollector.collect(recovery_data=watcher.result())
-        13. OutputGenerator.generate() -- write {strategy}.json
+        7. Start RecoveryWatcher(namespace, target_deployment)
+        8. (Optional) Start LocustRunner with load profile
+        9. Record experiment_start = time.time()
+        10. ChaosRunner.run_experiments() -- blocks until engine completes
+        11. Record experiment_end = time.time()
+        12. Stop LocustRunner, collect LoadStats, cleanup temp dirs
+        13. RecoveryWatcher.stop()
+        14. ResultCollector.collect() -- ChaosResult CRDs
+        15. MetricsCollector.collect(recovery_data=watcher.result())
+        16. OutputGenerator.generate(store=run_store) -- write {strategy}.json + DB
 
-    14. Clear placement constraints
-    15. Wait for rollout
+    17. Clear placement constraints
+    18. Wait for rollout
 
-16. Write summary.json with comparison table
+19. Write summary.json with comparison table
+20. Close SQLiteStore
+21. (Optional) Generate visualization charts
 ```
 
 ---
@@ -521,26 +641,32 @@ Pod scheduling recovery time varies with placement strategy due to differences i
 chaosprobe/
   chaosprobe/
     __init__.py              # version 0.1.0
-    cli.py                   # CLI entry point (1824 lines)
+    cli.py                   # CLI entry point (2182 lines)
     config/
-      loader.py              # Scenario loading (140 lines)
-      validator.py           # Validation (102 lines)
+      loader.py              # Scenario loading (169 lines)
+      validator.py           # Validation (145 lines)
     chaos/
       runner.py              # ChaosEngine execution (234 lines)
     collector/
       result_collector.py    # ChaosResult collection (243 lines)
+    loadgen/
+      runner.py              # Locust load generation (314 lines)
     metrics/
       recovery.py            # Real-time pod watch (255 lines)
       collector.py           # Metrics aggregation (170 lines)
     output/
-      generator.py           # JSON output (145 lines)
+      generator.py           # JSON output (155 lines)
       comparison.py          # Run comparison (266 lines)
+      visualize.py           # Charts & HTML reports (432 lines)
     placement/
       strategy.py            # Placement strategies (324 lines)
       mutator.py             # K8s patch operations (461 lines)
     provisioner/
       kubernetes.py          # Manifest application (266 lines)
-      setup.py               # LitmusChaos/Vagrant/Kubespray (1501 lines)
+      setup.py               # LitmusChaos/Vagrant/Kubespray (1542 lines)
+    storage/
+      base.py                # ResultStore ABC (52 lines)
+      sqlite.py              # SQLite backend (379 lines)
   scenarios/
     online-boutique/
       deploy/                # 12 microservice manifests
@@ -549,9 +675,12 @@ chaosprobe/
     examples/
       nginx-pod-delete/      # Simple example scenario
   tests/
-    test_config.py           # 10 tests
+    test_config.py           # 21 tests
     test_placement.py        # 40 tests
     test_output.py           # 12 tests
+    test_loadgen.py          # 12 tests
+    test_storage.py          # 12 tests
+    test_visualize.py        # 11 tests
   pyproject.toml
   README.md
   TECHNICAL.md               # This document
@@ -565,6 +694,8 @@ chaosprobe/
 - `kubernetes` (>=28.0.0) - Official Python K8s client
 - `click` (>=8.0.0) - CLI framework
 - `pyyaml` (>=6.0) - YAML parsing
+- `locust` (>=2.20.0) - Load generation
+- `matplotlib` (>=3.7.0) - Chart generation and visualization
 
 ### Development
 - `pytest`, `pytest-cov` - Testing

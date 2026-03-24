@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from chaosprobe.config.loader import load_scenario, merge_configs
-from chaosprobe.config.validator import validate_scenario, ValidationError
+from chaosprobe.config.validator import validate_scenario, ValidationError, _validate_cluster_config
 
 
 class TestConfigLoader:
@@ -225,3 +225,122 @@ class TestConfigValidator:
         }
         with pytest.raises(ValidationError, match="metadata.name"):
             validate_scenario(scenario)
+
+
+class TestClusterConfig:
+    """Tests for cluster configuration validation and loading."""
+
+    def test_validate_valid_cluster_config(self):
+        """Test validating a valid cluster config."""
+        cluster = {"workers": {"count": 3, "cpu": 2, "memory": 4096, "disk": 20}}
+        errors = _validate_cluster_config(cluster)
+        assert errors == []
+
+    def test_validate_missing_workers(self):
+        """Test validation fails when workers section is missing."""
+        errors = _validate_cluster_config({})
+        assert any("workers" in e for e in errors)
+
+    def test_validate_invalid_count(self):
+        """Test validation fails for non-positive count."""
+        errors = _validate_cluster_config({"workers": {"count": 0}})
+        assert any("count" in e for e in errors)
+
+    def test_validate_invalid_cpu(self):
+        """Test validation fails for non-positive cpu."""
+        errors = _validate_cluster_config({"workers": {"cpu": -1}})
+        assert any("cpu" in e for e in errors)
+
+    def test_validate_invalid_memory(self):
+        """Test validation fails for memory below minimum."""
+        errors = _validate_cluster_config({"workers": {"memory": 100}})
+        assert any("memory" in e for e in errors)
+
+    def test_validate_invalid_provider(self):
+        """Test validation fails for unknown provider."""
+        errors = _validate_cluster_config(
+            {"workers": {"count": 2}, "provider": "invalid"}
+        )
+        assert any("provider" in e for e in errors)
+
+    def test_validate_valid_provider(self):
+        """Test validation passes for valid providers."""
+        for provider in ("vagrant", "kubespray"):
+            errors = _validate_cluster_config(
+                {"workers": {"count": 2}, "provider": provider}
+            )
+            assert errors == []
+
+    def test_load_scenario_with_cluster_config(self, tmp_path):
+        """Test loading a scenario with cluster.yaml."""
+        # Create experiment.yaml
+        experiment = tmp_path / "experiment.yaml"
+        experiment.write_text("""
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: test-engine
+spec:
+  engineState: active
+  appinfo:
+    appns: default
+    applabel: app=test
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+""")
+
+        # Create cluster.yaml
+        cluster_file = tmp_path / "cluster.yaml"
+        cluster_file.write_text("""
+cluster:
+  provider: vagrant
+  workers:
+    count: 3
+    cpu: 4
+    memory: 8192
+    disk: 40
+""")
+
+        scenario = load_scenario(str(tmp_path))
+        assert "cluster" in scenario
+        assert scenario["cluster"]["provider"] == "vagrant"
+        assert scenario["cluster"]["workers"]["count"] == 3
+        assert scenario["cluster"]["workers"]["cpu"] == 4
+        assert scenario["cluster"]["workers"]["memory"] == 8192
+
+    def test_load_scenario_without_cluster_config(self, tmp_path):
+        """Test loading a scenario without cluster.yaml has no cluster key."""
+        experiment = tmp_path / "experiment.yaml"
+        experiment.write_text("""
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: test-engine
+spec:
+  engineState: active
+  appinfo:
+    appns: default
+    applabel: app=test
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+""")
+
+        scenario = load_scenario(str(tmp_path))
+        assert "cluster" not in scenario
+
+    def test_validate_scenario_with_valid_cluster(self, sample_scenario):
+        """Test that validation passes with a valid cluster config."""
+        sample_scenario["cluster"] = {
+            "workers": {"count": 2, "cpu": 2, "memory": 2048}
+        }
+        assert validate_scenario(sample_scenario) is True
+
+    def test_validate_scenario_with_invalid_cluster(self, sample_scenario):
+        """Test that validation fails with an invalid cluster config."""
+        sample_scenario["cluster"] = {"workers": {"count": -1}}
+        with pytest.raises(ValidationError, match="count"):
+            validate_scenario(sample_scenario)

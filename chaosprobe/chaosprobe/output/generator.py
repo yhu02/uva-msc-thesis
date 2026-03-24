@@ -27,6 +27,7 @@ class OutputGenerator:
         scenario: Dict[str, Any],
         results: List[Dict[str, Any]],
         metrics: Optional[Dict[str, Any]] = None,
+        store: Optional[Any] = None,
     ):
         """Initialize the output generator.
 
@@ -35,10 +36,12 @@ class OutputGenerator:
                       Contains: path, manifests, experiments, namespace.
             results: Collected experiment results from ResultCollector.
             metrics: Optional experiment metrics (recovery, pod status, etc.).
+            store: Optional ResultStore for persisting to database.
         """
         self.scenario = scenario
         self.results = results
         self.metrics = metrics
+        self.store = store
 
     def generate(self) -> Dict[str, Any]:
         """Generate the complete AI output structure."""
@@ -58,6 +61,14 @@ class OutputGenerator:
 
         if self.metrics:
             output["metrics"] = self.metrics
+
+        # Persist to database if store is configured
+        if self.store:
+            try:
+                self.store.save_run(output)
+            except Exception as e:
+                import warnings
+                warnings.warn(f"Failed to save results to database: {e}")
 
         return output
 

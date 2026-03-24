@@ -16,6 +16,9 @@ import yaml
 # Kinds that are treated as ChaosEngine experiment definitions
 CHAOS_KINDS = {"ChaosEngine"}
 
+# Filename for cluster configuration
+CLUSTER_CONFIG_FILE = "cluster.yaml"
+
 
 def load_scenario(scenario_path: str) -> Dict[str, Any]:
     """Load a scenario from a directory or single ChaosEngine file.
@@ -57,12 +60,20 @@ def load_scenario(scenario_path: str) -> Dict[str, Any]:
     # Detect namespace from the first ChaosEngine's appinfo or metadata
     namespace = _detect_namespace(experiments)
 
-    return {
+    # Load cluster configuration if present
+    cluster = _load_cluster_config(Path(scenario_dir))
+
+    result = {
         "path": scenario_dir,
         "manifests": manifests,
         "experiments": experiments,
         "namespace": namespace,
     }
+
+    if cluster:
+        result["cluster"] = cluster
+
+    return result
 
 
 def _load_yaml_file(filepath: Path) -> Tuple[List[Dict], List[Dict]]:
@@ -116,6 +127,24 @@ def _detect_namespace(experiments: List[Dict]) -> str:
         if ns:
             return ns
     return "default"
+
+
+def _load_cluster_config(scenario_dir: Path) -> Dict[str, Any] | None:
+    """Load cluster configuration from cluster.yaml in the scenario directory.
+
+    Returns:
+        Cluster configuration dict or None if not present.
+    """
+    cluster_file = scenario_dir / CLUSTER_CONFIG_FILE
+    if not cluster_file.exists():
+        return None
+
+    text = cluster_file.read_text()
+    data = yaml.safe_load(text)
+    if not data or not isinstance(data, dict):
+        return None
+
+    return data.get("cluster", data)
 
 
 def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:

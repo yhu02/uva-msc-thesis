@@ -1,0 +1,88 @@
+# Inter-Service Latency — Checkout fanout latency injection
+# Target: checkoutservice (Go, gRPC:5050, orchestrator on the critical path)
+# Goal: Inject network latency on the checkout service to measure cascading
+#        latency across its 5+ downstream dependencies (payment, shipping,
+#        email, cart, currency, product catalog). This is the worst-case
+#        latency scenario since checkout is a fanout point.
+#
+# Hypothesis: Colocate placement may reduce the network hop latency for
+# co-located downstream services, but amplify contention effects. Spread
+# placement isolates services but every downstream call crosses the network.
+#
+# Usage:
+#   chaosprobe run-all -n online-boutique -e scenarios/online-boutique/contention-checkout-latency/experiment.yaml --measure-latency
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: interservice-latency-checkout
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=checkoutservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-network-latency
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: NETWORK_LATENCY
+              value: "150"
+            - name: JITTER
+              value: "30"
+            - name: NETWORK_INTERFACE
+              value: eth0
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          # Probe 1: Homepage — should be unaffected (no checkout dependency)
+          - name: frontend-homepage
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Probe 2: Cart page — partially affected (cart + checkout share state)
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Probe 3: Frontend availability
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/_healthz
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 3s
+              retry: 2

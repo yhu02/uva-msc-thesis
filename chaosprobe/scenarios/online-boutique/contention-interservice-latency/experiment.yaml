@@ -1,0 +1,93 @@
+# Inter-Service Latency — Network latency injection on productcatalogservice
+# Target: productcatalogservice (Go, gRPC:3550, central dependency)
+# Goal: Inject network latency on the product catalog's outgoing connections
+#        to measure how inter-service communication degrades under each
+#        placement strategy. This tests whether co-location mitigates or
+#        amplifies network latency effects on dependent services.
+#
+# Hypothesis: Under colocate placement, injected network latency has less
+# impact because co-located services communicate over the loopback/local
+# network. Under spread placement, cross-node traffic amplifies the effect.
+#
+# Probes test cascading latency impact on frontend routes:
+#   - Homepage: depends on productcatalog + recommendation + ads
+#   - Product page: direct dependency on productcatalog
+#   - Cart page: control (independent of productcatalog)
+#
+# Usage:
+#   chaosprobe run-all -n online-boutique -e scenarios/online-boutique/contention-interservice-latency/experiment.yaml --measure-latency
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: interservice-latency-productcatalog
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=productcatalogservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-network-latency
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: NETWORK_LATENCY
+              value: "200"
+            - name: JITTER
+              value: "50"
+            - name: NETWORK_INTERFACE
+              value: eth0
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          # Probe 1: Homepage — depends on productcatalog + recommendation + ads
+          - name: frontend-homepage
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Probe 2: Cart page — control (no productcatalog dependency)
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
+
+          # Probe 3: Product page — direct productcatalog dependency
+          - name: frontend-product
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 3s
+              retry: 2
