@@ -158,6 +158,7 @@ class LatencyProber:
         samples: int = 10,
         interval: float = 1.0,
         parallel: bool = False,
+        probe_pod: Optional[str] = None,
     ) -> List[LatencyResult]:
         """Measure latency for all HTTP routes via the frontend service.
 
@@ -165,13 +166,16 @@ class LatencyProber:
             samples: Number of samples per route.
             interval: Seconds between samples.
             parallel: If True, measure all routes concurrently per sample round.
+            probe_pod: Optional pre-resolved pod name to use for probing.
+                       If None, a suitable pod is discovered automatically.
 
         Returns:
             List of LatencyResult for each route.
         """
         # Use loadgenerator pod for HTTP measurements — it has Python and
         # proper tools, unlike the distroless frontend/Go pods.
-        probe_pod = self._find_probe_pod()
+        if probe_pod is None:
+            probe_pod = self._find_probe_pod()
         if not probe_pod:
             return []
 
@@ -360,11 +364,14 @@ class LatencyProber:
         Tries python3 first (nanosecond precision), then GNU date +%s%N
         (also nanosecond), and finally falls back to date +%s with
         millisecond granularity by appending '000000'.
+        Handles busybox date which outputs literal '%N' instead of
+        nanoseconds.
         """
         return (
             "python3 -c 'import time;print(int(time.time()*1e9))' 2>/dev/null"
             " || { T=$(date +%s%N 2>/dev/null); "
-            "[ ${#T} -gt 15 ] && echo $T || echo ${T}000000000; }"
+            "case \"$T\" in *N*|*%*) echo $(date +%s)000000000;; "
+            "*) [ ${#T} -gt 15 ] && echo $T || echo ${T}000000000;; esac; }"
         )
 
     def _measure_http_from_pod(
@@ -541,10 +548,16 @@ class ContinuousLatencyProber:
         self._chaos_start_time: Optional[float] = None
         self._chaos_end_time: Optional[float] = None
         self._probe_errors: int = 0
+        self._cached_probe_pod: Optional[str] = None
 
     def start(self) -> None:
         """Start continuous latency probing in background."""
         self._start_time = time.time()
+        # Resolve the probe pod once at start to avoid repeated K8s API
+        # lookups on every measurement cycle.
+        self._cached_probe_pod = self._prober._find_probe_pod()
+        if not self._cached_probe_pod:
+            logger.warning("No probe pod found at start — will retry during probing")
         self._thread = threading.Thread(
             target=self._probe_loop, daemon=True, name="latency-prober"
         )
@@ -586,10 +599,12 @@ class ContinuousLatencyProber:
 
     def _probe_loop(self) -> None:
         """Main probe loop running in the background."""
+        consecutive_failures = 0
         while not self._stop_event.is_set():
             try:
                 http_results = self._prober.measure_http_routes(
                     samples=1, interval=0, parallel=True,
+                    probe_pod=self._cached_probe_pod,
                 )
                 now = time.time()
                 timestamp = datetime.fromtimestamp(now, tz=timezone.utc).isoformat()
@@ -613,10 +628,27 @@ class ContinuousLatencyProber:
                 with self._lock:
                     self._time_series.append(entry)
 
+                # If no routes were collected, the cached pod may be stale
+                if not entry["routes"]:
+                    consecutive_failures += 1
+                    if consecutive_failures >= 2:
+                        new_pod = self._prober._find_probe_pod()
+                        if new_pod:
+                            self._cached_probe_pod = new_pod
+                            consecutive_failures = 0
+                else:
+                    consecutive_failures = 0
+
             except Exception as exc:
                 logger.warning("Latency probe failed: %s", exc)
                 with self._lock:
                     self._probe_errors += 1
+                consecutive_failures += 1
+                if consecutive_failures >= 2:
+                    new_pod = self._prober._find_probe_pod()
+                    if new_pod:
+                        self._cached_probe_pod = new_pod
+                        consecutive_failures = 0
 
             self._stop_event.wait(timeout=self.interval)
 

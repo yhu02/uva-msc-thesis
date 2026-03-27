@@ -92,6 +92,9 @@ class ChaosRunner:
         # Delete existing engine if present
         self._delete_chaos_engine(engine_name)
 
+        # Clean up any leftover ChaosEngines from previous iterations
+        self._cleanup_managed_engines(exclude=engine_name)
+
         # Get experiment names from the engine spec
         exp_names = [e.get("name", "unknown") for e in spec.get("experiments", [])]
 
@@ -164,7 +167,11 @@ class ChaosRunner:
                         detail = f" (verdict: {exp_verdict})" if exp_verdict else ""
                         print(f"    [{elapsed}s] Experiment status: {exp_status}{detail}")
                         last_phase = exp_status
-                    if exp_status in ["Completed", "Failed", "Stopped"]:
+                    # LitmusChaos uses several terminal states:
+                    # Completed, Completed_With_Probe_Failure,
+                    # Completed_With_Error, Failed, Stopped
+                    if (exp_status.startswith("Completed") or
+                            exp_status in ["Failed", "Stopped"]):
                         return {"phase": exp_status, "status": status}
 
             except ApiException as e:
@@ -228,6 +235,33 @@ class ChaosRunner:
         except ApiException as e:
             if e.status != 404:
                 raise
+
+    def _cleanup_managed_engines(self, exclude: str = "") -> None:
+        """Delete all ChaosEngines labelled managed-by=chaosprobe.
+
+        This prevents leftover engines from previous iterations from
+        interfering with the current experiment. The LitmusChaos operator
+        can get stuck when multiple engines exist in the same namespace.
+
+        Args:
+            exclude: Engine name to skip (the one we're about to create).
+        """
+        try:
+            engines = self.custom_api.list_namespaced_custom_object(
+                group="litmuschaos.io",
+                version="v1alpha1",
+                namespace=self.namespace,
+                plural="chaosengines",
+                label_selector="managed-by=chaosprobe",
+            )
+        except ApiException:
+            return
+
+        for engine in engines.get("items", []):
+            name = engine.get("metadata", {}).get("name", "")
+            if name and name != exclude:
+                print(f"    Cleaning up leftover ChaosEngine '{name}'...")
+                self._delete_chaos_engine(name)
 
     def get_executed_experiments(self) -> List[Dict[str, Any]]:
         """Get list of executed experiments with their metadata."""

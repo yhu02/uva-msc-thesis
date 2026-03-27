@@ -119,11 +119,14 @@ class ThroughputProber:
 
         Tries python3 first (nanosecond precision), then GNU date +%s%N,
         and finally falls back to date +%s with '000000000' appended.
+        Handles busybox date which outputs literal '%N' instead of
+        nanoseconds.
         """
         return (
             "python3 -c 'import time;print(int(time.time()*1e9))' 2>/dev/null"
             " || { T=$(date +%s%N 2>/dev/null); "
-            "[ ${#T} -gt 15 ] && echo $T || echo ${T}000000000; }"
+            "case \"$T\" in *N*|*%*) echo $(date +%s)000000000;; "
+            "*) [ ${#T} -gt 15 ] && echo $T || echo ${T}000000000;; esac; }"
         )
 
     def measure_redis_throughput(
@@ -487,36 +490,12 @@ class ThroughputProber:
         )
 
 
-class ContinuousThroughputProber:
-    """Runs throughput benchmarks in a background thread during chaos.
+class _ContinuousProberBase:
+    """Base class for continuous throughput probers with phase tracking."""
 
-    Takes periodic measurements and provides before/during/after comparison.
-
-    Usage::
-
-        prober = ContinuousThroughputProber("online-boutique")
-        prober.start()
-        # ... run chaos experiment ...
-        prober.stop()
-        data = prober.result()
-    """
-
-    def __init__(
-        self,
-        namespace: str,
-        interval: float = 10.0,
-        redis_ops: int = 200,
-        disk_target: str = "redis-cart",
-        disk_block_kb: int = 512,
-        disk_count: int = 5,
-    ):
+    def __init__(self, namespace: str, interval: float, name: str):
         self.namespace = namespace
         self.interval = interval
-        self._prober = ThroughputProber(namespace)
-        self._redis_ops = redis_ops
-        self._disk_target = disk_target
-        self._disk_block_kb = disk_block_kb
-        self._disk_count = disk_count
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
@@ -525,12 +504,12 @@ class ContinuousThroughputProber:
         self._chaos_start_time: Optional[float] = None
         self._chaos_end_time: Optional[float] = None
         self._probe_errors: int = 0
+        self._thread_name = name
 
     def start(self) -> None:
-        """Start continuous throughput probing in background."""
         self._start_time = time.time()
         self._thread = threading.Thread(
-            target=self._probe_loop, daemon=True, name="throughput-prober"
+            target=self._probe_loop, daemon=True, name=self._thread_name,
         )
         self._thread.start()
 
@@ -547,11 +526,98 @@ class ContinuousThroughputProber:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=30)
 
+    def _current_phase(self, now: float) -> str:
+        with self._lock:
+            chaos_start = self._chaos_start_time
+            chaos_end = self._chaos_end_time
+        if chaos_start is None:
+            return "pre-chaos"
+        if chaos_end is None:
+            return "during-chaos"
+        return "post-chaos"
+
+    def _make_entry(self, now: float, phase: str) -> Dict[str, Any]:
+        return {
+            "timestamp": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+            "elapsed_s": round(now - (self._start_time or now), 1),
+            "phase": phase,
+        }
+
+    def _probe_loop(self) -> None:
+        raise NotImplementedError
+
+    @staticmethod
+    def _aggregate_operations(
+        entries: List[Dict[str, Any]], key: str,
+    ) -> Dict[str, Any]:
+        """Aggregate throughput metrics for a given key across entries."""
+        ops_by_op: Dict[str, List[float]] = {}
+        lat_by_op: Dict[str, List[float]] = {}
+        bps_by_op: Dict[str, List[float]] = {}
+        err_by_op: Dict[str, int] = {}
+
+        for entry in entries:
+            for op, data in entry.get(key, {}).items():
+                ops_by_op.setdefault(op, [])
+                lat_by_op.setdefault(op, [])
+                bps_by_op.setdefault(op, [])
+                err_by_op.setdefault(op, 0)
+                if data.get("ops_per_second") is not None:
+                    ops_by_op[op].append(data["ops_per_second"])
+                if data.get("latency_ms") is not None:
+                    lat_by_op[op].append(data["latency_ms"])
+                if data.get("bytes_per_second") is not None:
+                    bps_by_op[op].append(data["bytes_per_second"])
+                if data.get("status") != "ok":
+                    err_by_op[op] += 1
+
+        summary = {}
+        for op in ops_by_op:
+            ops = ops_by_op[op]
+            lats = lat_by_op.get(op, [])
+            bps = bps_by_op.get(op, [])
+            errs = err_by_op.get(op, 0)
+            if ops:
+                summary[op] = {
+                    "meanOpsPerSecond": round(statistics.mean(ops), 2),
+                    "medianOpsPerSecond": round(statistics.median(ops), 2),
+                    "minOpsPerSecond": round(min(ops), 2),
+                    "maxOpsPerSecond": round(max(ops), 2),
+                    "meanLatency_ms": round(statistics.mean(lats), 2) if lats else None,
+                    "meanBytesPerSecond": round(statistics.mean(bps), 2) if bps else None,
+                    "sampleCount": len(ops),
+                    "errorCount": errs,
+                }
+            else:
+                summary[op] = {"meanOpsPerSecond": None, "sampleCount": 0, "errorCount": errs}
+        return summary
+
+
+class ContinuousRedisProber(_ContinuousProberBase):
+    """Runs Redis throughput benchmarks in a background thread during chaos.
+
+    Usage::
+
+        prober = ContinuousRedisProber("online-boutique")
+        prober.start()
+        # ... run chaos experiment ...
+        prober.stop()
+        data = prober.result()
+    """
+
+    def __init__(
+        self,
+        namespace: str,
+        interval: float = 10.0,
+        ops_per_sample: int = 200,
+    ):
+        super().__init__(namespace, interval, name="redis-prober")
+        self._prober = ThroughputProber(namespace)
+        self._ops_per_sample = ops_per_sample
+
     def result(self) -> Dict[str, Any]:
-        """Return structured throughput data with phase summaries."""
         with self._lock:
             series = list(self._time_series)
-
         phases = self._split_phases(series)
         data: Dict[str, Any] = {
             "timeSeries": series,
@@ -559,8 +625,7 @@ class ContinuousThroughputProber:
             "config": {
                 "interval_s": self.interval,
                 "namespace": self.namespace,
-                "redisOpsPerSample": self._redis_ops,
-                "diskTarget": self._disk_target,
+                "opsPerSample": self._ops_per_sample,
             },
         }
         if self._probe_errors > 0:
@@ -568,37 +633,17 @@ class ContinuousThroughputProber:
         return data
 
     def _probe_loop(self) -> None:
-        """Main probe loop."""
         while not self._stop_event.is_set():
             try:
                 now = time.time()
-                timestamp = datetime.fromtimestamp(now, tz=timezone.utc).isoformat()
                 phase = self._current_phase(now)
+                entry = self._make_entry(now, phase)
+                entry["redis"] = {}
 
-                entry: Dict[str, Any] = {
-                    "timestamp": timestamp,
-                    "elapsed_s": round(now - (self._start_time or now), 1),
-                    "phase": phase,
-                    "redis": {},
-                    "disk": {},
-                }
-
-                # Run Redis and disk benchmarks in parallel
-                with ThreadPoolExecutor(max_workers=2) as pool:
-                    redis_future = pool.submit(
-                        self._prober.measure_redis_throughput,
-                        samples=1, ops_per_sample=self._redis_ops,
-                    )
-                    disk_future = pool.submit(
-                        self._prober.measure_disk_throughput,
-                        target_service=self._disk_target, samples=1,
-                        block_size_kb=self._disk_block_kb, count=self._disk_count,
-                    )
-
-                    redis_results = redis_future.result()
-                    disk_results = disk_future.result()
-
-                for r in redis_results:
+                results = self._prober.measure_redis_throughput(
+                    samples=1, ops_per_sample=self._ops_per_sample,
+                )
+                for r in results:
                     if r.samples:
                         s = r.samples[0]
                         entry["redis"][r.operation] = {
@@ -607,7 +652,92 @@ class ContinuousThroughputProber:
                             "status": s.status,
                         }
 
-                for r in disk_results:
+                with self._lock:
+                    self._time_series.append(entry)
+
+            except Exception as exc:
+                logger.warning("Redis probe failed: %s", exc)
+                with self._lock:
+                    self._probe_errors += 1
+
+            self._stop_event.wait(timeout=self.interval)
+
+    def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
+        phases: Dict[str, List[Dict[str, Any]]] = {
+            "pre-chaos": [], "during-chaos": [], "post-chaos": [],
+        }
+        for entry in series:
+            phases.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)
+        result = {}
+        for name, entries in phases.items():
+            if not entries:
+                result[name] = {"sampleCount": 0, "redis": {}}
+            else:
+                result[name] = {
+                    "sampleCount": len(entries),
+                    "redis": self._aggregate_operations(entries, "redis"),
+                }
+        return result
+
+
+class ContinuousDiskProber(_ContinuousProberBase):
+    """Runs disk I/O throughput benchmarks in a background thread during chaos.
+
+    Usage::
+
+        prober = ContinuousDiskProber("online-boutique")
+        prober.start()
+        # ... run chaos experiment ...
+        prober.stop()
+        data = prober.result()
+    """
+
+    def __init__(
+        self,
+        namespace: str,
+        interval: float = 10.0,
+        disk_target: str = "redis-cart",
+        block_size_kb: int = 512,
+        block_count: int = 5,
+    ):
+        super().__init__(namespace, interval, name="disk-prober")
+        self._prober = ThroughputProber(namespace)
+        self._disk_target = disk_target
+        self._block_size_kb = block_size_kb
+        self._block_count = block_count
+
+    def result(self) -> Dict[str, Any]:
+        with self._lock:
+            series = list(self._time_series)
+        phases = self._split_phases(series)
+        data: Dict[str, Any] = {
+            "timeSeries": series,
+            "phases": phases,
+            "config": {
+                "interval_s": self.interval,
+                "namespace": self.namespace,
+                "diskTarget": self._disk_target,
+                "blockSize_kb": self._block_size_kb,
+                "blockCount": self._block_count,
+            },
+        }
+        if self._probe_errors > 0:
+            data["probeErrors"] = self._probe_errors
+        return data
+
+    def _probe_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                now = time.time()
+                phase = self._current_phase(now)
+                entry = self._make_entry(now, phase)
+                entry["disk"] = {}
+
+                results = self._prober.measure_disk_throughput(
+                    target_service=self._disk_target, samples=1,
+                    block_size_kb=self._block_size_kb, count=self._block_count,
+                )
+                for r in results:
                     if r.samples:
                         s = r.samples[0]
                         entry["disk"][r.operation] = {
@@ -621,97 +751,29 @@ class ContinuousThroughputProber:
                     self._time_series.append(entry)
 
             except Exception as exc:
-                logger.warning("Throughput probe failed: %s", exc)
+                logger.warning("Disk probe failed: %s", exc)
                 with self._lock:
                     self._probe_errors += 1
 
             self._stop_event.wait(timeout=self.interval)
 
-    def _current_phase(self, now: float) -> str:
-        with self._lock:
-            chaos_start = self._chaos_start_time
-            chaos_end = self._chaos_end_time
-        if chaos_start is None:
-            return "pre-chaos"
-        if chaos_end is None:
-            return "during-chaos"
-        return "post-chaos"
-
     def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Split time series into phases and compute per-phase summaries."""
         phases: Dict[str, List[Dict[str, Any]]] = {
-            "pre-chaos": [],
-            "during-chaos": [],
-            "post-chaos": [],
+            "pre-chaos": [], "during-chaos": [], "post-chaos": [],
         }
         for entry in series:
-            phase = entry.get("phase", "pre-chaos")
-            phases.setdefault(phase, []).append(entry)
-
+            phases.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)
         result = {}
-        for phase_name, entries in phases.items():
+        for name, entries in phases.items():
             if not entries:
-                result[phase_name] = {"sampleCount": 0, "redis": {}, "disk": {}}
-                continue
-
-            result[phase_name] = {
-                "sampleCount": len(entries),
-                "redis": self._aggregate_target(entries, "redis"),
-                "disk": self._aggregate_target(entries, "disk"),
-            }
-
+                result[name] = {"sampleCount": 0, "disk": {}}
+            else:
+                result[name] = {
+                    "sampleCount": len(entries),
+                    "disk": self._aggregate_operations(entries, "disk"),
+                }
         return result
 
-    @staticmethod
-    def _aggregate_target(
-        entries: List[Dict[str, Any]], target: str
-    ) -> Dict[str, Any]:
-        """Aggregate throughput metrics for a target across entries."""
-        ops_by_operation: Dict[str, List[float]] = {}
-        lat_by_operation: Dict[str, List[float]] = {}
-        bps_by_operation: Dict[str, List[float]] = {}
-        errors_by_operation: Dict[str, int] = {}
 
-        for entry in entries:
-            target_data = entry.get(target, {})
-            for op, data in target_data.items():
-                ops_by_operation.setdefault(op, [])
-                lat_by_operation.setdefault(op, [])
-                bps_by_operation.setdefault(op, [])
-                errors_by_operation.setdefault(op, 0)
-
-                if data.get("ops_per_second") is not None:
-                    ops_by_operation[op].append(data["ops_per_second"])
-                if data.get("latency_ms") is not None:
-                    lat_by_operation[op].append(data["latency_ms"])
-                if data.get("bytes_per_second") is not None:
-                    bps_by_operation[op].append(data["bytes_per_second"])
-                if data.get("status") != "ok":
-                    errors_by_operation[op] += 1
-
-        summary = {}
-        for op in ops_by_operation:
-            ops = ops_by_operation[op]
-            lats = lat_by_operation.get(op, [])
-            bps = bps_by_operation.get(op, [])
-            errs = errors_by_operation.get(op, 0)
-
-            if ops:
-                summary[op] = {
-                    "meanOpsPerSecond": round(statistics.mean(ops), 2),
-                    "medianOpsPerSecond": round(statistics.median(ops), 2),
-                    "minOpsPerSecond": round(min(ops), 2),
-                    "maxOpsPerSecond": round(max(ops), 2),
-                    "meanLatency_ms": round(statistics.mean(lats), 2) if lats else None,
-                    "meanBytesPerSecond": round(statistics.mean(bps), 2) if bps else None,
-                    "sampleCount": len(ops),
-                    "errorCount": errs,
-                }
-            else:
-                summary[op] = {
-                    "meanOpsPerSecond": None,
-                    "sampleCount": 0,
-                    "errorCount": errs,
-                }
-
-        return summary
+# Backwards-compatible alias
+ContinuousThroughputProber = ContinuousRedisProber

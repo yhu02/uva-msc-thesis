@@ -26,7 +26,7 @@ from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.metrics.recovery import RecoveryWatcher
 from chaosprobe.metrics.latency import LatencyProber, ContinuousLatencyProber
-from chaosprobe.metrics.throughput import ThroughputProber, ContinuousThroughputProber
+from chaosprobe.metrics.throughput import ThroughputProber, ContinuousRedisProber, ContinuousDiskProber
 from chaosprobe.loadgen.runner import LocustRunner, LoadProfile, LoadStats
 
 
@@ -36,6 +36,98 @@ def _get_store(db_path: Optional[str] = None):
         return None
     from chaosprobe.storage.sqlite import SQLiteStore
     return SQLiteStore(db_path=db_path)
+
+
+def _print_cluster_recovery_hints(setup: LitmusSetup) -> None:
+    """Detect cluster state and print concrete recovery commands."""
+    import subprocess as _sp
+
+    steps: list[str] = []
+
+    # Detect libvirt VMs (works in WSL unlike vagrant commands)
+    has_virsh = False
+    try:
+        _sp.run(["which", "virsh"], capture_output=True, check=True)
+        has_virsh = True
+    except (FileNotFoundError, _sp.CalledProcessError):
+        pass
+
+    if has_virsh:
+        # Use virsh to inspect VM state — reliable in WSL with libvirt
+        try:
+            result = _sp.run(
+                ["virsh", "list", "--all", "--name"],
+                capture_output=True, text=True,
+            )
+            all_vms = [v.strip() for v in result.stdout.strip().split("\n") if v.strip()]
+
+            result_running = _sp.run(
+                ["virsh", "list", "--state-running", "--name"],
+                capture_output=True, text=True,
+            )
+            running_vms = [v.strip() for v in result_running.stdout.strip().split("\n") if v.strip()]
+
+            # Find k8s-related VMs
+            k8s_vms = [v for v in all_vms if "k8s" in v]
+            stopped_vms = [v for v in k8s_vms if v not in running_vms]
+
+            if not k8s_vms:
+                steps.append(
+                    "No Kubernetes VMs found. Create a cluster first:\n"
+                    "    chaosprobe cluster vagrant init\n"
+                    "    chaosprobe cluster vagrant up --provider=libvirt"
+                )
+            elif stopped_vms:
+                start_cmds = "\n".join(f"    virsh start {vm}" for vm in stopped_vms)
+                steps.append(
+                    f"These VMs are stopped: {', '.join(stopped_vms)}\n"
+                    f"Start them:\n{start_cmds}"
+                )
+                steps.append(
+                    "Then wait ~30s for kubelet to come up and verify:\n"
+                    "    kubectl cluster-info"
+                )
+            else:
+                # All VMs running but cluster unreachable
+                cp_vm = next((v for v in k8s_vms if "k8s-1" in v or "master" in v or "cp" in v), k8s_vms[0])
+                steps.append(
+                    "VMs are running but the API server is unreachable. Check kubelet:\n"
+                    f"    virsh console {cp_vm}\n"
+                    "  or SSH via the VM's IP:\n"
+                    f"    virsh domifaddr {cp_vm}\n"
+                    f"    ssh <ip> sudo systemctl status kubelet"
+                )
+        except Exception:
+            steps.append(
+                "Could not query libvirt VM status. Check manually:\n"
+                "    virsh list --all"
+            )
+    else:
+        # No virsh — fall back to kubectl context check
+        try:
+            result = _sp.run(
+                ["kubectl", "config", "current-context"],
+                capture_output=True, text=True,
+            )
+            ctx = result.stdout.strip() if result.returncode == 0 else None
+        except FileNotFoundError:
+            ctx = None
+
+        if ctx:
+            steps.append(
+                f"kubectl context '{ctx}' is set but the cluster is unreachable.\n"
+                "    Verify the node is up and the API server is listening:\n"
+                "    kubectl cluster-info"
+            )
+        else:
+            steps.append(
+                "No Kubernetes cluster configured. Set one up:\n"
+                "    chaosprobe cluster vagrant init && chaosprobe cluster vagrant up --provider=libvirt"
+            )
+
+    click.echo("\nRun these commands to recover:", err=True)
+    for i, step in enumerate(steps, 1):
+        click.echo(f"  {i}. {step}", err=True)
 
 
 def ensure_litmus_setup(
@@ -64,6 +156,7 @@ def ensure_litmus_setup(
     is_valid, message = setup.validate_cluster()
     if not is_valid:
         click.echo(f"Error: {message}", err=True)
+        _print_cluster_recovery_hints(setup)
         return False
     click.echo(f"  {message}")
 
@@ -1525,9 +1618,14 @@ def placement_nodes():
     help="Measure inter-service latency during each experiment",
 )
 @click.option(
-    "--measure-throughput/--no-measure-throughput", "measure_throughput",
+    "--measure-redis/--no-measure-redis", "measure_redis",
     default=True, show_default=True,
-    help="Measure Redis and disk I/O throughput during each experiment",
+    help="Measure Redis throughput during each experiment",
+)
+@click.option(
+    "--measure-disk/--no-measure-disk", "measure_disk",
+    default=True, show_default=True,
+    help="Measure disk I/O throughput during each experiment",
 )
 def run_all(
     namespace: str,
@@ -1546,7 +1644,8 @@ def run_all(
     db: Optional[str],
     do_visualize: bool,
     measure_latency: bool,
-    measure_throughput: bool,
+    measure_redis: bool,
+    measure_disk: bool,
 ):
     """Run all placement experiments automatically.
 
@@ -1632,8 +1731,10 @@ def run_all(
     click.echo(f"  Settle:     {settle_time}s between placement and experiment")
     if measure_latency:
         click.echo(f"  Latency:    Measuring inter-service latency during experiments")
-    if measure_throughput:
-        click.echo(f"  Throughput: Measuring Redis and disk I/O throughput")
+    if measure_redis:
+        click.echo(f"  Redis:      Measuring Redis throughput during experiments")
+    if measure_disk:
+        click.echo(f"  Disk:       Measuring disk I/O throughput during experiments")
     click.echo("")
 
     # Extract target deployment from experiment spec for recovery metrics
@@ -1706,9 +1807,11 @@ def run_all(
                 if settle_time > 0:
                     click.echo(f"\n{step_label}: Waiting {settle_time}s for workloads to settle...")
                     time.sleep(settle_time)
-                    click.echo("    Ready.")
-                else:
-                    click.echo(f"\n{step_label}: Skipping settle time.")
+
+                # Verify all deployments are ready before proceeding
+                click.echo("    Verifying deployment readiness...")
+                _wait_for_healthy_deployments(namespace, timeout=60)
+                click.echo("    Ready.")
 
                 # Run chaos experiment
                 step_label = f"  Step 4" if iterations == 1 else f"    Step B"
@@ -1734,15 +1837,23 @@ def run_all(
                     latency_prober = ContinuousLatencyProber(namespace)
                     latency_prober.start()
 
-                # Start continuous throughput prober if requested
-                throughput_prober = None
-                throughput_data = None
-                if measure_throughput:
-                    click.echo("    Starting throughput probing (Redis + disk)...")
-                    throughput_prober = ContinuousThroughputProber(
+                # Start continuous Redis prober if requested
+                redis_prober = None
+                redis_data = None
+                if measure_redis:
+                    click.echo("    Starting Redis throughput probing...")
+                    redis_prober = ContinuousRedisProber(namespace)
+                    redis_prober.start()
+
+                # Start continuous disk prober if requested
+                disk_prober = None
+                disk_data = None
+                if measure_disk:
+                    click.echo("    Starting disk I/O throughput probing...")
+                    disk_prober = ContinuousDiskProber(
                         namespace, disk_target=target_deployment,
                     )
-                    throughput_prober.start()
+                    disk_prober.start()
 
                 # Start Locust load generation if requested
                 iter_locust_runner = None
@@ -1757,26 +1868,30 @@ def run_all(
                 try:
                     # Collect pre-chaos baseline samples
                     pre_chaos_window = min(settle_time, 15)
-                    if (latency_prober or throughput_prober) and pre_chaos_window > 0:
+                    if (latency_prober or redis_prober or disk_prober) and pre_chaos_window > 0:
                         click.echo(f"    Collecting pre-chaos baseline ({pre_chaos_window}s)...")
                         time.sleep(pre_chaos_window)
 
                     experiment_start = time.time()
                     if latency_prober:
                         latency_prober.mark_chaos_start()
-                    if throughput_prober:
-                        throughput_prober.mark_chaos_start()
+                    if redis_prober:
+                        redis_prober.mark_chaos_start()
+                    if disk_prober:
+                        disk_prober.mark_chaos_start()
                     runner = ChaosRunner(namespace, timeout=timeout)
                     runner.run_experiments(scenario.get("experiments", []))
                     experiment_end = time.time()
                     if latency_prober:
                         latency_prober.mark_chaos_end()
-                    if throughput_prober:
-                        throughput_prober.mark_chaos_end()
+                    if redis_prober:
+                        redis_prober.mark_chaos_end()
+                    if disk_prober:
+                        disk_prober.mark_chaos_end()
 
                     # Collect post-chaos recovery samples
                     post_chaos_window = min(settle_time, 15)
-                    if (latency_prober or throughput_prober) and post_chaos_window > 0:
+                    if (latency_prober or redis_prober or disk_prober) and post_chaos_window > 0:
                         click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
                         time.sleep(post_chaos_window)
                 finally:
@@ -1803,16 +1918,22 @@ def run_all(
                             click.echo(f"    Latency: {n_samples} samples during chaos")
                         except Exception as e:
                             click.echo(f"    Warning: failed to collect latency data: {e}", err=True)
-                    if throughput_prober:
+                    if redis_prober:
                         try:
-                            throughput_prober.stop()
-                            throughput_data = throughput_prober.result()
-                            tp_phases = throughput_data.get("phases", {})
-                            tp_during = tp_phases.get("during-chaos", {})
-                            tp_samples = tp_during.get("sampleCount", 0)
-                            click.echo(f"    Throughput: {tp_samples} samples during chaos")
+                            redis_prober.stop()
+                            redis_data = redis_prober.result()
+                            rp = redis_data.get("phases", {}).get("during-chaos", {})
+                            click.echo(f"    Redis: {rp.get('sampleCount', 0)} samples during chaos")
                         except Exception as e:
-                            click.echo(f"    Warning: failed to collect throughput data: {e}", err=True)
+                            click.echo(f"    Warning: failed to collect Redis data: {e}", err=True)
+                    if disk_prober:
+                        try:
+                            disk_prober.stop()
+                            disk_data = disk_prober.result()
+                            dp = disk_data.get("phases", {}).get("during-chaos", {})
+                            click.echo(f"    Disk: {dp.get('sampleCount', 0)} samples during chaos")
+                        except Exception as e:
+                            click.echo(f"    Warning: failed to collect disk data: {e}", err=True)
                     watcher.stop()
 
                 recovery_data = watcher.result()
@@ -1829,7 +1950,8 @@ def run_all(
                     until_time=experiment_end,
                     recovery_data=recovery_data,
                     latency_data=latency_data,
-                    throughput_data=throughput_data,
+                    redis_data=redis_data,
+                    disk_data=disk_data,
                 )
 
                 # Generate output
@@ -2000,6 +2122,45 @@ def _extract_target_deployment(scenario: Dict[str, Any]) -> str:
         if applabel.startswith("app="):
             return applabel.split("=", 1)[1]
     return "checkoutservice"
+
+
+def _wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
+    """Wait until all deployments in the namespace have all replicas ready."""
+    from kubernetes import client, config as k8s_config
+
+    try:
+        k8s_config.load_incluster_config()
+    except k8s_config.ConfigException:
+        k8s_config.load_kube_config()
+
+    apps_api = client.AppsV1Api()
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        all_ready = True
+        deps = apps_api.list_namespaced_deployment(namespace)
+        for dep in deps.items:
+            desired = dep.spec.replicas or 1
+            ready = dep.status.ready_replicas or 0 if dep.status else 0
+            available = dep.status.available_replicas or 0 if dep.status else 0
+            if ready < desired or available < desired:
+                all_ready = False
+                break
+        if all_ready:
+            return
+        time.sleep(5)
+
+    # Log which deployments are not ready but don't fail
+    deps = apps_api.list_namespaced_deployment(namespace)
+    for dep in deps.items:
+        desired = dep.spec.replicas or 1
+        ready = dep.status.ready_replicas or 0 if dep.status else 0
+        if ready < desired:
+            click.echo(
+                f"    Warning: {dep.metadata.name} not fully ready "
+                f"({ready}/{desired} replicas)",
+                err=True,
+            )
 
 
 def _aggregate_iterations(

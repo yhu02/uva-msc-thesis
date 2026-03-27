@@ -41,7 +41,8 @@ class MetricsCollector:
         until_time: float,
         recovery_data: Optional[Dict[str, Any]] = None,
         latency_data: Optional[Dict[str, Any]] = None,
-        throughput_data: Optional[Dict[str, Any]] = None,
+        redis_data: Optional[Dict[str, Any]] = None,
+        disk_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Collect all available metrics for a deployment during an experiment.
 
@@ -54,9 +55,10 @@ class MetricsCollector:
             latency_data: Pre-collected inter-service latency data from
                           ContinuousLatencyProber. If None, the latency
                           section will be omitted.
-            throughput_data: Pre-collected throughput data from
-                             ContinuousThroughputProber. If None, the
-                             throughput section will be omitted.
+            redis_data: Pre-collected Redis throughput data from
+                       ContinuousRedisProber. If None, omitted.
+            disk_data: Pre-collected disk I/O throughput data from
+                       ContinuousDiskProber. If None, omitted.
 
         Returns:
             Unified metrics dictionary with all collected data.
@@ -99,8 +101,11 @@ class MetricsCollector:
         if latency_data is not None:
             result["latency"] = latency_data
 
-        if throughput_data is not None:
-            result["throughput"] = throughput_data
+        if redis_data is not None:
+            result["redis"] = redis_data
+
+        if disk_data is not None:
+            result["disk"] = disk_data
 
         return result
 

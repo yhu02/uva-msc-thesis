@@ -633,7 +633,7 @@ def _extract_latency_data(
     result = {}
     for name, sdata in raw_strategies.items():
         # Single iteration: metrics.latency
-        metrics = sdata.get("metrics", {})
+        metrics = sdata.get("metrics") or {}
         if metrics and "latency" in metrics:
             result[name] = metrics["latency"]
             continue
@@ -779,23 +779,59 @@ def _extract_throughput_data(
 ) -> Dict[str, Dict[str, Any]]:
     """Extract throughput phase data from raw strategy results.
 
+    Merges separate "redis" and "disk" metric keys into a unified
+    throughput structure with phases containing both targets.
+    Also supports the legacy "throughput" key for backwards compatibility.
+
     Returns:
         Dict mapping strategy name to throughput phase data.
     """
     result = {}
     for name, sdata in raw_strategies.items():
-        metrics = sdata.get("metrics", {})
-        if metrics and "throughput" in metrics:
+        metrics = sdata.get("metrics") or {}
+
+        # New format: separate "redis" and "disk" keys
+        redis_data = metrics.get("redis", {})
+        disk_data = metrics.get("disk", {})
+
+        # Legacy format: combined "throughput" key
+        if not redis_data and not disk_data and "throughput" in metrics:
             result[name] = metrics["throughput"]
             continue
 
-        iters = sdata.get("iterations", [])
-        if iters:
+        # Try iterations for new format
+        if not redis_data and not disk_data:
+            iters = sdata.get("iterations", [])
             for it in iters:
-                tp = it.get("metrics", {}).get("throughput")
+                m = it.get("metrics", {})
+                redis_data = m.get("redis", {})
+                disk_data = m.get("disk", {})
+                if redis_data or disk_data:
+                    break
+                # Legacy fallback in iterations
+                tp = m.get("throughput")
                 if tp:
                     result[name] = tp
                     break
+
+        if redis_data or disk_data:
+            # Merge redis and disk phase data into unified structure
+            merged: Dict[str, Any] = {"phases": {}}
+            all_phases = set()
+            for d in (redis_data, disk_data):
+                all_phases.update(d.get("phases", {}).keys())
+            for phase in all_phases:
+                rp = redis_data.get("phases", {}).get(phase, {})
+                dp = disk_data.get("phases", {}).get(phase, {})
+                merged["phases"][phase] = {
+                    "sampleCount": max(
+                        rp.get("sampleCount", 0),
+                        dp.get("sampleCount", 0),
+                    ),
+                    "redis": rp.get("redis", {}),
+                    "disk": dp.get("disk", {}),
+                }
+            result[name] = merged
 
     return result
 

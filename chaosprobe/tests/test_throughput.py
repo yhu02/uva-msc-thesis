@@ -6,10 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chaosprobe.metrics.throughput import (
-    ContinuousThroughputProber,
+    ContinuousRedisProber,
+    ContinuousDiskProber,
     ThroughputProber,
     ThroughputResult,
     ThroughputSample,
+    _ContinuousProberBase,
 )
 
 
@@ -130,9 +132,9 @@ class TestThroughputResult:
         assert summary["meanBytesPerSecond"] == 110_000_000.0
 
 
-class TestContinuousThroughputProber:
+class TestContinuousRedisProber:
     def test_phase_splitting(self):
-        prober = ContinuousThroughputProber.__new__(ContinuousThroughputProber)
+        prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
         prober._lock = threading.Lock()
 
         series = [
@@ -142,9 +144,6 @@ class TestContinuousThroughputProber:
                     "write": {"ops_per_second": 5000, "latency_ms": 0.2, "status": "ok"},
                     "read": {"ops_per_second": 8000, "latency_ms": 0.12, "status": "ok"},
                 },
-                "disk": {
-                    "write": {"ops_per_second": 100, "latency_ms": 10.0, "bytes_per_second": 100000000, "status": "ok"},
-                },
             },
             {
                 "phase": "during-chaos",
@@ -152,23 +151,18 @@ class TestContinuousThroughputProber:
                     "write": {"ops_per_second": 2000, "latency_ms": 0.5, "status": "ok"},
                     "read": {"ops_per_second": 3000, "latency_ms": 0.33, "status": "ok"},
                 },
-                "disk": {
-                    "write": {"ops_per_second": 30, "latency_ms": 33.0, "bytes_per_second": 30000000, "status": "ok"},
-                },
             },
             {
                 "phase": "during-chaos",
                 "redis": {
                     "write": {"ops_per_second": 2500, "latency_ms": 0.4, "status": "ok"},
                 },
-                "disk": {},
             },
             {
                 "phase": "post-chaos",
                 "redis": {
                     "write": {"ops_per_second": 4800, "latency_ms": 0.21, "status": "ok"},
                 },
-                "disk": {},
             },
         ]
 
@@ -183,7 +177,7 @@ class TestContinuousThroughputProber:
         assert redis_write["sampleCount"] == 2
 
     def test_phase_splitting_empty(self):
-        prober = ContinuousThroughputProber.__new__(ContinuousThroughputProber)
+        prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
         prober._lock = threading.Lock()
 
         phases = prober._split_phases([])
@@ -191,9 +185,37 @@ class TestContinuousThroughputProber:
         assert phases["during-chaos"]["sampleCount"] == 0
         assert phases["post-chaos"]["sampleCount"] == 0
 
+
+class TestContinuousDiskProber:
+    def test_phase_splitting(self):
+        prober = ContinuousDiskProber.__new__(ContinuousDiskProber)
+        prober._lock = threading.Lock()
+
+        series = [
+            {
+                "phase": "pre-chaos",
+                "disk": {
+                    "write": {"ops_per_second": 100, "latency_ms": 10.0, "bytes_per_second": 100000000, "status": "ok"},
+                },
+            },
+            {
+                "phase": "during-chaos",
+                "disk": {
+                    "write": {"ops_per_second": 30, "latency_ms": 33.0, "bytes_per_second": 30000000, "status": "ok"},
+                },
+            },
+        ]
+
+        phases = prober._split_phases(series)
+        assert phases["pre-chaos"]["sampleCount"] == 1
+        assert phases["during-chaos"]["sampleCount"] == 1
+        assert phases["during-chaos"]["disk"]["write"]["meanOpsPerSecond"] == 30.0
+
+
+class TestContinuousProberBase:
     def test_current_phase_transitions(self):
         import time
-        prober = ContinuousThroughputProber.__new__(ContinuousThroughputProber)
+        prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
         prober._lock = threading.Lock()
         prober._chaos_start_time = None
         prober._chaos_end_time = None
@@ -207,14 +229,14 @@ class TestContinuousThroughputProber:
         prober._chaos_end_time = now - 5
         assert prober._current_phase(now) == "post-chaos"
 
-    def test_aggregate_target(self):
+    def test_aggregate_operations(self):
         entries = [
             {"redis": {"write": {"ops_per_second": 100, "latency_ms": 10, "status": "ok"}}},
             {"redis": {"write": {"ops_per_second": 200, "latency_ms": 5, "status": "ok"}}},
             {"redis": {"write": {"ops_per_second": None, "latency_ms": None, "status": "error"}}},
         ]
 
-        result = ContinuousThroughputProber._aggregate_target(entries, "redis")
+        result = _ContinuousProberBase._aggregate_operations(entries, "redis")
         assert "write" in result
         assert result["write"]["meanOpsPerSecond"] == 150.0
         assert result["write"]["sampleCount"] == 2
