@@ -14,7 +14,7 @@
 # I/O throughput during pre-chaos, during-chaos, and post-chaos phases.
 #
 # Usage:
-#   chaosprobe run-all -n online-boutique \
+#   chaosprobe run -n online-boutique \
 #     -e scenarios/online-boutique/contention-db-throughput/experiment.yaml \
 #     --measure-throughput --visualize
 apiVersion: litmuschaos.io/v1alpha1

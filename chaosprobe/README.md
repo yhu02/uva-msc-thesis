@@ -137,7 +137,7 @@ workers:
   disk: "20GB"
 ```
 
-When `--provision` is passed to `run-all`, this config is used to automatically provision the cluster before running experiments.
+When `--provision` is passed to `run`, this config is used to automatically provision the cluster before running experiments.
 
 ## Quick Start
 
@@ -147,11 +147,8 @@ When `--provision` is passed to `run-all`, this config is used to automatically 
 # Initialize ChaosProbe (installs LitmusChaos)
 uv run chaosprobe init
 
-# Run a scenario directory
-uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
-
-# AI edits the deployment.yaml to fix issues, then re-run
-uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o after-fix.json
+# Run the full placement experiment matrix (all defaults: steady load, db, visualization)
+uv run chaosprobe run -n online-boutique
 
 # Compare before and after
 uv run chaosprobe compare results.json after-fix.json -o comparison.json
@@ -179,7 +176,7 @@ export KUBECONFIG=~/.kube/config-chaosprobe
 
 # 6. Initialize ChaosProbe and run
 uv run chaosprobe init
-uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
+uv run chaosprobe run -n online-boutique
 
 # Destroy VMs when done
 uv run chaosprobe cluster vagrant destroy
@@ -214,7 +211,7 @@ export KUBECONFIG=~/.kube/config-chaosprobe
 
 # 4. Run scenarios
 uv run chaosprobe init
-uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
+uv run chaosprobe run -n online-boutique
 ```
 
 ## Commands
@@ -228,8 +225,8 @@ uv run chaosprobe status
 # Initialize (install LitmusChaos)
 uv run chaosprobe init
 
-# Run a scenario (directory or single file)
-uv run chaosprobe run <scenario-dir> -o results.json
+# Run the full placement experiment matrix
+uv run chaosprobe run -n online-boutique
 
 # Deploy manifests only (no experiments)
 uv run chaosprobe provision <scenario-dir>
@@ -260,81 +257,90 @@ uv run chaosprobe placement nodes
 uv run chaosprobe placement clear -n online-boutique
 ```
 
-### Run-All Command
+### Run Command
+
+The `run` command is the primary entry point. By default it runs the full placement experiment matrix with load generation, database persistence, and visualization enabled.
 
 ```bash
-# Run the full placement experiment matrix automatically
-uv run chaosprobe run-all -n online-boutique
+# Run with all defaults (all strategies, steady load, results.db, charts)
+uv run chaosprobe run -n online-boutique
 
 # Run specific strategies only
-uv run chaosprobe run-all -n online-boutique -s colocate,spread
+uv run chaosprobe run -n online-boutique -s colocate,spread
 
 # Run multiple iterations per strategy for statistical significance
-uv run chaosprobe run-all -n online-boutique -i 3
+uv run chaosprobe run -n online-boutique -i 3
 
 # Use a custom experiment file
-uv run chaosprobe run-all -n online-boutique -e scenarios/online-boutique/placement-experiment.yaml
+uv run chaosprobe run -n online-boutique -e scenarios/online-boutique/placement-experiment.yaml
 
 # Custom output directory and settings
-uv run chaosprobe run-all -n online-boutique -o results/my-run --timeout 600 --seed 42
+uv run chaosprobe run -n online-boutique -o results/my-run --timeout 600 --seed 42
 
-# With load generation and database storage
-uv run chaosprobe run-all -n online-boutique --load-profile steady --db results.db
+# Use ramp load profile instead of steady
+uv run chaosprobe run -n online-boutique --load-profile ramp
 
 # Auto-provision cluster from scenario cluster.yaml
-uv run chaosprobe run-all -n online-boutique --provision
+uv run chaosprobe run -n online-boutique --provision
 
-# Generate visualization charts after run
-uv run chaosprobe run-all -n online-boutique --visualize
+# Disable visualization
+uv run chaosprobe run -n online-boutique --no-visualize
 ```
 
 Iterates through placement strategies (baseline, colocate, spread, antagonistic, random), applies each, runs the corresponding chaos experiment, collects recovery and pod metrics, and saves results to a timestamped directory.
 
 ### Load Generation
 
-```bash
-# Run a scenario with Locust load generation
-uv run chaosprobe run <scenario-dir> -o results.json --load-profile steady
+Load generation runs by default (`--load-profile steady`). Override with a different profile or custom locustfile:
 
-# Available profiles: steady (50 users), ramp (100 users), spike (200 users)
-uv run chaosprobe run <scenario-dir> --load-profile ramp --target-url http://frontend:8080
+```bash
+# Use ramp profile (100 users)
+uv run chaosprobe run -n online-boutique --load-profile ramp
+
+# Use spike profile (200 users)
+uv run chaosprobe run -n online-boutique --load-profile spike
 
 # Use a custom locustfile
-uv run chaosprobe run <scenario-dir> --load-profile steady --locustfile my_locustfile.py
+uv run chaosprobe run -n online-boutique --locustfile my_locustfile.py
+
+# Override target URL
+uv run chaosprobe run -n online-boutique --target-url http://frontend:8080
 ```
 
 ### Query & Database Commands
 
-Results can be persisted to a SQLite database with `--db`:
+Results are persisted to a SQLite database by default (`results.db`):
 
 ```bash
-# Run with database storage
-uv run chaosprobe run <scenario-dir> -o results.json --db results.db
+# List stored runs (uses default results.db)
+uv run chaosprobe query runs
 
-# List stored runs
-uv run chaosprobe query runs --db results.db
+# Use a specific database
+uv run chaosprobe query runs --db custom.db
 
 # Compare strategies across runs
-uv run chaosprobe query compare --db results.db
+uv run chaosprobe query compare
 
 # Show details of a specific run
-uv run chaosprobe query show <run-id> --db results.db
+uv run chaosprobe query show <run-id>
 
 # Export all runs to CSV
-uv run chaosprobe query export --db results.db -o export.csv
+uv run chaosprobe query export -o export.csv
 ```
 
 ### Visualization
 
+Visualization is enabled by default after `run`. You can also generate charts independently:
+
 ```bash
 # Generate charts from a summary.json file
-uv run chaosprobe visualize results/20260227-140237/summary.json -o charts/
+uv run chaosprobe visualize --summary results/20260227-140237/summary.json -o charts/
 
 # Generate charts from database
 uv run chaosprobe visualize --db results.db -o charts/
 
-# Auto-generate charts after run-all
-uv run chaosprobe run-all -n online-boutique --visualize
+# Disable auto-visualization during run
+uv run chaosprobe run -n online-boutique --no-visualize
 ```
 
 Generates resilience score bar charts, recovery time comparisons, load metric overlays, pod-node heatmaps, and an HTML summary report.

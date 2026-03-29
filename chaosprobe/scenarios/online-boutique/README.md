@@ -49,7 +49,7 @@ Performance
 Deploys all 11 microservices (including load generator) + Redis, then runs a simple pod-delete on the frontend as a deployment health check.
 
 ```bash
-chaosprobe run scenarios/online-boutique/deploy/
+chaosprobe provision scenarios/online-boutique/deploy/
 ```
 
 ### 2. CPU Contention — Execution Saturation
@@ -61,7 +61,7 @@ chaosprobe run scenarios/online-boutique/deploy/
 Tests cascading latency when the hottest service's CPU is saturated. Currency conversion is called by checkout, frontend, and every price display.
 
 ```bash
-chaosprobe run scenarios/online-boutique/contention-cpu/
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-cpu/experiment.yaml
 ```
 
 ### 3. Memory Contention — Execution Saturation
@@ -73,7 +73,7 @@ chaosprobe run scenarios/online-boutique/contention-cpu/
 Tests OOMKill behavior and graceful degradation when a Python service exceeds memory limits.
 
 ```bash
-chaosprobe run scenarios/online-boutique/contention-memory/
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-memory/experiment.yaml
 ```
 
 ### 4. Scheduling Contention — Critical Path
@@ -85,7 +85,7 @@ chaosprobe run scenarios/online-boutique/contention-memory/
 Tests pod scheduling recovery time on the critical checkout path. With 1 replica and force-delete, the entire checkout flow breaks until rescheduling completes.
 
 ```bash
-chaosprobe run scenarios/online-boutique/contention-scheduling/
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-scheduling/experiment.yaml
 ```
 
 ### 5. Redis Latency — I/O Contention (In-cluster Storage)
@@ -97,7 +97,7 @@ chaosprobe run scenarios/online-boutique/contention-scheduling/
 Tests in-cluster storage contention by injecting latency between the cart service and its Redis dependency. Measures whether slow storage cascades to checkout and frontend.
 
 ```bash
-chaosprobe run scenarios/online-boutique/contention-redis-latency/
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-redis-latency/experiment.yaml
 ```
 
 ### 6. Network Loss — I/O Saturation (Bandwidth)
@@ -109,7 +109,7 @@ chaosprobe run scenarios/online-boutique/contention-redis-latency/
 Tests bandwidth saturation and network congestion on the checkout service. With 60% packet loss, downstream calls to payment, shipping, email, cart, and currency fail intermittently.
 
 ```bash
-chaosprobe run scenarios/online-boutique/contention-network-loss/
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-network-loss/experiment.yaml
 ```
 
 ### 7. Disk I/O Stress — I/O Saturation
@@ -121,7 +121,7 @@ chaosprobe run scenarios/online-boutique/contention-network-loss/
 Tests disk I/O pressure on the product catalog. Measures whether the service degrades gracefully or becomes unresponsive, affecting frontend product listing and recommendations.
 
 ```bash
-chaosprobe run scenarios/online-boutique/contention-io-stress/
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-io-stress/experiment.yaml
 ```
 
 ## Workflow
@@ -129,29 +129,23 @@ chaosprobe run scenarios/online-boutique/contention-io-stress/
 ### Step 1: Deploy the application
 
 ```bash
-chaosprobe run scenarios/online-boutique/deploy/
+chaosprobe provision scenarios/online-boutique/deploy/
 ```
 
-This deploys all services to the `online-boutique` namespace and verifies the deployment with a frontend health check.
+This deploys all services to the `online-boutique` namespace.
 
 ### Step 2: Run experiments
 
-Run contention experiments individually against already-deployed services:
+Run the full placement experiment matrix automatically:
 
 ```bash
-# Pick one:
-chaosprobe run scenarios/online-boutique/contention-cpu/
-chaosprobe run scenarios/online-boutique/contention-memory/
-chaosprobe run scenarios/online-boutique/contention-scheduling/
-chaosprobe run scenarios/online-boutique/contention-redis-latency/
-chaosprobe run scenarios/online-boutique/contention-network-loss/
-chaosprobe run scenarios/online-boutique/contention-io-stress/
+chaosprobe run -n online-boutique
 ```
 
-Or run the full placement experiment matrix automatically (see [Automated Experiment Runner](#automated-experiment-runner)):
+Or run specific strategies:
 
 ```bash
-chaosprobe run-all -n online-boutique
+chaosprobe run -n online-boutique -s colocate,spread
 ```
 
 ### Step 3: AI fix-and-verify loop
@@ -187,16 +181,16 @@ Placement experiments control pod scheduling to study how co-location affects pe
 
 ```bash
 # Run all strategies (baseline, colocate, spread, antagonistic, random)
-chaosprobe run-all -n online-boutique
+chaosprobe run -n online-boutique
 
 # Run specific strategies only
-chaosprobe run-all -n online-boutique -s colocate,spread
+chaosprobe run -n online-boutique -s colocate,spread
 
 # Custom output directory
-chaosprobe run-all -n online-boutique -o results/my-run
+chaosprobe run -n online-boutique -o results/my-run
 
 # Custom experiment file
-chaosprobe run-all -n online-boutique -e path/to/experiment.yaml
+chaosprobe run -n online-boutique -e path/to/experiment.yaml
 ```
 
 This iterates through each strategy — clearing placement, applying the strategy, waiting for workloads to settle, running the chaos experiment, and collecting results. Output goes to a timestamped `results/` directory with individual JSON files per strategy and an overall `summary.json`.
@@ -207,8 +201,8 @@ This iterates through each strategy — clearing placement, applying the strateg
 # 1. Apply a placement strategy
 chaosprobe placement apply colocate -n online-boutique
 
-# 2. Run the shared experiment
-chaosprobe run scenarios/online-boutique/placement-experiment.yaml -o colocate.json
+# 2. Run a single strategy with a custom experiment file
+chaosprobe run -n online-boutique -s baseline -e scenarios/online-boutique/placement-experiment.yaml
 
 # 3. Clear placement and try another strategy
 chaosprobe placement clear -n online-boutique

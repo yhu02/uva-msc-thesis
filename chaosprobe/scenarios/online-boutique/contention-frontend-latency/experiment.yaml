@@ -11,7 +11,7 @@
 # maximizes network hops but distributes load.
 #
 # Usage:
-#   chaosprobe run-all -n online-boutique -e scenarios/online-boutique/contention-frontend-latency/experiment.yaml --measure-latency
+#   chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-frontend-latency/experiment.yaml --measure-latency
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:

@@ -31,9 +31,7 @@ from chaosprobe.loadgen.runner import LocustRunner, LoadProfile, LoadStats
 
 
 def _get_store(db_path: Optional[str] = None):
-    """Lazily get a SQLiteStore instance if db_path is given."""
-    if db_path is None:
-        return None
+    """Get a SQLiteStore instance (uses default path if none given)."""
     from chaosprobe.storage.sqlite import SQLiteStore
     return SQLiteStore(db_path=db_path)
 
@@ -970,201 +968,6 @@ def vagrant_ssh(vm_name: Optional[str], name: str, vagrant_dir: Optional[str]):
 # ─────────────────────────────────────────────────────────────
 
 
-@main.command()
-@click.argument("scenario_path", type=click.Path(exists=True))
-@click.option("--output", "-o", type=click.Path(), help="Output file for results JSON")
-@click.option(
-    "--namespace", "-n", default=None, help="Override namespace (default: from scenario)"
-)
-@click.option(
-    "--timeout",
-    "-t",
-    default=300,
-    help="Timeout in seconds for experiment completion",
-)
-@click.option(
-    "--no-auto-setup",
-    is_flag=True,
-    help="Disable automatic LitmusChaos installation",
-)
-@click.option(
-    "--load-profile",
-    type=click.Choice(["steady", "ramp", "spike"]),
-    default=None,
-    help="Run Locust load generation during experiment (steady/ramp/spike)",
-)
-@click.option(
-    "--locustfile",
-    type=click.Path(exists=True),
-    default=None,
-    help="Custom Locust file for load generation",
-)
-@click.option(
-    "--target-url",
-    default=None,
-    help="Target URL for load generation (e.g. http://frontend.ns.svc.cluster.local)",
-)
-@click.option(
-    "--db",
-    default=None,
-    help="Path to SQLite database for persisting results",
-)
-def run(
-    scenario_path: str,
-    output: Optional[str],
-    namespace: Optional[str],
-    timeout: int,
-    no_auto_setup: bool,
-    load_profile: Optional[str],
-    locustfile: Optional[str],
-    target_url: Optional[str],
-    db: Optional[str],
-):
-    """Run a chaos scenario and generate AI-consumable output.
-
-    SCENARIO_PATH is a directory containing Kubernetes manifests and
-    ChaosEngine YAML files, or a single YAML file.
-
-    \b
-    Example scenario directory:
-      scenarios/nginx-pod-delete/
-        deployment.yaml     # K8s Deployment
-        service.yaml        # K8s Service
-        experiment.yaml     # ChaosEngine YAML
-
-    ChaosProbe automatically:
-    - Classifies files by kind (ChaosEngine vs regular K8s resources)
-    - Deploys K8s manifests to the cluster
-    - Runs ChaosEngine experiments
-    - Generates structured AI-consumable output
-    """
-    click.echo(f"Loading scenario from {scenario_path}...")
-
-    try:
-        scenario = load_scenario(scenario_path)
-        validate_scenario(scenario)
-    except Exception as e:
-        click.echo(f"Error loading scenario: {e}", err=True)
-        sys.exit(1)
-
-    # Override namespace if specified
-    if namespace:
-        scenario["namespace"] = namespace
-
-    target_namespace = scenario.get("namespace", "default")
-    experiment_types = _extract_experiment_types(scenario)
-
-    click.echo(f"  Manifests: {len(scenario.get('manifests', []))} files")
-    click.echo(f"  Experiments: {len(scenario.get('experiments', []))} ChaosEngine(s)")
-    click.echo(f"  Experiment types: {', '.join(experiment_types) or 'none'}")
-    click.echo(f"  Namespace: {target_namespace}")
-
-    # Phase 0: Ensure LitmusChaos is set up
-    click.echo("\n[0/4] Checking prerequisites...")
-    if not ensure_litmus_setup(
-        target_namespace, experiment_types, auto_setup=not no_auto_setup
-    ):
-        sys.exit(1)
-
-    # Phase 1: Deploy K8s manifests
-    click.echo("\n[1/4] Deploying manifests...")
-    provisioner = KubernetesProvisioner(target_namespace)
-    try:
-        provisioner.provision(scenario.get("manifests", []))
-        click.echo("  Manifests deployed successfully")
-    except Exception as e:
-        click.echo(f"  Error deploying manifests: {e}", err=True)
-        sys.exit(1)
-
-    # Phase 2: Run chaos experiments
-    click.echo("\n[2/4] Running chaos experiments...")
-
-    # Start Locust load generation if requested
-    locust_runner = None
-    load_stats = None
-    if load_profile:
-        profile = LoadProfile.from_name(load_profile)
-        url = target_url or f"http://frontend.{target_namespace}.svc.cluster.local"
-        click.echo(f"  Starting Locust load generation ({load_profile}: {profile.users} users)")
-        locust_runner = LocustRunner(target_url=url, locustfile=locustfile)
-        locust_runner.start(profile)
-
-    runner = ChaosRunner(target_namespace, timeout=timeout)
-    try:
-        runner.run_experiments(scenario.get("experiments", []))
-        click.echo("  Experiments completed")
-    except Exception as e:
-        click.echo(f"  Error running experiments: {e}", err=True)
-        # Continue to collect results even if experiments fail
-
-    # Stop Locust and collect stats
-    if locust_runner:
-        try:
-            locust_runner.stop()
-            load_stats = locust_runner.collect_stats()
-            click.echo(f"  Load stats: {load_stats.total_requests} requests, "
-                        f"p95={load_stats.p95_response_time_ms:.0f}ms, "
-                        f"error_rate={load_stats.error_rate:.2%}")
-        except Exception as e:
-            click.echo(f"  Warning: failed to collect load stats: {e}", err=True)
-        finally:
-            locust_runner.cleanup()
-
-    # Phase 3: Collect results
-    click.echo("\n[3/4] Collecting results...")
-    collector = ResultCollector(target_namespace)
-    try:
-        executed = runner.get_executed_experiments()
-        results = collector.collect(executed)
-        click.echo(f"  Collected results from {len(results)} experiments")
-    except Exception as e:
-        click.echo(f"  Error collecting results: {e}", err=True)
-        results = []
-
-    # Phase 4: Generate AI output
-    click.echo("\n[4/4] Generating AI output...")
-    store = _get_store(db)
-    try:
-        generator = OutputGenerator(scenario, results, store=store)
-        output_data = generator.generate()
-
-        # Merge load stats into output
-        if load_stats:
-            output_data["loadGeneration"] = {
-                "profile": load_profile,
-                "stats": load_stats.to_dict(),
-            }
-            # Re-save with load stats included
-            if store:
-                try:
-                    store.save_run(output_data)
-                except Exception:
-                    pass
-    finally:
-        if store:
-            store.close()
-        if locust_runner:
-            locust_runner.cleanup()
-
-    if output:
-        output_path = Path(output)
-        output_path.write_text(json.dumps(output_data, indent=2))
-        click.echo(f"  Output written to {output}")
-    else:
-        click.echo(json.dumps(output_data, indent=2))
-
-    # Print summary
-    summary = output_data["summary"]
-    click.echo(f"\n{'=' * 50}")
-    click.echo("Summary:")
-    click.echo(f"  Verdict: {summary['overallVerdict']}")
-    click.echo(f"  Resilience Score: {summary['resilienceScore']:.1f}")
-    click.echo(
-        f"  Experiments: {summary['passed']}/{summary['totalExperiments']} passed"
-    )
-
-    if output:
-        click.echo(f"\n  Output: {output}")
 
 
 @main.command()
@@ -1540,18 +1343,18 @@ def placement_nodes():
 
 
 # ─────────────────────────────────────────────────────────────
-# run-all — automated full experiment matrix
+# run — automated full experiment matrix
 # ─────────────────────────────────────────────────────────────
 
 
-@main.command("run-all")
+@main.command()
 @click.option(
     "--namespace", "-n", default="online-boutique",
     help="Namespace containing the application",
 )
 @click.option(
-    "--output-dir", "-o", default=None,
-    help="Directory for results (default: results/<timestamp>)",
+    "--output-dir", "-o", default="results",
+    help="Base directory for results (a timestamped subdirectory is created)",
 )
 @click.option(
     "--strategies", "-s", default="baseline,colocate,spread,antagonistic,random",
@@ -1589,8 +1392,8 @@ def placement_nodes():
 @click.option(
     "--load-profile",
     type=click.Choice(["steady", "ramp", "spike"]),
-    default=None,
-    help="Run Locust load generation during each experiment",
+    default="steady",
+    help="Locust load profile during each experiment (default: steady)",
 )
 @click.option(
     "--locustfile",
@@ -1600,16 +1403,17 @@ def placement_nodes():
 )
 @click.option(
     "--target-url",
-    default=None,
-    help="Target URL for load generation (e.g. http://frontend.ns.svc.cluster.local)",
+    default="http://frontend.online-boutique.svc.cluster.local",
+    help="Target URL for load generation",
 )
 @click.option(
     "--db",
-    default=None,
+    default="results.db",
     help="Path to SQLite database for persisting results",
 )
 @click.option(
-    "--visualize", "do_visualize", is_flag=True,
+    "--visualize/--no-visualize", "do_visualize",
+    default=True, show_default=True,
     help="Generate visualization charts after experiments complete",
 )
 @click.option(
@@ -1627,7 +1431,7 @@ def placement_nodes():
     default=True, show_default=True,
     help="Measure disk I/O throughput during each experiment",
 )
-def run_all(
+def run(
     namespace: str,
     output_dir: Optional[str],
     strategies: str,
@@ -1647,7 +1451,7 @@ def run_all(
     measure_redis: bool,
     measure_disk: bool,
 ):
-    """Run all placement experiments automatically.
+    """Run placement experiments automatically.
 
     Iterates through placement strategies (baseline, colocate, spread,
     antagonistic, random), applies each placement, runs the shared
@@ -1656,10 +1460,10 @@ def run_all(
 
     \b
     Example:
-      chaosprobe run-all -n online-boutique
-      chaosprobe run-all -n online-boutique -s colocate,spread
-      chaosprobe run-all -n online-boutique -o results/my-run
-      chaosprobe run-all -n online-boutique -i 3  # 3 iterations per strategy
+      chaosprobe run -n online-boutique
+      chaosprobe run -n online-boutique -s colocate,spread
+      chaosprobe run -n online-boutique -o results/my-run
+      chaosprobe run -n online-boutique -i 3  # 3 iterations per strategy
     """
     strategy_list = [s.strip() for s in strategies.split(",")]
     valid_strategies = {"baseline", "colocate", "spread", "antagonistic", "random"}
@@ -1673,11 +1477,8 @@ def run_all(
         sys.exit(1)
 
     # Create output directory
-    if output_dir:
-        results_dir = Path(output_dir)
-    else:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        results_dir = Path("results") / ts
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    results_dir = Path(output_dir) / ts
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # Load the shared experiment file once
@@ -1741,7 +1542,7 @@ def run_all(
     target_deployment = _extract_target_deployment(shared_scenario)
 
     overall_results: Dict[str, Any] = {
-        "runId": f"run-all-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "namespace": namespace,
         "iterations": iterations,
@@ -1860,7 +1661,7 @@ def run_all(
                 iter_load_stats = None
                 if load_profile:
                     profile = LoadProfile.from_name(load_profile)
-                    url = target_url or f"http://frontend.{namespace}.svc.cluster.local"
+                    url = target_url
                     click.echo(f"    Starting Locust ({load_profile}: {profile.users} users)")
                     iter_locust_runner = LocustRunner(target_url=url, locustfile=locustfile)
                     iter_locust_runner.start(profile)
@@ -1955,7 +1756,7 @@ def run_all(
                 )
 
                 # Generate output
-                generator = OutputGenerator(scenario, results, metrics=recovery, store=run_store)
+                generator = OutputGenerator(scenario, results, metrics=recovery)
                 output_data = generator.generate()
 
                 # Merge load stats into output
@@ -1971,6 +1772,14 @@ def run_all(
                 else:
                     result_file = results_dir / f"{strategy_name}.json"
                 result_file.write_text(json.dumps(output_data, indent=2))
+
+                # Persist to database after JSON is finalised — keeps both in sync
+                if run_store:
+                    try:
+                        run_store.save_run(output_data)
+                    except Exception as e:
+                        import warnings
+                        warnings.warn(f"Failed to save results to database: {e}")
 
                 verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
                 score = output_data.get("summary", {}).get("resilienceScore", 0)
@@ -2398,7 +2207,7 @@ def visualize(
     """Generate visualization charts from experiment results.
 
     Can read from the SQLite database or directly from a summary.json file
-    produced by the run-all command.
+    produced by the run command.
 
     \b
     Examples:
@@ -2415,7 +2224,7 @@ def visualize(
         except ImportError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
-    elif db or True:  # Default to DB mode
+    else:  # Default to DB mode
         click.echo(f"Generating charts from database...")
         from chaosprobe.storage.sqlite import SQLiteStore
         store = SQLiteStore(db_path=db)

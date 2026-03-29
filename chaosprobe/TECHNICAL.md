@@ -376,7 +376,7 @@ Handles all infrastructure bootstrapping.
 |---|---|
 | `chaosprobe init` | Install LitmusChaos, setup RBAC |
 | `chaosprobe status [--json]` | Check prerequisites and cluster connectivity |
-| `chaosprobe run <scenario> -o results.json` | Run a chaos scenario and generate output |
+| `chaosprobe run [-n namespace]` | Run placement experiment matrix (all defaults: steady load, db, viz) |
 | `chaosprobe provision <scenario>` | Deploy manifests only (no experiments) |
 | `chaosprobe compare baseline.json after.json -o comparison.json` | Compare before/after runs |
 | `chaosprobe cleanup <namespace> [--all]` | Remove experiments and optionally namespace |
@@ -390,30 +390,33 @@ Handles all infrastructure bootstrapping.
 | `chaosprobe placement nodes` | List cluster nodes with resources |
 | `chaosprobe placement clear -n <ns>` | Remove all placement constraints |
 
-### Run-All (Placement Experiment Matrix)
+### Run (Placement Experiment Matrix)
 
 ```
-chaosprobe run-all -n <namespace> [options]
+chaosprobe run [options]
 ```
 
 | Option | Default | Purpose |
 |---|---|---|
-| `-n, --namespace` | required | Target namespace |
-| `-o, --output-dir` | `results/<timestamp>` | Results directory |
+| `-n, --namespace` | `online-boutique` | Target namespace |
+| `-o, --output-dir` | `results` | Base results directory (timestamped subdir created) |
 | `-s, --strategies` | all 5 | Comma-separated subset |
 | `-i, --iterations` | 1 | Iterations per strategy |
 | `-e, --experiment` | auto-detected | Custom experiment YAML |
 | `-t, --timeout` | 300 | Engine timeout (seconds) |
-| `--seed` | None | Random strategy seed |
+| `--seed` | 42 | Random strategy seed |
 | `--settle-time` | 30 | Wait between placement and experiment |
 | `--provision` | off | Auto-provision cluster from scenario cluster.yaml |
-| `--load-profile` | None | Locust load profile (steady/ramp/spike) |
+| `--load-profile` | `steady` | Locust load profile (steady/ramp/spike) |
 | `--locustfile` | built-in | Custom locustfile path |
-| `--target-url` | auto-detected | URL for Locust load generation |
-| `--db` | None | SQLite database path for persistence |
-| `--visualize` | off | Generate charts after run |
+| `--target-url` | `http://frontend.online-boutique.svc.cluster.local` | URL for Locust load generation |
+| `--db` | `results.db` | SQLite database path for persistence |
+| `--visualize/--no-visualize` | on | Generate charts after run |
+| `--measure-latency/--no-measure-latency` | on | Measure inter-service latency |
+| `--measure-redis/--no-measure-redis` | on | Measure Redis throughput |
+| `--measure-disk/--no-measure-disk` | on | Measure disk I/O throughput |
 
-**Workflow per strategy**: apply placement -> settle -> start RecoveryWatcher -> (optional) start Locust -> run experiment -> stop Locust/watcher -> collect results + metrics -> clear placement -> next strategy.
+**Workflow per strategy**: apply placement -> settle -> start RecoveryWatcher -> start Locust -> run experiment -> stop Locust/watcher -> collect results + metrics -> clear placement -> next strategy.
 
 ### Query (Database)
 
@@ -428,7 +431,7 @@ chaosprobe run-all -n <namespace> [options]
 
 | Command | Purpose |
 |---|---|
-| `chaosprobe visualize <summary.json> -o <dir>` | Generate charts from summary file |
+| `chaosprobe visualize --summary <file> -o <dir>` | Generate charts from summary file |
 | `chaosprobe visualize --db <path> -o <dir>` | Generate charts from database |
 
 Generated charts: resilience score bars, recovery time comparison, load metrics overlay, pod-node heatmap, HTML summary report.
@@ -449,13 +452,13 @@ Generated charts: resilience score bars, recovery time comparison, load metrics 
 
 ---
 
-## 4. Data Flow: run-all Command
+## 4. Data Flow: run Command
 
 ```
 1. Load shared scenario (placement-experiment.yaml)
 2. Extract target deployment from ChaosEngine appinfo
 3. Create MetricsCollector for namespace
-4. Open shared SQLiteStore (if --db specified)
+4. Open shared SQLiteStore (results.db by default)
 
 For each strategy in [baseline, colocate, spread, antagonistic, random]:
     5. Apply placement via PlacementMutator
@@ -463,7 +466,7 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
 
     For each iteration (1..N):
         7. Start RecoveryWatcher(namespace, target_deployment)
-        8. (Optional) Start LocustRunner with load profile
+        8. Start LocustRunner with load profile (steady by default)
         9. Record experiment_start = time.time()
         10. ChaosRunner.run_experiments() -- blocks until engine completes
         11. Record experiment_end = time.time()
@@ -478,7 +481,7 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
 
 19. Write summary.json with comparison table
 20. Close SQLiteStore
-21. (Optional) Generate visualization charts
+21. Generate visualization charts (on by default)
 ```
 
 ---
@@ -552,11 +555,11 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
 }
 ```
 
-### Summary (run-all)
+### Summary (run)
 
 ```json
 {
-  "runId": "run-all-20260227-131031",
+  "runId": "run-20260227-131031",
   "timestamp": "...",
   "namespace": "online-boutique",
   "iterations": 1,

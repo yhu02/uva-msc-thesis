@@ -3,7 +3,7 @@
 # The runner adds a unique suffix to metadata.name automatically.
 #
 # Usage (automated):
-#   chaosprobe run-all -n online-boutique
+#   chaosprobe run -n online-boutique
 #
 # Usage (manual):
 #   chaosprobe placement apply colocate -n online-boutique

@@ -12,14 +12,9 @@ A framework for running LitmusChaos experiments against Kubernetes deployments, 
 cd chaosprobe
 uv sync
 uv run chaosprobe init
-uv run chaosprobe run scenarios/examples/nginx-pod-delete/ -o results.json
-uv run chaosprobe run-all -n online-boutique --load-profile steady --db results.db --visualize
+uv run chaosprobe run -n online-boutique
 ```
 
 ## Repository Structure
 
 - `chaosprobe/` — ChaosProbe CLI tool (Python package)
-- `thesis.latex` — Thesis document
-- `main.bib` — Bibliography
-- `Debugging.md` — Debugging tips (containerd socket paths)
-- `LICENSE` — MIT License

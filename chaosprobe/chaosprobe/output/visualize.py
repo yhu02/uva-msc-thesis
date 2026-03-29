@@ -90,7 +90,7 @@ def generate_from_summary(
     """Generate charts from a summary.json file (no database needed).
 
     Args:
-        summary_path: Path to a run-all summary.json file.
+        summary_path: Path to a run summary.json file.
         output_dir: Directory to save chart images.
 
     Returns:
