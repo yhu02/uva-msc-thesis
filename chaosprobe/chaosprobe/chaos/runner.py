@@ -7,7 +7,7 @@ monitors execution, and tracks results.
 import time
 import uuid
 from copy import deepcopy
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException

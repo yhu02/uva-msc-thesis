@@ -4,13 +4,11 @@ Provides controllable load patterns and live metric collection
 to replace the passive Google loadgenerator.
 """
 
-import json
 import os
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 

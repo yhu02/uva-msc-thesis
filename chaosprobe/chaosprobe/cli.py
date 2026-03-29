@@ -2,7 +2,6 @@
 
 import copy
 import json
-import os
 import statistics
 import sys
 import time
@@ -25,9 +24,10 @@ from chaosprobe.placement.strategy import PlacementStrategy
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.metrics.recovery import RecoveryWatcher
-from chaosprobe.metrics.latency import LatencyProber, ContinuousLatencyProber
-from chaosprobe.metrics.throughput import ThroughputProber, ContinuousRedisProber, ContinuousDiskProber
-from chaosprobe.loadgen.runner import LocustRunner, LoadProfile, LoadStats
+from chaosprobe.metrics.latency import ContinuousLatencyProber
+from chaosprobe.metrics.throughput import ContinuousRedisProber, ContinuousDiskProber
+from chaosprobe.metrics.resources import ContinuousResourceProber
+from chaosprobe.loadgen.runner import LocustRunner, LoadProfile
 
 
 def _get_store(db_path: Optional[str] = None):
@@ -1431,6 +1431,16 @@ def placement_nodes():
     default=True, show_default=True,
     help="Measure disk I/O throughput during each experiment",
 )
+@click.option(
+    "--measure-resources/--no-measure-resources", "measure_resources",
+    default=True, show_default=True,
+    help="Measure node/pod resource utilization during each experiment",
+)
+@click.option(
+    "--collect-logs/--no-collect-logs", "collect_logs",
+    default=True, show_default=True,
+    help="Collect container logs from target deployment after each experiment",
+)
 def run(
     namespace: str,
     output_dir: Optional[str],
@@ -1450,6 +1460,8 @@ def run(
     measure_latency: bool,
     measure_redis: bool,
     measure_disk: bool,
+    measure_resources: bool,
+    collect_logs: bool,
 ):
     """Run placement experiments automatically.
 
@@ -1536,6 +1548,10 @@ def run(
         click.echo(f"  Redis:      Measuring Redis throughput during experiments")
     if measure_disk:
         click.echo(f"  Disk:       Measuring disk I/O throughput during experiments")
+    if measure_resources:
+        click.echo(f"  Resources:  Measuring node/pod resource utilization during experiments")
+    if collect_logs:
+        click.echo(f"  Logs:       Collecting container logs from target deployment")
     click.echo("")
 
     # Extract target deployment from experiment spec for recovery metrics
@@ -1656,6 +1672,16 @@ def run(
                     )
                     disk_prober.start()
 
+                # Start continuous resource prober if requested
+                resource_prober = None
+                resource_data = None
+                if measure_resources:
+                    click.echo("    Starting resource utilization probing...")
+                    resource_prober = ContinuousResourceProber(
+                        namespace, target_deployment,
+                    )
+                    resource_prober.start()
+
                 # Start Locust load generation if requested
                 iter_locust_runner = None
                 iter_load_stats = None
@@ -1669,7 +1695,7 @@ def run(
                 try:
                     # Collect pre-chaos baseline samples
                     pre_chaos_window = min(settle_time, 15)
-                    if (latency_prober or redis_prober or disk_prober) and pre_chaos_window > 0:
+                    if (latency_prober or redis_prober or disk_prober or resource_prober) and pre_chaos_window > 0:
                         click.echo(f"    Collecting pre-chaos baseline ({pre_chaos_window}s)...")
                         time.sleep(pre_chaos_window)
 
@@ -1680,6 +1706,8 @@ def run(
                         redis_prober.mark_chaos_start()
                     if disk_prober:
                         disk_prober.mark_chaos_start()
+                    if resource_prober:
+                        resource_prober.mark_chaos_start()
                     runner = ChaosRunner(namespace, timeout=timeout)
                     runner.run_experiments(scenario.get("experiments", []))
                     experiment_end = time.time()
@@ -1689,10 +1717,12 @@ def run(
                         redis_prober.mark_chaos_end()
                     if disk_prober:
                         disk_prober.mark_chaos_end()
+                    if resource_prober:
+                        resource_prober.mark_chaos_end()
 
                     # Collect post-chaos recovery samples
                     post_chaos_window = min(settle_time, 15)
-                    if (latency_prober or redis_prober or disk_prober) and post_chaos_window > 0:
+                    if (latency_prober or redis_prober or disk_prober or resource_prober) and post_chaos_window > 0:
                         click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
                         time.sleep(post_chaos_window)
                 finally:
@@ -1735,6 +1765,17 @@ def run(
                             click.echo(f"    Disk: {dp.get('sampleCount', 0)} samples during chaos")
                         except Exception as e:
                             click.echo(f"    Warning: failed to collect disk data: {e}", err=True)
+                    if resource_prober:
+                        try:
+                            resource_prober.stop()
+                            resource_data = resource_prober.result()
+                            if resource_data.get("available"):
+                                rp = resource_data.get("phases", {}).get("during-chaos", {})
+                                click.echo(f"    Resources: {rp.get('sampleCount', 0)} samples during chaos")
+                            else:
+                                click.echo(f"    Resources: {resource_data.get('reason', 'unavailable')}")
+                        except Exception as e:
+                            click.echo(f"    Warning: failed to collect resource data: {e}", err=True)
                     watcher.stop()
 
                 recovery_data = watcher.result()
@@ -1753,6 +1794,8 @@ def run(
                     latency_data=latency_data,
                     redis_data=redis_data,
                     disk_data=disk_data,
+                    resource_data=resource_data,
+                    collect_logs=collect_logs,
                 )
 
                 # Generate output
@@ -1950,8 +1993,8 @@ def _wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
         deps = apps_api.list_namespaced_deployment(namespace)
         for dep in deps.items:
             desired = dep.spec.replicas or 1
-            ready = dep.status.ready_replicas or 0 if dep.status else 0
-            available = dep.status.available_replicas or 0 if dep.status else 0
+            ready = (dep.status.ready_replicas or 0) if dep.status else 0
+            available = (dep.status.available_replicas or 0) if dep.status else 0
             if ready < desired or available < desired:
                 all_ready = False
                 break
@@ -1963,7 +2006,7 @@ def _wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
     deps = apps_api.list_namespaced_deployment(namespace)
     for dep in deps.items:
         desired = dep.spec.replicas or 1
-        ready = dep.status.ready_replicas or 0 if dep.status else 0
+        ready = (dep.status.ready_replicas or 0) if dep.status else 0
         if ready < desired:
             click.echo(
                 f"    Warning: {dep.metadata.name} not fully ready "

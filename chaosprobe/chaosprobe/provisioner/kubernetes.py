@@ -5,9 +5,8 @@ Applies standard Kubernetes manifests from scenario directories.
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 

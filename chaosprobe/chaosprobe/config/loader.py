@@ -100,6 +100,7 @@ def _load_yaml_directory(dirpath: Path) -> Tuple[List[Dict], List[Dict]]:
     all_experiments: List[Dict] = []
 
     yaml_files = sorted(dirpath.glob("*.yaml")) + sorted(dirpath.glob("*.yml"))
+    yaml_files = [f for f in yaml_files if f.name != CLUSTER_CONFIG_FILE]
     if not yaml_files:
         raise ValueError(f"No YAML files found in {dirpath}")
 

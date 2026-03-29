@@ -357,23 +357,6 @@ class LatencyProber:
         # Last resort: try frontend (will fail on distroless)
         return self._find_ready_pod("frontend")
 
-    @staticmethod
-    def _nano_time_cmd() -> str:
-        """Return a shell snippet that prints epoch nanoseconds.
-
-        Tries python3 first (nanosecond precision), then GNU date +%s%N
-        (also nanosecond), and finally falls back to date +%s with
-        millisecond granularity by appending '000000'.
-        Handles busybox date which outputs literal '%N' instead of
-        nanoseconds.
-        """
-        return (
-            "python3 -c 'import time;print(int(time.time()*1e9))' 2>/dev/null"
-            " || { T=$(date +%s%N 2>/dev/null); "
-            "case \"$T\" in *N*|*%*) echo $(date +%s)000000000;; "
-            "*) [ ${#T} -gt 15 ] && echo $T || echo ${T}000000000;; esac; }"
-        )
-
     def _measure_http_from_pod(
         self,
         pod_name: str,

@@ -904,6 +904,7 @@ end
                 ["vagrant", "status", "--machine-readable"],
                 capture_output=True,
                 text=True,
+                check=True,
                 cwd=str(vagrant_dir),
                 env=self._get_vagrant_env(),
             )

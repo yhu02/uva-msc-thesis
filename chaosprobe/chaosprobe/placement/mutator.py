@@ -392,9 +392,9 @@ class PlacementMutator:
                         if dep.status and dep.status.observed_generation
                         else 0
                     )
-                    ready = dep.status.ready_replicas or 0 if dep.status else 0
-                    updated = dep.status.updated_replicas or 0 if dep.status else 0
-                    available = dep.status.available_replicas or 0 if dep.status else 0
+                    ready = (dep.status.ready_replicas or 0) if dep.status else 0
+                    updated = (dep.status.updated_replicas or 0) if dep.status else 0
+                    available = (dep.status.available_replicas or 0) if dep.status else 0
 
                     # Controller must have observed the latest spec change
                     # AND all replicas must be updated, ready, and available

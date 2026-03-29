@@ -10,9 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import matplotlib
+
     matplotlib.use("Agg")  # Non-interactive backend
     import matplotlib.pyplot as plt
     import matplotlib.ticker as ticker
+
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
@@ -22,8 +24,7 @@ def check_matplotlib():
     """Raise an error if matplotlib is not installed."""
     if not HAS_MATPLOTLIB:
         raise ImportError(
-            "matplotlib is required for visualization. "
-            "Install it with: pip install matplotlib"
+            "matplotlib is required for visualization. " "Install it with: pip install matplotlib"
         )
 
 
@@ -120,9 +121,11 @@ def generate_from_summary(
         strategies[name] = {
             "avgResilienceScore": exp.get("meanResilienceScore", exp.get("resilienceScore", 0)),
             "passRate": exp.get("passRate", 0.0),
-            "avgMeanRecovery_ms": exp.get("meanRecoveryTime_ms") or rec_summary.get("meanRecovery_ms"),
+            "avgMeanRecovery_ms": exp.get("meanRecoveryTime_ms")
+            or rec_summary.get("meanRecovery_ms"),
             "avgP95Recovery_ms": exp.get("maxRecoveryTime_ms") or rec_summary.get("p95Recovery_ms"),
-            "medianRecovery_ms": exp.get("medianRecoveryTime_ms") or rec_summary.get("medianRecovery_ms"),
+            "medianRecovery_ms": exp.get("medianRecoveryTime_ms")
+            or rec_summary.get("medianRecovery_ms"),
             "runCount": exp.get("totalExperiments", iterations_count),
         }
 
@@ -172,10 +175,25 @@ def generate_from_summary(
         if path:
             generated.append(path)
 
+    # Generate resource utilization charts from per-strategy resource data
+    resource_by_strategy = _extract_resource_data(raw_strategies)
+    if resource_by_strategy:
+        path = _chart_resource_utilization(resource_by_strategy, output_path)
+        if path:
+            generated.append(path)
+
+        path = _chart_resource_by_phase(resource_by_strategy, output_path)
+        if path:
+            generated.append(path)
+
     html_path = _generate_html_summary(
-        generated, strategies, output_path, iterations_count,
+        generated,
+        strategies,
+        output_path,
+        iterations_count,
         latency_data=latency_by_strategy,
         throughput_data=throughput_by_strategy,
+        resource_data=resource_by_strategy,
     )
     if html_path:
         generated.append(html_path)
@@ -260,12 +278,24 @@ def _chart_recovery_times(
     width = 0.35
 
     bars1 = ax.bar(
-        [i - width / 2 for i in x], mean_times, width,
-        label="Mean Recovery", color="#4CAF50", edgecolor="black", linewidth=0.5, alpha=0.7,
+        [i - width / 2 for i in x],
+        mean_times,
+        width,
+        label="Mean Recovery",
+        color="#4CAF50",
+        edgecolor="black",
+        linewidth=0.5,
+        alpha=0.7,
     )
     bars2 = ax.bar(
-        [i + width / 2 for i in x], p95_times, width,
-        label="P95 Recovery", color="#FF9800", edgecolor="black", linewidth=0.5, alpha=0.7,
+        [i + width / 2 for i in x],
+        p95_times,
+        width,
+        label="P95 Recovery",
+        color="#FF9800",
+        edgecolor="black",
+        linewidth=0.5,
+        alpha=0.7,
     )
 
     # Overlay per-iteration recovery data points
@@ -274,10 +304,18 @@ def _chart_recovery_times(
             idata = iteration_data.get(name, {})
             iter_times = idata.get("recoveryTimes", [])
             if len(iter_times) > 1:
-                jitter = [i - width / 2 + (j - len(iter_times) / 2) * 0.03
-                          for j in range(len(iter_times))]
-                ax.scatter(jitter, iter_times, color="black", s=20, zorder=5, alpha=0.8,
-                           label="Per-iteration" if i == 0 else None)
+                jitter = [
+                    i - width / 2 + (j - len(iter_times) / 2) * 0.03 for j in range(len(iter_times))
+                ]
+                ax.scatter(
+                    jitter,
+                    iter_times,
+                    color="black",
+                    s=20,
+                    zorder=5,
+                    alpha=0.8,
+                    label="Per-iteration" if i == 0 else None,
+                )
 
     ax.set_ylabel("Recovery Time (ms)")
     ax.set_title("Pod Recovery Time by Placement Strategy")
@@ -288,11 +326,23 @@ def _chart_recovery_times(
 
     # Value labels
     for bar in bars1:
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 20,
-                f"{bar.get_height():.0f}", ha="center", va="bottom", fontsize=9)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 20,
+            f"{bar.get_height():.0f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
     for bar in bars2:
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 20,
-                f"{bar.get_height():.0f}", ha="center", va="bottom", fontsize=9)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 20,
+            f"{bar.get_height():.0f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     plt.tight_layout()
     filepath = str(output_path / "recovery_times.png")
@@ -301,9 +351,7 @@ def _chart_recovery_times(
     return filepath
 
 
-def _chart_load_metrics(
-    strategies: Dict[str, Any], output_path: Path
-) -> Optional[str]:
+def _chart_load_metrics(strategies: Dict[str, Any], output_path: Path) -> Optional[str]:
     """Generate load generation metrics comparison chart."""
     names = []
     p95_latencies = []
@@ -342,9 +390,7 @@ def _chart_load_metrics(
     return filepath
 
 
-def _chart_pod_node_heatmap(
-    store, runs: List[Dict[str, Any]], output_path: Path
-) -> Optional[str]:
+def _chart_pod_node_heatmap(store, runs: List[Dict[str, Any]], output_path: Path) -> Optional[str]:
     """Generate pod-node placement heatmap from recent runs."""
     # Collect placement data per strategy
     strategy_placements: Dict[str, Dict[str, str]] = {}
@@ -363,13 +409,9 @@ def _chart_pod_node_heatmap(
         return None
 
     # Build data matrix: pods x strategies, values = node names
-    all_pods = sorted(
-        set(p for assigns in strategy_placements.values() for p in assigns.keys())
-    )
+    all_pods = sorted(set(p for assigns in strategy_placements.values() for p in assigns.keys()))
     all_strategies = sorted(strategy_placements.keys())
-    all_nodes = sorted(
-        set(n for assigns in strategy_placements.values() for n in assigns.values())
-    )
+    all_nodes = sorted(set(n for assigns in strategy_placements.values() for n in assigns.values()))
 
     if not all_pods or not all_strategies:
         return None
@@ -388,7 +430,7 @@ def _chart_pod_node_heatmap(
     fig, ax = plt.subplots(figsize=(max(8, len(all_strategies) * 2), max(6, len(all_pods) * 0.5)))
 
     cmap = plt.cm.get_cmap("Set3", len(all_nodes))
-    im = ax.imshow(data, cmap=cmap, aspect="auto", vmin=-0.5, vmax=len(all_nodes) - 0.5)
+    ax.imshow(data, cmap=cmap, aspect="auto", vmin=-0.5, vmax=len(all_nodes) - 0.5)
 
     ax.set_xticks(range(len(all_strategies)))
     ax.set_xticklabels(all_strategies, rotation=45, ha="right")
@@ -417,6 +459,7 @@ def _generate_html_summary(
     iterations: int = 1,
     latency_data: Optional[Dict[str, Dict[str, Any]]] = None,
     throughput_data: Optional[Dict[str, Dict[str, Any]]] = None,
+    resource_data: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Optional[str]:
     """Generate an HTML page with embedded charts and summary table."""
     if not chart_paths:
@@ -424,13 +467,13 @@ def _generate_html_summary(
 
     rows = ""
     for name, data in sorted(strategies.items()):
-        avg_rec = data.get('avgMeanRecovery_ms')
+        avg_rec = data.get("avgMeanRecovery_ms")
         avg_rec_str = f"{avg_rec:.1f}" if avg_rec is not None else "n/a"
-        median_rec = data.get('medianRecovery_ms')
+        median_rec = data.get("medianRecovery_ms")
         median_str = f"{median_rec:.1f}" if median_rec is not None else "n/a"
-        p95_rec = data.get('avgP95Recovery_ms')
+        p95_rec = data.get("avgP95Recovery_ms")
         p95_str = f"{p95_rec:.1f}" if p95_rec is not None else "n/a"
-        run_count = data.get('runCount', iterations)
+        run_count = data.get("runCount", iterations)
         rows += f"""
         <tr>
             <td>{name}</td>
@@ -530,7 +573,9 @@ def _generate_html_summary(
                     during_str = f"{during_ops:.1f}" if during_ops is not None else "n/a"
                     post_str = f"{post_ops:.1f}" if post_ops is not None else "n/a"
                     lat_str = f"{during_lat:.2f}" if during_lat is not None else "n/a"
-                    bps_str = f"{during_bps / 1024 / 1024:.1f} MB/s" if during_bps is not None else "n/a"
+                    bps_str = (
+                        f"{during_bps / 1024 / 1024:.1f} MB/s" if during_bps is not None else "n/a"
+                    )
 
                     degradation = ""
                     if pre_ops and during_ops and during_ops < pre_ops * 0.7:
@@ -561,6 +606,40 @@ def _generate_html_summary(
             <th>Post-Chaos Ops/s</th>
         </tr>
         {throughput_rows}
+    </table>"""
+
+    resource_section = ""
+    if resource_data:
+        resource_rows = ""
+        for strat_name in sorted(resource_data.keys()):
+            phases = resource_data[strat_name].get("phases", {})
+            for phase_name in ("pre-chaos", "during-chaos", "post-chaos"):
+                nd = phases.get(phase_name, {}).get("node", {})
+                cpu = nd.get("meanCpu_percent")
+                mem = nd.get("meanMemory_percent")
+                cpu_str = f"{cpu:.1f}" if cpu is not None else "n/a"
+                mem_str = f"{mem:.1f}" if mem is not None else "n/a"
+                samples = phases.get(phase_name, {}).get("sampleCount", 0)
+                resource_rows += f"""
+            <tr>
+                <td>{strat_name}</td>
+                <td>{phase_name}</td>
+                <td>{cpu_str}</td>
+                <td>{mem_str}</td>
+                <td>{samples}</td>
+            </tr>"""
+
+        resource_section = f"""
+    <h2>Node Resource Utilization</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Phase</th>
+            <th>Mean CPU (%)</th>
+            <th>Mean Memory (%)</th>
+            <th>Samples</th>
+        </tr>
+        {resource_rows}
     </table>"""
 
     img_tags = ""
@@ -605,6 +684,8 @@ def _generate_html_summary(
     {latency_section}
 
     {throughput_section}
+
+    {resource_section}
 
     <h2>Charts</h2>
     <div class="charts">
@@ -688,13 +769,27 @@ def _chart_latency_by_strategy(
             means.append(route_data.get("mean_ms") or 0)
 
         x = [j + i * width for j in range(len(routes))]
-        bars = ax.bar(x, means, width, label=strat, color=colors[i],
-                       edgecolor="black", linewidth=0.5, alpha=0.7)
+        bars = ax.bar(
+            x,
+            means,
+            width,
+            label=strat,
+            color=colors[i],
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.7,
+        )
 
         for bar, val in zip(bars, means):
             if val > 0:
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5,
-                        f"{val:.0f}", ha="center", va="bottom", fontsize=8)
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 5,
+                    f"{val:.0f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                )
 
     ax.set_ylabel("Mean Latency (ms)")
     ax.set_title("Inter-Service Latency During Chaos by Strategy")
@@ -735,15 +830,16 @@ def _chart_latency_degradation(
     all_routes = set()
     for pre, during in valid_strategies.values():
         all_routes.update(pre.keys())
-        all_routes.update(during.keys())  
+        all_routes.update(during.keys())
     routes = sorted(all_routes)
 
     if not routes:
         return None
 
     n_strats = len(valid_strategies)
-    fig, axes = plt.subplots(1, n_strats, figsize=(max(6, 5 * n_strats), 6),
-                              squeeze=False, sharey=True)
+    fig, axes = plt.subplots(
+        1, n_strats, figsize=(max(6, 5 * n_strats), 6), squeeze=False, sharey=True
+    )
 
     for idx, (strat, (pre, during)) in enumerate(sorted(valid_strategies.items())):
         ax = axes[0][idx]
@@ -752,10 +848,26 @@ def _chart_latency_degradation(
 
         x = range(len(routes))
         width = 0.35
-        ax.bar([i - width / 2 for i in x], pre_vals, width,
-               label="Pre-chaos", color="#4CAF50", alpha=0.7, edgecolor="black", linewidth=0.5)
-        ax.bar([i + width / 2 for i in x], during_vals, width,
-               label="During chaos", color="#F44336", alpha=0.7, edgecolor="black", linewidth=0.5)
+        ax.bar(
+            [i - width / 2 for i in x],
+            pre_vals,
+            width,
+            label="Pre-chaos",
+            color="#4CAF50",
+            alpha=0.7,
+            edgecolor="black",
+            linewidth=0.5,
+        )
+        ax.bar(
+            [i + width / 2 for i in x],
+            during_vals,
+            width,
+            label="During chaos",
+            color="#F44336",
+            alpha=0.7,
+            edgecolor="black",
+            linewidth=0.5,
+        )
 
         ax.set_title(f"{strat}")
         ax.set_xticks(list(x))
@@ -877,13 +989,27 @@ def _chart_throughput_by_strategy(
             values.append(op_data.get("meanOpsPerSecond") or 0)
 
         x = [j + i * width for j in range(len(labels))]
-        bars = ax.bar(x, values, width, label=strat, color=colors[i],
-                       edgecolor="black", linewidth=0.5, alpha=0.7)
+        bars = ax.bar(
+            x,
+            values,
+            width,
+            label=strat,
+            color=colors[i],
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.7,
+        )
 
         for bar, val in zip(bars, values):
             if val > 0:
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
-                        f"{val:.0f}", ha="center", va="bottom", fontsize=8)
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 1,
+                    f"{val:.0f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                )
 
     ax.set_ylabel("Mean Ops/Second")
     ax.set_title("Throughput During Chaos by Strategy")
@@ -931,8 +1057,9 @@ def _chart_throughput_degradation(
         return None
 
     n_strats = len(valid_strategies)
-    fig, axes = plt.subplots(1, n_strats, figsize=(max(6, 5 * n_strats), 6),
-                              squeeze=False, sharey=True)
+    fig, axes = plt.subplots(
+        1, n_strats, figsize=(max(6, 5 * n_strats), 6), squeeze=False, sharey=True
+    )
 
     for idx, (strat, (pre, during)) in enumerate(sorted(valid_strategies.items())):
         ax = axes[0][idx]
@@ -948,10 +1075,26 @@ def _chart_throughput_degradation(
 
         x = range(len(all_ops))
         width = 0.35
-        ax.bar([i - width / 2 for i in x], pre_vals, width,
-               label="Pre-chaos", color="#4CAF50", alpha=0.7, edgecolor="black", linewidth=0.5)
-        ax.bar([i + width / 2 for i in x], during_vals, width,
-               label="During chaos", color="#F44336", alpha=0.7, edgecolor="black", linewidth=0.5)
+        ax.bar(
+            [i - width / 2 for i in x],
+            pre_vals,
+            width,
+            label="Pre-chaos",
+            color="#4CAF50",
+            alpha=0.7,
+            edgecolor="black",
+            linewidth=0.5,
+        )
+        ax.bar(
+            [i + width / 2 for i in x],
+            during_vals,
+            width,
+            label="During chaos",
+            color="#F44336",
+            alpha=0.7,
+            edgecolor="black",
+            linewidth=0.5,
+        )
 
         ax.set_title(f"{strat}")
         ax.set_xticks(list(x))
@@ -965,6 +1108,153 @@ def _chart_throughput_degradation(
     fig.suptitle("Throughput Degradation: Pre-Chaos vs During Chaos", fontsize=13)
     plt.tight_layout()
     filepath = str(output_path / "throughput_degradation.png")
+    fig.savefig(filepath, dpi=150)
+    plt.close(fig)
+    return filepath
+
+
+def _extract_resource_data(
+    raw_strategies: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Extract resource utilization data from raw strategy results."""
+    result = {}
+    for name, sdata in raw_strategies.items():
+        metrics = sdata.get("metrics") or {}
+        if metrics and "resources" in metrics:
+            res = metrics["resources"]
+            if res.get("available", False):
+                result[name] = res
+                continue
+
+        # Multi-iteration: use first iteration with resource data
+        for it in sdata.get("iterations", []):
+            m = it.get("metrics", {})
+            res = m.get("resources", {})
+            if res.get("available", False):
+                result[name] = res
+                break
+
+    return result
+
+
+def _chart_resource_utilization(
+    resource_by_strategy: Dict[str, Dict[str, Any]],
+    output_path: Path,
+) -> Optional[str]:
+    """Generate line chart of CPU% and memory% over time across strategies."""
+    if not resource_by_strategy:
+        return None
+
+    fig, (ax_cpu, ax_mem) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    strategy_names = sorted(resource_by_strategy.keys())
+    colors = _strategy_colors(strategy_names)
+
+    for idx, strat in enumerate(strategy_names):
+        series = resource_by_strategy[strat].get("timeSeries", [])
+        if not series:
+            continue
+
+        elapsed = [e["elapsed_s"] for e in series]
+        cpu_pct = [e.get("node", {}).get("cpu_percent", 0) for e in series]
+        mem_pct = [e.get("node", {}).get("memory_percent", 0) for e in series]
+
+        ax_cpu.plot(
+            elapsed,
+            cpu_pct,
+            label=strat,
+            color=colors[idx],
+            linewidth=1.5,
+            alpha=0.8,
+        )
+        ax_mem.plot(
+            elapsed,
+            mem_pct,
+            label=strat,
+            color=colors[idx],
+            linewidth=1.5,
+            alpha=0.8,
+        )
+
+    ax_cpu.set_ylabel("CPU Utilization (%)")
+    ax_cpu.set_title("Node Resource Utilization During Experiment")
+    ax_cpu.legend()
+    ax_cpu.grid(alpha=0.3)
+    ax_cpu.set_ylim(0, 105)
+
+    ax_mem.set_ylabel("Memory Utilization (%)")
+    ax_mem.set_xlabel("Elapsed Time (s)")
+    ax_mem.legend()
+    ax_mem.grid(alpha=0.3)
+    ax_mem.set_ylim(0, 105)
+
+    plt.tight_layout()
+    filepath = str(output_path / "resource_utilization.png")
+    fig.savefig(filepath, dpi=150)
+    plt.close(fig)
+    return filepath
+
+
+def _chart_resource_by_phase(
+    resource_by_strategy: Dict[str, Dict[str, Any]],
+    output_path: Path,
+) -> Optional[str]:
+    """Generate bar chart showing mean CPU and memory per phase per strategy."""
+    if not resource_by_strategy:
+        return None
+
+    strategy_names = sorted(resource_by_strategy.keys())
+    phase_names = ["pre-chaos", "during-chaos", "post-chaos"]
+
+    fig, (ax_cpu, ax_mem) = plt.subplots(1, 2, figsize=(14, 6))
+    width = 0.8 / max(len(strategy_names), 1)
+    colors = _strategy_colors(strategy_names)
+
+    for i, strat in enumerate(strategy_names):
+        phases = resource_by_strategy[strat].get("phases", {})
+
+        cpu_vals = []
+        mem_vals = []
+        for phase in phase_names:
+            pd = phases.get(phase, {}).get("node", {})
+            cpu_vals.append(pd.get("meanCpu_percent") or 0)
+            mem_vals.append(pd.get("meanMemory_percent") or 0)
+
+        x = [j + i * width for j in range(len(phase_names))]
+        ax_cpu.bar(
+            x,
+            cpu_vals,
+            width,
+            label=strat,
+            color=colors[i],
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.7,
+        )
+        ax_mem.bar(
+            x,
+            mem_vals,
+            width,
+            label=strat,
+            color=colors[i],
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.7,
+        )
+
+    for ax, title, ylabel in [
+        (ax_cpu, "CPU Utilization by Phase", "Mean CPU (%)"),
+        (ax_mem, "Memory Utilization by Phase", "Mean Memory (%)"),
+    ]:
+        ax.set_title(title)
+        ax.set_ylabel(ylabel)
+        ax.set_xticks([j + width * (len(strategy_names) - 1) / 2 for j in range(len(phase_names))])
+        ax.set_xticklabels(phase_names, fontsize=9)
+        ax.legend()
+        ax.grid(axis="y", alpha=0.3)
+        ax.set_ylim(0, 105)
+
+    plt.tight_layout()
+    filepath = str(output_path / "resource_by_phase.png")
     fig.savefig(filepath, dpi=150)
     plt.close(fig)
     return filepath
