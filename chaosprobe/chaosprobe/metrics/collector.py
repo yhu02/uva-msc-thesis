@@ -43,6 +43,7 @@ class MetricsCollector:
         redis_data: Optional[Dict[str, Any]] = None,
         disk_data: Optional[Dict[str, Any]] = None,
         resource_data: Optional[Dict[str, Any]] = None,
+        prometheus_data: Optional[Dict[str, Any]] = None,
         collect_logs: bool = False,
     ) -> Dict[str, Any]:
         """Collect all available metrics for a deployment during an experiment.
@@ -62,6 +63,8 @@ class MetricsCollector:
                        ContinuousDiskProber. If None, omitted.
             resource_data: Pre-collected node/pod resource utilization
                            from ContinuousResourceProber. If None, omitted.
+            prometheus_data: Pre-collected Prometheus metrics from
+                             ContinuousPrometheusProber. If None, omitted.
             collect_logs: If True, collect container logs from target pods.
 
         Returns:
@@ -121,6 +124,9 @@ class MetricsCollector:
 
         if resource_data is not None:
             result["resources"] = resource_data
+
+        if prometheus_data is not None:
+            result["prometheus"] = prometheus_data
 
         if collect_logs:
             duration = until_time - since_time

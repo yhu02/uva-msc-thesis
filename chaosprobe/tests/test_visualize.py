@@ -18,6 +18,8 @@ from chaosprobe.output.visualize import (
     _chart_throughput_by_strategy,
     _chart_throughput_degradation,
     _extract_throughput_data,
+    _extract_prometheus_data,
+    _chart_prometheus_by_phase,
     _generate_html_summary,
 )
 
@@ -492,3 +494,112 @@ class TestThroughputCharts:
     def test_extract_throughput_data_empty(self):
         result = _extract_throughput_data({"baseline": {"metrics": {}}})
         assert result == {}
+
+
+class TestPrometheusVisualization:
+    def test_extract_prometheus_data_single(self):
+        raw = {
+            "baseline": {
+                "metrics": {
+                    "prometheus": {
+                        "available": True,
+                        "phases": {
+                            "during-chaos": {
+                                "sampleCount": 5,
+                                "metrics": {"http_error_rate": {"mean": 0.3, "max": 0.5}},
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        result = _extract_prometheus_data(raw)
+        assert "baseline" in result
+        assert result["baseline"]["available"] is True
+
+    def test_extract_prometheus_data_iterations(self):
+        raw = {
+            "colocate": {
+                "iterations": [
+                    {"metrics": {}},
+                    {"metrics": {"prometheus": {
+                        "available": True,
+                        "phases": {"during-chaos": {"sampleCount": 3, "metrics": {}}},
+                    }}},
+                ],
+            },
+        }
+        result = _extract_prometheus_data(raw)
+        assert "colocate" in result
+
+    def test_extract_prometheus_data_not_available(self):
+        raw = {
+            "baseline": {
+                "metrics": {
+                    "prometheus": {"available": False, "reason": "not found"},
+                },
+            },
+        }
+        result = _extract_prometheus_data(raw)
+        assert result == {}
+
+    def test_extract_prometheus_data_empty(self):
+        result = _extract_prometheus_data({"baseline": {"metrics": {}}})
+        assert result == {}
+
+    def test_chart_prometheus_by_phase(self, tmp_path):
+        data = {
+            "baseline": {
+                "available": True,
+                "phases": {
+                    "pre-chaos": {
+                        "sampleCount": 2,
+                        "metrics": {"http_error_rate": {"mean": 0.01, "max": 0.02}},
+                    },
+                    "during-chaos": {
+                        "sampleCount": 5,
+                        "metrics": {"http_error_rate": {"mean": 0.35, "max": 0.5}},
+                    },
+                    "post-chaos": {
+                        "sampleCount": 2,
+                        "metrics": {"http_error_rate": {"mean": 0.02, "max": 0.03}},
+                    },
+                },
+            },
+        }
+        path = _chart_prometheus_by_phase(data, tmp_path)
+        assert path is not None
+        assert os.path.exists(path)
+        assert path.endswith("prometheus_by_phase.png")
+
+    def test_chart_prometheus_by_phase_empty(self, tmp_path):
+        path = _chart_prometheus_by_phase({}, tmp_path)
+        assert path is None
+
+    def test_html_includes_prometheus_section(self, tmp_path):
+        strategies = {"baseline": {"avgResilienceScore": 90, "passRate": 1.0}}
+        # Create a dummy chart file
+        chart = tmp_path / "test.png"
+        chart.write_bytes(b"PNG")
+        prometheus_data = {
+            "baseline": {
+                "available": True,
+                "phases": {
+                    "during-chaos": {
+                        "sampleCount": 3,
+                        "metrics": {
+                            "http_error_rate": {"mean": 0.3, "max": 0.5},
+                        },
+                    },
+                },
+            },
+        }
+        path = _generate_html_summary(
+            [str(chart)], strategies, tmp_path,
+            prometheus_data=prometheus_data,
+        )
+        assert path is not None
+        with open(path) as f:
+            content = f.read()
+        assert "Prometheus Cluster Metrics" in content
+        assert "http_error_rate" in content

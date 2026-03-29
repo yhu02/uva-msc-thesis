@@ -229,3 +229,102 @@ class TestComparison:
 
         assert comparison["conclusion"]["fixEffective"] is True
         assert comparison["comparison"]["verdictChanged"] is True
+
+    def test_compare_recovery_metrics(self):
+        """Test that recovery time comparison is included when metrics present."""
+        baseline = {
+            "runId": "b", "timestamp": "T", "scenario": {},
+            "experiments": [],
+            "summary": {"resilienceScore": 50, "overallVerdict": "FAIL"},
+            "metrics": {
+                "recovery": {"summary": {
+                    "meanRecovery_ms": 3000.0,
+                    "p95Recovery_ms": 4000.0,
+                }},
+            },
+        }
+        after_fix = {
+            "runId": "a", "timestamp": "T", "scenario": {},
+            "experiments": [],
+            "summary": {"resilienceScore": 90, "overallVerdict": "PASS"},
+            "metrics": {
+                "recovery": {"summary": {
+                    "meanRecovery_ms": 1500.0,
+                    "p95Recovery_ms": 2000.0,
+                }},
+            },
+        }
+        comparison = compare_runs(baseline, after_fix)
+        rec = comparison["comparison"]["metrics"]["recovery"]
+        assert rec["baseline"]["meanRecovery_ms"] == 3000.0
+        assert rec["afterFix"]["meanRecovery_ms"] == 1500.0
+        assert rec["meanChange_ms"] == -1500.0
+        assert rec["improved"] is True
+
+    def test_compare_latency_metrics(self):
+        """Test that latency comparison is included for shared routes."""
+        baseline = {
+            "runId": "b", "timestamp": "T", "scenario": {},
+            "experiments": [],
+            "summary": {"resilienceScore": 50, "overallVerdict": "FAIL"},
+            "metrics": {
+                "latency": {"phases": {"during-chaos": {"routes": {
+                    "frontend→cart": {"mean_ms": 50.0},
+                }}}},
+            },
+        }
+        after_fix = {
+            "runId": "a", "timestamp": "T", "scenario": {},
+            "experiments": [],
+            "summary": {"resilienceScore": 90, "overallVerdict": "PASS"},
+            "metrics": {
+                "latency": {"phases": {"during-chaos": {"routes": {
+                    "frontend→cart": {"mean_ms": 30.0},
+                }}}},
+            },
+        }
+        comparison = compare_runs(baseline, after_fix)
+        lat = comparison["comparison"]["metrics"]["latency"]
+        assert lat["allImproved"] is True
+        assert lat["routes"][0]["change_ms"] == -20.0
+
+    def test_compare_resource_metrics(self):
+        """Test that resource utilization comparison is included."""
+        def _make_run(score, verdict, cpu, mem):
+            return {
+                "runId": "r", "timestamp": "T", "scenario": {},
+                "experiments": [],
+                "summary": {"resilienceScore": score, "overallVerdict": verdict},
+                "metrics": {
+                    "resources": {
+                        "available": True,
+                        "phases": {"during-chaos": {"node": {
+                            "meanCpu_percent": cpu,
+                            "meanMemory_percent": mem,
+                        }}},
+                    },
+                },
+            }
+
+        comparison = compare_runs(
+            _make_run(50, "FAIL", 85.0, 70.0),
+            _make_run(90, "PASS", 60.0, 55.0),
+        )
+        res = comparison["comparison"]["metrics"]["resources"]
+        assert res["cpuChange_percent"] == -25.0
+        assert res["memoryChange_percent"] == -15.0
+
+    def test_compare_no_metrics_section_when_absent(self):
+        """Test that metrics comparison is empty when no metrics data."""
+        baseline = {
+            "runId": "b", "timestamp": "T", "scenario": {},
+            "experiments": [],
+            "summary": {"resilienceScore": 50, "overallVerdict": "FAIL"},
+        }
+        after_fix = {
+            "runId": "a", "timestamp": "T", "scenario": {},
+            "experiments": [],
+            "summary": {"resilienceScore": 90, "overallVerdict": "PASS"},
+        }
+        comparison = compare_runs(baseline, after_fix)
+        assert comparison["comparison"]["metrics"] == {}

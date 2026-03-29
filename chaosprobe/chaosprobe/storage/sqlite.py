@@ -175,6 +175,42 @@ class SQLiteStore(ResultStore):
                 (run_id, "resilienceScore", rs, "percent", run_data.get("timestamp"))
             )
 
+        # Latency metrics (during-chaos mean per route)
+        latency = metrics.get("latency", {})
+        during_routes = latency.get("phases", {}).get("during-chaos", {}).get("routes", {})
+        for route, rdata in during_routes.items():
+            mean_ms = rdata.get("mean_ms")
+            if mean_ms is not None:
+                metric_rows.append(
+                    (run_id, f"latency:{route}", mean_ms, "ms", run_data.get("timestamp"))
+                )
+
+        # Throughput metrics (during-chaos ops/sec)
+        for target in ("redis", "disk"):
+            tp = metrics.get(target, {})
+            during_ops = tp.get("phases", {}).get("during-chaos", {}).get(target, {})
+            for op, op_data in during_ops.items():
+                ops_sec = op_data.get("meanOpsPerSecond")
+                if ops_sec is not None:
+                    metric_rows.append(
+                        (run_id, f"{target}:{op}:ops_per_second", ops_sec, "ops/s", run_data.get("timestamp"))
+                    )
+
+        # Resource utilization (during-chaos node CPU/memory %)
+        resources = metrics.get("resources", {})
+        if resources.get("available"):
+            during_node = resources.get("phases", {}).get("during-chaos", {}).get("node", {})
+            cpu_pct = during_node.get("meanCpu_percent")
+            if cpu_pct is not None:
+                metric_rows.append(
+                    (run_id, "node:cpu_percent", cpu_pct, "percent", run_data.get("timestamp"))
+                )
+            mem_pct = during_node.get("meanMemory_percent")
+            if mem_pct is not None:
+                metric_rows.append(
+                    (run_id, "node:memory_percent", mem_pct, "percent", run_data.get("timestamp"))
+                )
+
         if metric_rows:
             conn.executemany(
                 "INSERT INTO metrics (run_id, metric_name, metric_value, metric_unit, timestamp) "
@@ -377,3 +413,101 @@ class SQLiteStore(ResultStore):
                 writer.writerow(list(row))
 
         return output_path
+
+    def get_metric_trend(
+        self,
+        metric_name: str,
+        strategy: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Get historical trend of a metric across runs.
+
+        Args:
+            metric_name: Name of the metric (e.g. 'meanRecovery_ms',
+                         'resilienceScore', 'latency:frontend→cartservice').
+            strategy: Optional filter by placement strategy.
+            limit: Maximum number of data points to return.
+
+        Returns:
+            List of dicts with timestamp, value, run_id, and strategy.
+        """
+        conn = self._get_conn()
+        query = """
+            SELECT m.metric_value, m.timestamp, m.run_id, r.strategy
+            FROM metrics m
+            JOIN runs r ON m.run_id = r.id
+            WHERE m.metric_name = ?
+        """
+        params: list = [metric_name]
+
+        if strategy:
+            query += " AND r.strategy = ?"
+            params.append(strategy)
+
+        query += " ORDER BY m.timestamp ASC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "value": row["metric_value"],
+                "timestamp": row["timestamp"],
+                "runId": row["run_id"],
+                "strategy": row["strategy"],
+            }
+            for row in rows
+        ]
+
+    def get_metric_names(self) -> List[str]:
+        """Return all distinct metric names stored in the database."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT metric_name FROM metrics ORDER BY metric_name"
+        ).fetchall()
+        return [row["metric_name"] for row in rows]
+
+    def get_runs_below_threshold(
+        self,
+        metric_name: str,
+        threshold: float,
+        strategy: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find runs where a metric is below a threshold.
+
+        Useful for identifying regressions (e.g. resilience score < 80).
+
+        Args:
+            metric_name: Metric to check.
+            threshold: Value below which runs are returned.
+            strategy: Optional strategy filter.
+
+        Returns:
+            List of run summaries with id, timestamp, strategy, value.
+        """
+        conn = self._get_conn()
+        query = """
+            SELECT r.id, r.timestamp, r.strategy, r.overall_verdict,
+                   m.metric_value
+            FROM metrics m
+            JOIN runs r ON m.run_id = r.id
+            WHERE m.metric_name = ? AND m.metric_value < ?
+        """
+        params: list = [metric_name, threshold]
+
+        if strategy:
+            query += " AND r.strategy = ?"
+            params.append(strategy)
+
+        query += " ORDER BY m.timestamp DESC"
+
+        rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "runId": row["id"],
+                "timestamp": row["timestamp"],
+                "strategy": row["strategy"],
+                "verdict": row["overall_verdict"],
+                "value": row["metric_value"],
+            }
+            for row in rows
+        ]

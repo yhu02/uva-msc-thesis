@@ -50,3 +50,25 @@ class ResultStore(ABC):
     @abstractmethod
     def export_csv(self, output_path: str) -> str:
         """Export all runs to CSV."""
+
+    @abstractmethod
+    def get_metric_trend(
+        self,
+        metric_name: str,
+        strategy: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Get historical trend of a metric across runs."""
+
+    @abstractmethod
+    def get_metric_names(self) -> List[str]:
+        """Return all distinct metric names stored."""
+
+    @abstractmethod
+    def get_runs_below_threshold(
+        self,
+        metric_name: str,
+        threshold: float,
+        strategy: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find runs where a metric is below a threshold."""

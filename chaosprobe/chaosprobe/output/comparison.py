@@ -52,6 +52,12 @@ def compare_runs(
         after_fix.get("experiments", []),
     )
 
+    # Compare metrics (recovery, latency, throughput, resources)
+    metrics_comparison = _compare_metrics(
+        baseline.get("metrics", {}),
+        after_fix.get("metrics", {}),
+    )
+
     # Evaluate improvement criteria
     criteria_met = _evaluate_improvement_criteria(
         score_change, experiment_improvements, improvement_criteria
@@ -101,6 +107,7 @@ def compare_runs(
             "newVerdict": afterfix_verdict,
             "experimentImprovements": experiment_improvements,
             "improvementCriteriaMet": criteria_met,
+            "metrics": metrics_comparison,
         },
         "conclusion": {
             "fixEffective": fix_effective,
@@ -117,6 +124,115 @@ def compare_runs(
 
 
 # ── Experiment comparison ─────────────────────────────────────
+
+
+def _compare_metrics(
+    baseline_metrics: Dict[str, Any],
+    afterfix_metrics: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Compare metrics between baseline and after-fix runs.
+
+    Compares recovery times, latency, throughput, and resource utilization
+    when data is present in both runs.
+    """
+    result: Dict[str, Any] = {}
+
+    # Recovery time comparison
+    b_rec = baseline_metrics.get("recovery", {}).get("summary", {})
+    a_rec = afterfix_metrics.get("recovery", {}).get("summary", {})
+    if b_rec.get("meanRecovery_ms") is not None and a_rec.get("meanRecovery_ms") is not None:
+        b_mean = b_rec["meanRecovery_ms"]
+        a_mean = a_rec["meanRecovery_ms"]
+        result["recovery"] = {
+            "baseline": {
+                "meanRecovery_ms": b_mean,
+                "p95Recovery_ms": b_rec.get("p95Recovery_ms"),
+            },
+            "afterFix": {
+                "meanRecovery_ms": a_mean,
+                "p95Recovery_ms": a_rec.get("p95Recovery_ms"),
+            },
+            "meanChange_ms": round(a_mean - b_mean, 1),
+            "improved": a_mean < b_mean,
+        }
+
+    # Latency comparison (during-chaos phase)
+    b_lat = baseline_metrics.get("latency", {})
+    a_lat = afterfix_metrics.get("latency", {})
+    if b_lat and a_lat:
+        b_during = b_lat.get("phases", {}).get("during-chaos", {}).get("routes", {})
+        a_during = a_lat.get("phases", {}).get("during-chaos", {}).get("routes", {})
+        if b_during and a_during:
+            route_changes = []
+            for route in set(b_during) & set(a_during):
+                b_mean = b_during[route].get("mean_ms")
+                a_mean = a_during[route].get("mean_ms")
+                if b_mean is not None and a_mean is not None:
+                    route_changes.append({
+                        "route": route,
+                        "baseline_ms": round(b_mean, 1),
+                        "afterFix_ms": round(a_mean, 1),
+                        "change_ms": round(a_mean - b_mean, 1),
+                        "improved": a_mean < b_mean,
+                    })
+            if route_changes:
+                result["latency"] = {
+                    "routes": route_changes,
+                    "allImproved": all(r["improved"] for r in route_changes),
+                }
+
+    # Throughput comparison (during-chaos phase)
+    for target in ("redis", "disk"):
+        b_tp = baseline_metrics.get(target, {})
+        a_tp = afterfix_metrics.get(target, {})
+        if b_tp and a_tp:
+            b_during = b_tp.get("phases", {}).get("during-chaos", {}).get(target, {})
+            a_during = a_tp.get("phases", {}).get("during-chaos", {}).get(target, {})
+            if b_during and a_during:
+                op_changes = []
+                for op in set(b_during) & set(a_during):
+                    b_ops = b_during[op].get("meanOpsPerSecond")
+                    a_ops = a_during[op].get("meanOpsPerSecond")
+                    if b_ops is not None and a_ops is not None:
+                        op_changes.append({
+                            "operation": op,
+                            "baseline_ops": round(b_ops, 1),
+                            "afterFix_ops": round(a_ops, 1),
+                            "change_ops": round(a_ops - b_ops, 1),
+                            "improved": a_ops > b_ops,
+                        })
+                if op_changes:
+                    result[target] = {
+                        "operations": op_changes,
+                        "allImproved": all(o["improved"] for o in op_changes),
+                    }
+
+    # Resource utilization comparison (during-chaos phase)
+    b_res = baseline_metrics.get("resources", {})
+    a_res = afterfix_metrics.get("resources", {})
+    if b_res.get("available") and a_res.get("available"):
+        b_node = b_res.get("phases", {}).get("during-chaos", {}).get("node", {})
+        a_node = a_res.get("phases", {}).get("during-chaos", {}).get("node", {})
+        if b_node and a_node:
+            b_cpu = b_node.get("meanCpu_percent")
+            a_cpu = a_node.get("meanCpu_percent")
+            b_mem = b_node.get("meanMemory_percent")
+            a_mem = a_node.get("meanMemory_percent")
+            if b_cpu is not None and a_cpu is not None:
+                result["resources"] = {
+                    "baseline": {
+                        "meanCpu_percent": round(b_cpu, 1),
+                        "meanMemory_percent": round(b_mem, 1) if b_mem is not None else None,
+                    },
+                    "afterFix": {
+                        "meanCpu_percent": round(a_cpu, 1),
+                        "meanMemory_percent": round(a_mem, 1) if a_mem is not None else None,
+                    },
+                    "cpuChange_percent": round(a_cpu - b_cpu, 1),
+                    "memoryChange_percent": round(a_mem - b_mem, 1) if (b_mem is not None and a_mem is not None) else None,
+                }
+
+    return result
 
 
 def _compare_experiments(

@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 import yaml
@@ -27,6 +27,7 @@ from chaosprobe.metrics.recovery import RecoveryWatcher
 from chaosprobe.metrics.latency import ContinuousLatencyProber
 from chaosprobe.metrics.throughput import ContinuousRedisProber, ContinuousDiskProber
 from chaosprobe.metrics.resources import ContinuousResourceProber
+from chaosprobe.metrics.prometheus import ContinuousPrometheusProber
 from chaosprobe.loadgen.runner import LocustRunner, LoadProfile
 
 
@@ -200,6 +201,27 @@ def ensure_litmus_setup(
             click.echo(
                 f"  WARNING: Failed to install experiment '{exp_type}'", err=True
             )
+
+    # Ensure metrics-server is installed (needed for resource probing)
+    if not setup.is_metrics_server_installed():
+        click.echo("metrics-server not found. Installing automatically...")
+        try:
+            if setup.install_metrics_server(wait=True):
+                click.echo("  metrics-server installed successfully")
+            else:
+                click.echo("  WARNING: metrics-server installed but not yet ready", err=True)
+        except Exception as e:
+            click.echo(f"  WARNING: Failed to install metrics-server: {e}", err=True)
+    else:
+        click.echo("  metrics-server: available")
+
+    # Check if Prometheus is available (used for cluster metrics).
+    # Unlike metrics-server, Prometheus is NOT auto-installed because
+    # users may run their own instance with custom scrape configs.
+    if setup.is_prometheus_installed():
+        click.echo("  Prometheus: available")
+    else:
+        click.echo("  Prometheus: not found (install manually or use --no-measure-prometheus)")
 
     return True
 
@@ -1441,6 +1463,16 @@ def placement_nodes():
     default=True, show_default=True,
     help="Collect container logs from target deployment after each experiment",
 )
+@click.option(
+    "--measure-prometheus/--no-measure-prometheus", "measure_prometheus",
+    default=True, show_default=False,
+    help="Query Prometheus for cluster metrics during each experiment",
+)
+@click.option(
+    "--prometheus-url",
+    multiple=True,
+    help="Prometheus server URL(s); repeat for multiple instances (auto-discovered if omitted)",
+)
 def run(
     namespace: str,
     output_dir: Optional[str],
@@ -1462,6 +1494,8 @@ def run(
     measure_disk: bool,
     measure_resources: bool,
     collect_logs: bool,
+    measure_prometheus: bool,
+    prometheus_url: Tuple[str, ...],
 ):
     """Run placement experiments automatically.
 
@@ -1550,6 +1584,9 @@ def run(
         click.echo(f"  Disk:       Measuring disk I/O throughput during experiments")
     if measure_resources:
         click.echo(f"  Resources:  Measuring node/pod resource utilization during experiments")
+    if measure_prometheus:
+        prom_display = ", ".join(prometheus_url) if prometheus_url else "(auto-discover)"
+        click.echo(f"  Prometheus: Querying cluster Prometheus at {prom_display}")
     if collect_logs:
         click.echo(f"  Logs:       Collecting container logs from target deployment")
     click.echo("")
@@ -1682,6 +1719,16 @@ def run(
                     )
                     resource_prober.start()
 
+                # Start continuous Prometheus prober if requested
+                prometheus_prober = None
+                prometheus_data = None
+                if measure_prometheus:
+                    click.echo("    Starting Prometheus metrics collection...")
+                    prometheus_prober = ContinuousPrometheusProber(
+                        namespace, prometheus_urls=list(prometheus_url) if prometheus_url else None,
+                    )
+                    prometheus_prober.start()
+
                 # Start Locust load generation if requested
                 iter_locust_runner = None
                 iter_load_stats = None
@@ -1695,7 +1742,7 @@ def run(
                 try:
                     # Collect pre-chaos baseline samples
                     pre_chaos_window = min(settle_time, 15)
-                    if (latency_prober or redis_prober or disk_prober or resource_prober) and pre_chaos_window > 0:
+                    if (latency_prober or redis_prober or disk_prober or resource_prober or prometheus_prober) and pre_chaos_window > 0:
                         click.echo(f"    Collecting pre-chaos baseline ({pre_chaos_window}s)...")
                         time.sleep(pre_chaos_window)
 
@@ -1708,6 +1755,8 @@ def run(
                         disk_prober.mark_chaos_start()
                     if resource_prober:
                         resource_prober.mark_chaos_start()
+                    if prometheus_prober:
+                        prometheus_prober.mark_chaos_start()
                     runner = ChaosRunner(namespace, timeout=timeout)
                     runner.run_experiments(scenario.get("experiments", []))
                     experiment_end = time.time()
@@ -1719,10 +1768,12 @@ def run(
                         disk_prober.mark_chaos_end()
                     if resource_prober:
                         resource_prober.mark_chaos_end()
+                    if prometheus_prober:
+                        prometheus_prober.mark_chaos_end()
 
                     # Collect post-chaos recovery samples
                     post_chaos_window = min(settle_time, 15)
-                    if (latency_prober or redis_prober or disk_prober or resource_prober) and post_chaos_window > 0:
+                    if (latency_prober or redis_prober or disk_prober or resource_prober or prometheus_prober) and post_chaos_window > 0:
                         click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
                         time.sleep(post_chaos_window)
                 finally:
@@ -1776,6 +1827,17 @@ def run(
                                 click.echo(f"    Resources: {resource_data.get('reason', 'unavailable')}")
                         except Exception as e:
                             click.echo(f"    Warning: failed to collect resource data: {e}", err=True)
+                    if prometheus_prober:
+                        try:
+                            prometheus_prober.stop()
+                            prometheus_data = prometheus_prober.result()
+                            if prometheus_data.get("available"):
+                                pp = prometheus_data.get("phases", {}).get("during-chaos", {})
+                                click.echo(f"    Prometheus: {pp.get('sampleCount', 0)} samples during chaos")
+                            else:
+                                click.echo(f"    Prometheus: {prometheus_data.get('reason', 'unavailable')}")
+                        except Exception as e:
+                            click.echo(f"    Warning: failed to collect Prometheus data: {e}", err=True)
                     watcher.stop()
 
                 recovery_data = watcher.result()
@@ -1795,6 +1857,7 @@ def run(
                     redis_data=redis_data,
                     disk_data=disk_data,
                     resource_data=resource_data,
+                    prometheus_data=prometheus_data,
                     collect_logs=collect_logs,
                 )
 

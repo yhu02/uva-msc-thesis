@@ -1546,3 +1546,165 @@ end
             return True
         except Exception:
             return False
+
+    # -- metrics-server & Prometheus ----------------------------------------
+
+    def is_metrics_server_installed(self) -> bool:
+        """Check if metrics-server is available in the cluster."""
+        if not self._k8s_initialized:
+            return False
+        try:
+            custom = client.CustomObjectsApi()
+            custom.list_cluster_custom_object(
+                group="metrics.k8s.io",
+                version="v1beta1",
+                plural="nodes",
+            )
+            return True
+        except ApiException:
+            return False
+
+    def install_metrics_server(self, wait: bool = True, timeout: int = 120) -> bool:
+        """Install metrics-server from the official manifest.
+
+        Uses the high-availability manifest with ``--kubelet-insecure-tls``
+        added for Vagrant/Kubespray clusters that use self-signed certs.
+
+        Returns:
+            True if installation succeeded.
+        """
+        manifest_url = (
+            "https://github.com/kubernetes-sigs/metrics-server"
+            "/releases/latest/download/components.yaml"
+        )
+        print("Installing metrics-server...")
+        try:
+            subprocess.run(
+                ["kubectl", "apply", "-f", manifest_url],
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to apply metrics-server manifest: {e}")
+
+        # Patch to add --kubelet-insecure-tls for self-signed certs
+        # (common in Vagrant/Kubespray clusters)
+        patch = (
+            '{"spec":{"template":{"spec":{"containers":[{'
+            '"name":"metrics-server",'
+            '"args":["--cert-dir=/tmp","--secure-port=10250",'
+            '"--kubelet-preferred-address-types='
+            'InternalIP,ExternalIP,Hostname",'
+            '"--kubelet-use-node-status-port",'
+            '"--metric-resolution=15s",'
+            '"--kubelet-insecure-tls"]}]}}}}'
+        )
+        try:
+            subprocess.run(
+                [
+                    "kubectl", "patch", "deployment", "metrics-server",
+                    "-n", "kube-system",
+                    "--type=strategic",
+                    f"-p={patch}",
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            # Patch may fail if args already set — non-fatal
+            pass
+
+        if wait:
+            return self._wait_for_metrics_server(timeout)
+        return True
+
+    def _wait_for_metrics_server(self, timeout: int) -> bool:
+        """Wait for metrics-server to become operational."""
+        start = time.time()
+        while time.time() - start < timeout:
+            if self.is_metrics_server_installed():
+                return True
+            time.sleep(5)
+        return False
+
+    def is_prometheus_installed(self) -> bool:
+        """Check if Prometheus is running in the cluster."""
+        if not self._k8s_initialized:
+            return False
+        search_namespaces = ["monitoring", "prometheus", "kube-prometheus", "default"]
+        search_names = ["prometheus-server", "prometheus", "prometheus-k8s"]
+        for ns in search_namespaces:
+            try:
+                services = self.core_api.list_namespaced_service(ns)
+                for svc in services.items:
+                    if svc.metadata.name in search_names:
+                        return True
+            except ApiException:
+                continue
+        return False
+
+    def install_prometheus(self, wait: bool = True, timeout: int = 180) -> bool:
+        """Install Prometheus using the prometheus-community Helm chart.
+
+        Installs a lightweight Prometheus server in the ``monitoring``
+        namespace.  Alertmanager and pushgateway are disabled to keep
+        resource usage low for thesis experiments.
+
+        Returns:
+            True if installation succeeded.
+        """
+        self._ensure_namespace("monitoring")
+
+        print("Adding prometheus-community Helm repository...")
+        try:
+            subprocess.run(
+                ["helm", "repo", "add", "prometheus-community",
+                 "https://prometheus-community.github.io/helm-charts"],
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            pass  # Repo may already exist
+
+        subprocess.run(["helm", "repo", "update"], check=True, capture_output=True)
+
+        print("Installing Prometheus...")
+        try:
+            subprocess.run(
+                [
+                    "helm", "upgrade", "--install", "prometheus",
+                    "prometheus-community/prometheus",
+                    "--namespace", "monitoring",
+                    "--set", "alertmanager.enabled=false",
+                    "--set", "kube-state-metrics.enabled=true",
+                    "--set", "prometheus-pushgateway.enabled=false",
+                    "--set", "server.persistentVolume.enabled=false",
+                    "--set", "server.retention=3d",
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to install Prometheus: {e}")
+
+        if wait:
+            return self._wait_for_prometheus(timeout)
+        return True
+
+    def _wait_for_prometheus(self, timeout: int) -> bool:
+        """Wait for Prometheus server to become ready."""
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                pods = self.core_api.list_namespaced_pod(
+                    "monitoring",
+                    label_selector="app.kubernetes.io/name=prometheus",
+                )
+                for pod in pods.items:
+                    if pod.status.phase == "Running":
+                        ready = all(
+                            cs.ready
+                            for cs in (pod.status.container_statuses or [])
+                        )
+                        if ready:
+                            return True
+            except ApiException:
+                pass
+            time.sleep(5)
+        return False

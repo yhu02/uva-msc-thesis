@@ -186,6 +186,13 @@ def generate_from_summary(
         if path:
             generated.append(path)
 
+    # Generate Prometheus metrics charts from per-strategy data
+    prometheus_by_strategy = _extract_prometheus_data(raw_strategies)
+    if prometheus_by_strategy:
+        path = _chart_prometheus_by_phase(prometheus_by_strategy, output_path)
+        if path:
+            generated.append(path)
+
     html_path = _generate_html_summary(
         generated,
         strategies,
@@ -194,6 +201,7 @@ def generate_from_summary(
         latency_data=latency_by_strategy,
         throughput_data=throughput_by_strategy,
         resource_data=resource_by_strategy,
+        prometheus_data=prometheus_by_strategy,
     )
     if html_path:
         generated.append(html_path)
@@ -460,6 +468,7 @@ def _generate_html_summary(
     latency_data: Optional[Dict[str, Dict[str, Any]]] = None,
     throughput_data: Optional[Dict[str, Dict[str, Any]]] = None,
     resource_data: Optional[Dict[str, Dict[str, Any]]] = None,
+    prometheus_data: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Optional[str]:
     """Generate an HTML page with embedded charts and summary table."""
     if not chart_paths:
@@ -642,6 +651,51 @@ def _generate_html_summary(
         {resource_rows}
     </table>"""
 
+    prometheus_section = ""
+    if prometheus_data:
+        prom_rows = ""
+        # Collect all metric labels across strategies
+        all_labels: set = set()
+        for pdata in prometheus_data.values():
+            phases = pdata.get("phases", {})
+            for phase_info in phases.values():
+                all_labels.update(phase_info.get("metrics", {}).keys())
+
+        for strat_name in sorted(prometheus_data.keys()):
+            phases = prometheus_data[strat_name].get("phases", {})
+            for label in sorted(all_labels):
+                for phase_name in ("pre-chaos", "during-chaos", "post-chaos"):
+                    phase_metrics = phases.get(phase_name, {}).get("metrics", {})
+                    metric = phase_metrics.get(label, {})
+                    mean_val = metric.get("mean")
+                    max_val = metric.get("max")
+                    mean_str = f"{mean_val:.4f}" if mean_val is not None else "n/a"
+                    max_str = f"{max_val:.4f}" if max_val is not None else "n/a"
+                    samples = phases.get(phase_name, {}).get("sampleCount", 0)
+                    prom_rows += f"""
+            <tr>
+                <td>{strat_name}</td>
+                <td>{label}</td>
+                <td>{phase_name}</td>
+                <td>{mean_str}</td>
+                <td>{max_str}</td>
+                <td>{samples}</td>
+            </tr>"""
+
+        prometheus_section = f"""
+    <h2>Prometheus Cluster Metrics</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Metric</th>
+            <th>Phase</th>
+            <th>Mean</th>
+            <th>Max</th>
+            <th>Samples</th>
+        </tr>
+        {prom_rows}
+    </table>"""
+
     img_tags = ""
     for path in chart_paths:
         if path.endswith(".png"):
@@ -686,6 +740,8 @@ def _generate_html_summary(
     {throughput_section}
 
     {resource_section}
+
+    {prometheus_section}
 
     <h2>Charts</h2>
     <div class="charts">
@@ -1255,6 +1311,106 @@ def _chart_resource_by_phase(
 
     plt.tight_layout()
     filepath = str(output_path / "resource_by_phase.png")
+    fig.savefig(filepath, dpi=150)
+    plt.close(fig)
+    return filepath
+
+
+def _extract_prometheus_data(
+    raw_strategies: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Extract Prometheus metrics data from raw strategy results."""
+    result = {}
+    for name, sdata in raw_strategies.items():
+        metrics = sdata.get("metrics") or {}
+        if metrics and "prometheus" in metrics:
+            prom = metrics["prometheus"]
+            if prom.get("available", False):
+                result[name] = prom
+                continue
+
+        # Multi-iteration: use first iteration with prometheus data
+        for it in sdata.get("iterations", []):
+            m = it.get("metrics", {})
+            prom = m.get("prometheus", {})
+            if prom.get("available", False):
+                result[name] = prom
+                break
+
+    return result
+
+
+def _chart_prometheus_by_phase(
+    prometheus_by_strategy: Dict[str, Dict[str, Any]],
+    output_path: Path,
+) -> Optional[str]:
+    """Generate grouped bar chart of Prometheus metrics per phase per strategy.
+
+    Shows the mean aggregate value for each metric during pre/during/post
+    chaos across all strategies.
+    """
+    if not prometheus_by_strategy:
+        return None
+
+    # Collect all metric labels
+    all_labels: set = set()
+    for pdata in prometheus_by_strategy.values():
+        phases = pdata.get("phases", {})
+        for phase_info in phases.values():
+            all_labels.update(phase_info.get("metrics", {}).keys())
+
+    if not all_labels:
+        return None
+
+    labels = sorted(all_labels)
+    strategy_names = sorted(prometheus_by_strategy.keys())
+    phase_names = ["pre-chaos", "during-chaos", "post-chaos"]
+
+    # One subplot per metric
+    n_metrics = len(labels)
+    cols = min(n_metrics, 3)
+    rows_count = (n_metrics + cols - 1) // cols
+    fig, axes = plt.subplots(
+        rows_count, cols,
+        figsize=(6 * cols, 5 * rows_count),
+        squeeze=False,
+    )
+
+    width = 0.8 / max(len(strategy_names), 1)
+    colors = _strategy_colors(strategy_names)
+
+    for m_idx, metric_label in enumerate(labels):
+        row_i = m_idx // cols
+        col_i = m_idx % cols
+        ax = axes[row_i][col_i]
+
+        for s_idx, strat in enumerate(strategy_names):
+            phases = prometheus_by_strategy[strat].get("phases", {})
+            vals = []
+            for phase in phase_names:
+                metric_agg = phases.get(phase, {}).get("metrics", {}).get(metric_label, {})
+                vals.append(metric_agg.get("mean") or 0)
+
+            x = [j + s_idx * width for j in range(len(phase_names))]
+            ax.bar(
+                x, vals, width,
+                label=strat, color=colors[s_idx],
+                edgecolor="black", linewidth=0.5, alpha=0.7,
+            )
+
+        ax.set_title(metric_label.replace("_", " ").title(), fontsize=10)
+        ax.set_xticks([j + width * (len(strategy_names) - 1) / 2 for j in range(len(phase_names))])
+        ax.set_xticklabels(phase_names, fontsize=8)
+        ax.legend(fontsize=7)
+        ax.grid(axis="y", alpha=0.3)
+
+    # Hide unused subplots
+    for m_idx in range(n_metrics, rows_count * cols):
+        axes[m_idx // cols][m_idx % cols].set_visible(False)
+
+    fig.suptitle("Prometheus Metrics by Phase and Strategy", fontsize=13)
+    plt.tight_layout()
+    filepath = str(output_path / "prometheus_by_phase.png")
     fig.savefig(filepath, dpi=150)
     plt.close(fig)
     return filepath

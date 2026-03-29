@@ -207,3 +207,110 @@ class TestSQLiteStore:
         assert "pod_placements" in table_names
         assert "load_stats" in table_names
         store.close()
+
+    def test_save_metrics_includes_latency_and_resources(self, store):
+        """Test that save_run extracts latency, throughput, and resource metrics."""
+        run_data = {
+            "runId": "run-metrics-test",
+            "timestamp": "2026-03-29T12:00:00+00:00",
+            "scenario": {"directory": "/test"},
+            "infrastructure": {"namespace": "test"},
+            "experiments": [],
+            "summary": {
+                "totalExperiments": 0, "passed": 0, "failed": 0,
+                "resilienceScore": 80.0, "overallVerdict": "PASS",
+            },
+            "metrics": {
+                "recovery": {"summary": {"meanRecovery_ms": 1200.0}},
+                "latency": {
+                    "phases": {"during-chaos": {"routes": {
+                        "frontend→cart": {"mean_ms": 45.0},
+                    }}},
+                },
+                "redis": {
+                    "phases": {"during-chaos": {"redis": {
+                        "write": {"meanOpsPerSecond": 5000.0},
+                    }}},
+                },
+                "resources": {
+                    "available": True,
+                    "phases": {"during-chaos": {"node": {
+                        "meanCpu_percent": 72.5,
+                        "meanMemory_percent": 60.0,
+                    }}},
+                },
+            },
+        }
+        store.save_run(run_data)
+
+        metrics = store.get_metrics("run-metrics-test")
+        names = {m["metric_name"] for m in metrics}
+        assert "latency:frontend→cart" in names
+        assert "redis:write:ops_per_second" in names
+        assert "node:cpu_percent" in names
+        assert "node:memory_percent" in names
+
+    def test_get_metric_trend(self, store, sample_run_data):
+        """Test historical trend query returns ordered results."""
+        store.save_run(sample_run_data)
+
+        # Add a second run
+        run2 = sample_run_data.copy()
+        run2["runId"] = "run-2"
+        run2["timestamp"] = "2026-03-21T12:00:00+00:00"
+        run2["placement"] = {"strategy": "colocate"}
+        run2["metrics"]["recovery"]["summary"]["meanRecovery_ms"] = 1800.0
+        store.save_run(run2)
+
+        trend = store.get_metric_trend("meanRecovery_ms")
+        assert len(trend) == 2
+        assert trend[0]["value"] == 1500.0
+        assert trend[1]["value"] == 1800.0
+        assert trend[0]["timestamp"] < trend[1]["timestamp"]
+
+    def test_get_metric_trend_by_strategy(self, store, sample_run_data):
+        store.save_run(sample_run_data)
+
+        run2 = sample_run_data.copy()
+        run2["runId"] = "run-spread"
+        run2["placement"] = {"strategy": "spread"}
+        store.save_run(run2)
+
+        trend = store.get_metric_trend("meanRecovery_ms", strategy="colocate")
+        assert len(trend) == 1
+        assert trend[0]["strategy"] == "colocate"
+
+    def test_get_metric_names(self, store, sample_run_data):
+        store.save_run(sample_run_data)
+
+        names = store.get_metric_names()
+        assert "meanRecovery_ms" in names
+        assert "resilienceScore" in names
+        assert "p95Recovery_ms" in names
+
+    def test_get_runs_below_threshold(self, store, sample_run_data):
+        store.save_run(sample_run_data)
+
+        # Resilience score is 95 — shouldn't match threshold of 80
+        below = store.get_runs_below_threshold("resilienceScore", 80.0)
+        assert len(below) == 0
+
+        # Should match threshold of 100
+        below = store.get_runs_below_threshold("resilienceScore", 100.0)
+        assert len(below) == 1
+        assert below[0]["value"] == 95.0
+
+    def test_get_runs_below_threshold_by_strategy(self, store, sample_run_data):
+        store.save_run(sample_run_data)
+
+        run2 = sample_run_data.copy()
+        run2["runId"] = "run-spread"
+        run2["placement"] = {"strategy": "spread"}
+        run2["summary"]["resilienceScore"] = 40.0
+        store.save_run(run2)
+
+        below = store.get_runs_below_threshold(
+            "resilienceScore", 50.0, strategy="spread",
+        )
+        assert len(below) == 1
+        assert below[0]["strategy"] == "spread"

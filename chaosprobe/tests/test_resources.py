@@ -36,6 +36,12 @@ class TestParseCpuQuantity:
     def test_whitespace_stripped(self):
         assert parse_cpu_quantity("  412m  ") == 412.0
 
+    def test_microcores(self):
+        assert parse_cpu_quantity("196250u") == 196.25
+
+    def test_microcores_large(self):
+        assert parse_cpu_quantity("1000000u") == 1000.0
+
 
 class TestParseMemoryQuantity:
     def test_kibibytes(self):

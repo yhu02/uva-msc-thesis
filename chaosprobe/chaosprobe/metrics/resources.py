@@ -31,10 +31,13 @@ def parse_cpu_quantity(value: str) -> float:
         parse_cpu_quantity("2")       -> 2000.0
         parse_cpu_quantity("412m")    -> 412.0
         parse_cpu_quantity("500000n") -> 0.5
+        parse_cpu_quantity("196250u") -> 196.25
     """
     value = value.strip()
     if value.endswith("n"):
         return float(value[:-1]) / 1_000_000
+    if value.endswith("u"):
+        return float(value[:-1]) / 1_000
     if value.endswith("m"):
         return float(value[:-1])
     return float(value) * 1000
