@@ -215,13 +215,21 @@ def ensure_litmus_setup(
     else:
         click.echo("  metrics-server: available")
 
-    # Check if Prometheus is available (used for cluster metrics).
-    # Unlike metrics-server, Prometheus is NOT auto-installed because
-    # users may run their own instance with custom scrape configs.
-    if setup.is_prometheus_installed():
-        click.echo("  Prometheus: available")
+    # Ensure Prometheus is installed (needed for cluster metrics)
+    if not setup.is_prometheus_installed():
+        if not prereqs.get("helm"):
+            click.echo("  Prometheus: skipped (helm not available)")
+        else:
+            click.echo("Prometheus not found. Installing automatically...")
+            try:
+                if setup.install_prometheus(wait=True):
+                    click.echo("  Prometheus installed successfully")
+                else:
+                    click.echo("  WARNING: Prometheus installed but not yet ready", err=True)
+            except Exception as e:
+                click.echo(f"  WARNING: Failed to install Prometheus: {e}", err=True)
     else:
-        click.echo("  Prometheus: not found (install manually or use --no-measure-prometheus)")
+        click.echo("  Prometheus: available")
 
     return True
 
