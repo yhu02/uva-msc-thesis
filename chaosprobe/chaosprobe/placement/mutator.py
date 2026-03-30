@@ -133,6 +133,7 @@ class PlacementMutator:
                 cpu_request_millicores=total_cpu,
                 memory_request_bytes=total_mem,
                 current_node=current_node,
+                namespace=self.namespace,
             ))
 
         return result

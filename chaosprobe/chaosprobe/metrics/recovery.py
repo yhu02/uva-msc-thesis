@@ -259,10 +259,13 @@ class RecoveryWatcher:
             if c["totalRecovery_ms"] is not None
         ]
 
+        incomplete = len(cycles) - len(recovery_times)
+
         if not recovery_times:
             return {
                 "count": len(cycles),
                 "completedCycles": 0,
+                "incompleteCycles": incomplete,
                 "meanRecovery_ms": None,
                 "medianRecovery_ms": None,
                 "minRecovery_ms": None,
@@ -277,6 +280,7 @@ class RecoveryWatcher:
         return {
             "count": len(cycles),
             "completedCycles": len(recovery_times),
+            "incompleteCycles": incomplete,
             "meanRecovery_ms": round(statistics.mean(recovery_times), 1),
             "medianRecovery_ms": round(statistics.median(recovery_times), 1),
             "minRecovery_ms": min(recovery_times),

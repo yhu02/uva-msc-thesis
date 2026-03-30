@@ -116,6 +116,7 @@ class DeploymentInfo:
     cpu_request_millicores: int = 0
     memory_request_bytes: int = 0
     current_node: Optional[str] = None
+    namespace: Optional[str] = None
 
 
 def compute_assignments(
