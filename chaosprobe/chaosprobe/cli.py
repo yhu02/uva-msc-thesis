@@ -1499,8 +1499,8 @@ def placement_nodes():
 )
 @click.option(
     "--neo4j-uri",
-    default=None, envvar="NEO4J_URI",
-    help="Neo4j connection URI (e.g. bolt://localhost:7687). Enables graph storage.",
+    default="bolt://localhost:7687", envvar="NEO4J_URI",
+    help="Neo4j connection URI (default: bolt://localhost:7687). Enables graph storage.",
 )
 @click.option(
     "--neo4j-user",
@@ -1509,8 +1509,8 @@ def placement_nodes():
 )
 @click.option(
     "--neo4j-password",
-    default="neo4j", envvar="NEO4J_PASSWORD",
-    help="Neo4j password (default: neo4j)",
+    default="chaosprobe", envvar="NEO4J_PASSWORD",
+    help="Neo4j password (default: chaosprobe)",
 )
 def run(
     namespace: str,
@@ -2235,16 +2235,16 @@ def _build_comparison_table(
 # ─────────────────────────────────────────────────────────────
 
 _neo4j_uri_option = click.option(
-    "--neo4j-uri", default=None, envvar="NEO4J_URI", required=True,
-    help="Neo4j connection URI (e.g. bolt://localhost:7687)",
+    "--neo4j-uri", default="bolt://localhost:7687", envvar="NEO4J_URI",
+    help="Neo4j connection URI (default: bolt://localhost:7687)",
 )
 _neo4j_user_option = click.option(
     "--neo4j-user", default="neo4j", envvar="NEO4J_USER",
     help="Neo4j username",
 )
 _neo4j_password_option = click.option(
-    "--neo4j-password", default="neo4j", envvar="NEO4J_PASSWORD",
-    help="Neo4j password",
+    "--neo4j-password", default="chaosprobe", envvar="NEO4J_PASSWORD",
+    help="Neo4j password (default: chaosprobe)",
 )
 
 
