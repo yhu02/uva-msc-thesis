@@ -122,6 +122,7 @@ end
         self.apps_api = client.AppsV1Api()
         self.apiext_api = client.ApiextensionsV1Api()
         self.rbac_api = client.RbacAuthorizationV1Api()
+        self.storage_api = client.StorageV1Api()
         self._k8s_initialized = True
 
     def get_cluster_info(self) -> dict:
@@ -1677,6 +1678,8 @@ end
                     "--set", "prometheus-pushgateway.enabled=false",
                     "--set", "server.persistentVolume.enabled=false",
                     "--set", "server.retention=3d",
+                    "--set", "server.global.scrape_interval=15s",
+                    "--set", "server.global.evaluation_interval=15s",
                 ],
                 check=True,
             )
@@ -1695,6 +1698,163 @@ end
                 pods = self.core_api.list_namespaced_pod(
                     "monitoring",
                     label_selector="app.kubernetes.io/name=prometheus",
+                )
+                for pod in pods.items:
+                    if pod.status.phase == "Running":
+                        ready = all(
+                            cs.ready
+                            for cs in (pod.status.container_statuses or [])
+                        )
+                        if ready:
+                            return True
+            except ApiException:
+                pass
+            time.sleep(5)
+        return False
+
+    # ------------------------------------------------------------------
+    # Neo4j
+    # ------------------------------------------------------------------
+
+    def is_neo4j_installed(self) -> bool:
+        """Check if Neo4j is running in the cluster."""
+        if not self._k8s_initialized:
+            return False
+        for ns in ("neo4j", "default", "monitoring"):
+            try:
+                services = self.core_api.list_namespaced_service(ns)
+                for svc in services.items:
+                    if svc.metadata.name in ("neo4j", "neo4j-lb"):
+                        return True
+            except ApiException:
+                continue
+        return False
+
+    def _ensure_storage_class(self) -> None:
+        """Install local-path-provisioner if no StorageClass exists."""
+        try:
+            sc_list = self.storage_api.list_storage_class()
+            if sc_list.items:
+                return
+        except Exception:
+            pass
+
+        print("No StorageClass found. Installing local-path-provisioner...")
+        subprocess.run(
+            [
+                "kubectl", "apply", "-f",
+                "https://raw.githubusercontent.com/rancher/local-path-provisioner/"
+                "v0.0.26/deploy/local-path-storage.yaml",
+            ],
+            check=True,
+        )
+        # Mark as default StorageClass
+        subprocess.run(
+            [
+                "kubectl", "patch", "storageclass", "local-path",
+                "-p", '{"metadata":{"annotations":'
+                       '{"storageclass.kubernetes.io/is-default-class":"true"}}}',
+            ],
+            check=True,
+        )
+        print("  local-path-provisioner installed")
+
+    def install_neo4j(self, wait: bool = True, timeout: int = 300) -> bool:
+        """Install Neo4j as a lightweight Deployment.
+
+        Deploys a Neo4j Community instance in the ``neo4j`` namespace
+        using a plain Deployment + Service (no Helm chart) to keep
+        resource usage low for thesis clusters with limited memory.
+
+        Returns:
+            True if installation succeeded.
+        """
+        self._ensure_namespace("neo4j")
+
+        manifest = {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": "neo4j", "namespace": "neo4j"},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": "neo4j"}},
+                "template": {
+                    "metadata": {"labels": {"app": "neo4j"}},
+                    "spec": {
+                        "containers": [{
+                            "name": "neo4j",
+                            "image": "neo4j:5-community",
+                            "env": [
+                                {"name": "NEO4J_AUTH", "value": "neo4j/chaosprobe"},
+                                {"name": "NEO4J_server_memory_heap_initial__size", "value": "256m"},
+                                {"name": "NEO4J_server_memory_heap_max__size", "value": "256m"},
+                                {"name": "NEO4J_server_memory_pagecache_size", "value": "64m"},
+                                {"name": "NEO4J_server_config_strict__validation_enabled", "value": "false"},
+                            ],
+                            "ports": [
+                                {"containerPort": 7474, "name": "http"},
+                                {"containerPort": 7687, "name": "bolt"},
+                            ],
+                            "resources": {
+                                "requests": {"cpu": "250m", "memory": "512Mi"},
+                                "limits": {"cpu": "500m", "memory": "768Mi"},
+                            },
+                        }],
+                    },
+                },
+            },
+        }
+
+        svc_manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "neo4j", "namespace": "neo4j"},
+            "spec": {
+                "selector": {"app": "neo4j"},
+                "ports": [
+                    {"name": "http", "port": 7474, "targetPort": 7474},
+                    {"name": "bolt", "port": 7687, "targetPort": 7687},
+                ],
+            },
+        }
+
+        print("Installing Neo4j...")
+        try:
+            # Apply deployment
+            from kubernetes.utils import create_from_dict
+            k8s_client = client.ApiClient()
+            try:
+                self.apps_api.read_namespaced_deployment("neo4j", "neo4j")
+                self.apps_api.patch_namespaced_deployment("neo4j", "neo4j", manifest)
+            except ApiException as e:
+                if e.status == 404:
+                    create_from_dict(k8s_client, manifest)
+                else:
+                    raise
+
+            # Apply service
+            try:
+                self.core_api.read_namespaced_service("neo4j", "neo4j")
+            except ApiException as e:
+                if e.status == 404:
+                    create_from_dict(k8s_client, svc_manifest)
+                else:
+                    raise
+        except Exception as e:
+            raise RuntimeError(f"Failed to install Neo4j: {e}")
+
+        if wait:
+            return self._wait_for_neo4j(timeout)
+        return True
+
+    def _wait_for_neo4j(self, timeout: int) -> bool:
+        """Wait for Neo4j to become ready."""
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                pods = self.core_api.list_namespaced_pod(
+                    "neo4j",
+                    label_selector="app=neo4j",
                 )
                 for pod in pods.items:
                     if pod.status.phase == "Running":

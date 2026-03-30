@@ -88,10 +88,10 @@ class TestQueryPrometheus:
 
         assert result is not None
         assert len(result) == 2
-        assert result[0]["labels"] == {"pod": "frontend-abc"}
-        assert result[0]["value"] == 1.5
-        assert result[1]["labels"] == {"pod": "cart-def"}
-        assert result[1]["value"] == 0.3
+        assert result[0]["metric"] == {"pod": "frontend-abc", "__name__": "up"}
+        assert result[0]["value"] == [1711700000, "1.5"]
+        assert result[1]["metric"] == {"pod": "cart-def"}
+        assert result[1]["value"] == [1711700000, "0.3"]
 
     def test_returns_none_on_connection_error(self):
         result = _query_prometheus("http://127.0.0.1:1", "up", timeout=0.5)
@@ -293,7 +293,7 @@ class TestPrometheusProberResult:
                 "elapsed_s": 0.0,
                 "phase": "pre-chaos",
                 "metrics": {
-                    "test_metric": [{"labels": {"pod": "a"}, "value": 1.0}],
+                    "test_metric": [{"metric": {"pod": "a"}, "value": [1711700000, "1.0"]}],
                 },
             },
             {
@@ -301,7 +301,7 @@ class TestPrometheusProberResult:
                 "elapsed_s": 10.0,
                 "phase": "during-chaos",
                 "metrics": {
-                    "test_metric": [{"labels": {"pod": "a"}, "value": 5.0}],
+                    "test_metric": [{"metric": {"pod": "a"}, "value": [1711700010, "5.0"]}],
                 },
             },
         ]
@@ -322,7 +322,7 @@ class TestPrometheusProberResult:
                 "timestamp": "2026-03-29T12:00:00+00:00",
                 "elapsed_s": 0.0,
                 "phase": "pre-chaos",
-                "metrics": {"test_metric": [{"labels": {}, "value": 1.0}]},
+                "metrics": {"test_metric": [{"metric": {}, "value": [1711700000, "1.0"]}]},
             },
         ]
 
@@ -339,8 +339,8 @@ class TestPrometheusProberPhaseSplitting:
                 "phase": "pre-chaos",
                 "metrics": {
                     "error_rate": [
-                        {"labels": {"svc": "frontend"}, "value": 0.01},
-                        {"labels": {"svc": "cart"}, "value": 0.02},
+                        {"metric": {"svc": "frontend"}, "value": [1711700000, "0.01"]},
+                        {"metric": {"svc": "cart"}, "value": [1711700000, "0.02"]},
                     ],
                 },
             },
@@ -348,8 +348,8 @@ class TestPrometheusProberPhaseSplitting:
                 "phase": "during-chaos",
                 "metrics": {
                     "error_rate": [
-                        {"labels": {"svc": "frontend"}, "value": 0.40},
-                        {"labels": {"svc": "cart"}, "value": 0.10},
+                        {"metric": {"svc": "frontend"}, "value": [1711700010, "0.40"]},
+                        {"metric": {"svc": "cart"}, "value": [1711700010, "0.10"]},
                     ],
                 },
             },
@@ -357,8 +357,8 @@ class TestPrometheusProberPhaseSplitting:
                 "phase": "during-chaos",
                 "metrics": {
                     "error_rate": [
-                        {"labels": {"svc": "frontend"}, "value": 0.60},
-                        {"labels": {"svc": "cart"}, "value": 0.20},
+                        {"metric": {"svc": "frontend"}, "value": [1711700020, "0.60"]},
+                        {"metric": {"svc": "cart"}, "value": [1711700020, "0.20"]},
                     ],
                 },
             },
@@ -366,7 +366,7 @@ class TestPrometheusProberPhaseSplitting:
                 "phase": "post-chaos",
                 "metrics": {
                     "error_rate": [
-                        {"labels": {"svc": "frontend"}, "value": 0.02},
+                        {"metric": {"svc": "frontend"}, "value": [1711700030, "0.02"]},
                     ],
                 },
             },
@@ -496,10 +496,18 @@ class TestDefaultQueries:
 
     def test_all_queries_present(self):
         expected = {
-            "container_restarts",
+            "pod_ready_count",
             "cpu_usage",
             "cpu_throttling",
             "memory_usage",
             "network_receive_bytes",
         }
         assert set(DEFAULT_QUERIES.keys()) == expected
+
+    def test_litmus_pod_filter_in_all_queries(self):
+        """All default queries exclude LitmusChaos experiment pods."""
+        for label, template in DEFAULT_QUERIES.items():
+            formatted = template.format(namespace="test-ns")
+            assert 'pod!~"' in formatted, (
+                f"Query {label!r} is missing the LitmusChaos pod exclusion filter"
+            )

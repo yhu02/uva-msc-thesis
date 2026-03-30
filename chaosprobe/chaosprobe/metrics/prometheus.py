@@ -25,21 +25,31 @@ logger = logging.getLogger(__name__)
 # Default PromQL queries for common Kubernetes / Online Boutique metrics
 # ---------------------------------------------------------------------------
 
+# LitmusChaos experiment pods (runners and helpers like pod-delete-*)
+# execute in the target namespace.  Exclude them so only real workload
+# data is collected.  The filter below is inlined into every query.
+#   pod!~".*-runner$|.*pod-delete.*"
+
 DEFAULT_QUERIES: Dict[str, str] = {
-    "container_restarts": (
-        'sum(rate(kube_pod_container_status_restarts_total{{namespace="{namespace}"}}[5m])) by (pod)'
+    "pod_ready_count": (
+        'sum(kube_pod_status_ready{{namespace="{namespace}",condition="true",'
+        'pod!~".*-runner$|.*pod-delete.*"}})'
     ),
     "cpu_usage": (
-        'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}",container!=""}}[5m])) by (pod)'
+        'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}",'
+        'container!="",pod!~".*-runner$|.*pod-delete.*"}}[5m])) by (pod)'
     ),
     "cpu_throttling": (
-        'sum(rate(container_cpu_cfs_throttled_seconds_total{{namespace="{namespace}"}}[5m])) by (pod)'
+        'sum(rate(container_cpu_cfs_throttled_seconds_total{{namespace="{namespace}",'
+        'pod!~".*-runner$|.*pod-delete.*"}}[5m])) by (pod)'
     ),
     "memory_usage": (
-        'sum(container_memory_working_set_bytes{{namespace="{namespace}",container!=""}}) by (pod)'
+        'sum(container_memory_working_set_bytes{{namespace="{namespace}",'
+        'container!="",pod!~".*-runner$|.*pod-delete.*"}}) by (pod)'
     ),
     "network_receive_bytes": (
-        'sum(rate(container_network_receive_bytes_total{{namespace="{namespace}"}}[5m])) by (pod)'
+        'sum(rate(container_network_receive_bytes_total{{namespace="{namespace}",'
+        'pod!~".*-runner$|.*pod-delete.*"}}[5m])) by (pod)'
     ),
 }
 
@@ -54,10 +64,12 @@ _PROMETHEUS_PORT = 9090
 def _query_prometheus(
     base_url: str, query: str, timeout: float = 10.0,
 ) -> Optional[List[Dict[str, Any]]]:
-    """Execute an instant PromQL query and return the result vector.
+    """Execute an instant PromQL query and return the raw result vector.
 
-    Returns a list of ``{"labels": {...}, "value": float}`` dicts, or
-    *None* on error.
+    Returns the ``data.result`` list from the Prometheus API response
+    in its original format, or *None* on error.  Each element looks like::
+
+        {"metric": {"__name__": "up", "pod": "frontend"}, "value": [1711700000, "1.5"]}
     """
     params = urlencode({"query": query})
     url = f"{base_url}/api/v1/query?{params}"
@@ -73,17 +85,7 @@ def _query_prometheus(
         logger.debug("Prometheus returned non-success: %s", body.get("error"))
         return None
 
-    results: List[Dict[str, Any]] = []
-    for item in body.get("data", {}).get("result", []):
-        metric_labels = {k: v for k, v in item.get("metric", {}).items() if k != "__name__"}
-        # Instant query returns [timestamp, "value"]
-        raw_value = item.get("value", [None, None])
-        try:
-            value = float(raw_value[1])
-        except (TypeError, IndexError, ValueError):
-            continue
-        results.append({"labels": metric_labels, "value": round(value, 6)})
-    return results
+    return body.get("data", {}).get("result", [])
 
 
 def _find_prometheus_service() -> List[Tuple[str, str, int]]:
@@ -295,8 +297,8 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
                         result = _query_prometheus(url, query)
                         if result is not None:
                             for item in result:
-                                # Deduplicate by (sorted label key-value pairs)
-                                key = tuple(sorted(item["labels"].items()))
+                                # Deduplicate by (sorted metric label pairs)
+                                key = tuple(sorted(item.get("metric", {}).items()))
                                 if key not in seen_keys:
                                     seen_keys.add(key)
                                     merged.append(item)
@@ -395,7 +397,13 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
                 sample_sums: List[float] = []
                 for e in entries:
                     metric_items = e.get("metrics", {}).get(label, [])
-                    total = sum(item.get("value", 0) for item in metric_items)
+                    total = 0.0
+                    for item in metric_items:
+                        raw = item.get("value", [None, None])
+                        try:
+                            total += float(raw[1])
+                        except (TypeError, IndexError, ValueError):
+                            pass
                     sample_sums.append(total)
 
                 if sample_sums:

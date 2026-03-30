@@ -231,6 +231,22 @@ def ensure_litmus_setup(
     else:
         click.echo("  Prometheus: available")
 
+    # Ensure Neo4j is installed (needed for graph storage)
+    if not setup.is_neo4j_installed():
+        if not prereqs.get("helm"):
+            click.echo("  Neo4j: skipped (helm not available)")
+        else:
+            click.echo("Neo4j not found. Installing automatically...")
+            try:
+                if setup.install_neo4j(wait=True):
+                    click.echo("  Neo4j installed successfully")
+                else:
+                    click.echo("  WARNING: Neo4j installed but not yet ready", err=True)
+            except Exception as e:
+                click.echo(f"  WARNING: Failed to install Neo4j: {e}", err=True)
+    else:
+        click.echo("  Neo4j: available")
+
     return True
 
 
@@ -1481,6 +1497,21 @@ def placement_nodes():
     multiple=True,
     help="Prometheus server URL(s); repeat for multiple instances (auto-discovered if omitted)",
 )
+@click.option(
+    "--neo4j-uri",
+    default=None, envvar="NEO4J_URI",
+    help="Neo4j connection URI (e.g. bolt://localhost:7687). Enables graph storage.",
+)
+@click.option(
+    "--neo4j-user",
+    default="neo4j", envvar="NEO4J_USER",
+    help="Neo4j username (default: neo4j)",
+)
+@click.option(
+    "--neo4j-password",
+    default="neo4j", envvar="NEO4J_PASSWORD",
+    help="Neo4j password (default: neo4j)",
+)
 def run(
     namespace: str,
     output_dir: Optional[str],
@@ -1504,6 +1535,9 @@ def run(
     collect_logs: bool,
     measure_prometheus: bool,
     prometheus_url: Tuple[str, ...],
+    neo4j_uri: Optional[str],
+    neo4j_user: str,
+    neo4j_password: str,
 ):
     """Run placement experiments automatically.
 
@@ -1614,6 +1648,20 @@ def run(
     passed = 0
     failed = 0
     run_store = _get_store(db)
+
+    # Optional Neo4j graph store
+    graph_store = None
+    if neo4j_uri:
+        try:
+            from chaosprobe.storage.neo4j_store import Neo4jStore
+            graph_store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
+            graph_store.ensure_schema()
+            graph_store.sync_service_dependencies()
+            click.echo(f"  Neo4j:      connected ({neo4j_uri})")
+        except ImportError:
+            click.echo("  Neo4j: skipped (install with: uv pip install chaosprobe[graph])", err=True)
+        except Exception as e:
+            click.echo(f"  Neo4j: connection failed ({e})", err=True)
 
     for idx, strategy_name in enumerate(strategy_list, 1):
         click.echo(f"\n{'─' * 60}")
@@ -1895,6 +1943,13 @@ def run(
                         import warnings
                         warnings.warn(f"Failed to save results to database: {e}")
 
+                # Sync to Neo4j graph if connected
+                if graph_store:
+                    try:
+                        graph_store.sync_run(output_data)
+                    except Exception as e:
+                        click.echo(f"    Warning: Neo4j sync failed: {e}", err=True)
+
                 verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
                 score = output_data.get("summary", {}).get("resilienceScore", 0)
                 rec_summary = recovery.get("recovery", {}).get("summary", {})
@@ -2033,6 +2088,8 @@ def run(
     # Close shared database connection
     if run_store:
         run_store.close()
+    if graph_store:
+        graph_store.close()
 
     click.echo("")
 
@@ -2171,6 +2228,207 @@ def _build_comparison_table(
         table.append(row)
 
     return table
+
+
+# ─────────────────────────────────────────────────────────────
+# Graph commands (Neo4j)
+# ─────────────────────────────────────────────────────────────
+
+_neo4j_uri_option = click.option(
+    "--neo4j-uri", default=None, envvar="NEO4J_URI", required=True,
+    help="Neo4j connection URI (e.g. bolt://localhost:7687)",
+)
+_neo4j_user_option = click.option(
+    "--neo4j-user", default="neo4j", envvar="NEO4J_USER",
+    help="Neo4j username",
+)
+_neo4j_password_option = click.option(
+    "--neo4j-password", default="neo4j", envvar="NEO4J_PASSWORD",
+    help="Neo4j password",
+)
+
+
+def _get_graph_store(uri, user, password):
+    """Create a Neo4jStore, handling missing dependency gracefully."""
+    try:
+        from chaosprobe.storage.neo4j_store import Neo4jStore
+    except ImportError:
+        click.echo(
+            "Error: Neo4j support not installed.\n"
+            "  Install with:  uv pip install chaosprobe[graph]",
+            err=True,
+        )
+        sys.exit(1)
+    return Neo4jStore(uri, user, password)
+
+
+@main.group()
+def graph():
+    """Neo4j graph commands for topology and blast-radius analysis."""
+    pass
+
+
+@graph.command("status")
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
+def graph_status(neo4j_uri, neo4j_user, neo4j_password):
+    """Check Neo4j connectivity and show node counts."""
+    store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+    try:
+        counts = store.status()
+        click.echo("Neo4j connected ✓")
+        click.echo(f"\n  {'Label':<22s} {'Count'}")
+        click.echo(f"  {'─' * 32}")
+        for label, count in counts.items():
+            click.echo(f"  {label:<22s} {count}")
+    finally:
+        store.close()
+
+
+@graph.command("sync")
+@click.argument("results_dir", required=False, default=None)
+@click.option("--namespace", "-n", default="online-boutique", help="Kubernetes namespace")
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
+def graph_sync(results_dir, namespace, neo4j_uri, neo4j_user, neo4j_password):
+    """Bulk-import existing JSON results into Neo4j.
+
+    If RESULTS_DIR is given, imports all JSON files from that directory.
+    Otherwise imports from the default results/ directory.
+    """
+    store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+    try:
+        store.ensure_schema()
+        store.sync_service_dependencies()
+
+        # Sync cluster topology if we have k8s access
+        try:
+            mutator = PlacementMutator(namespace)
+            nodes_raw = mutator.get_nodes()
+            deployments_raw = mutator.get_deployments()
+            store.sync_topology(
+                [{"name": n.name,
+                  "cpu": n.allocatable_cpu_millicores,
+                  "memory": n.allocatable_memory_bytes,
+                  "control_plane": n.is_control_plane} for n in nodes_raw],
+                [{"name": d.name,
+                  "namespace": d.namespace,
+                  "replicas": d.replicas} for d in deployments_raw],
+            )
+            click.echo(f"  Synced {len(nodes_raw)} nodes, {len(deployments_raw)} deployments")
+        except Exception as e:
+            click.echo(f"  Skipping topology sync (no cluster access): {e}", err=True)
+
+        # Find and import result JSON files
+        base = Path(results_dir) if results_dir else Path("results")
+        if not base.exists():
+            click.echo(f"Error: directory '{base}' not found", err=True)
+            sys.exit(1)
+
+        json_files = sorted(base.rglob("*.json"))
+        # Skip summary.json files — only import per-strategy results
+        json_files = [f for f in json_files if f.name != "summary.json"]
+
+        imported = 0
+        for jf in json_files:
+            try:
+                data = json.loads(jf.read_text())
+                if "runId" in data:
+                    store.sync_run(data)
+                    imported += 1
+            except Exception as e:
+                click.echo(f"  Skipping {jf.name}: {e}", err=True)
+
+        click.echo(f"  Imported {imported} run(s) from {len(json_files)} file(s)")
+    finally:
+        store.close()
+
+
+@graph.command("blast-radius")
+@click.argument("service_name")
+@click.option("--max-hops", default=3, type=int, help="Maximum dependency depth")
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
+def graph_blast_radius(service_name, max_hops, neo4j_uri, neo4j_user, neo4j_password):
+    """Show the blast radius for a service (upstream dependents)."""
+    from chaosprobe.graph.analysis import blast_radius_report
+
+    store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+    try:
+        report = blast_radius_report(store, service_name, max_hops=max_hops)
+        click.echo(f"\nBlast radius for '{service_name}' (max {max_hops} hops):")
+        if not report["affectedServices"]:
+            click.echo("  No upstream dependents found.")
+        else:
+            click.echo(f"\n  {'Service':<35s} {'Hops'}")
+            click.echo(f"  {'─' * 42}")
+            for svc in report["affectedServices"]:
+                click.echo(f"  {svc['name']:<35s} {svc['hops']}")
+            click.echo(f"\n  Total affected: {report['totalAffected']}")
+    finally:
+        store.close()
+
+
+@graph.command("topology")
+@click.option("--run-id", required=True, help="Run ID to show topology for")
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
+def graph_topology(run_id, neo4j_uri, neo4j_user, neo4j_password):
+    """Show placement topology for a specific run."""
+    store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+    try:
+        topo = store.get_topology(run_id)
+        if not topo["nodes"] and not topo["unscheduled"]:
+            click.echo(f"No topology data found for run {run_id}")
+            return
+
+        click.echo(f"\nTopology for run {run_id}:")
+        for node_info in topo["nodes"]:
+            deps = ", ".join(node_info["deployments"])
+            click.echo(f"\n  Node: {node_info['node']}")
+            click.echo(f"    Deployments: {deps}")
+
+        if topo["unscheduled"]:
+            click.echo(f"\n  Unscheduled: {', '.join(topo['unscheduled'])}")
+    finally:
+        store.close()
+
+
+@graph.command("compare")
+@click.option("--run-ids", required=True, help="Comma-separated run IDs to compare")
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+def graph_compare(run_ids, neo4j_uri, neo4j_user, neo4j_password, json_output):
+    """Compare strategies across runs using graph data."""
+    from chaosprobe.graph.analysis import strategy_summary
+
+    ids = [r.strip() for r in run_ids.split(",")]
+    store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+    try:
+        summary = strategy_summary(store, run_ids=ids)
+        if json_output:
+            click.echo(json.dumps(summary, indent=2))
+            return
+
+        strategies = summary.get("strategies", {})
+        if not strategies:
+            click.echo("No data found for the given run IDs.")
+            return
+
+        click.echo(f"\n  {'Strategy':<18s} {'Runs':<6s} {'Avg Score':<12s} {'Avg Recovery'}")
+        click.echo(f"  {'─' * 50}")
+        for name, data in strategies.items():
+            score_str = f"{data['avgResilienceScore']:.1f}" if data["avgResilienceScore"] is not None else "n/a"
+            rec_str = f"{data['avgRecoveryMs']:.0f}ms" if data["avgRecoveryMs"] is not None else "n/a"
+            click.echo(f"  {name:<18s} {data['runCount']:<6d} {score_str:<12s} {rec_str}")
+    finally:
+        store.close()
 
 
 # ─────────────────────────────────────────────────────────────
