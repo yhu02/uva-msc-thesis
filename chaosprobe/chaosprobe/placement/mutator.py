@@ -21,7 +21,6 @@ from chaosprobe.placement.strategy import (
     compute_assignments,
 )
 
-
 # Built-in Kubernetes label for targeting nodes by hostname
 PLACEMENT_LABEL_KEY = "kubernetes.io/hostname"
 # Annotation to track which deployments are managed by ChaosProbe placement
@@ -84,20 +83,24 @@ class PlacementMutator:
             # Parse taints
             taints = []
             for taint in node.spec.taints or []:
-                taints.append({
-                    "key": taint.key,
-                    "value": taint.value or "",
-                    "effect": taint.effect,
-                })
+                taints.append(
+                    {
+                        "key": taint.key,
+                        "value": taint.value or "",
+                        "effect": taint.effect,
+                    }
+                )
 
-            result.append(NodeInfo(
-                name=name,
-                labels=labels,
-                allocatable_cpu_millicores=cpu_m,
-                allocatable_memory_bytes=mem_b,
-                conditions_ready=ready,
-                taints=taints,
-            ))
+            result.append(
+                NodeInfo(
+                    name=name,
+                    labels=labels,
+                    allocatable_cpu_millicores=cpu_m,
+                    allocatable_memory_bytes=mem_b,
+                    conditions_ready=ready,
+                    taints=taints,
+                )
+            )
 
         return result
 
@@ -127,14 +130,16 @@ class PlacementMutator:
             # Find current node (from first running pod)
             current_node = self._get_pod_node(name)
 
-            result.append(DeploymentInfo(
-                name=name,
-                replicas=replicas,
-                cpu_request_millicores=total_cpu,
-                memory_request_bytes=total_mem,
-                current_node=current_node,
-                namespace=self.namespace,
-            ))
+            result.append(
+                DeploymentInfo(
+                    name=name,
+                    replicas=replicas,
+                    cpu_request_millicores=total_cpu,
+                    memory_request_bytes=total_mem,
+                    current_node=current_node,
+                    namespace=self.namespace,
+                )
+            )
 
         return result
 
@@ -182,9 +187,7 @@ class PlacementMutator:
         self._apply_assignment(assignment)
 
         if wait:
-            self._wait_for_rollouts(
-                list(assignment.assignments.keys()), timeout
-            )
+            self._wait_for_rollouts(list(assignment.assignments.keys()), timeout)
 
         return assignment
 
@@ -204,9 +207,7 @@ class PlacementMutator:
         self._apply_assignment(assignment)
 
         if wait:
-            self._wait_for_rollouts(
-                list(assignment.assignments.keys()), timeout
-            )
+            self._wait_for_rollouts(list(assignment.assignments.keys()), timeout)
 
     def clear_placement(
         self,
@@ -255,9 +256,7 @@ class PlacementMutator:
                         }
                     },
                 }
-                self.apps_api.patch_namespaced_deployment(
-                    name, self.namespace, patch
-                )
+                self.apps_api.patch_namespaced_deployment(name, self.namespace, patch)
                 cleared.append(name)
                 click.echo(f"  Cleared placement for: {name}")
 
@@ -308,9 +307,7 @@ class PlacementMutator:
         labeling needed.
         """
         for dep_name, node_name in assignment.assignments.items():
-            self._patch_deployment_placement(
-                dep_name, node_name, assignment.strategy.value
-            )
+            self._patch_deployment_placement(dep_name, node_name, assignment.strategy.value)
 
     def _cleanup_legacy_labels(self) -> None:
         """Remove legacy chaosprobe.io/placement-zone labels from nodes."""
@@ -344,9 +341,7 @@ class PlacementMutator:
             },
         }
         try:
-            self.apps_api.patch_namespaced_deployment(
-                deployment_name, self.namespace, patch
-            )
+            self.apps_api.patch_namespaced_deployment(deployment_name, self.namespace, patch)
             click.echo(f"  Pinned '{deployment_name}' -> node '{node_name}'")
         except ApiException as e:
             click.echo(f"  WARNING: Failed to patch '{deployment_name}': {e.reason}")
@@ -383,9 +378,7 @@ class PlacementMutator:
             still_pending = set()
             for name in pending:
                 try:
-                    dep = self.apps_api.read_namespaced_deployment(
-                        name, self.namespace
-                    )
+                    dep = self.apps_api.read_namespaced_deployment(name, self.namespace)
                     desired = dep.spec.replicas or 1
                     generation = dep.metadata.generation or 0
                     observed = (
@@ -442,13 +435,13 @@ class PlacementMutator:
         mem_str = str(mem_str)
         suffixes = {
             "Ki": 1024,
-            "Mi": 1024 ** 2,
-            "Gi": 1024 ** 3,
-            "Ti": 1024 ** 4,
+            "Mi": 1024**2,
+            "Gi": 1024**3,
+            "Ti": 1024**4,
             "K": 1000,
-            "M": 1000 ** 2,
-            "G": 1000 ** 3,
-            "T": 1000 ** 4,
+            "M": 1000**2,
+            "G": 1000**3,
+            "T": 1000**4,
         }
         for suffix, multiplier in sorted(suffixes.items(), key=lambda x: -len(x[0])):
             if mem_str.endswith(suffix):

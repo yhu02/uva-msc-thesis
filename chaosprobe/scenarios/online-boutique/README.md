@@ -1,6 +1,6 @@
 # Online Boutique Chaos Experiments
 
-Chaos experiments for [Google's Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) (microservices-demo), a 11-service e-commerce application. Experiments are organized by the distributed systems performance bottleneck taxonomy:
+Chaos experiments for [Google's Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) (microservices-demo), a 12-service e-commerce application. Experiments are organized by the distributed systems performance bottleneck taxonomy:
 
 ```
 Performance
@@ -150,7 +150,7 @@ chaosprobe run -n online-boutique -s colocate,spread
 
 ### Step 3: AI fix-and-verify loop
 
-Feed the JSON output to an AI agent. The output includes:
+Feed the experiment data to an AI agent. The data stored in Neo4j includes:
 - Full YAML content of all manifests and experiments
 - LitmusChaos experiment verdicts (Pass/Fail)
 - Probe results (frontend HTTP availability during chaos)
@@ -193,7 +193,7 @@ chaosprobe run -n online-boutique -o results/my-run
 chaosprobe run -n online-boutique -e path/to/experiment.yaml
 ```
 
-This iterates through each strategy — clearing placement, applying the strategy, waiting for workloads to settle, running the chaos experiment, and collecting results. Output goes to a timestamped `results/` directory with individual JSON files per strategy and an overall `summary.json`.
+This iterates through each strategy — clearing placement, applying the strategy, waiting for workloads to settle, running the chaos experiment, and collecting results. All data is stored in Neo4j.
 
 ### Manual workflow
 

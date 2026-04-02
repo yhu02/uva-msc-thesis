@@ -123,10 +123,29 @@ def _make_run_data(**overrides):
                 ],
                 "totalRestarts": 2,
             },
+            "nodeInfo": {
+                "nodeName": "worker1",
+                "allocatable": {"cpu": "2", "memory": "4028928Ki"},
+                "capacity": {"cpu": "2", "memory": "4128928Ki"},
+            },
             "eventTimeline": [
                 {"time": "2026-03-29T12:01:00Z", "type": "DELETED",
                  "pod": "checkoutservice-old", "phase": "Running"},
             ],
+            "containerLogs": {
+                "pods": {
+                    "checkoutservice-abc123": {
+                        "containers": {
+                            "server": {
+                                "current": "INFO starting server on :8080\nERROR connection refused",
+                                "previous": "FATAL out of memory",
+                            },
+                        },
+                        "restartCount": 2,
+                    },
+                },
+                "config": {"sinceSeconds": 330, "tailLines": 500},
+            },
         },
     }
     data.update(overrides)
@@ -352,6 +371,17 @@ class TestSyncRun:
         running_on_calls = _get_tx_calls(tx, "RUNNING_ON")
         assert len(running_on_calls) >= 1
 
+    def test_stores_container_logs(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        log_calls = _get_tx_calls(tx, "ContainerLog")
+        assert len(log_calls) >= 2  # delete + create
+
+        # Verify HAS_CONTAINER_LOG edge
+        edge_calls = _get_tx_calls(tx, "HAS_CONTAINER_LOG")
+        assert len(edge_calls) >= 2  # clear + create
+
     def test_stores_metrics_phases_for_all_types(self):
         store, tx = _make_store_with_tx()
         store.sync_run(_make_full_run_data())
@@ -382,6 +412,15 @@ class TestSyncRun:
 
         restart_calls = _get_tx_calls(tx, "total_restarts")
         assert len(restart_calls) >= 1
+
+    def test_stores_node_info(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        node_calls = _get_tx_calls(tx, "node_name")
+        assert len(node_calls) >= 1
+        node_calls = _get_tx_calls(tx, "node_capacity_cpu")
+        assert len(node_calls) >= 1
 
     def test_stores_event_timeline_as_json(self):
         store, tx = _make_store_with_tx()
@@ -436,14 +475,14 @@ class TestEnsureSchema:
             store = Neo4jStore("bolt://fake", "u", "p")
             store.ensure_schema()
 
-            # 5 constraints + 4 indexes = 9 calls
-            assert session.run.call_count == 9
+            # 5 constraints + 9 indexes = 14 calls
+            assert session.run.call_count == 15
             constraint_calls = [c for c in session.run.call_args_list
                                 if "CREATE CONSTRAINT" in c[0][0]]
             index_calls = [c for c in session.run.call_args_list
                            if "CREATE INDEX" in c[0][0]]
             assert len(constraint_calls) == 5
-            assert len(index_calls) == 4
+            assert len(index_calls) == 10
 
 
 # ---------------------------------------------------------------------------
@@ -467,12 +506,15 @@ class TestStatus:
             store = Neo4jStore("bolt://fake", "u", "p")
             result = store.status()
 
-            # Should query all 9 node types
-            assert session.run.call_count == 9
+            # Should query all 12 node types
+            assert session.run.call_count == 13
             assert "RecoveryCycle" in result
             assert "MetricsPhase" in result
             assert "PodSnapshot" in result
             assert "ExperimentResult" in result
+            assert "MetricsSample" in result
+            assert "AnomalyLabel" in result
+            assert "CascadeEvent" in result
 
 
 # ---------------------------------------------------------------------------
@@ -591,3 +633,75 @@ class TestStrategySummary:
 
         result = strategy_summary(store)
         assert result["strategies"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Neo4jStore — sync cascade timeline
+# ---------------------------------------------------------------------------
+
+
+class TestSyncCascadeTimeline:
+    def test_stores_cascade_events(self):
+        store, tx = _make_store_with_tx()
+        data = _make_run_data()
+        data["cascadeTimeline"] = [
+            {"targetService": "frontend", "affectedRoutes": ["/"], "summary": {}},
+            {"targetService": "checkout", "affectedRoutes": ["/cart"], "summary": {}},
+        ]
+        store.sync_run(data)
+
+        cascade_calls = _get_tx_calls(tx, "CascadeEvent")
+        # 1 DETACH DELETE + 2 CREATE
+        assert len(cascade_calls) >= 3
+
+    def test_empty_cascade_timeline(self):
+        store, tx = _make_store_with_tx()
+        data = _make_run_data()
+        data["cascadeTimeline"] = []
+        store.sync_run(data)
+
+        create_cascade = [c for c in tx.run.call_args_list
+                          if "CREATE (c:CascadeEvent" in str(c)]
+        assert len(create_cascade) == 0
+
+
+# ---------------------------------------------------------------------------
+# Neo4jStore — session ID support
+# ---------------------------------------------------------------------------
+
+
+class TestSessionId:
+    def test_session_id_stored_on_chaosrun(self):
+        store, tx = _make_store_with_tx()
+        data = _make_run_data()
+        data["sessionId"] = "20260402-013423"
+        store.sync_run(data)
+
+        merge_calls = _get_tx_calls(tx, "MERGE (e:ChaosRun")
+        assert len(merge_calls) >= 1
+        call_str = str(merge_calls[0])
+        assert "session_id" in call_str
+
+    def test_missing_session_id_defaults_empty(self):
+        store, tx = _make_store_with_tx()
+        data = _make_run_data()
+        # no sessionId key
+        store.sync_run(data)
+
+        merge_calls = _get_tx_calls(tx, "MERGE (e:ChaosRun")
+        assert len(merge_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Neo4jStore — scenario stored as JSON
+# ---------------------------------------------------------------------------
+
+
+class TestScenarioStorage:
+    def test_scenario_json_set_on_chaosrun(self):
+        store, tx = _make_store_with_tx()
+        data = _make_run_data()
+        store.sync_run(data)
+
+        scenario_calls = _get_tx_calls(tx, "scenario_json")
+        assert len(scenario_calls) >= 1

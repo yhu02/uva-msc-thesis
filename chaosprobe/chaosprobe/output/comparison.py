@@ -31,10 +31,7 @@ def compare_runs(
         }
 
     now = datetime.now(timezone.utc)
-    comparison_id = (
-        f"compare-{now.strftime('%Y-%m-%d-%H%M%S')}-"
-        f"{uuid.uuid4().hex[:6]}"
-    )
+    comparison_id = f"compare-{now.strftime('%Y-%m-%d-%H%M%S')}-" f"{uuid.uuid4().hex[:6]}"
     timestamp = now.isoformat()
 
     # Extract key metrics
@@ -69,9 +66,7 @@ def compare_runs(
     )
 
     # Calculate confidence
-    confidence = _calculate_confidence(
-        verdict_changed, score_change, experiment_improvements
-    )
+    confidence = _calculate_confidence(verdict_changed, score_change, experiment_improvements)
 
     return {
         "schemaVersion": "2.0.0",
@@ -84,9 +79,7 @@ def compare_runs(
             "results": {
                 "resilienceScore": baseline_score,
                 "overallVerdict": baseline_verdict,
-                "experiments": _summarize_experiments(
-                    baseline.get("experiments", [])
-                ),
+                "experiments": _summarize_experiments(baseline.get("experiments", [])),
             },
         },
         "afterFix": {
@@ -95,9 +88,7 @@ def compare_runs(
             "results": {
                 "resilienceScore": afterfix_score,
                 "overallVerdict": afterfix_verdict,
-                "experiments": _summarize_experiments(
-                    after_fix.get("experiments", [])
-                ),
+                "experiments": _summarize_experiments(after_fix.get("experiments", [])),
             },
         },
         "comparison": {
@@ -168,13 +159,15 @@ def _compare_metrics(
                 b_mean = b_during[route].get("mean_ms")
                 a_mean = a_during[route].get("mean_ms")
                 if b_mean is not None and a_mean is not None:
-                    route_changes.append({
-                        "route": route,
-                        "baseline_ms": round(b_mean, 1),
-                        "afterFix_ms": round(a_mean, 1),
-                        "change_ms": round(a_mean - b_mean, 1),
-                        "improved": a_mean < b_mean,
-                    })
+                    route_changes.append(
+                        {
+                            "route": route,
+                            "baseline_ms": round(b_mean, 1),
+                            "afterFix_ms": round(a_mean, 1),
+                            "change_ms": round(a_mean - b_mean, 1),
+                            "improved": a_mean < b_mean,
+                        }
+                    )
             if route_changes:
                 result["latency"] = {
                     "routes": route_changes,
@@ -194,13 +187,15 @@ def _compare_metrics(
                     b_ops = b_during[op].get("meanOpsPerSecond")
                     a_ops = a_during[op].get("meanOpsPerSecond")
                     if b_ops is not None and a_ops is not None:
-                        op_changes.append({
-                            "operation": op,
-                            "baseline_ops": round(b_ops, 1),
-                            "afterFix_ops": round(a_ops, 1),
-                            "change_ops": round(a_ops - b_ops, 1),
-                            "improved": a_ops > b_ops,
-                        })
+                        op_changes.append(
+                            {
+                                "operation": op,
+                                "baseline_ops": round(b_ops, 1),
+                                "afterFix_ops": round(a_ops, 1),
+                                "change_ops": round(a_ops - b_ops, 1),
+                                "improved": a_ops > b_ops,
+                            }
+                        )
                 if op_changes:
                     result[target] = {
                         "operations": op_changes,
@@ -229,7 +224,11 @@ def _compare_metrics(
                         "meanMemory_percent": round(a_mem, 1) if a_mem is not None else None,
                     },
                     "cpuChange_percent": round(a_cpu - b_cpu, 1),
-                    "memoryChange_percent": round(a_mem - b_mem, 1) if (b_mem is not None and a_mem is not None) else None,
+                    "memoryChange_percent": (
+                        round(a_mem - b_mem, 1)
+                        if (b_mem is not None and a_mem is not None)
+                        else None
+                    ),
                 }
 
     return result
@@ -250,12 +249,8 @@ def _compare_experiments(
         if not afterfix_exp:
             continue
 
-        baseline_probe = baseline_exp.get("result", {}).get(
-            "probeSuccessPercentage", 0
-        )
-        afterfix_probe = afterfix_exp.get("result", {}).get(
-            "probeSuccessPercentage", 0
-        )
+        baseline_probe = baseline_exp.get("result", {}).get("probeSuccessPercentage", 0)
+        afterfix_probe = afterfix_exp.get("result", {}).get("probeSuccessPercentage", 0)
 
         baseline_verdict = baseline_exp.get("result", {}).get("verdict", "Awaited")
         afterfix_verdict = afterfix_exp.get("result", {}).get("verdict", "Awaited")
@@ -273,7 +268,6 @@ def _compare_experiments(
     return improvements
 
 
-
 # ── Criteria evaluation ──────────────────────────────────────
 
 
@@ -287,9 +281,7 @@ def _evaluate_improvement_criteria(
     required_probe_increase = criteria.get("probeSuccessIncrease", 15)
 
     probe_changes = [e["probeSuccessChange"] for e in experiment_improvements]
-    avg_probe_change = (
-        sum(probe_changes) / len(probe_changes) if probe_changes else 0
-    )
+    avg_probe_change = sum(probe_changes) / len(probe_changes) if probe_changes else 0
 
     return {
         "resilienceScoreIncrease": {
@@ -352,9 +344,7 @@ def _summarize_experiments(
         {
             "name": e["name"],
             "verdict": e.get("result", {}).get("verdict", "Awaited"),
-            "probeSuccessPercentage": e.get("result", {}).get(
-                "probeSuccessPercentage", 0
-            ),
+            "probeSuccessPercentage": e.get("result", {}).get("probeSuccessPercentage", 0),
         }
         for e in experiments
     ]

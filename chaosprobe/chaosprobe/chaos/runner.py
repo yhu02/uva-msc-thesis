@@ -110,12 +110,14 @@ class ChaosRunner:
             )
         except ApiException as e:
             print(f"    ERROR: Failed to create ChaosEngine: {e.reason}")
-            self._executed_experiments.append({
-                "engineName": engine_name,
-                "experimentNames": exp_names,
-                "status": "error",
-                "error": str(e),
-            })
+            self._executed_experiments.append(
+                {
+                    "engineName": engine_name,
+                    "experimentNames": exp_names,
+                    "status": "error",
+                    "error": str(e),
+                }
+            )
             return
 
         # Wait for completion
@@ -127,13 +129,15 @@ class ChaosRunner:
         elapsed = int(time.time() - start_time)
         print(f"    Result: {phase} ({elapsed}s elapsed)")
 
-        self._executed_experiments.append({
-            "engineName": engine_name,
-            "experimentNames": exp_names,
-            "status": phase,
-            "startTime": start_time,
-            "endTime": time.time(),
-        })
+        self._executed_experiments.append(
+            {
+                "engineName": engine_name,
+                "experimentNames": exp_names,
+                "status": phase,
+                "startTime": start_time,
+                "endTime": time.time(),
+            }
+        )
 
     def _wait_for_engine(self, engine_name: str, start_time: float) -> Dict[str, Any]:
         """Wait for a ChaosEngine to complete."""
@@ -170,8 +174,7 @@ class ChaosRunner:
                     # LitmusChaos uses several terminal states:
                     # Completed, Completed_With_Probe_Failure,
                     # Completed_With_Error, Failed, Stopped
-                    if (exp_status.startswith("Completed") or
-                            exp_status in ["Failed", "Stopped"]):
+                    if exp_status.startswith("Completed") or exp_status in ["Failed", "Stopped"]:
                         return {"phase": exp_status, "status": status}
 
             except ApiException as e:

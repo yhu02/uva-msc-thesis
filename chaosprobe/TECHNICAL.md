@@ -2,12 +2,12 @@
 
 ## 1. System Overview
 
-ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-consumable output. It wraps LitmusChaos to run native ChaosEngine experiments, collects real-time pod recovery metrics, and produces structured JSON reports for machine-learning feedback loops.
+ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-consumable output. It wraps LitmusChaos to run native ChaosEngine experiments, collects real-time pod recovery metrics, and stores all data in a Neo4j graph database for machine-learning feedback loops.
 
-**Core loop**: deploy manifests -> run chaos experiments -> collect metrics -> generate structured output -> AI reads output, edits manifests, re-runs, compares.
+**Core loop**: deploy manifests -> run chaos experiments -> collect metrics -> store in Neo4j -> AI reads data, edits manifests, re-runs, compares.
 
 ```
-ChaosProbe CLI (cli.py, 2182 lines)
+ChaosProbe CLI (cli.py, ~3200 lines)
       |
       +-- Cluster Manager (provisioner/setup.py)
       |     +-- Vagrant (local dev: 3-node KVM/libvirt cluster)
@@ -40,6 +40,9 @@ ChaosProbe CLI (cli.py, 2182 lines)
       +-- Metrics Collection
       |     +-- RecoveryWatcher (metrics/recovery.py)
       |     |   Real-time pod watch during chaos
+      |     +-- Continuous Probers (latency, throughput, resources, Prometheus)
+      |     +-- Anomaly Labels (metrics/anomaly_labels.py)
+      |     +-- Cascade Timeline (metrics/cascade.py)
       |     +-- MetricsCollector (metrics/collector.py)
       |         Pod status, node info, unified output
       |
@@ -49,10 +52,19 @@ ChaosProbe CLI (cli.py, 2182 lines)
       +-- Output Generator (output/generator.py)
       |     +-- Comparison Engine (output/comparison.py)
       |     +-- Visualizer (output/visualize.py)
-      |         Charts, heatmaps, HTML reports
+      |     |   Charts, heatmaps, HTML reports
+      |     +-- ML Export (output/ml_export.py)
+      |         Aligned CSV/Parquet datasets for ML
       |
-      +-- Storage (storage/sqlite.py)
-            SQLite persistence: runs, metrics, placements, load stats
+      +-- Storage
+      |     +-- Neo4j Graph Store (storage/neo4j_store.py) [primary]
+      |     |   Topology, runs, metrics, time-series, anomaly labels
+      |     +-- SQLite (storage/sqlite.py) [secondary]
+      |         Tabular queries, CSV export
+      |
+      +-- Graph Analysis (graph/analysis.py)
+            Blast radius, topology comparison, colocation impact,
+            critical path analysis, strategy summary
 ```
 
 ---
@@ -263,7 +275,8 @@ Generates charts correlating placement strategies with performance metrics. Requ
 | Function | Purpose |
 |---|---|
 | `generate_all_charts(store, output_dir)` | Generate all charts from database runs |
-| `generate_from_summary(summary_path, output_dir)` | Generate charts from a summary.json file |
+| `generate_from_dict(summary, output_dir)` | Generate charts from an in-memory summary dict |
+| `generate_from_summary(summary_path, output_dir)` | Generate charts from a legacy summary.json file |
 | `_resilience_score_chart(data, output_dir)` | Bar chart of resilience scores per strategy |
 | `_recovery_time_chart(data, output_dir)` | Mean/max recovery time comparison |
 | `_load_metrics_chart(data, output_dir)` | p95 latency and error rate overlay |
@@ -378,7 +391,7 @@ Handles all infrastructure bootstrapping.
 | `chaosprobe status [--json]` | Check prerequisites and cluster connectivity |
 | `chaosprobe run [-n namespace]` | Run placement experiment matrix (all defaults: steady load, db, viz) |
 | `chaosprobe provision <scenario>` | Deploy manifests only (no experiments) |
-| `chaosprobe compare baseline.json after.json -o comparison.json` | Compare before/after runs |
+| `chaosprobe compare run-id-1 run-id-2 --neo4j-uri bolt://localhost:7687` | Compare before/after runs |
 | `chaosprobe cleanup <namespace> [--all]` | Remove experiments and optionally namespace |
 
 ### Placement
@@ -402,7 +415,7 @@ chaosprobe run [options]
 | `-o, --output-dir` | `results` | Base results directory (timestamped subdir created) |
 | `-s, --strategies` | all 5 | Comma-separated subset |
 | `-i, --iterations` | 1 | Iterations per strategy |
-| `-e, --experiment` | auto-detected | Custom experiment YAML |
+| `-e, --experiment` | `scenarios/online-boutique/placement-experiment.yaml` | Custom experiment YAML |
 | `-t, --timeout` | 300 | Engine timeout (seconds) |
 | `--seed` | 42 | Random strategy seed |
 | `--settle-time` | 30 | Wait between placement and experiment |
@@ -415,6 +428,15 @@ chaosprobe run [options]
 | `--measure-latency/--no-measure-latency` | on | Measure inter-service latency |
 | `--measure-redis/--no-measure-redis` | on | Measure Redis throughput |
 | `--measure-disk/--no-measure-disk` | on | Measure disk I/O throughput |
+| `--measure-resources/--no-measure-resources` | on | Measure node/pod resource utilization |
+| `--collect-logs/--no-collect-logs` | on | Collect container logs from target deployment |
+| `--measure-prometheus/--no-measure-prometheus` | on | Query Prometheus for cluster metrics |
+| `--prometheus-url` | auto-discovered | Prometheus server URL(s); repeat for multiple |
+| `--baseline-duration` | 0 | Seconds to collect steady-state metrics before chaos |
+| `--neo4j-uri` | `bolt://localhost:7687` | Neo4j connection URI (env: `NEO4J_URI`) |
+| `--neo4j-user` | `neo4j` | Neo4j username (env: `NEO4J_USER`) |
+| `--neo4j-password` | `chaosprobe` | Neo4j password (env: `NEO4J_PASSWORD`) |
+| `--no-auto-setup` | off | Disable automatic LitmusChaos installation |
 
 **Workflow per strategy**: apply placement -> settle -> start RecoveryWatcher -> start Locust -> run experiment -> stop Locust/watcher -> collect results + metrics -> clear placement -> next strategy.
 
@@ -431,10 +453,35 @@ chaosprobe run [options]
 
 | Command | Purpose |
 |---|---|
-| `chaosprobe visualize --summary <file> -o <dir>` | Generate charts from summary file |
-| `chaosprobe visualize --db <path> -o <dir>` | Generate charts from database |
+| `chaosprobe visualize --neo4j-uri <uri> --session <id> -o <dir>` | Generate charts from Neo4j session |
+| `chaosprobe visualize --db <path> -o <dir>` | Generate charts from SQLite database |
+| `chaosprobe visualize --summary <file> -o <dir>` | Generate charts from summary file (legacy) |
+
+Additional options: `--scenario` (filter by scenario in DB mode), `--neo4j-user`, `--neo4j-password`.
 
 Generated charts: resilience score bars, recovery time comparison, load metrics overlay, pod-node heatmap, HTML summary report.
+
+### Graph (Neo4j)
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe graph status` | Check Neo4j connectivity and show node counts |
+| `chaosprobe graph sessions` | List all experiment sessions stored in Neo4j |
+| `chaosprobe graph blast-radius <service> [--max-hops N]` | Show upstream dependents affected by a service failure |
+| `chaosprobe graph topology --run-id <id>` | Show pod-to-node placement topology for a run |
+| `chaosprobe graph details <run-id> [--json]` | Show comprehensive data for a single run |
+| `chaosprobe graph compare --session <id>` | Compare strategies within a session |
+
+All graph commands accept `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`.
+
+### ML Export
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe ml-export --neo4j-uri <uri> --session <id> -o <dir>` | Export aligned time-series dataset from Neo4j |
+| `chaosprobe ml-export --db <path> -o <dir>` | Export from SQLite |
+
+Produces CSV (default) or Parquet (`--format parquet`, requires `pyarrow`) with aligned features and anomaly labels.
 
 ### Cluster Management
 
@@ -474,14 +521,16 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
         13. RecoveryWatcher.stop()
         14. ResultCollector.collect() -- ChaosResult CRDs
         15. MetricsCollector.collect(recovery_data=watcher.result())
-        16. OutputGenerator.generate(store=run_store) -- write {strategy}.json + DB
+        16. OutputGenerator.generate() -- build output_data dict
+        17. Neo4jStore.sync_run(output_data) -- sync to graph database
+        18. SQLiteStore.save_run(output_data) -- persist to SQLite
 
-    17. Clear placement constraints
-    18. Wait for rollout
+    19. Clear placement constraints
+    20. Wait for rollout
 
-19. Write summary.json with comparison table
-20. Close SQLiteStore
-21. Generate visualization charts (on by default)
+21. Build comparison table + remediation log
+22. Close SQLiteStore and Neo4jStore
+23. Generate visualization charts (on by default)
 ```
 
 ---
@@ -555,7 +604,7 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
 }
 ```
 
-### Summary (run)
+### Summary (in-memory, synced to Neo4j)
 
 ```json
 {
@@ -570,7 +619,7 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
       "placement": {"strategy": "...", "assignments": {...}, "metadata": {...}},
       "experiment": {"totalExperiments": 1, "passed": 0, "failed": 1, "resilienceScore": 50.0, "overallVerdict": "FAIL"},
       "metrics": {...},
-      "resultFile": "results/.../colocate.json"
+      "runId": "run-2026-04-02-131031-abc123"
     }
   },
   "summary": {"totalStrategies": 5, "passed": 0, "failed": 5},
@@ -644,46 +693,69 @@ Pod scheduling recovery time varies with placement strategy due to differences i
 chaosprobe/
   chaosprobe/
     __init__.py              # version 0.1.0
-    cli.py                   # CLI entry point (2182 lines)
+    cli.py                   # CLI entry point (~3200 lines)
     config/
-      loader.py              # Scenario loading (169 lines)
-      validator.py           # Validation (145 lines)
+      loader.py              # Scenario loading
+      validator.py           # Validation
     chaos/
-      runner.py              # ChaosEngine execution (234 lines)
+      runner.py              # ChaosEngine execution
     collector/
-      result_collector.py    # ChaosResult collection (243 lines)
+      result_collector.py    # ChaosResult collection
     loadgen/
-      runner.py              # Locust load generation (314 lines)
+      runner.py              # Locust load generation
     metrics/
-      recovery.py            # Real-time pod watch (255 lines)
-      collector.py           # Metrics aggregation (170 lines)
+      recovery.py            # Real-time pod watch
+      collector.py           # Metrics aggregation
+      latency.py             # Continuous latency prober
+      throughput.py          # Redis/disk throughput probers
+      resources.py           # Resource usage prober
+      prometheus.py          # Prometheus metrics prober
+      anomaly_labels.py      # Ground-truth ML labels
+      cascade.py             # Fault propagation tracking
+      remediation.py         # Remediation action logs
+      timeseries.py          # Time-series alignment
     output/
-      generator.py           # JSON output (155 lines)
-      comparison.py          # Run comparison (266 lines)
-      visualize.py           # Charts & HTML reports (432 lines)
+      generator.py           # Structured output generation
+      comparison.py          # Run comparison
+      visualize.py           # Charts & HTML reports
+      ml_export.py           # ML-ready dataset export
     placement/
-      strategy.py            # Placement strategies (324 lines)
-      mutator.py             # K8s patch operations (461 lines)
+      strategy.py            # Placement strategies
+      mutator.py             # K8s patch operations
     provisioner/
-      kubernetes.py          # Manifest application (266 lines)
-      setup.py               # LitmusChaos/Vagrant/Kubespray (1542 lines)
+      kubernetes.py          # Manifest application
+      setup.py               # LitmusChaos/Neo4j/Vagrant/Kubespray
     storage/
-      base.py                # ResultStore ABC (52 lines)
-      sqlite.py              # SQLite backend (379 lines)
+      base.py                # ResultStore ABC
+      sqlite.py              # SQLite backend
+      neo4j_store.py         # Neo4j graph store (primary)
+    graph/
+      analysis.py            # High-level graph analysis functions
   scenarios/
     online-boutique/
       deploy/                # 12 microservice manifests
       placement-experiment.yaml
-      experiment-variants/   # CPU, memory, IO, network, Redis variants
+      contention-*/          # CPU, memory, IO, network, Redis variants
     examples/
       nginx-pod-delete/      # Simple example scenario
   tests/
-    test_config.py           # 21 tests
-    test_placement.py        # 40 tests
-    test_output.py           # 12 tests
-    test_loadgen.py          # 12 tests
-    test_storage.py          # 12 tests
-    test_visualize.py        # 11 tests
+    test_config.py
+    test_placement.py
+    test_output.py
+    test_loadgen.py
+    test_storage.py
+    test_visualize.py
+    test_neo4j_store.py
+    test_ml_export.py
+    test_latency.py
+    test_throughput.py
+    test_resources.py
+    test_prometheus.py
+    test_collector.py
+    test_timeseries.py
+    test_cascade.py
+    test_anomaly_labels.py
+    test_remediation.py
   pyproject.toml
   README.md
   TECHNICAL.md               # This document
@@ -699,6 +771,7 @@ chaosprobe/
 - `pyyaml` (>=6.0) - YAML parsing
 - `locust` (>=2.20.0) - Load generation
 - `matplotlib` (>=3.7.0) - Chart generation and visualization
+- `neo4j` (>=5.0.0) - Neo4j graph database driver (optional extra: `graph`)
 
 ### Development
 - `pytest`, `pytest-cov` - Testing

@@ -98,11 +98,29 @@ def generate_from_summary(
         List of generated file paths.
     """
     check_matplotlib()
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
 
     with open(summary_path) as f:
         summary = json.load(f)
+
+    return generate_from_dict(summary, output_dir)
+
+
+def generate_from_dict(
+    summary: Dict[str, Any],
+    output_dir: str,
+) -> List[str]:
+    """Generate charts from an in-memory summary dict.
+
+    Args:
+        summary: Summary dict (same structure as summary.json).
+        output_dir: Directory to save chart images.
+
+    Returns:
+        List of generated file paths.
+    """
+    check_matplotlib()
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
     raw_strategies = summary.get("strategies", {})
     if not raw_strategies:
@@ -1371,7 +1389,8 @@ def _chart_prometheus_by_phase(
     cols = min(n_metrics, 3)
     rows_count = (n_metrics + cols - 1) // cols
     fig, axes = plt.subplots(
-        rows_count, cols,
+        rows_count,
+        cols,
         figsize=(6 * cols, 5 * rows_count),
         squeeze=False,
     )
@@ -1393,9 +1412,14 @@ def _chart_prometheus_by_phase(
 
             x = [j + s_idx * width for j in range(len(phase_names))]
             ax.bar(
-                x, vals, width,
-                label=strat, color=colors[s_idx],
-                edgecolor="black", linewidth=0.5, alpha=0.7,
+                x,
+                vals,
+                width,
+                label=strat,
+                color=colors[s_idx],
+                edgecolor="black",
+                linewidth=0.5,
+                alpha=0.7,
             )
 
         ax.set_title(metric_label.replace("_", " ").title(), fontsize=10)

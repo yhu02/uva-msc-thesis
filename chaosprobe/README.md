@@ -1,17 +1,18 @@
 # ChaosProbe
 
-A framework for running native LitmusChaos experiments against Kubernetes deployments, producing structured AI-consumable output.
+A framework for running native LitmusChaos experiments against Kubernetes deployments, collecting structured experiment data into Neo4j for AI-driven anomaly classification and remediation.
 
 ## Overview
 
 ChaosProbe enables automated chaos testing with an AI feedback loop:
 
 1. **Cluster Deployment**: Deploy Kubernetes clusters via Vagrant (local) or Kubespray (production)
-2. **Auto-Setup**: Installs Helm and LitmusChaos automatically
+2. **Auto-Setup**: Installs Helm, LitmusChaos, and Neo4j automatically
 3. **Deploy Manifests**: Applies standard K8s manifests to the cluster
-4. **Run Experiments**: Executes native ChaosEngine experiments
-5. **Generate AI Output**: Produces structured JSON with experiment results and resilience scores
-6. **Compare Runs**: Diffs before/after results to evaluate fix effectiveness
+4. **Run Experiments**: Executes native ChaosEngine experiments across placement strategies
+5. **Collect to Neo4j**: Stores all results, metrics, anomaly labels, and time-series in a Neo4j graph database
+6. **ML Export**: Exports aligned, labeled datasets for anomaly classification and remediation models
+7. **Compare Runs**: Diffs before/after results to evaluate fix effectiveness
 
 ### AI Feedback Loop
 
@@ -150,8 +151,8 @@ uv run chaosprobe init
 # Run the full placement experiment matrix (all defaults: steady load, db, visualization)
 uv run chaosprobe run -n online-boutique
 
-# Compare before and after
-uv run chaosprobe compare results.json after-fix.json -o comparison.json
+# Compare before and after (using Neo4j run IDs)
+uv run chaosprobe compare run-baseline-001 run-afterfix-001 --neo4j-uri bolt://localhost:7687
 ```
 
 ### Local Development with Vagrant
@@ -231,8 +232,8 @@ uv run chaosprobe run -n online-boutique
 # Deploy manifests only (no experiments)
 uv run chaosprobe provision <scenario-dir>
 
-# Compare before/after results
-uv run chaosprobe compare baseline.json after-fix.json -o comparison.json
+# Compare before/after results (Neo4j run IDs or legacy JSON files)
+uv run chaosprobe compare run-baseline-001 run-afterfix-001 --neo4j-uri bolt://localhost:7687
 
 # Cleanup resources
 uv run chaosprobe cleanup <namespace> --all
@@ -333,8 +334,11 @@ uv run chaosprobe query export -o export.csv
 Visualization is enabled by default after `run`. You can also generate charts independently:
 
 ```bash
-# Generate charts from a summary.json file
-uv run chaosprobe visualize --summary results/20260227-140237/summary.json -o charts/
+# Generate charts from Neo4j (uses most recent session)
+uv run chaosprobe visualize --neo4j-uri bolt://localhost:7687 -o charts/
+
+# Generate charts from a specific session
+uv run chaosprobe visualize --neo4j-uri bolt://localhost:7687 --session 20260402-013423 -o charts/
 
 # Generate charts from database
 uv run chaosprobe visualize --db results.db -o charts/
@@ -364,6 +368,46 @@ uv run chaosprobe cluster kubeconfig --host <ip> --user <user>
 uv run chaosprobe cluster destroy --inventory <path>
 ```
 
+### Graph Commands (Neo4j)
+
+```bash
+# Check Neo4j connectivity
+uv run chaosprobe graph status --neo4j-uri bolt://localhost:7687
+
+# List experiment sessions stored in Neo4j
+uv run chaosprobe graph sessions --neo4j-uri bolt://localhost:7687
+
+# Show service blast radius (upstream dependency analysis)
+uv run chaosprobe graph blast-radius frontend --neo4j-uri bolt://localhost:7687
+
+# Show placement topology for a run
+uv run chaosprobe graph topology --run-id <run-id> --neo4j-uri bolt://localhost:7687
+
+# Show full details of a run
+uv run chaosprobe graph details <run-id> --neo4j-uri bolt://localhost:7687
+
+# Compare strategies across runs
+uv run chaosprobe graph compare --neo4j-uri bolt://localhost:7687
+```
+
+### ML Export
+
+Export aligned, labeled datasets for training anomaly classification and remediation models:
+
+```bash
+# Export from Neo4j
+uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.csv
+
+# Export from SQLite
+uv run chaosprobe ml-export --db results.db -o dataset.csv
+
+# Export as Parquet (requires pyarrow: uv pip install pyarrow)
+uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.parquet --format parquet
+
+# Filter by strategy
+uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 --strategy colocate -o dataset.csv
+```
+
 ## Supported Chaos Experiments
 
 Any LitmusChaos experiment can be used via native ChaosEngine YAML. Common ones:
@@ -387,7 +431,7 @@ Any LitmusChaos experiment can be used via native ChaosEngine YAML. Common ones:
 
 ## Output Format
 
-ChaosProbe generates structured JSON (schema v2.0.0) for AI consumption:
+ChaosProbe stores structured data (schema v2.0.0) in Neo4j. The internal data format for each run:
 
 ```json
 {
@@ -523,7 +567,7 @@ ChaosProbe CLI
       │   ├── Vagrant (local development)
       │   └── Kubespray (production)
       │
-      ├── Setup Manager (installs LitmusChaos)
+      ├── Setup Manager (installs LitmusChaos, metrics-server, Neo4j)
       │
       ├── Config Loader (directory-based, auto-classifies by kind)
       │   └── Validator (ChaosEngine + K8s manifest validation)
@@ -540,9 +584,20 @@ ChaosProbe CLI
       │
       ├── Metrics Collection
       │   ├── RecoveryWatcher (real-time pod watch during chaos)
+      │   ├── Continuous Probers (latency, throughput, resources, Prometheus)
+      │   ├── Anomaly Labels (ground-truth ML labels)
+      │   ├── Cascade Timeline (fault propagation tracking)
       │   └── MetricsCollector (pod status, node info, unified output)
       │
-      └── Output Generator
+      ├── Storage
+      │   ├── Neo4j Graph Store (primary — topology, runs, metrics, time-series)
+      │   └── SQLite Store (secondary — tabular queries, CSV export)
+      │
+      ├── Graph Analysis (blast radius, topology comparison, colocation impact)
+      │
+      └── Output
+          ├── Visualization (charts, HTML reports)
+          ├── ML Export (aligned CSV/Parquet datasets)
           └── Comparison Engine (diffs before/after runs)
 ```
 

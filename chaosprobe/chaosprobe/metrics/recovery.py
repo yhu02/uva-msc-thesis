@@ -77,11 +77,15 @@ class RecoveryWatcher:
         # Close any pending cycle
         with self._lock:
             if self._pending_deletion is not None:
-                self._cycles.append(self._finalize_cycle({
-                    "deletionTime": self._pending_deletion,
-                    "scheduledTime": None,
-                    "readyTime": None,
-                }))
+                self._cycles.append(
+                    self._finalize_cycle(
+                        {
+                            "deletionTime": self._pending_deletion,
+                            "scheduledTime": None,
+                            "readyTime": None,
+                        }
+                    )
+                )
                 self._pending_deletion = None
 
     def result(self) -> Dict[str, Any]:
@@ -146,12 +150,14 @@ class RecoveryWatcher:
                     now = datetime.now(timezone.utc)
 
                     with self._lock:
-                        self._events.append({
-                            "time": now.isoformat(),
-                            "type": event_type,
-                            "pod": pod_name,
-                            "phase": pod_phase,
-                        })
+                        self._events.append(
+                            {
+                                "time": now.isoformat(),
+                                "type": event_type,
+                                "pod": pod_name,
+                                "phase": pod_phase,
+                            }
+                        )
 
                         if event_type == "DELETED":
                             self._pod_ready.pop(pod_name, None)
@@ -161,29 +167,31 @@ class RecoveryWatcher:
 
                         elif event_type in ("ADDED", "MODIFIED"):
                             was_ready = self._pod_ready.get(pod_name, False)
-                            is_ready = (
-                                pod_phase == "Running" and self._is_pod_ready(pod)
-                            )
+                            is_ready = pod_phase == "Running" and self._is_pod_ready(pod)
                             self._pod_ready[pod_name] = is_ready
 
                             # Trigger on not-ready → ready transition
                             if is_ready and not was_ready and self._pending_deletion is not None:
                                 scheduled_time = self._get_scheduled_time(pod)
-                                self._cycles.append(self._finalize_cycle({
-                                    "deletionTime": self._pending_deletion,
-                                    "scheduledTime": scheduled_time,
-                                    "readyTime": now,
-                                }))
+                                self._cycles.append(
+                                    self._finalize_cycle(
+                                        {
+                                            "deletionTime": self._pending_deletion,
+                                            "scheduledTime": scheduled_time,
+                                            "readyTime": now,
+                                        }
+                                    )
+                                )
                                 self._pending_deletion = None
             except Exception as exc:
                 logger.warning(
                     "Watch stream interrupted (attempt %d/%d): %s",
-                    attempt + 1, max_retries, exc,
+                    attempt + 1,
+                    max_retries,
+                    exc,
                 )
                 with self._lock:
-                    self._watch_errors.append(
-                        f"attempt {attempt + 1}: {exc}"
-                    )
+                    self._watch_errors.append(f"attempt {attempt + 1}: {exc}")
                 if attempt < max_retries - 1 and not self._stop_event.is_set():
                     self._stop_event.wait(timeout=retry_delay)
                     retry_delay = min(retry_delay * 2, 10.0)
@@ -227,19 +235,13 @@ class RecoveryWatcher:
         total_recovery = None
 
         if deletion and scheduled:
-            deletion_to_scheduled = int(
-                (scheduled - deletion).total_seconds() * 1000
-            )
+            deletion_to_scheduled = int((scheduled - deletion).total_seconds() * 1000)
 
         if scheduled and ready:
-            scheduled_to_ready = int(
-                (ready - scheduled).total_seconds() * 1000
-            )
+            scheduled_to_ready = int((ready - scheduled).total_seconds() * 1000)
 
         if deletion and ready:
-            total_recovery = int(
-                (ready - deletion).total_seconds() * 1000
-            )
+            total_recovery = int((ready - deletion).total_seconds() * 1000)
 
         return {
             "deletionTime": deletion.isoformat() if deletion else None,
@@ -254,9 +256,7 @@ class RecoveryWatcher:
     def _compute_summary(cycles: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Compute summary statistics from recovery cycles."""
         recovery_times = [
-            c["totalRecovery_ms"]
-            for c in cycles
-            if c["totalRecovery_ms"] is not None
+            c["totalRecovery_ms"] for c in cycles if c["totalRecovery_ms"] is not None
         ]
 
         incomplete = len(cycles) - len(recovery_times)

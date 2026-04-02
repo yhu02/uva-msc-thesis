@@ -19,11 +19,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from kubernetes import client, config
-
-logger = logging.getLogger(__name__)
 from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
+logger = logging.getLogger(__name__)
 
 # Online Boutique service dependency graph
 # Each entry: (source_service, target_service, target_host, protocol, description)
@@ -37,14 +36,26 @@ ONLINE_BOUTIQUE_ROUTES: List[Tuple[str, str, str, str, str]] = [
     ("frontend", "adservice", "adservice:9555", "grpc", "Ad serving"),
     ("frontend", "shippingservice", "shippingservice:50051", "grpc", "Shipping quotes"),
     # Checkout → downstream calls
-    ("checkoutservice", "productcatalogservice", "productcatalogservice:3550", "grpc", "Product lookup"),
+    (
+        "checkoutservice",
+        "productcatalogservice",
+        "productcatalogservice:3550",
+        "grpc",
+        "Product lookup",
+    ),
     ("checkoutservice", "cartservice", "cartservice:7070", "grpc", "Cart retrieval"),
     ("checkoutservice", "currencyservice", "currencyservice:7000", "grpc", "Price conversion"),
     ("checkoutservice", "shippingservice", "shippingservice:50051", "grpc", "Shipping cost"),
     ("checkoutservice", "paymentservice", "paymentservice:50051", "grpc", "Payment processing"),
     ("checkoutservice", "emailservice", "emailservice:8080", "grpc", "Order confirmation"),
     # Recommendation → product catalog
-    ("recommendationservice", "productcatalogservice", "productcatalogservice:3550", "grpc", "Product list"),
+    (
+        "recommendationservice",
+        "productcatalogservice",
+        "productcatalogservice:3550",
+        "grpc",
+        "Product list",
+    ),
     # Cart → Redis
     ("cartservice", "redis-cart", "redis-cart:6379", "tcp", "Session storage"),
 ]
@@ -61,6 +72,7 @@ ONLINE_BOUTIQUE_HTTP_ROUTES: List[Tuple[str, str, str, str]] = [
 @dataclass
 class LatencySample:
     """A single latency measurement."""
+
     source: str
     target: str
     route: str
@@ -74,6 +86,7 @@ class LatencySample:
 @dataclass
 class LatencyResult:
     """Aggregated latency results for a service pair."""
+
     source: str
     target: str
     route: str
@@ -180,8 +193,7 @@ class LatencyProber:
             return []
 
         routes_info = [
-            (src, route, desc, method)
-            for src, route, desc, method in ONLINE_BOUTIQUE_HTTP_ROUTES
+            (src, route, desc, method) for src, route, desc, method in ONLINE_BOUTIQUE_HTTP_ROUTES
         ]
         result_map = {}
         for source, route, description, _method in routes_info:
@@ -201,7 +213,10 @@ class LatencyProber:
                         url = f"http://frontend.{self.namespace}.svc.cluster.local{route}"
                         fut = pool.submit(
                             self._measure_http_from_pod,
-                            probe_pod, url, method, route,
+                            probe_pod,
+                            url,
+                            method,
+                            route,
                         )
                         futures[fut] = route
                     for fut in as_completed(futures):
@@ -212,9 +227,7 @@ class LatencyProber:
             for _src, route, _desc, method in routes_info:
                 url = f"http://frontend.{self.namespace}.svc.cluster.local{route}"
                 for _ in range(samples):
-                    sample = self._measure_http_from_pod(
-                        probe_pod, url, method, route
-                    )
+                    sample = self._measure_http_from_pod(probe_pod, url, method, route)
                     result_map[route].samples.append(sample)
                     if interval > 0:
                         time.sleep(interval)
@@ -255,10 +268,15 @@ class LatencyProber:
         result_list = []
         valid_routes = []
         for i, (source, target, host, protocol, description) in enumerate(routes):
-            result_list.append(LatencyResult(
-                source=source, target=target, route=host,
-                protocol=protocol, description=description,
-            ))
+            result_list.append(
+                LatencyResult(
+                    source=source,
+                    target=target,
+                    route=host,
+                    protocol=protocol,
+                    description=description,
+                )
+            )
             valid_routes.append((i, source, target, host))
 
         if parallel and len(valid_routes) > 1:
@@ -268,7 +286,10 @@ class LatencyProber:
                     for idx, (ri, source, target, host) in enumerate(valid_routes):
                         fut = pool.submit(
                             self._measure_tcp_from_pod,
-                            probe_pod, host, source, target,
+                            probe_pod,
+                            host,
+                            source,
+                            target,
                         )
                         futures[fut] = idx
                     for fut in as_completed(futures):
@@ -278,9 +299,7 @@ class LatencyProber:
         else:
             for idx, (ri, source, target, host) in enumerate(valid_routes):
                 for _ in range(samples):
-                    sample = self._measure_tcp_from_pod(
-                        probe_pod, host, source, target
-                    )
+                    sample = self._measure_tcp_from_pod(probe_pod, host, source, target)
                     result_list[idx].samples.append(sample)
                     if interval > 0:
                         time.sleep(interval)
@@ -304,10 +323,14 @@ class LatencyProber:
             Dictionary with HTTP route latencies and service pair latencies.
         """
         http_results = self.measure_http_routes(
-            samples=samples, interval=interval, parallel=parallel,
+            samples=samples,
+            interval=interval,
+            parallel=parallel,
         )
         service_results = self.measure_service_pairs(
-            samples=samples, interval=interval, parallel=parallel,
+            samples=samples,
+            interval=interval,
+            parallel=parallel,
         )
 
         return {
@@ -348,8 +371,12 @@ class LatencyProber:
         emailservice, recommendationservice, adservice, paymentservice.
         """
         for svc in [
-            "loadgenerator", "currencyservice", "emailservice",
-            "recommendationservice", "adservice", "paymentservice",
+            "loadgenerator",
+            "currencyservice",
+            "emailservice",
+            "recommendationservice",
+            "adservice",
+            "paymentservice",
         ]:
             pod = self._find_ready_pod(svc)
             if pod:
@@ -380,9 +407,7 @@ class LatencyProber:
             f"e=int(time.time()*1e9);"
             f"print(r.status,s,e)"
         )
-        cmd = [
-            "python3", "-c", py_script
-        ]
+        cmd = ["python3", "-c", py_script]
 
         try:
             resp = stream(
@@ -417,16 +442,26 @@ class LatencyProber:
                     )
 
             return LatencySample(
-                source="loadgenerator", target="frontend", route=route,
-                protocol="http", latency_ms=0, status="error",
-                timestamp=now, error=f"Unexpected output: {resp[:200]}",
+                source="loadgenerator",
+                target="frontend",
+                route=route,
+                protocol="http",
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=f"Unexpected output: {resp[:200]}",
             )
 
         except Exception as e:
             return LatencySample(
-                source="loadgenerator", target="frontend", route=route,
-                protocol="http", latency_ms=0, status="error",
-                timestamp=now, error=str(e)[:200],
+                source="loadgenerator",
+                target="frontend",
+                route=route,
+                protocol="http",
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=str(e)[:200],
             )
 
     def _measure_tcp_from_pod(
@@ -480,22 +515,36 @@ class LatencyProber:
                 if start_ns > 0 and end_ns > 0:
                     latency_ms = (end_ns - start_ns) / 1_000_000
                     return LatencySample(
-                        source=source, target=target, route=host,
-                        protocol="tcp", latency_ms=round(latency_ms, 2),
-                        status="ok", timestamp=now,
+                        source=source,
+                        target=target,
+                        route=host,
+                        protocol="tcp",
+                        latency_ms=round(latency_ms, 2),
+                        status="ok",
+                        timestamp=now,
                     )
 
             return LatencySample(
-                source=source, target=target, route=host,
-                protocol="tcp", latency_ms=0, status="error",
-                timestamp=now, error=f"Unexpected output: {resp[:200]}",
+                source=source,
+                target=target,
+                route=host,
+                protocol="tcp",
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=f"Unexpected output: {resp[:200]}",
             )
 
         except Exception as e:
             return LatencySample(
-                source=source, target=target, route=host,
-                protocol="tcp", latency_ms=0, status="error",
-                timestamp=now, error=str(e)[:200],
+                source=source,
+                target=target,
+                route=host,
+                protocol="tcp",
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=str(e)[:200],
             )
 
 
@@ -541,9 +590,7 @@ class ContinuousLatencyProber:
         self._cached_probe_pod = self._prober._find_probe_pod()
         if not self._cached_probe_pod:
             logger.warning("No probe pod found at start — will retry during probing")
-        self._thread = threading.Thread(
-            target=self._probe_loop, daemon=True, name="latency-prober"
-        )
+        self._thread = threading.Thread(target=self._probe_loop, daemon=True, name="latency-prober")
         self._thread.start()
 
     def mark_chaos_start(self) -> None:
@@ -586,7 +633,9 @@ class ContinuousLatencyProber:
         while not self._stop_event.is_set():
             try:
                 http_results = self._prober.measure_http_routes(
-                    samples=1, interval=0, parallel=True,
+                    samples=1,
+                    interval=0,
+                    parallel=True,
                     probe_pod=self._cached_probe_pod,
                 )
                 now = time.time()

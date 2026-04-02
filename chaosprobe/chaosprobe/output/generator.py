@@ -1,6 +1,7 @@
 """Output generator for ChaosProbe results.
 
-Produces structured JSON output with experiment results.
+Produces structured output dicts with experiment results,
+synced to Neo4j as the primary data store.
 """
 
 import uuid
@@ -8,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from chaosprobe.collector.result_collector import calculate_resilience_score
+from chaosprobe.metrics.anomaly_labels import generate_anomaly_labels
+from chaosprobe.metrics.cascade import compute_cascade_timeline
 
 
 class OutputGenerator:
@@ -27,6 +30,7 @@ class OutputGenerator:
         scenario: Dict[str, Any],
         results: List[Dict[str, Any]],
         metrics: Optional[Dict[str, Any]] = None,
+        placement: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the output generator.
 
@@ -35,10 +39,12 @@ class OutputGenerator:
                       Contains: path, manifests, experiments, namespace.
             results: Collected experiment results from ResultCollector.
             metrics: Optional experiment metrics (recovery, pod status, etc.).
+            placement: Optional placement dict with strategy and assignments.
         """
         self.scenario = scenario
         self.results = results
         self.metrics = metrics
+        self.placement = placement
 
     def generate(self) -> Dict[str, Any]:
         """Generate the complete AI output structure."""
@@ -59,6 +65,18 @@ class OutputGenerator:
         if self.metrics:
             output["metrics"] = self.metrics
 
+        output["anomalyLabels"] = generate_anomaly_labels(
+            self.scenario,
+            metrics=self.metrics,
+            placement=self.placement,
+        )
+
+        if self.metrics and self.metrics.get("latency"):
+            output["cascadeTimeline"] = compute_cascade_timeline(
+                self.metrics["latency"],
+                anomaly_labels=output["anomalyLabels"],
+            )
+
         return output
 
     def generate_minimal(self) -> Dict[str, Any]:
@@ -77,17 +95,21 @@ class OutputGenerator:
         """Generate scenario metadata section with file contents."""
         manifests = []
         for m in self.scenario.get("manifests", []):
-            manifests.append({
-                "file": m["file"],
-                "content": m.get("spec", {}),
-            })
+            manifests.append(
+                {
+                    "file": m["file"],
+                    "content": m.get("spec", {}),
+                }
+            )
 
         experiments = []
         for e in self.scenario.get("experiments", []):
-            experiments.append({
-                "file": e["file"],
-                "content": e.get("spec", {}),
-            })
+            experiments.append(
+                {
+                    "file": e["file"],
+                    "content": e.get("spec", {}),
+                }
+            )
 
         return {
             "directory": self.scenario.get("path", ""),
@@ -141,5 +163,3 @@ class OutputGenerator:
             "resilienceScore": resilience_score,
             "overallVerdict": overall_verdict,
         }
-
-

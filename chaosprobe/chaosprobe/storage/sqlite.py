@@ -193,7 +193,13 @@ class SQLiteStore(ResultStore):
                 ops_sec = op_data.get("meanOpsPerSecond")
                 if ops_sec is not None:
                     metric_rows.append(
-                        (run_id, f"{target}:{op}:ops_per_second", ops_sec, "ops/s", run_data.get("timestamp"))
+                        (
+                            run_id,
+                            f"{target}:{op}:ops_per_second",
+                            ops_sec,
+                            "ops/s",
+                            run_data.get("timestamp"),
+                        )
                     )
 
         # Resource utilization (during-chaos node CPU/memory %)
@@ -311,9 +317,7 @@ class SQLiteStore(ResultStore):
                 (run_id, metric_name),
             ).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM metrics WHERE run_id = ?", (run_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM metrics WHERE run_id = ?", (run_id,)).fetchall()
         return [dict(row) for row in rows]
 
     def compare_strategies(
@@ -363,21 +367,25 @@ class SQLiteStore(ResultStore):
                 "avgResilienceScore": round(row_dict["avg_resilience"] or 0, 1),
                 "minResilienceScore": round(row_dict["min_resilience"] or 0, 1),
                 "maxResilienceScore": round(row_dict["max_resilience"] or 0, 1),
-                "passRate": round((row_dict["pass_count"] or 0) / run_count, 2)
-                if run_count
-                else 0,
-                "avgMeanRecovery_ms": round(row_dict["avg_mean_recovery_ms"], 1)
-                if row_dict["avg_mean_recovery_ms"]
-                else None,
-                "avgP95Recovery_ms": round(row_dict["avg_p95_recovery_ms"], 1)
-                if row_dict["avg_p95_recovery_ms"]
-                else None,
-                "avgLoadP95_ms": round(row_dict["avg_load_p95_ms"], 1)
-                if row_dict["avg_load_p95_ms"]
-                else None,
-                "avgLoadErrorRate": round(row_dict["avg_load_error_rate"], 4)
-                if row_dict["avg_load_error_rate"]
-                else None,
+                "passRate": round((row_dict["pass_count"] or 0) / run_count, 2) if run_count else 0,
+                "avgMeanRecovery_ms": (
+                    round(row_dict["avg_mean_recovery_ms"], 1)
+                    if row_dict["avg_mean_recovery_ms"]
+                    else None
+                ),
+                "avgP95Recovery_ms": (
+                    round(row_dict["avg_p95_recovery_ms"], 1)
+                    if row_dict["avg_p95_recovery_ms"]
+                    else None
+                ),
+                "avgLoadP95_ms": (
+                    round(row_dict["avg_load_p95_ms"], 1) if row_dict["avg_load_p95_ms"] else None
+                ),
+                "avgLoadErrorRate": (
+                    round(row_dict["avg_load_error_rate"], 4)
+                    if row_dict["avg_load_error_rate"]
+                    else None
+                ),
             }
 
         return {"strategies": strategies}
@@ -403,12 +411,25 @@ class SQLiteStore(ResultStore):
 
         with open(output_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "run_id", "timestamp", "scenario", "strategy", "namespace",
-                "verdict", "resilience_score", "total_experiments", "passed", "failed",
-                "mean_recovery_ms", "p95_recovery_ms",
-                "load_requests", "load_p95_ms", "load_error_rate",
-            ])
+            writer.writerow(
+                [
+                    "run_id",
+                    "timestamp",
+                    "scenario",
+                    "strategy",
+                    "namespace",
+                    "verdict",
+                    "resilience_score",
+                    "total_experiments",
+                    "passed",
+                    "failed",
+                    "mean_recovery_ms",
+                    "p95_recovery_ms",
+                    "load_requests",
+                    "load_p95_ms",
+                    "load_error_rate",
+                ]
+            )
             for row in rows:
                 writer.writerow(list(row))
 

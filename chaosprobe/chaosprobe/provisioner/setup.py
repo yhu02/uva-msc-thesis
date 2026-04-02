@@ -23,7 +23,7 @@ class LitmusSetup:
     KUBESPRAY_DIR = Path.home() / ".chaosprobe" / "kubespray"
     VAGRANT_DIR = Path.home() / ".chaosprobe" / "vagrant"
 
-    VAGRANTFILE_TEMPLATE = '''# -*- mode: ruby -*-
+    VAGRANTFILE_TEMPLATE = """# -*- mode: ruby -*-
 # vi: set ft=ruby :
 
 # ChaosProbe Vagrant Configuration
@@ -93,7 +93,7 @@ Vagrant.configure("2") do |config|
     end
   end
 end
-'''
+"""
 
     def __init__(self, skip_k8s_init: bool = False):
         """Initialize the setup handler.
@@ -147,7 +147,14 @@ end
 
             # Try to get server URL
             result = subprocess.run(
-                ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}"],
+                [
+                    "kubectl",
+                    "config",
+                    "view",
+                    "--minify",
+                    "-o",
+                    "jsonpath={.clusters[0].cluster.server}",
+                ],
                 capture_output=True,
                 text=True,
             )
@@ -155,7 +162,16 @@ end
                 server = result.stdout.strip()
                 info["server"] = server
                 # Check if it's a local cluster
-                local_indicators = ["localhost", "127.0.0.1", "0.0.0.0", "minikube", "kind", "k3s", "k3d", "docker-desktop"]
+                local_indicators = [
+                    "localhost",
+                    "127.0.0.1",
+                    "0.0.0.0",
+                    "minikube",
+                    "kind",
+                    "k3s",
+                    "k3d",
+                    "docker-desktop",
+                ]
                 info["is_local"] = any(ind in server.lower() for ind in local_indicators)
 
         except Exception:
@@ -258,8 +274,12 @@ end
             kubespray_dir.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(
                 [
-                    "git", "clone", "--depth", "1",
-                    "--branch", self.KUBESPRAY_VERSION,
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    self.KUBESPRAY_VERSION,
                     self.KUBESPRAY_REPO,
                     str(kubespray_dir),
                 ],
@@ -342,7 +362,7 @@ end
                         }
                     },
                     "calico_rr": {"hosts": {}},
-                }
+                },
             }
         }
 
@@ -367,6 +387,7 @@ end
 
         # Write hosts.yaml
         import yaml
+
         hosts_file = output_dir / "hosts.yaml"
         with open(hosts_file, "w") as f:
             yaml.dump(inventory, f, default_flow_style=False)
@@ -396,7 +417,8 @@ end
 
         cmd = [
             str(ansible_playbook),
-            "-i", str(inventory_dir / "hosts.yaml"),
+            "-i",
+            str(inventory_dir / "hosts.yaml"),
             str(kubespray_dir / "cluster.yml"),
             "-b",  # become (sudo)
         ]
@@ -462,8 +484,7 @@ end
 
         # Replace internal IP with control plane host IP
         kubeconfig_content = kubeconfig_content.replace(
-            "server: https://127.0.0.1:",
-            f"server: https://{control_plane_host}:"
+            "server: https://127.0.0.1:", f"server: https://{control_plane_host}:"
         )
 
         with open(output_path, "w") as f:
@@ -493,10 +514,12 @@ end
 
         cmd = [
             str(ansible_playbook),
-            "-i", str(inventory_dir / "hosts.yaml"),
+            "-i",
+            str(inventory_dir / "hosts.yaml"),
             str(kubespray_dir / "reset.yml"),
             "-b",
-            "-e", "reset_confirmation=yes",
+            "-e",
+            "reset_confirmation=yes",
         ]
 
         if become_pass:
@@ -598,13 +621,15 @@ end
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
-        result["all_ready"] = all([
-            result["kvm_available"],
-            result["libvirtd_installed"],
-            result["libvirtd_running"],
-            result["user_in_groups"],
-            result["vagrant_libvirt_plugin"],
-        ])
+        result["all_ready"] = all(
+            [
+                result["kvm_available"],
+                result["libvirtd_installed"],
+                result["libvirtd_running"],
+                result["user_in_groups"],
+                result["vagrant_libvirt_plugin"],
+            ]
+        )
 
         return result
 
@@ -624,6 +649,7 @@ end
             Dictionary with installation status.
         """
         import getpass
+
         current_user = getpass.getuser()
 
         result = {
@@ -835,8 +861,10 @@ end
             vm_cpus=vm_cpus,
         )
 
-        print(f"Provisioning cluster from scenario config: "
-              f"{num_workers} workers, {vm_cpus} CPU, {vm_memory}MB RAM")
+        print(
+            f"Provisioning cluster from scenario config: "
+            f"{num_workers} workers, {vm_cpus} CPU, {vm_memory}MB RAM"
+        )
 
         self.vagrant_up(vagrant_dir, provider=config_provider)
         return vagrant_dir
@@ -1101,6 +1129,7 @@ end
         # Add Vagrant-specific SSH settings to inventory
         hosts_file = inventory_dir / "hosts.yaml"
         import yaml
+
         with open(hosts_file) as f:
             inventory = yaml.safe_load(f)
 
@@ -1108,8 +1137,12 @@ end
         for host in hosts:
             if host["name"] in inventory["all"]["hosts"]:
                 if host.get("ansible_ssh_private_key_file"):
-                    inventory["all"]["hosts"][host["name"]]["ansible_ssh_private_key_file"] = host["ansible_ssh_private_key_file"]
-                inventory["all"]["hosts"][host["name"]]["ansible_ssh_common_args"] = "-o StrictHostKeyChecking=no"
+                    inventory["all"]["hosts"][host["name"]]["ansible_ssh_private_key_file"] = host[
+                        "ansible_ssh_private_key_file"
+                    ]
+                inventory["all"]["hosts"][host["name"]][
+                    "ansible_ssh_common_args"
+                ] = "-o StrictHostKeyChecking=no"
 
         with open(hosts_file, "w") as f:
             yaml.dump(inventory, f, default_flow_style=False)
@@ -1130,8 +1163,7 @@ end
         try:
             crds = self.apiext_api.list_custom_resource_definition()
             litmus_crds = [
-                crd for crd in crds.items
-                if crd.metadata.name.endswith(".litmuschaos.io")
+                crd for crd in crds.items if crd.metadata.name.endswith(".litmuschaos.io")
             ]
             return len(litmus_crds) > 0
         except Exception:
@@ -1182,8 +1214,13 @@ end
         print("Adding LitmusChaos Helm repository...")
         try:
             subprocess.run(
-                ["helm", "repo", "add", "litmuschaos",
-                 "https://litmuschaos.github.io/litmus-helm/"],
+                [
+                    "helm",
+                    "repo",
+                    "add",
+                    "litmuschaos",
+                    "https://litmuschaos.github.io/litmus-helm/",
+                ],
                 check=True,
             )
         except subprocess.CalledProcessError:
@@ -1203,9 +1240,13 @@ end
         try:
             subprocess.run(
                 [
-                    "helm", "upgrade", "--install", "litmus",
+                    "helm",
+                    "upgrade",
+                    "--install",
+                    "litmus",
                     "litmuschaos/litmus-core",
-                    "--namespace", self.LITMUS_NAMESPACE,
+                    "--namespace",
+                    self.LITMUS_NAMESPACE,
                 ],
                 check=True,
             )
@@ -1217,9 +1258,13 @@ end
         try:
             subprocess.run(
                 [
-                    "helm", "upgrade", "--install", "chaos-experiments",
+                    "helm",
+                    "upgrade",
+                    "--install",
+                    "chaos-experiments",
                     "litmuschaos/kubernetes-chaos",
-                    "--namespace", self.LITMUS_NAMESPACE,
+                    "--namespace",
+                    self.LITMUS_NAMESPACE,
                 ],
                 check=True,
             )
@@ -1264,8 +1309,17 @@ end
             rules=[
                 client.V1PolicyRule(
                     api_groups=[""],
-                    resources=["pods", "pods/log", "pods/exec", "events", "services",
-                              "configmaps", "secrets", "persistentvolumeclaims", "nodes"],
+                    resources=[
+                        "pods",
+                        "pods/log",
+                        "pods/exec",
+                        "events",
+                        "services",
+                        "configmaps",
+                        "secrets",
+                        "persistentvolumeclaims",
+                        "nodes",
+                    ],
                     verbs=["get", "list", "watch", "create", "update", "patch", "delete"],
                 ),
                 client.V1PolicyRule(
@@ -1290,9 +1344,7 @@ end
             self.rbac_api.create_cluster_role(cluster_role)
         except ApiException as e:
             if e.status == 409:
-                self.rbac_api.replace_cluster_role(
-                    f"litmus-admin-{namespace}", cluster_role
-                )
+                self.rbac_api.replace_cluster_role(f"litmus-admin-{namespace}", cluster_role)
             else:
                 raise
 
@@ -1337,7 +1389,9 @@ end
         Returns:
             True if installation succeeded.
         """
-        GITHUB_RAW_BASE = "https://raw.githubusercontent.com/litmuschaos/chaos-charts/master/faults/kubernetes"
+        GITHUB_RAW_BASE = (
+            "https://raw.githubusercontent.com/litmuschaos/chaos-charts/master/faults/kubernetes"
+        )
         experiment_urls = {
             "pod-delete": f"{GITHUB_RAW_BASE}/pod-delete/fault.yaml",
             "container-kill": f"{GITHUB_RAW_BASE}/container-kill/fault.yaml",
@@ -1395,9 +1449,7 @@ end
             self.core_api.read_namespace(namespace)
         except ApiException as e:
             if e.status == 404:
-                ns = client.V1Namespace(
-                    metadata=client.V1ObjectMeta(name=namespace)
-                )
+                ns = client.V1Namespace(metadata=client.V1ObjectMeta(name=namespace))
                 self.core_api.create_namespace(ns)
             else:
                 raise
@@ -1434,13 +1486,15 @@ end
             "litmus_installed": self.is_litmus_installed() if self._k8s_initialized else False,
             "litmus_ready": self.is_litmus_ready() if self._k8s_initialized else False,
         }
-        results["all_ready"] = all([
-            results["kubectl"],
-            results["helm"],
-            results["cluster_access"],
-            results["litmus_installed"],
-            results["litmus_ready"],
-        ])
+        results["all_ready"] = all(
+            [
+                results["kubectl"],
+                results["helm"],
+                results["cluster_access"],
+                results["litmus_installed"],
+                results["litmus_ready"],
+            ]
+        )
         return results
 
     def _check_git(self) -> bool:
@@ -1625,8 +1679,12 @@ end
         try:
             subprocess.run(
                 [
-                    "kubectl", "patch", "deployment", "metrics-server",
-                    "-n", "kube-system",
+                    "kubectl",
+                    "patch",
+                    "deployment",
+                    "metrics-server",
+                    "-n",
+                    "kube-system",
                     "--type=strategic",
                     f"-p={patch}",
                 ],
@@ -1680,8 +1738,13 @@ end
         print("Adding prometheus-community Helm repository...")
         try:
             subprocess.run(
-                ["helm", "repo", "add", "prometheus-community",
-                 "https://prometheus-community.github.io/helm-charts"],
+                [
+                    "helm",
+                    "repo",
+                    "add",
+                    "prometheus-community",
+                    "https://prometheus-community.github.io/helm-charts",
+                ],
                 check=True,
             )
         except subprocess.CalledProcessError:
@@ -1693,17 +1756,29 @@ end
         try:
             subprocess.run(
                 [
-                    "helm", "upgrade", "--install", "prometheus",
+                    "helm",
+                    "upgrade",
+                    "--install",
+                    "prometheus",
                     "prometheus-community/prometheus",
-                    "--namespace", "monitoring",
-                    "--set", "alertmanager.enabled=false",
-                    "--set", "kube-state-metrics.enabled=true",
-                    "--set", "prometheus-pushgateway.enabled=false",
-                    "--set", "server.persistentVolume.enabled=true",
-                    "--set", "server.persistentVolume.size=2Gi",
-                    "--set", "server.retention=3d",
-                    "--set", "server.global.scrape_interval=15s",
-                    "--set", "server.global.evaluation_interval=15s",
+                    "--namespace",
+                    "monitoring",
+                    "--set",
+                    "alertmanager.enabled=false",
+                    "--set",
+                    "kube-state-metrics.enabled=true",
+                    "--set",
+                    "prometheus-pushgateway.enabled=false",
+                    "--set",
+                    "server.persistentVolume.enabled=true",
+                    "--set",
+                    "server.persistentVolume.size=2Gi",
+                    "--set",
+                    "server.retention=3d",
+                    "--set",
+                    "server.global.scrape_interval=15s",
+                    "--set",
+                    "server.global.evaluation_interval=15s",
                 ],
                 check=True,
             )
@@ -1725,10 +1800,7 @@ end
                 )
                 for pod in pods.items:
                     if pod.status.phase == "Running":
-                        ready = all(
-                            cs.ready
-                            for cs in (pod.status.container_statuses or [])
-                        )
+                        ready = all(cs.ready for cs in (pod.status.container_statuses or []))
                         if ready:
                             return True
             except ApiException:
@@ -1766,7 +1838,9 @@ end
         print("No StorageClass found. Installing local-path-provisioner...")
         subprocess.run(
             [
-                "kubectl", "apply", "-f",
+                "kubectl",
+                "apply",
+                "-f",
                 "https://raw.githubusercontent.com/rancher/local-path-provisioner/"
                 "v0.0.26/deploy/local-path-storage.yaml",
             ],
@@ -1775,9 +1849,13 @@ end
         # Mark as default StorageClass
         subprocess.run(
             [
-                "kubectl", "patch", "storageclass", "local-path",
-                "-p", '{"metadata":{"annotations":'
-                       '{"storageclass.kubernetes.io/is-default-class":"true"}}}',
+                "kubectl",
+                "patch",
+                "storageclass",
+                "local-path",
+                "-p",
+                '{"metadata":{"annotations":'
+                '{"storageclass.kubernetes.io/is-default-class":"true"}}}',
             ],
             check=True,
         )
@@ -1816,33 +1894,45 @@ end
                 "template": {
                     "metadata": {"labels": {"app": "neo4j"}},
                     "spec": {
-                        "containers": [{
-                            "name": "neo4j",
-                            "image": "neo4j:5-community",
-                            "env": [
-                                {"name": "NEO4J_AUTH", "value": "neo4j/chaosprobe"},
-                                {"name": "NEO4J_server_memory_heap_initial__size", "value": "256m"},
-                                {"name": "NEO4J_server_memory_heap_max__size", "value": "256m"},
-                                {"name": "NEO4J_server_memory_pagecache_size", "value": "64m"},
-                                {"name": "NEO4J_server_config_strict__validation_enabled", "value": "false"},
-                            ],
-                            "ports": [
-                                {"containerPort": 7474, "name": "http"},
-                                {"containerPort": 7687, "name": "bolt"},
-                            ],
-                            "resources": {
-                                "requests": {"cpu": "250m", "memory": "512Mi"},
-                                "limits": {"cpu": "500m", "memory": "768Mi"},
-                            },
-                            "volumeMounts": [{
+                        "containers": [
+                            {
+                                "name": "neo4j",
+                                "image": "neo4j:5-community",
+                                "env": [
+                                    {"name": "NEO4J_AUTH", "value": "neo4j/chaosprobe"},
+                                    {
+                                        "name": "NEO4J_server_memory_heap_initial__size",
+                                        "value": "256m",
+                                    },
+                                    {"name": "NEO4J_server_memory_heap_max__size", "value": "256m"},
+                                    {"name": "NEO4J_server_memory_pagecache_size", "value": "64m"},
+                                    {
+                                        "name": "NEO4J_server_config_strict__validation_enabled",
+                                        "value": "false",
+                                    },
+                                ],
+                                "ports": [
+                                    {"containerPort": 7474, "name": "http"},
+                                    {"containerPort": 7687, "name": "bolt"},
+                                ],
+                                "resources": {
+                                    "requests": {"cpu": "250m", "memory": "512Mi"},
+                                    "limits": {"cpu": "500m", "memory": "768Mi"},
+                                },
+                                "volumeMounts": [
+                                    {
+                                        "name": "neo4j-data",
+                                        "mountPath": "/data",
+                                    }
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
                                 "name": "neo4j-data",
-                                "mountPath": "/data",
-                            }],
-                        }],
-                        "volumes": [{
-                            "name": "neo4j-data",
-                            "persistentVolumeClaim": {"claimName": "neo4j-data"},
-                        }],
+                                "persistentVolumeClaim": {"claimName": "neo4j-data"},
+                            }
+                        ],
                     },
                 },
             },
@@ -1864,6 +1954,7 @@ end
         print("Installing Neo4j...")
         try:
             from kubernetes.utils import create_from_dict
+
             k8s_client = client.ApiClient()
 
             # Apply PVC (skip if already exists)
@@ -1911,10 +2002,7 @@ end
                 )
                 for pod in pods.items:
                     if pod.status.phase == "Running":
-                        ready = all(
-                            cs.ready
-                            for cs in (pod.status.container_statuses or [])
-                        )
+                        ready = all(cs.ready for cs in (pod.status.container_statuses or []))
                         if ready:
                             return True
             except ApiException:

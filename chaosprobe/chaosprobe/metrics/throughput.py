@@ -27,12 +27,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ThroughputSample:
     """A single throughput measurement."""
-    operation: str       # "read", "write", "mixed"
-    target: str          # "redis", "disk"
+
+    operation: str  # "read", "write", "mixed"
+    target: str  # "redis", "disk"
     ops_per_second: float
-    latency_ms: float    # per-operation latency
+    latency_ms: float  # per-operation latency
     bytes_per_second: Optional[float] = None
-    status: str = "ok"   # "ok", "error"
+    status: str = "ok"  # "ok", "error"
     timestamp: str = ""
     error: Optional[str] = None
 
@@ -40,6 +41,7 @@ class ThroughputSample:
 @dataclass
 class ThroughputResult:
     """Aggregated throughput results for a measurement series."""
+
     target: str
     operation: str
     description: str
@@ -78,7 +80,9 @@ class ThroughputResult:
             "minOpsPerSecond": round(min(ops_list), 2),
             "maxOpsPerSecond": round(max(ops_list), 2),
             "meanLatency_ms": round(statistics.mean(lat_list), 2),
-            "p95Latency_ms": round(sorted(lat_list)[min(int(len(lat_list) * 0.95), len(lat_list) - 1)], 2),
+            "p95Latency_ms": round(
+                sorted(lat_list)[min(int(len(lat_list) * 0.95), len(lat_list) - 1)], 2
+            ),
             "meanBytesPerSecond": round(statistics.mean(bps_list), 2) if bps_list else None,
         }
 
@@ -125,7 +129,7 @@ class ThroughputProber:
         return (
             "python3 -c 'import time;print(int(time.time()*1e9))' 2>/dev/null"
             " || { T=$(date +%s%N 2>/dev/null); "
-            "case \"$T\" in *N*|*%*) echo $(date +%s)000000000;; "
+            'case "$T" in *N*|*%*) echo $(date +%s)000000000;; '
             "*) [ ${#T} -gt 15 ] && echo $T || echo ${T}000000000;; esac; }"
         )
 
@@ -155,11 +159,13 @@ class ThroughputProber:
             return []
 
         write_result = ThroughputResult(
-            target="redis", operation="write",
+            target="redis",
+            operation="write",
             description=f"Redis SET ({ops_per_sample} keys per sample)",
         )
         read_result = ThroughputResult(
-            target="redis", operation="read",
+            target="redis",
+            operation="read",
             description=f"Redis GET ({ops_per_sample} keys per sample)",
         )
 
@@ -204,27 +210,27 @@ class ThroughputProber:
             return []
 
         write_result = ThroughputResult(
-            target="disk", operation="write",
+            target="disk",
+            operation="write",
             description=f"Sequential disk write ({block_size_kb}KB x {count} blocks)",
         )
         read_result = ThroughputResult(
-            target="disk", operation="read",
+            target="disk",
+            operation="read",
             description=f"Sequential disk read ({block_size_kb}KB x {count} blocks)",
         )
 
         for i in range(samples):
-            w_sample = self._disk_benchmark(
-                pod, "write", block_size_kb, count
-            )
+            w_sample = self._disk_benchmark(pod, "write", block_size_kb, count)
             write_result.samples.append(w_sample)
 
-            r_sample = self._disk_benchmark(
-                pod, "read", block_size_kb, count
-            )
+            r_sample = self._disk_benchmark(pod, "read", block_size_kb, count)
             read_result.samples.append(r_sample)
 
         # Clean up test file
-        self._exec_in_pod(pod, ["sh", "-c", "rm -f /tmp/chaosprobe_disktest 2>/dev/null; echo done"])
+        self._exec_in_pod(
+            pod, ["sh", "-c", "rm -f /tmp/chaosprobe_disktest 2>/dev/null; echo done"]
+        )
 
         return [write_result, read_result]
 
@@ -251,12 +257,15 @@ class ThroughputProber:
         with ThreadPoolExecutor(max_workers=2) as pool:
             redis_future = pool.submit(
                 self.measure_redis_throughput,
-                samples=samples, ops_per_sample=ops_per_sample,
+                samples=samples,
+                ops_per_sample=ops_per_sample,
             )
             disk_future = pool.submit(
                 self.measure_disk_throughput,
-                target_service=disk_target, samples=samples,
-                block_size_kb=disk_block_kb, count=disk_count,
+                target_service=disk_target,
+                samples=samples,
+                block_size_kb=disk_block_kb,
+                count=disk_count,
             )
             redis_results = redis_future.result()
             disk_results = disk_future.result()
@@ -303,8 +312,13 @@ class ThroughputProber:
             if target_service in self._exec_pod_cache:
                 return self._exec_pod_cache[target_service]
 
-        candidates = [target_service, "redis-cart", "loadgenerator",
-                       "currencyservice", "emailservice"]
+        candidates = [
+            target_service,
+            "redis-cart",
+            "loadgenerator",
+            "currencyservice",
+            "emailservice",
+        ]
         for svc in candidates:
             pod = self._find_ready_pod(svc)
             if pod:
@@ -351,38 +365,40 @@ class ThroughputProber:
 
         # redis-cli TIME returns two lines: seconds and microseconds.
         # We read them inline to get a single microsecond timestamp.
-        time_cmd = (
-            f"redis-cli -h {host} -p {port} TIME 2>/dev/null "
-            "| tr '\\n' ' '"
-        )
+        time_cmd = f"redis-cli -h {host} -p {port} TIME 2>/dev/null " "| tr '\\n' ' '"
         if operation == "write":
             cmd = [
-                "sh", "-c",
+                "sh",
+                "-c",
                 f"TSTART=$({time_cmd}); "
                 f"for i in $(seq 1 {count}); do "
                 f"redis-cli -h {host} -p {port} SET chaosprobe:bench:$i value_$i > /dev/null 2>&1; "
                 f"done; "
                 f"TEND=$({time_cmd}); "
-                f"echo \"$TSTART $TEND\""
+                f'echo "$TSTART $TEND"',
             ]
         else:
             cmd = [
-                "sh", "-c",
+                "sh",
+                "-c",
                 f"TSTART=$({time_cmd}); "
                 f"for i in $(seq 1 {count}); do "
                 f"redis-cli -h {host} -p {port} GET chaosprobe:bench:$i > /dev/null 2>&1; "
                 f"done; "
                 f"TEND=$({time_cmd}); "
-                f"echo \"$TSTART $TEND\""
+                f'echo "$TSTART $TEND"',
             ]
 
         resp = self._exec_in_pod(pod_name, cmd)
 
         if resp.startswith("ERROR:"):
             return ThroughputSample(
-                operation=operation, target="redis",
-                ops_per_second=0, latency_ms=0,
-                status="error", timestamp=now,
+                operation=operation,
+                target="redis",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp=now,
                 error=resp[:200],
             )
 
@@ -397,18 +413,23 @@ class ThroughputProber:
                     ops_per_sec = (count / elapsed_ms) * 1000
                     avg_latency = elapsed_ms / count
                     return ThroughputSample(
-                        operation=operation, target="redis",
+                        operation=operation,
+                        target="redis",
                         ops_per_second=round(ops_per_sec, 2),
                         latency_ms=round(avg_latency, 4),
-                        status="ok", timestamp=now,
+                        status="ok",
+                        timestamp=now,
                     )
         except (ValueError, ZeroDivisionError):
             pass
 
         return ThroughputSample(
-            operation=operation, target="redis",
-            ops_per_second=0, latency_ms=0,
-            status="error", timestamp=now,
+            operation=operation,
+            target="redis",
+            ops_per_second=0,
+            latency_ms=0,
+            status="error",
+            timestamp=now,
             error=f"Parse failed: {resp[:100]}",
         )
 
@@ -427,19 +448,21 @@ class ThroughputProber:
         if operation == "write":
             # Use conv=fdatasync if supported (GNU dd), fall back to sync
             cmd = [
-                "sh", "-c",
+                "sh",
+                "-c",
                 f"START=$({nano}); "
                 f"dd if=/dev/zero of=/tmp/chaosprobe_disktest "
                 f"bs={block_size_kb}k count={count} conv=fdatasync 2>/dev/null || "
                 f"{{ dd if=/dev/zero of=/tmp/chaosprobe_disktest "
                 f"bs={block_size_kb}k count={count} 2>/dev/null; sync; }}; "
                 f"END=$({nano}); "
-                f"echo \"$START $END\""
+                f'echo "$START $END"',
             ]
         else:
             # Write first if file doesn't exist, then read
             cmd = [
-                "sh", "-c",
+                "sh",
+                "-c",
                 f"[ -f /tmp/chaosprobe_disktest ] || "
                 f"dd if=/dev/zero of=/tmp/chaosprobe_disktest "
                 f"bs={block_size_kb}k count={count} 2>/dev/null; "
@@ -448,16 +471,19 @@ class ThroughputProber:
                 f"dd if=/tmp/chaosprobe_disktest of=/dev/null "
                 f"bs={block_size_kb}k 2>/dev/null; "
                 f"END=$({nano}); "
-                f"echo \"$START $END\""
+                f'echo "$START $END"',
             ]
 
         resp = self._exec_in_pod(pod_name, cmd)
 
         if resp.startswith("ERROR:"):
             return ThroughputSample(
-                operation=operation, target="disk",
-                ops_per_second=0, latency_ms=0,
-                status="error", timestamp=now,
+                operation=operation,
+                target="disk",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp=now,
                 error=resp[:200],
             )
 
@@ -473,19 +499,24 @@ class ThroughputProber:
                     bps = total_bytes / elapsed_s if elapsed_s > 0 else 0
                     avg_latency = elapsed_ms / count if count > 0 else 0
                     return ThroughputSample(
-                        operation=operation, target="disk",
+                        operation=operation,
+                        target="disk",
                         ops_per_second=round(ops_per_sec, 2),
                         latency_ms=round(avg_latency, 4),
                         bytes_per_second=round(bps, 2),
-                        status="ok", timestamp=now,
+                        status="ok",
+                        timestamp=now,
                     )
         except (ValueError, ZeroDivisionError):
             pass
 
         return ThroughputSample(
-            operation=operation, target="disk",
-            ops_per_second=0, latency_ms=0,
-            status="error", timestamp=now,
+            operation=operation,
+            target="disk",
+            ops_per_second=0,
+            latency_ms=0,
+            status="error",
+            timestamp=now,
             error=f"Parse failed: {resp[:100]}",
         )
 
@@ -509,7 +540,9 @@ class _ContinuousProberBase:
     def start(self) -> None:
         self._start_time = time.time()
         self._thread = threading.Thread(
-            target=self._probe_loop, daemon=True, name=self._thread_name,
+            target=self._probe_loop,
+            daemon=True,
+            name=self._thread_name,
         )
         self._thread.start()
 
@@ -548,7 +581,8 @@ class _ContinuousProberBase:
 
     @staticmethod
     def _aggregate_operations(
-        entries: List[Dict[str, Any]], key: str,
+        entries: List[Dict[str, Any]],
+        key: str,
     ) -> Dict[str, Any]:
         """Aggregate throughput metrics for a given key across entries."""
         ops_by_op: Dict[str, List[float]] = {}
@@ -641,7 +675,8 @@ class ContinuousRedisProber(_ContinuousProberBase):
                 entry["redis"] = {}
 
                 results = self._prober.measure_redis_throughput(
-                    samples=1, ops_per_sample=self._ops_per_sample,
+                    samples=1,
+                    ops_per_sample=self._ops_per_sample,
                 )
                 for r in results:
                     if r.samples:
@@ -664,7 +699,9 @@ class ContinuousRedisProber(_ContinuousProberBase):
 
     def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
         phases: Dict[str, List[Dict[str, Any]]] = {
-            "pre-chaos": [], "during-chaos": [], "post-chaos": [],
+            "pre-chaos": [],
+            "during-chaos": [],
+            "post-chaos": [],
         }
         for entry in series:
             phases.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)
@@ -734,8 +771,10 @@ class ContinuousDiskProber(_ContinuousProberBase):
                 entry["disk"] = {}
 
                 results = self._prober.measure_disk_throughput(
-                    target_service=self._disk_target, samples=1,
-                    block_size_kb=self._block_size_kb, count=self._block_count,
+                    target_service=self._disk_target,
+                    samples=1,
+                    block_size_kb=self._block_size_kb,
+                    count=self._block_count,
                 )
                 for r in results:
                     if r.samples:
@@ -759,7 +798,9 @@ class ContinuousDiskProber(_ContinuousProberBase):
 
     def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
         phases: Dict[str, List[Dict[str, Any]]] = {
-            "pre-chaos": [], "during-chaos": [], "post-chaos": [],
+            "pre-chaos": [],
+            "during-chaos": [],
+            "post-chaos": [],
         }
         for entry in series:
             phases.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)

@@ -12,28 +12,29 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 import yaml
 
-from chaosprobe.config.loader import load_scenario
-from chaosprobe.config.validator import validate_scenario
-from chaosprobe.provisioner.kubernetes import KubernetesProvisioner
-from chaosprobe.provisioner.setup import LitmusSetup
 from chaosprobe.chaos.runner import ChaosRunner
 from chaosprobe.collector.result_collector import ResultCollector
-from chaosprobe.output.generator import OutputGenerator
-from chaosprobe.output.comparison import compare_runs
-from chaosprobe.placement.strategy import PlacementStrategy
-from chaosprobe.placement.mutator import PlacementMutator
+from chaosprobe.config.loader import load_scenario
+from chaosprobe.config.validator import validate_scenario
+from chaosprobe.loadgen.runner import LoadProfile, LocustRunner
 from chaosprobe.metrics.collector import MetricsCollector
-from chaosprobe.metrics.recovery import RecoveryWatcher
 from chaosprobe.metrics.latency import ContinuousLatencyProber
-from chaosprobe.metrics.throughput import ContinuousRedisProber, ContinuousDiskProber
-from chaosprobe.metrics.resources import ContinuousResourceProber
 from chaosprobe.metrics.prometheus import ContinuousPrometheusProber
-from chaosprobe.loadgen.runner import LocustRunner, LoadProfile
+from chaosprobe.metrics.recovery import RecoveryWatcher
+from chaosprobe.metrics.resources import ContinuousResourceProber
+from chaosprobe.metrics.throughput import ContinuousDiskProber, ContinuousRedisProber
+from chaosprobe.output.comparison import compare_runs
+from chaosprobe.output.generator import OutputGenerator
+from chaosprobe.placement.mutator import PlacementMutator
+from chaosprobe.placement.strategy import PlacementStrategy
+from chaosprobe.provisioner.kubernetes import KubernetesProvisioner
+from chaosprobe.provisioner.setup import LitmusSetup
 
 
 def _get_store(db_path: Optional[str] = None):
     """Get a SQLiteStore instance (uses default path if none given)."""
     from chaosprobe.storage.sqlite import SQLiteStore
+
     return SQLiteStore(db_path=db_path)
 
 
@@ -56,15 +57,19 @@ def _print_cluster_recovery_hints(setup: LitmusSetup) -> None:
         try:
             result = _sp.run(
                 ["virsh", "list", "--all", "--name"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             all_vms = [v.strip() for v in result.stdout.strip().split("\n") if v.strip()]
 
             result_running = _sp.run(
                 ["virsh", "list", "--state-running", "--name"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
-            running_vms = [v.strip() for v in result_running.stdout.strip().split("\n") if v.strip()]
+            running_vms = [
+                v.strip() for v in result_running.stdout.strip().split("\n") if v.strip()
+            ]
 
             # Find k8s-related VMs
             k8s_vms = [v for v in all_vms if "k8s" in v]
@@ -83,12 +88,13 @@ def _print_cluster_recovery_hints(setup: LitmusSetup) -> None:
                     f"Start them:\n{start_cmds}"
                 )
                 steps.append(
-                    "Then wait ~30s for kubelet to come up and verify:\n"
-                    "    kubectl cluster-info"
+                    "Then wait ~30s for kubelet to come up and verify:\n" "    kubectl cluster-info"
                 )
             else:
                 # All VMs running but cluster unreachable
-                cp_vm = next((v for v in k8s_vms if "k8s-1" in v or "master" in v or "cp" in v), k8s_vms[0])
+                cp_vm = next(
+                    (v for v in k8s_vms if "k8s-1" in v or "master" in v or "cp" in v), k8s_vms[0]
+                )
                 steps.append(
                     "VMs are running but the API server is unreachable. Check kubelet:\n"
                     f"    virsh console {cp_vm}\n"
@@ -98,15 +104,15 @@ def _print_cluster_recovery_hints(setup: LitmusSetup) -> None:
                 )
         except Exception:
             steps.append(
-                "Could not query libvirt VM status. Check manually:\n"
-                "    virsh list --all"
+                "Could not query libvirt VM status. Check manually:\n" "    virsh list --all"
             )
     else:
         # No virsh — fall back to kubectl context check
         try:
             result = _sp.run(
                 ["kubectl", "config", "current-context"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             ctx = result.stdout.strip() if result.returncode == 0 else None
         except FileNotFoundError:
@@ -198,9 +204,7 @@ def ensure_litmus_setup(
     for exp_type in set(experiment_types):
         click.echo(f"  Installing experiment: {exp_type}")
         if not setup.install_experiment(exp_type, namespace):
-            click.echo(
-                f"  WARNING: Failed to install experiment '{exp_type}'", err=True
-            )
+            click.echo(f"  WARNING: Failed to install experiment '{exp_type}'", err=True)
 
     # Ensure metrics-server is installed (needed for resource probing)
     if not setup.is_metrics_server_installed():
@@ -302,20 +306,12 @@ def init(namespace: str, skip_litmus: bool):
     click.echo(f"  helm: {'OK' if prereqs['helm'] else 'MISSING'}")
     click.echo(f"  git: {'OK' if prereqs['git'] else 'MISSING'}")
     click.echo(f"  ssh: {'OK' if prereqs['ssh'] else 'MISSING'}")
-    click.echo(
-        f"  ansible: {'OK' if prereqs['ansible'] else 'Not installed (optional)'}"
-    )
-    click.echo(
-        f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}"
-    )
-    click.echo(
-        f"  LitmusChaos: {'Installed' if prereqs['litmus_installed'] else 'Not installed'}"
-    )
+    click.echo(f"  ansible: {'OK' if prereqs['ansible'] else 'Not installed (optional)'}")
+    click.echo(f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}")
+    click.echo(f"  LitmusChaos: {'Installed' if prereqs['litmus_installed'] else 'Not installed'}")
 
     if not prereqs["kubectl"]:
-        click.echo(
-            "\nError: kubectl is required. Please install it first.", err=True
-        )
+        click.echo("\nError: kubectl is required. Please install it first.", err=True)
         sys.exit(1)
 
     click.echo("\nValidating cluster...")
@@ -323,7 +319,9 @@ def init(namespace: str, skip_litmus: bool):
     if not is_valid:
         click.echo(f"  Error: {message}", err=True)
         click.echo("\nNo cluster configured. Options:")
-        click.echo("  1. Use 'chaosprobe cluster vagrant up' to start a local libvirt/Vagrant cluster")
+        click.echo(
+            "  1. Use 'chaosprobe cluster vagrant up' to start a local libvirt/Vagrant cluster"
+        )
         click.echo("  2. Use 'chaosprobe cluster create' to deploy with Kubespray")
         click.echo("  3. Configure kubectl to connect to an existing cluster")
         sys.exit(1)
@@ -394,18 +392,12 @@ def status(json_output: bool):
             click.echo("    KVM not available (check BIOS/WSL2 settings)")
         elif not libvirt_status.get("libvirtd_installed"):
             click.echo("    Run: chaosprobe cluster vagrant setup")
-    click.echo(
-        f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}"
-    )
+    click.echo(f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}")
     if prereqs["cluster_access"]:
         click.echo(f"    Context: {prereqs['cluster_context']}")
         click.echo(f"    Server: {prereqs['cluster_server']}")
-    click.echo(
-        f"  LitmusChaos installed: {'Yes' if prereqs['litmus_installed'] else 'No'}"
-    )
-    click.echo(
-        f"  LitmusChaos ready: {'Yes' if prereqs['litmus_ready'] else 'No'}"
-    )
+    click.echo(f"  LitmusChaos installed: {'Yes' if prereqs['litmus_installed'] else 'No'}")
+    click.echo(f"  LitmusChaos ready: {'Yes' if prereqs['litmus_ready'] else 'No'}")
 
     if prereqs["all_ready"]:
         click.echo("\nAll systems ready!")
@@ -459,9 +451,7 @@ def cluster_create(
     prereqs = setup.check_prerequisites()
 
     if not prereqs["git"]:
-        click.echo(
-            "Error: git is required for Kubespray. Please install it.", err=True
-        )
+        click.echo("Error: git is required for Kubespray. Please install it.", err=True)
         sys.exit(1)
 
     if not prereqs["python_venv"]:
@@ -525,9 +515,7 @@ def cluster_create(
     help="Sudo password for ansible become",
 )
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation")
-def cluster_destroy(
-    inventory: str, become_pass: Optional[str], force: bool
-):
+def cluster_destroy(inventory: str, become_pass: Optional[str], force: bool):
     """Destroy a Kubernetes cluster using Kubespray reset."""
     inventory_dir = Path(inventory)
     if not (inventory_dir / "hosts.yaml").exists():
@@ -561,9 +549,7 @@ def cluster_destroy(
     type=click.Path(exists=True),
     help="SSH private key file",
 )
-def cluster_kubeconfig(
-    host: str, user: str, output: Optional[str], ssh_key: Optional[str]
-):
+def cluster_kubeconfig(host: str, user: str, output: Optional[str], ssh_key: Optional[str]):
     """Fetch kubeconfig from a control plane node."""
     setup = LitmusSetup(skip_k8s_init=True)
 
@@ -577,7 +563,7 @@ def cluster_kubeconfig(
             output_path=output_path,
             ssh_key=key_path,
         )
-        click.echo(f"\nTo use this cluster:")
+        click.echo("\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)
@@ -595,19 +581,13 @@ def cluster_vagrant():
 
 @cluster_vagrant.command("init")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option(
-    "--control-planes", "-c", default=1, help="Number of control plane nodes"
-)
+@click.option("--control-planes", "-c", default=1, help="Number of control plane nodes")
 @click.option("--workers", "-w", default=2, help="Number of worker nodes")
 @click.option("--memory", "-m", default=2048, help="Memory per VM in MB")
 @click.option("--cpus", default=2, help="CPUs per VM")
 @click.option("--box", default="generic/ubuntu2204", help="Vagrant box image")
-@click.option(
-    "--network-prefix", default="192.168.56", help="Network prefix for private IPs"
-)
-@click.option(
-    "--output", "-o", type=click.Path(), help="Output directory for Vagrantfile"
-)
+@click.option("--network-prefix", default="192.168.56", help="Network prefix for private IPs")
+@click.option("--output", "-o", type=click.Path(), help="Output directory for Vagrantfile")
 def vagrant_init(
     name: str,
     control_planes: int,
@@ -623,9 +603,7 @@ def vagrant_init(
     prereqs = setup.check_prerequisites()
 
     if not prereqs["vagrant"]:
-        click.echo(
-            "Error: Vagrant not found. Please install Vagrant first.", err=True
-        )
+        click.echo("Error: Vagrant not found. Please install Vagrant first.", err=True)
         sys.exit(1)
 
     output_dir = Path(output) if output else None
@@ -642,7 +620,7 @@ def vagrant_init(
             output_dir=output_dir,
         )
         click.echo(f"\nVagrantfile created at: {vagrant_dir}")
-        click.echo(f"\nNext steps:")
+        click.echo("\nNext steps:")
         click.echo(f"  1. Start VMs: chaosprobe cluster vagrant up --name {name}")
         click.echo(f"  2. Deploy K8s: chaosprobe cluster vagrant deploy --name {name}")
     except Exception as e:
@@ -659,19 +637,11 @@ def vagrant_setup(check_only: bool):
     click.echo("Checking libvirt/KVM status...")
     status = setup._check_libvirt()
 
-    click.echo(f"\nLibvirt Status:")
-    click.echo(
-        f"  KVM available (/dev/kvm): {'OK' if status['kvm_available'] else 'MISSING'}"
-    )
-    click.echo(
-        f"  libvirtd installed: {'OK' if status['libvirtd_installed'] else 'MISSING'}"
-    )
-    click.echo(
-        f"  libvirtd running: {'OK' if status['libvirtd_running'] else 'NOT RUNNING'}"
-    )
-    click.echo(
-        f"  User in libvirt/kvm groups: {'OK' if status['user_in_groups'] else 'MISSING'}"
-    )
+    click.echo("\nLibvirt Status:")
+    click.echo(f"  KVM available (/dev/kvm): {'OK' if status['kvm_available'] else 'MISSING'}")
+    click.echo(f"  libvirtd installed: {'OK' if status['libvirtd_installed'] else 'MISSING'}")
+    click.echo(f"  libvirtd running: {'OK' if status['libvirtd_running'] else 'NOT RUNNING'}")
+    click.echo(f"  User in libvirt/kvm groups: {'OK' if status['user_in_groups'] else 'MISSING'}")
     click.echo(
         f"  vagrant-libvirt plugin: {'OK' if status['vagrant_libvirt_plugin'] else 'MISSING'}"
     )
@@ -682,15 +652,11 @@ def vagrant_setup(check_only: bool):
 
     if check_only:
         click.echo(click.style("\nLibvirt is not fully configured.", fg="yellow"))
-        click.echo(
-            "Run 'chaosprobe cluster vagrant setup' to install missing components."
-        )
+        click.echo("Run 'chaosprobe cluster vagrant setup' to install missing components.")
         sys.exit(1)
 
     if not status["kvm_available"]:
-        click.echo(
-            click.style("\nError: KVM is not available.", fg="red"), err=True
-        )
+        click.echo(click.style("\nError: KVM is not available.", fg="red"), err=True)
         click.echo("Enable CPU virtualisation in BIOS/WSL2.", err=True)
         sys.exit(1)
 
@@ -748,12 +714,8 @@ def vagrant_up(name: str, provider: str, vagrant_dir: Optional[str]):
         click.echo("Checking libvirt configuration...")
         libvirt_status = setup._check_libvirt()
         if not libvirt_status["all_ready"]:
-            click.echo(
-                click.style("\nLibvirt is not fully configured.", fg="yellow")
-            )
-            click.echo(
-                "\nRun 'chaosprobe cluster vagrant setup' to install libvirt."
-            )
+            click.echo(click.style("\nLibvirt is not fully configured.", fg="yellow"))
+            click.echo("\nRun 'chaosprobe cluster vagrant setup' to install libvirt.")
             sys.exit(1)
         click.echo("  Libvirt: OK")
 
@@ -762,10 +724,8 @@ def vagrant_up(name: str, provider: str, vagrant_dir: Optional[str]):
 
     try:
         setup.vagrant_up(vdir, provider=provider)
-        click.echo(f"\nVMs are running. Next steps:")
-        click.echo(
-            f"  Deploy K8s: chaosprobe cluster vagrant deploy --name {name}"
-        )
+        click.echo("\nVMs are running. Next steps:")
+        click.echo(f"  Deploy K8s: chaosprobe cluster vagrant deploy --name {name}")
     except Exception as e:
         click.echo(f"\nError starting VMs: {e}", err=True)
         sys.exit(1)
@@ -831,9 +791,7 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
     prereqs = setup.check_prerequisites()
 
     if not prereqs["git"]:
-        click.echo(
-            "Error: git is required for Kubespray. Please install it.", err=True
-        )
+        click.echo("Error: git is required for Kubespray. Please install it.", err=True)
         sys.exit(1)
 
     if not prereqs["python_venv"]:
@@ -868,7 +826,7 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
 
     try:
         inventory_dir = setup.vagrant_deploy_cluster(vdir, cluster_name=name)
-        click.echo(f"\nCluster deployed successfully!")
+        click.echo("\nCluster deployed successfully!")
         click.echo(f"Inventory: {inventory_dir}")
 
         hosts = setup.get_vagrant_ssh_config(vdir)
@@ -876,10 +834,8 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
         if cp_hosts:
             cp_ip = cp_hosts[0]["ip"]
             cp_user = cp_hosts[0]["ansible_user"]
-            click.echo(f"\nTo get kubeconfig:")
-            click.echo(
-                f"  chaosprobe cluster kubeconfig --host {cp_ip} --user {cp_user}"
-            )
+            click.echo("\nTo get kubeconfig:")
+            click.echo(f"  chaosprobe cluster kubeconfig --host {cp_ip} --user {cp_user}")
     except Exception as e:
         click.echo(f"\nError deploying cluster: {e}", err=True)
         sys.exit(1)
@@ -958,10 +914,8 @@ def vagrant_kubeconfig(name: str, vagrant_dir: Optional[str], output: Optional[s
     output_path = Path(output) if output else None
 
     try:
-        kubeconfig_path = setup.vagrant_fetch_kubeconfig(
-            vdir, output_path=output_path
-        )
-        click.echo(f"\nTo use this cluster:")
+        kubeconfig_path = setup.vagrant_fetch_kubeconfig(vdir, output_path=output_path)
+        click.echo("\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)
@@ -1014,13 +968,9 @@ def vagrant_ssh(vm_name: Optional[str], name: str, vagrant_dir: Optional[str]):
 # ─────────────────────────────────────────────────────────────
 
 
-
-
 @main.command()
 @click.argument("scenario_path", type=click.Path(exists=True))
-@click.option(
-    "--namespace", "-n", default=None, help="Override namespace (default: from scenario)"
-)
+@click.option("--namespace", "-n", default=None, help="Override namespace (default: from scenario)")
 def provision(scenario_path: str, namespace: Optional[str]):
     """Deploy manifests from a scenario without running experiments.
 
@@ -1052,26 +1002,91 @@ def provision(scenario_path: str, namespace: Optional[str]):
         sys.exit(1)
 
 
-@main.command()
-@click.argument("baseline_file", type=click.Path(exists=True))
-@click.argument("afterfix_file", type=click.Path(exists=True))
-@click.option(
-    "--output", "-o", type=click.Path(), help="Output file for comparison JSON"
+# ─────────────────────────────────────────────────────────────
+# Neo4j option decorators (shared across commands)
+# ─────────────────────────────────────────────────────────────
+
+_neo4j_uri_option = click.option(
+    "--neo4j-uri",
+    default="bolt://localhost:7687",
+    envvar="NEO4J_URI",
+    help="Neo4j connection URI (default: bolt://localhost:7687)",
 )
-def compare(baseline_file: str, afterfix_file: str, output: Optional[str]):
+_neo4j_user_option = click.option(
+    "--neo4j-user",
+    default="neo4j",
+    envvar="NEO4J_USER",
+    help="Neo4j username",
+)
+_neo4j_password_option = click.option(
+    "--neo4j-password",
+    default="chaosprobe",
+    envvar="NEO4J_PASSWORD",
+    help="Neo4j password (default: chaosprobe)",
+)
+
+
+def _get_graph_store(uri, user, password):
+    """Create a Neo4jStore, handling missing dependency gracefully."""
+    try:
+        from chaosprobe.storage.neo4j_store import Neo4jStore
+    except ImportError:
+        click.echo(
+            "Error: Neo4j support not installed.\n"
+            "  Install with:  uv pip install chaosprobe[graph]",
+            err=True,
+        )
+        sys.exit(1)
+    return Neo4jStore(uri, user, password)
+
+
+@main.command()
+@click.argument("baseline", type=str)
+@click.argument("afterfix", type=str)
+@click.option("--output", "-o", type=click.Path(), help="Output file for comparison JSON")
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
+def compare(
+    baseline: str,
+    afterfix: str,
+    output: Optional[str],
+    neo4j_uri: Optional[str],
+    neo4j_user: str,
+    neo4j_password: str,
+):
     """Compare baseline results with after-fix results.
 
-    BASELINE_FILE: Path to the baseline results JSON file.
-    AFTERFIX_FILE: Path to the after-fix results JSON file.
-    """
-    click.echo(f"Comparing {baseline_file} with {afterfix_file}...")
+    BASELINE: Run ID (Neo4j) or path to baseline results JSON file.
+    AFTERFIX: Run ID (Neo4j) or path to after-fix results JSON file.
 
-    try:
-        baseline_data = json.loads(Path(baseline_file).read_text())
-        afterfix_data = json.loads(Path(afterfix_file).read_text())
-    except Exception as e:
-        click.echo(f"Error loading result files: {e}", err=True)
-        sys.exit(1)
+    \b
+    Examples:
+      chaosprobe compare run-2026-04-02-1234 run-2026-04-02-5678 --neo4j-uri bolt://localhost:7687
+      chaosprobe compare baseline.json afterfix.json  # legacy JSON file mode
+    """
+    if neo4j_uri:
+        click.echo(f"Comparing runs from Neo4j: {baseline} vs {afterfix}...")
+        store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+        try:
+            baseline_data = store.get_run_output(baseline)
+            afterfix_data = store.get_run_output(afterfix)
+        finally:
+            store.close()
+        if not baseline_data:
+            click.echo(f"Error: run '{baseline}' not found in Neo4j", err=True)
+            sys.exit(1)
+        if not afterfix_data:
+            click.echo(f"Error: run '{afterfix}' not found in Neo4j", err=True)
+            sys.exit(1)
+    else:
+        click.echo(f"Comparing {baseline} with {afterfix}...")
+        try:
+            baseline_data = json.loads(Path(baseline).read_text())
+            afterfix_data = json.loads(Path(afterfix).read_text())
+        except Exception as e:
+            click.echo(f"Error loading result files: {e}", err=True)
+            sys.exit(1)
 
     comparison = compare_runs(baseline_data, afterfix_data)
 
@@ -1087,11 +1102,8 @@ def compare(baseline_file: str, afterfix_file: str, output: Optional[str]):
     click.echo(f"  Fix Effective: {comparison['conclusion']['fixEffective']}")
     click.echo(f"  Confidence: {comparison['conclusion']['confidence']:.2f}")
     click.echo(
-        f"  Resilience Score Change: "
-        f"{comparison['comparison']['resilienceScoreChange']:+.1f}"
+        f"  Resilience Score Change: " f"{comparison['comparison']['resilienceScoreChange']:+.1f}"
     )
-
-
 
 
 @main.command()
@@ -1154,31 +1166,45 @@ def placement():
     type=click.Choice([s.value for s in PlacementStrategy], case_sensitive=False),
 )
 @click.option(
-    "--namespace", "-n", default="online-boutique",
+    "--namespace",
+    "-n",
+    default="online-boutique",
     help="Namespace containing deployments",
 )
 @click.option(
-    "--target-node", "-t", default=None,
+    "--target-node",
+    "-t",
+    default=None,
     help="For 'colocate': pin to this specific node",
 )
 @click.option(
-    "--seed", "-s", default=None, type=int,
+    "--seed",
+    "-s",
+    default=None,
+    type=int,
     help="For 'random': seed for reproducible assignments",
 )
 @click.option(
-    "--deployments", "-d", default=None,
+    "--deployments",
+    "-d",
+    default=None,
     help="Comma-separated list of deployment names (default: all in namespace)",
 )
 @click.option(
-    "--no-wait", is_flag=True,
+    "--no-wait",
+    is_flag=True,
     help="Don't wait for rollouts to complete",
 )
 @click.option(
-    "--timeout", default=300, type=int,
+    "--timeout",
+    default=300,
+    type=int,
     help="Timeout in seconds for rollout completion",
 )
 @click.option(
-    "--output", "-o", type=click.Path(),
+    "--output",
+    "-o",
+    type=click.Path(),
     help="Save assignment to JSON file",
 )
 def placement_apply(
@@ -1225,7 +1251,7 @@ def placement_apply(
     click.echo(f"\nCluster nodes ({len(schedulable)} schedulable):")
     for node in schedulable:
         cpu_cores = node.allocatable_cpu_millicores / 1000
-        mem_gib = node.allocatable_memory_bytes / (1024 ** 3)
+        mem_gib = node.allocatable_memory_bytes / (1024**3)
         click.echo(f"  {node.name}: {cpu_cores:.1f} CPU, {mem_gib:.1f} GiB RAM")
 
     # Show target deployments
@@ -1235,7 +1261,7 @@ def placement_apply(
     click.echo(f"\nDeployments ({len(deps)}):")
     for d in deps:
         cpu = d.cpu_request_millicores
-        mem_mib = d.memory_request_bytes / (1024 ** 2)
+        mem_mib = d.memory_request_bytes / (1024**2)
         current = d.current_node or "unknown"
         click.echo(f"  {d.name}: {cpu}m CPU, {mem_mib:.0f}Mi RAM (node: {current})")
 
@@ -1255,7 +1281,7 @@ def placement_apply(
         sys.exit(1)
 
     # Summary
-    click.echo(f"\nPlacement applied:")
+    click.echo("\nPlacement applied:")
     click.echo(f"  Strategy: {assignment.strategy.value}")
     click.echo(f"  Description: {assignment.metadata.get('description', '')}")
     for dep_name, node_name in sorted(assignment.assignments.items()):
@@ -1269,15 +1295,20 @@ def placement_apply(
 
 @placement.command("clear")
 @click.option(
-    "--namespace", "-n", default="online-boutique",
+    "--namespace",
+    "-n",
+    default="online-boutique",
     help="Namespace containing deployments",
 )
 @click.option(
-    "--deployments", "-d", default=None,
+    "--deployments",
+    "-d",
+    default=None,
     help="Comma-separated list of deployment names (default: all managed)",
 )
 @click.option(
-    "--no-wait", is_flag=True,
+    "--no-wait",
+    is_flag=True,
     help="Don't wait for rollouts to complete",
 )
 def placement_clear(
@@ -1315,7 +1346,9 @@ def placement_clear(
 
 @placement.command("show")
 @click.option(
-    "--namespace", "-n", default="online-boutique",
+    "--namespace",
+    "-n",
+    default="online-boutique",
     help="Namespace containing deployments",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
@@ -1373,7 +1406,7 @@ def placement_nodes():
 
     for node in nodes:
         cpu_cores = node.allocatable_cpu_millicores / 1000
-        mem_gib = node.allocatable_memory_bytes / (1024 ** 3)
+        mem_gib = node.allocatable_memory_bytes / (1024**3)
         status = "Ready" if node.conditions_ready else "NotReady"
         schedulable = "schedulable" if node.is_schedulable else "unschedulable"
 
@@ -1395,44 +1428,63 @@ def placement_nodes():
 
 @main.command()
 @click.option(
-    "--namespace", "-n", default="online-boutique",
+    "--namespace",
+    "-n",
+    default="online-boutique",
     help="Namespace containing the application",
 )
 @click.option(
-    "--output-dir", "-o", default="results",
+    "--output-dir",
+    "-o",
+    default="results",
     help="Base directory for results (a timestamped subdirectory is created)",
 )
 @click.option(
-    "--strategies", "-s", default="baseline,colocate,spread,antagonistic,random",
+    "--strategies",
+    "-s",
+    default="baseline,colocate,spread,antagonistic,random",
     help="Comma-separated strategies to test (default: all)",
 )
 @click.option(
-    "--timeout", "-t", default=300, type=int,
+    "--timeout",
+    "-t",
+    default=300,
+    type=int,
     help="Timeout per experiment in seconds",
 )
 @click.option(
-    "--seed", default=42, type=int,
+    "--seed",
+    default=42,
+    type=int,
     help="Seed for the random strategy",
 )
 @click.option(
-    "--settle-time", default=30, type=int,
+    "--settle-time",
+    default=30,
+    type=int,
     help="Seconds to wait after placement before running experiment",
 )
 @click.option(
-    "--no-auto-setup", is_flag=True,
+    "--no-auto-setup",
+    is_flag=True,
     help="Disable automatic LitmusChaos installation",
 )
 @click.option(
-    "--experiment", "-e",
+    "--experiment",
+    "-e",
     default="scenarios/online-boutique/placement-experiment.yaml",
     help="Path to the placement experiment YAML file",
 )
 @click.option(
-    "--iterations", "-i", default=1, type=int,
+    "--iterations",
+    "-i",
+    default=1,
+    type=int,
     help="Number of iterations per strategy (default: 1)",
 )
 @click.option(
-    "--provision", is_flag=True,
+    "--provision",
+    is_flag=True,
     help="Provision a fresh cluster from scenario cluster config before running",
 )
 @click.option(
@@ -1458,38 +1510,52 @@ def placement_nodes():
     help="Path to SQLite database for persisting results",
 )
 @click.option(
-    "--visualize/--no-visualize", "do_visualize",
-    default=True, show_default=True,
+    "--visualize/--no-visualize",
+    "do_visualize",
+    default=True,
+    show_default=True,
     help="Generate visualization charts after experiments complete",
 )
 @click.option(
-    "--measure-latency/--no-measure-latency", "measure_latency",
-    default=True, show_default=True,
+    "--measure-latency/--no-measure-latency",
+    "measure_latency",
+    default=True,
+    show_default=True,
     help="Measure inter-service latency during each experiment",
 )
 @click.option(
-    "--measure-redis/--no-measure-redis", "measure_redis",
-    default=True, show_default=True,
+    "--measure-redis/--no-measure-redis",
+    "measure_redis",
+    default=True,
+    show_default=True,
     help="Measure Redis throughput during each experiment",
 )
 @click.option(
-    "--measure-disk/--no-measure-disk", "measure_disk",
-    default=True, show_default=True,
+    "--measure-disk/--no-measure-disk",
+    "measure_disk",
+    default=True,
+    show_default=True,
     help="Measure disk I/O throughput during each experiment",
 )
 @click.option(
-    "--measure-resources/--no-measure-resources", "measure_resources",
-    default=True, show_default=True,
+    "--measure-resources/--no-measure-resources",
+    "measure_resources",
+    default=True,
+    show_default=True,
     help="Measure node/pod resource utilization during each experiment",
 )
 @click.option(
-    "--collect-logs/--no-collect-logs", "collect_logs",
-    default=True, show_default=True,
+    "--collect-logs/--no-collect-logs",
+    "collect_logs",
+    default=True,
+    show_default=True,
     help="Collect container logs from target deployment after each experiment",
 )
 @click.option(
-    "--measure-prometheus/--no-measure-prometheus", "measure_prometheus",
-    default=True, show_default=False,
+    "--measure-prometheus/--no-measure-prometheus",
+    "measure_prometheus",
+    default=True,
+    show_default=False,
     help="Query Prometheus for cluster metrics during each experiment",
 )
 @click.option(
@@ -1498,18 +1564,27 @@ def placement_nodes():
     help="Prometheus server URL(s); repeat for multiple instances (auto-discovered if omitted)",
 )
 @click.option(
+    "--baseline-duration",
+    type=int,
+    default=0,
+    help="Seconds to collect steady-state 'normal' metrics before chaos (default: 0 = use settle time)",
+)
+@click.option(
     "--neo4j-uri",
-    default="bolt://localhost:7687", envvar="NEO4J_URI",
+    default="bolt://localhost:7687",
+    envvar="NEO4J_URI",
     help="Neo4j connection URI (default: bolt://localhost:7687). Enables graph storage.",
 )
 @click.option(
     "--neo4j-user",
-    default="neo4j", envvar="NEO4J_USER",
+    default="neo4j",
+    envvar="NEO4J_USER",
     help="Neo4j username (default: neo4j)",
 )
 @click.option(
     "--neo4j-password",
-    default="chaosprobe", envvar="NEO4J_PASSWORD",
+    default="chaosprobe",
+    envvar="NEO4J_PASSWORD",
     help="Neo4j password (default: chaosprobe)",
 )
 def run(
@@ -1535,6 +1610,7 @@ def run(
     collect_logs: bool,
     measure_prometheus: bool,
     prometheus_url: Tuple[str, ...],
+    baseline_duration: int,
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
@@ -1557,7 +1633,10 @@ def run(
     valid_strategies = {"baseline", "colocate", "spread", "antagonistic", "random"}
     for s in strategy_list:
         if s not in valid_strategies:
-            click.echo(f"Error: Unknown strategy '{s}'. Valid: {', '.join(sorted(valid_strategies))}", err=True)
+            click.echo(
+                f"Error: Unknown strategy '{s}'. Valid: {', '.join(sorted(valid_strategies))}",
+                err=True,
+            )
             sys.exit(1)
 
     if iterations < 1:
@@ -1619,25 +1698,29 @@ def run(
     click.echo(f"  Timeout:    {timeout}s per experiment")
     click.echo(f"  Settle:     {settle_time}s between placement and experiment")
     if measure_latency:
-        click.echo(f"  Latency:    Measuring inter-service latency during experiments")
+        click.echo("  Latency:    Measuring inter-service latency during experiments")
     if measure_redis:
-        click.echo(f"  Redis:      Measuring Redis throughput during experiments")
+        click.echo("  Redis:      Measuring Redis throughput during experiments")
     if measure_disk:
-        click.echo(f"  Disk:       Measuring disk I/O throughput during experiments")
+        click.echo("  Disk:       Measuring disk I/O throughput during experiments")
     if measure_resources:
-        click.echo(f"  Resources:  Measuring node/pod resource utilization during experiments")
+        click.echo("  Resources:  Measuring node/pod resource utilization during experiments")
     if measure_prometheus:
         prom_display = ", ".join(prometheus_url) if prometheus_url else "(auto-discover)"
         click.echo(f"  Prometheus: Querying cluster Prometheus at {prom_display}")
     if collect_logs:
-        click.echo(f"  Logs:       Collecting container logs from target deployment")
+        click.echo("  Logs:       Collecting container logs from target deployment")
+    if baseline_duration > 0:
+        click.echo(f"  Baseline:   {baseline_duration}s steady-state collection before chaos")
     click.echo("")
 
     # ── Pre-flight checks ──────────────────────────────────────
     click.echo("Pre-flight checks...")
 
     # 1. Verify all nodes are Ready
-    from kubernetes import client as k8s_client_mod, config as k8s_config
+    from kubernetes import client as k8s_client_mod
+    from kubernetes import config as k8s_config
+
     try:
         k8s_config.load_incluster_config()
     except k8s_config.ConfigException:
@@ -1660,8 +1743,10 @@ def run(
     try:
         custom_api = k8s_client_mod.CustomObjectsApi()
         engines = custom_api.list_namespaced_custom_object(
-            group="litmuschaos.io", version="v1alpha1",
-            namespace=namespace, plural="chaosengines",
+            group="litmuschaos.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="chaosengines",
         )
         engine_items = engines.get("items", [])
         if engine_items:
@@ -1669,8 +1754,11 @@ def run(
             for eng in engine_items:
                 name = eng["metadata"]["name"]
                 custom_api.delete_namespaced_custom_object(
-                    group="litmuschaos.io", version="v1alpha1",
-                    namespace=namespace, plural="chaosengines", name=name,
+                    group="litmuschaos.io",
+                    version="v1alpha1",
+                    namespace=namespace,
+                    plural="chaosengines",
+                    name=name,
                 )
             click.echo("  ChaosEngines: cleaned")
         else:
@@ -1685,9 +1773,7 @@ def run(
             pods = core_api.list_namespaced_pod(ns, label_selector=label)
             for pod in pods.items:
                 if pod.status.phase == "Running":
-                    ready = all(
-                        cs.ready for cs in (pod.status.container_statuses or [])
-                    )
+                    ready = all(cs.ready for cs in (pod.status.container_statuses or []))
                     if ready:
                         return True
         except Exception:
@@ -1696,6 +1782,7 @@ def run(
 
     import socket
     import subprocess as _sp
+
     apps_api = k8s_client_mod.AppsV1Api()
     _preflight_setup = None  # lazy LitmusSetup instance
 
@@ -1731,7 +1818,8 @@ def run(
         """Start a kubectl port-forward in the background."""
         _sp.Popen(
             ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
-            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
         )
         time.sleep(3)
 
@@ -1768,7 +1856,10 @@ def run(
         else:
             click.echo("  Prometheus:  WARNING - no ready pod found after 60s", err=True)
             click.echo("               Prometheus metrics may be unavailable.", err=True)
-            click.echo("               Check: kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus", err=True)
+            click.echo(
+                "               Check: kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus",
+                err=True,
+            )
 
     # Neo4j
     if neo4j_uri:
@@ -1795,22 +1886,27 @@ def run(
             if _check_port(host, port):
                 click.echo(f"  Neo4j bolt:  {host}:{port} reachable")
             else:
-                click.echo(f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward...", err=True)
+                click.echo(
+                    f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward...",
+                    err=True,
+                )
                 _start_port_forward("neo4j", "neo4j", ["7687:7687", "7474:7474"])
                 if _check_port(host, port):
                     click.echo(f"  Neo4j bolt:  {host}:{port} reachable (port-forward started)")
                 else:
-                    click.echo(f"  Neo4j bolt:  WARNING - still not reachable at {host}:{port}", err=True)
+                    click.echo(
+                        f"  Neo4j bolt:  WARNING - still not reachable at {host}:{port}", err=True
+                    )
         else:
             click.echo("  Neo4j:       WARNING - no ready pod found in neo4j namespace", err=True)
 
     # metrics-server — verify API works and has --kubelet-insecure-tls for Vagrant clusters
-    metrics_api_ok = False
     try:
         k8s_client_mod.CustomObjectsApi().list_cluster_custom_object(
-            group="metrics.k8s.io", version="v1beta1", plural="nodes",
+            group="metrics.k8s.io",
+            version="v1beta1",
+            plural="nodes",
         )
-        metrics_api_ok = True
         click.echo("  metrics-srv: API available")
     except Exception:
         # API not responding — check if deployment exists but is misconfigured
@@ -1851,12 +1947,22 @@ def run(
     failed = 0
     run_store = _get_store(db)
 
-    # Optional Neo4j graph store
+    # Neo4j graph store — primary data store
     graph_store = None
     if neo4j_uri:
         try:
             from chaosprobe.storage.neo4j_store import Neo4jStore
-            graph_store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
+
+            # Retry connection — Neo4j may still be starting after install
+            for _attempt in range(6):
+                try:
+                    graph_store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
+                    break
+                except Exception:
+                    if _attempt == 5:
+                        raise
+                    click.echo(f"  Neo4j:      waiting for bolt to become ready ({_attempt + 1}/6)...")
+                    time.sleep(5)
             graph_store.ensure_schema()
             # Sync current cluster topology into the graph
             try:
@@ -1864,22 +1970,36 @@ def run(
                 nodes_raw = topo_mutator.get_nodes()
                 deployments_raw = topo_mutator.get_deployments()
                 graph_store.sync_topology(
-                    [{"name": n.name,
-                      "cpu": n.allocatable_cpu_millicores,
-                      "memory": n.allocatable_memory_bytes,
-                      "control_plane": n.is_control_plane} for n in nodes_raw],
-                    [{"name": d.name,
-                      "namespace": d.namespace,
-                      "replicas": d.replicas} for d in deployments_raw],
+                    [
+                        {
+                            "name": n.name,
+                            "cpu": n.allocatable_cpu_millicores,
+                            "memory": n.allocatable_memory_bytes,
+                            "control_plane": n.is_control_plane,
+                        }
+                        for n in nodes_raw
+                    ],
+                    [
+                        {"name": d.name, "namespace": d.namespace, "replicas": d.replicas}
+                        for d in deployments_raw
+                    ],
                 )
             except Exception as e:
                 click.echo(f"  Neo4j: topology sync skipped ({e})", err=True)
             graph_store.sync_service_dependencies()
             click.echo(f"  Neo4j:      connected ({neo4j_uri})")
         except ImportError:
-            click.echo("  Neo4j: skipped (install with: uv pip install chaosprobe[graph])", err=True)
+            click.echo(
+                "Error: Neo4j driver not installed (install with: uv pip install chaosprobe[graph])",
+                err=True,
+            )
+            sys.exit(1)
         except Exception as e:
-            click.echo(f"  Neo4j: connection failed ({e})", err=True)
+            click.echo(f"Error: Neo4j connection failed ({e})", err=True)
+            click.echo(
+                "Neo4j is required as the primary data store. Check connection and retry.", err=True
+            )
+            sys.exit(1)
 
     for idx, strategy_name in enumerate(strategy_list, 1):
         click.echo(f"\n{'─' * 60}")
@@ -1904,7 +2024,10 @@ def run(
             # ── Step 2: Apply placement (skip for baseline) ──
             if strategy_name == "baseline":
                 click.echo("\n  Step 2: Baseline — using default scheduling")
-                strategy_result["placement"] = {"strategy": "baseline", "description": "Default Kubernetes scheduling"}
+                strategy_result["placement"] = {
+                    "strategy": "baseline",
+                    "description": "Default Kubernetes scheduling",
+                }
             else:
                 click.echo(f"\n  Step 2: Applying {strategy_name} placement...")
                 strat = PlacementStrategy(strategy_name)
@@ -1918,7 +2041,9 @@ def run(
 
                 # Show summary
                 nodes_used = set(assignment.assignments.values())
-                click.echo(f"    Placed {len(assignment.assignments)} deployments across {len(nodes_used)} node(s)")
+                click.echo(
+                    f"    Placed {len(assignment.assignments)} deployments across {len(nodes_used)} node(s)"
+                )
                 for node in sorted(nodes_used):
                     count = sum(1 for n in assignment.assignments.values() if n == node)
                     click.echo(f"      {node}: {count} deployment(s)")
@@ -1931,7 +2056,7 @@ def run(
                     click.echo(f"\n  ── Iteration {iter_num}/{iterations} ──")
 
                 # Settle
-                step_label = f"  Step 3" if iterations == 1 else f"    Step A"
+                step_label = "  Step 3" if iterations == 1 else "    Step A"
                 if settle_time > 0:
                     click.echo(f"\n{step_label}: Waiting {settle_time}s for workloads to settle...")
                     time.sleep(settle_time)
@@ -1942,7 +2067,7 @@ def run(
                 click.echo("    Ready.")
 
                 # Run chaos experiment
-                step_label = f"  Step 4" if iterations == 1 else f"    Step B"
+                step_label = "  Step 4" if iterations == 1 else "    Step B"
                 click.echo(f"\n{step_label}: Running experiment...")
 
                 scenario = copy.deepcopy(shared_scenario)
@@ -1979,7 +2104,8 @@ def run(
                 if measure_disk:
                     click.echo("    Starting disk I/O throughput probing...")
                     disk_prober = ContinuousDiskProber(
-                        namespace, disk_target=target_deployment,
+                        namespace,
+                        disk_target=target_deployment,
                     )
                     disk_prober.start()
 
@@ -1989,7 +2115,8 @@ def run(
                 if measure_resources:
                     click.echo("    Starting resource utilization probing...")
                     resource_prober = ContinuousResourceProber(
-                        namespace, target_deployment,
+                        namespace,
+                        target_deployment,
                     )
                     resource_prober.start()
 
@@ -1999,7 +2126,8 @@ def run(
                 if measure_prometheus:
                     click.echo("    Starting Prometheus metrics collection...")
                     prometheus_prober = ContinuousPrometheusProber(
-                        namespace, prometheus_urls=list(prometheus_url) if prometheus_url else None,
+                        namespace,
+                        prometheus_urls=list(prometheus_url) if prometheus_url else None,
                     )
                     prometheus_prober.start()
 
@@ -2015,8 +2143,16 @@ def run(
 
                 try:
                     # Collect pre-chaos baseline samples
-                    pre_chaos_window = min(settle_time, 15)
-                    if (latency_prober or redis_prober or disk_prober or resource_prober or prometheus_prober) and pre_chaos_window > 0:
+                    pre_chaos_window = (
+                        baseline_duration if baseline_duration > 0 else min(settle_time, 15)
+                    )
+                    if (
+                        latency_prober
+                        or redis_prober
+                        or disk_prober
+                        or resource_prober
+                        or prometheus_prober
+                    ) and pre_chaos_window > 0:
                         click.echo(f"    Collecting pre-chaos baseline ({pre_chaos_window}s)...")
                         time.sleep(pre_chaos_window)
 
@@ -2047,7 +2183,13 @@ def run(
 
                     # Collect post-chaos recovery samples
                     post_chaos_window = min(settle_time, 15)
-                    if (latency_prober or redis_prober or disk_prober or resource_prober or prometheus_prober) and post_chaos_window > 0:
+                    if (
+                        latency_prober
+                        or redis_prober
+                        or disk_prober
+                        or resource_prober
+                        or prometheus_prober
+                    ) and post_chaos_window > 0:
                         click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
                         time.sleep(post_chaos_window)
                 finally:
@@ -2057,9 +2199,11 @@ def run(
                         try:
                             iter_locust_runner.stop()
                             iter_load_stats = iter_locust_runner.collect_stats()
-                            click.echo(f"    Load: {iter_load_stats.total_requests} reqs, "
-                                       f"p95={iter_load_stats.p95_response_time_ms:.0f}ms, "
-                                       f"err={iter_load_stats.error_rate:.2%}")
+                            click.echo(
+                                f"    Load: {iter_load_stats.total_requests} reqs, "
+                                f"p95={iter_load_stats.p95_response_time_ms:.0f}ms, "
+                                f"err={iter_load_stats.error_rate:.2%}"
+                            )
                         except Exception as e:
                             click.echo(f"    Warning: failed to collect load stats: {e}", err=True)
                         finally:
@@ -2073,13 +2217,17 @@ def run(
                             n_samples = during.get("sampleCount", 0)
                             click.echo(f"    Latency: {n_samples} samples during chaos")
                         except Exception as e:
-                            click.echo(f"    Warning: failed to collect latency data: {e}", err=True)
+                            click.echo(
+                                f"    Warning: failed to collect latency data: {e}", err=True
+                            )
                     if redis_prober:
                         try:
                             redis_prober.stop()
                             redis_data = redis_prober.result()
                             rp = redis_data.get("phases", {}).get("during-chaos", {})
-                            click.echo(f"    Redis: {rp.get('sampleCount', 0)} samples during chaos")
+                            click.echo(
+                                f"    Redis: {rp.get('sampleCount', 0)} samples during chaos"
+                            )
                         except Exception as e:
                             click.echo(f"    Warning: failed to collect Redis data: {e}", err=True)
                     if disk_prober:
@@ -2096,22 +2244,34 @@ def run(
                             resource_data = resource_prober.result()
                             if resource_data.get("available"):
                                 rp = resource_data.get("phases", {}).get("during-chaos", {})
-                                click.echo(f"    Resources: {rp.get('sampleCount', 0)} samples during chaos")
+                                click.echo(
+                                    f"    Resources: {rp.get('sampleCount', 0)} samples during chaos"
+                                )
                             else:
-                                click.echo(f"    Resources: {resource_data.get('reason', 'unavailable')}")
+                                click.echo(
+                                    f"    Resources: {resource_data.get('reason', 'unavailable')}"
+                                )
                         except Exception as e:
-                            click.echo(f"    Warning: failed to collect resource data: {e}", err=True)
+                            click.echo(
+                                f"    Warning: failed to collect resource data: {e}", err=True
+                            )
                     if prometheus_prober:
                         try:
                             prometheus_prober.stop()
                             prometheus_data = prometheus_prober.result()
                             if prometheus_data.get("available"):
                                 pp = prometheus_data.get("phases", {}).get("during-chaos", {})
-                                click.echo(f"    Prometheus: {pp.get('sampleCount', 0)} samples during chaos")
+                                click.echo(
+                                    f"    Prometheus: {pp.get('sampleCount', 0)} samples during chaos"
+                                )
                             else:
-                                click.echo(f"    Prometheus: {prometheus_data.get('reason', 'unavailable')}")
+                                click.echo(
+                                    f"    Prometheus: {prometheus_data.get('reason', 'unavailable')}"
+                                )
                         except Exception as e:
-                            click.echo(f"    Warning: failed to collect Prometheus data: {e}", err=True)
+                            click.echo(
+                                f"    Warning: failed to collect Prometheus data: {e}", err=True
+                            )
                     watcher.stop()
 
                 recovery_data = watcher.result()
@@ -2136,15 +2296,24 @@ def run(
                 )
 
                 # Generate output
-                generator = OutputGenerator(scenario, results, metrics=recovery)
-                output_data = generator.generate()
-
-                # Merge placement info so Neo4j and JSON have the strategy
-                output_data["placement"] = strategy_result.get("placement") or {
+                placement_info = strategy_result.get("placement") or {
                     "strategy": strategy_name,
                     "seed": seed if strategy_name == "random" else None,
                     "assignments": {},
                 }
+                generator = OutputGenerator(
+                    scenario,
+                    results,
+                    metrics=recovery,
+                    placement=placement_info,
+                )
+                output_data = generator.generate()
+
+                # Merge placement info so Neo4j has the strategy
+                output_data["placement"] = placement_info
+
+                # Tag with session ID for grouping runs
+                output_data["sessionId"] = ts
 
                 # Merge load stats into output
                 if iter_load_stats:
@@ -2153,19 +2322,13 @@ def run(
                         "stats": iter_load_stats.to_dict(),
                     }
 
-                # Save result file
-                if iterations > 1:
-                    result_file = results_dir / f"{strategy_name}-iter-{iter_num}.json"
-                else:
-                    result_file = results_dir / f"{strategy_name}.json"
-                result_file.write_text(json.dumps(output_data, indent=2))
-
-                # Persist to database after JSON is finalised — keeps both in sync
+                # Persist to database
                 if run_store:
                     try:
                         run_store.save_run(output_data)
                     except Exception as e:
                         import warnings
+
                         warnings.warn(f"Failed to save results to database: {e}")
 
                 # Sync to Neo4j graph if connected
@@ -2173,7 +2336,9 @@ def run(
                     try:
                         graph_store.sync_run(output_data)
                     except Exception as e:
+                        import traceback
                         click.echo(f"    Warning: Neo4j sync failed: {e}", err=True)
+                        click.echo(traceback.format_exc(), err=True)
 
                 verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
                 score = output_data.get("summary", {}).get("resilienceScore", 0)
@@ -2181,16 +2346,18 @@ def run(
                 avg_recovery = rec_summary.get("meanRecovery_ms")
                 recovery_str = f" | Avg Recovery: {avg_recovery:.0f}ms" if avg_recovery else ""
 
-                click.echo(f"\n    Results saved to {result_file}")
+                click.echo(f"\n    Results synced to Neo4j (run: {output_data.get('runId', '')})")
                 click.echo(f"    Verdict: {verdict} | Resilience Score: {score:.1f}{recovery_str}")
 
-                iteration_results.append({
-                    "iteration": iter_num,
-                    "verdict": verdict,
-                    "resilienceScore": score,
-                    "metrics": recovery,
-                    "resultFile": str(result_file),
-                })
+                iteration_results.append(
+                    {
+                        "iteration": iter_num,
+                        "verdict": verdict,
+                        "resilienceScore": score,
+                        "metrics": recovery,
+                        "runId": output_data.get("runId", ""),
+                    }
+                )
 
             # Aggregate results across iterations
             if iterations > 1:
@@ -2201,11 +2368,15 @@ def run(
 
                 agg = strategy_result["aggregated"]
                 iter_passed = sum(1 for ir in iteration_results if ir["verdict"] == "PASS")
-                click.echo(f"\n    Aggregated: {iter_passed}/{iterations} passed | "
-                           f"Mean Score: {agg['meanResilienceScore']:.1f}")
+                click.echo(
+                    f"\n    Aggregated: {iter_passed}/{iterations} passed | "
+                    f"Mean Score: {agg['meanResilienceScore']:.1f}"
+                )
                 if agg.get("meanRecoveryTime_ms") is not None:
-                    click.echo(f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
-                               f"Max: {agg['maxRecoveryTime_ms']:.0f}ms")
+                    click.echo(
+                        f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
+                        f"Max: {agg['maxRecoveryTime_ms']:.0f}ms"
+                    )
 
                 if agg["passRate"] == 1.0:
                     passed += 1
@@ -2223,7 +2394,7 @@ def run(
                 }
                 strategy_result["metrics"] = ir["metrics"]
                 strategy_result["status"] = "completed"
-                strategy_result["resultFile"] = ir["resultFile"]
+                strategy_result["runId"] = ir["runId"]
 
                 if ir["verdict"] == "PASS":
                     passed += 1
@@ -2259,8 +2430,10 @@ def run(
     comparison_table = _build_comparison_table(overall_results["strategies"], iterations)
     overall_results["comparison"] = comparison_table
 
-    summary_file = results_dir / "summary.json"
-    summary_file.write_text(json.dumps(overall_results, indent=2))
+    # Generate remediation log pairing baseline state with strategy outcomes
+    from chaosprobe.metrics.remediation import generate_remediation_log
+
+    overall_results["remediationLog"] = generate_remediation_log(overall_results)
 
     # ── Print final summary ──
     click.echo(f"\n{'=' * 60}")
@@ -2269,12 +2442,18 @@ def run(
 
     has_recovery = any(r.get("avgRecovery_ms") is not None for r in comparison_table)
     if has_recovery:
-        click.echo(f"\n  {'Strategy':<16s} {'Verdict':<8s} {'Score':<8s} "
-                    f"{'Avg Rec.':<10s} {'Max Rec.':<10s} {'Status'}")
+        click.echo(
+            f"\n  {'Strategy':<16s} {'Verdict':<8s} {'Score':<8s} "
+            f"{'Avg Rec.':<10s} {'Max Rec.':<10s} {'Status'}"
+        )
         click.echo(f"  {'─' * 68}")
         for row in comparison_table:
-            avg_r = f"{row['avgRecovery_ms']:.0f}ms" if row.get("avgRecovery_ms") is not None else "n/a"
-            max_r = f"{row['maxRecovery_ms']:.0f}ms" if row.get("maxRecovery_ms") is not None else "n/a"
+            avg_r = (
+                f"{row['avgRecovery_ms']:.0f}ms" if row.get("avgRecovery_ms") is not None else "n/a"
+            )
+            max_r = (
+                f"{row['maxRecovery_ms']:.0f}ms" if row.get("maxRecovery_ms") is not None else "n/a"
+            )
             click.echo(
                 f"  {row['strategy']:<16s} {row['verdict']:<8s} "
                 f"{row['resilienceScore']:<8.1f} {avg_r:<10s} {max_r:<10s} {row['status']}"
@@ -2288,8 +2467,7 @@ def run(
                 f"{row['resilienceScore']:<10.1f} {row['status']}"
             )
 
-    click.echo(f"\n  Results directory: {results_dir}")
-    click.echo(f"  Summary:          {summary_file}")
+    click.echo(f"\n  Session: {ts}")
     click.echo(f"\n  Total: {total} | Passed: {passed} | Failed: {failed}")
 
     # ── Generate visualizations if requested ──
@@ -2297,9 +2475,10 @@ def run(
         click.echo(f"\n{'─' * 60}")
         click.echo("Generating visualizations...")
         try:
-            from chaosprobe.output.visualize import generate_from_summary
+            from chaosprobe.output.visualize import generate_from_dict
+
             charts_dir = str(results_dir / "charts")
-            generated = generate_from_summary(str(summary_file), charts_dir)
+            generated = generate_from_dict(overall_results, charts_dir)
             if generated:
                 click.echo(f"  Generated {len(generated)} file(s) in {charts_dir}")
                 html_files = [p for p in generated if p.endswith(".html")]
@@ -2331,7 +2510,8 @@ def _extract_target_deployment(scenario: Dict[str, Any]) -> str:
 
 def _wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
     """Wait until all deployments in the namespace have all replicas ready."""
-    from kubernetes import client, config as k8s_config
+    from kubernetes import client
+    from kubernetes import config as k8s_config
 
     try:
         k8s_config.load_incluster_config()
@@ -2427,8 +2607,7 @@ def _build_comparison_table(
         row: Dict[str, Any] = {
             "strategy": sname,
             "verdict": exp.get("overallVerdict", "ERROR"),
-            "resilienceScore": exp.get("resilienceScore",
-                                       exp.get("meanResilienceScore", 0)),
+            "resilienceScore": exp.get("resilienceScore", exp.get("meanResilienceScore", 0)),
             "passed": exp.get("passed", 0),
             "failed": exp.get("failed", 0),
             "status": sdata["status"],
@@ -2455,38 +2634,6 @@ def _build_comparison_table(
     return table
 
 
-# ─────────────────────────────────────────────────────────────
-# Graph commands (Neo4j)
-# ─────────────────────────────────────────────────────────────
-
-_neo4j_uri_option = click.option(
-    "--neo4j-uri", default="bolt://localhost:7687", envvar="NEO4J_URI",
-    help="Neo4j connection URI (default: bolt://localhost:7687)",
-)
-_neo4j_user_option = click.option(
-    "--neo4j-user", default="neo4j", envvar="NEO4J_USER",
-    help="Neo4j username",
-)
-_neo4j_password_option = click.option(
-    "--neo4j-password", default="chaosprobe", envvar="NEO4J_PASSWORD",
-    help="Neo4j password (default: chaosprobe)",
-)
-
-
-def _get_graph_store(uri, user, password):
-    """Create a Neo4jStore, handling missing dependency gracefully."""
-    try:
-        from chaosprobe.storage.neo4j_store import Neo4jStore
-    except ImportError:
-        click.echo(
-            "Error: Neo4j support not installed.\n"
-            "  Install with:  uv pip install chaosprobe[graph]",
-            err=True,
-        )
-        sys.exit(1)
-    return Neo4jStore(uri, user, password)
-
-
 @main.group()
 def graph():
     """Neo4j graph commands for topology and blast-radius analysis."""
@@ -2511,62 +2658,26 @@ def graph_status(neo4j_uri, neo4j_user, neo4j_password):
         store.close()
 
 
-@graph.command("sync")
-@click.argument("results_dir", required=False, default=None)
-@click.option("--namespace", "-n", default="online-boutique", help="Kubernetes namespace")
+@graph.command("sessions")
 @_neo4j_uri_option
 @_neo4j_user_option
 @_neo4j_password_option
-def graph_sync(results_dir, namespace, neo4j_uri, neo4j_user, neo4j_password):
-    """Bulk-import existing JSON results into Neo4j.
-
-    If RESULTS_DIR is given, imports all JSON files from that directory.
-    Otherwise imports from the default results/ directory.
-    """
+def graph_sessions(neo4j_uri, neo4j_user, neo4j_password):
+    """List all experiment sessions stored in Neo4j."""
     store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
     try:
-        store.ensure_schema()
-        store.sync_service_dependencies()
-
-        # Sync cluster topology if we have k8s access
-        try:
-            mutator = PlacementMutator(namespace)
-            nodes_raw = mutator.get_nodes()
-            deployments_raw = mutator.get_deployments()
-            store.sync_topology(
-                [{"name": n.name,
-                  "cpu": n.allocatable_cpu_millicores,
-                  "memory": n.allocatable_memory_bytes,
-                  "control_plane": n.is_control_plane} for n in nodes_raw],
-                [{"name": d.name,
-                  "namespace": d.namespace,
-                  "replicas": d.replicas} for d in deployments_raw],
+        sessions = store.list_sessions()
+        if not sessions:
+            click.echo("No sessions found.")
+            return
+        click.echo(f"\n  {'Session ID':<22s} {'Runs':<6s} {'Strategies':<40s} {'First Run'}")
+        click.echo(f"  {'─' * 80}")
+        for s in sessions:
+            strats = ", ".join(sorted(s.get("strategies", [])))
+            click.echo(
+                f"  {s['session_id']:<22s} {s['run_count']:<6d} "
+                f"{strats:<40s} {s.get('first_run', '')}"
             )
-            click.echo(f"  Synced {len(nodes_raw)} nodes, {len(deployments_raw)} deployments")
-        except Exception as e:
-            click.echo(f"  Skipping topology sync (no cluster access): {e}", err=True)
-
-        # Find and import result JSON files
-        base = Path(results_dir) if results_dir else Path("results")
-        if not base.exists():
-            click.echo(f"Error: directory '{base}' not found", err=True)
-            sys.exit(1)
-
-        json_files = sorted(base.rglob("*.json"))
-        # Skip summary.json files — only import per-strategy results
-        json_files = [f for f in json_files if f.name != "summary.json"]
-
-        imported = 0
-        for jf in json_files:
-            try:
-                data = json.loads(jf.read_text())
-                if "runId" in data:
-                    store.sync_run(data)
-                    imported += 1
-            except Exception as e:
-                click.echo(f"  Skipping {jf.name}: {e}", err=True)
-
-        click.echo(f"  Imported {imported} run(s) from {len(json_files)} file(s)")
     finally:
         store.close()
 
@@ -2651,47 +2762,61 @@ def graph_details(run_id, neo4j_uri, neo4j_user, neo4j_password, json_output):
         click.echo(f"  Total Restarts:   {exp.get('total_restarts')}")
 
         if exp.get("mean_recovery_ms") is not None:
-            click.echo(f"\n  Recovery:")
+            click.echo("\n  Recovery:")
             click.echo(f"    Mean:   {exp.get('mean_recovery_ms'):.0f}ms")
             click.echo(f"    Median: {exp.get('median_recovery_ms'):.0f}ms")
             click.echo(f"    Min:    {exp.get('min_recovery_ms')}ms")
             click.echo(f"    Max:    {exp.get('max_recovery_ms')}ms")
             click.echo(f"    P95:    {exp.get('p95_recovery_ms')}ms")
-            click.echo(f"    Cycles: {exp.get('completed_cycles')} completed, {exp.get('incomplete_cycles')} incomplete")
+            click.echo(
+                f"    Cycles: {exp.get('completed_cycles')} completed, {exp.get('incomplete_cycles')} incomplete"
+            )
 
         if exp.get("load_profile"):
             click.echo(f"\n  Load Generation: {exp.get('load_profile')}")
-            click.echo(f"    Requests: {exp.get('load_total_requests')} ({exp.get('load_total_failures')} failures)")
-            click.echo(f"    Avg Response: {exp.get('load_avg_response_ms')}ms  P95: {exp.get('load_p95_response_ms')}ms")
+            click.echo(
+                f"    Requests: {exp.get('load_total_requests')} ({exp.get('load_total_failures')} failures)"
+            )
+            click.echo(
+                f"    Avg Response: {exp.get('load_avg_response_ms')}ms  P95: {exp.get('load_p95_response_ms')}ms"
+            )
 
         cycles = details.get("recoveryCycles", [])
         if cycles:
             click.echo(f"\n  Recovery Cycles ({len(cycles)}):")
             for c in cycles:
-                click.echo(f"    #{c.get('seq', '?')}: {c.get('total_recovery_ms')}ms "
-                           f"(sched: {c.get('deletion_to_scheduled_ms')}ms, "
-                           f"ready: {c.get('scheduled_to_ready_ms')}ms)")
+                click.echo(
+                    f"    #{c.get('seq', '?')}: {c.get('total_recovery_ms')}ms "
+                    f"(sched: {c.get('deletion_to_scheduled_ms')}ms, "
+                    f"ready: {c.get('scheduled_to_ready_ms')}ms)"
+                )
 
         phases = details.get("metricsPhases", [])
         if phases:
             click.echo(f"\n  Metrics Phases ({len(phases)}):")
             for p in phases:
-                click.echo(f"    {p.get('metric_type'):<12s} {p.get('phase'):<15s} "
-                           f"({p.get('sample_count', 0)} samples)")
+                click.echo(
+                    f"    {p.get('metric_type'):<12s} {p.get('phase'):<15s} "
+                    f"({p.get('sample_count', 0)} samples)"
+                )
 
         pods = details.get("podSnapshots", [])
         if pods:
             click.echo(f"\n  Pod Snapshots ({len(pods)}):")
             for p in pods:
-                click.echo(f"    {p.get('name'):<45s} {p.get('phase'):<10s} "
-                           f"node={p.get('node')}  restarts={p.get('restart_count')}")
+                click.echo(
+                    f"    {p.get('name'):<45s} {p.get('phase'):<10s} "
+                    f"node={p.get('node')}  restarts={p.get('restart_count')}"
+                )
 
         results = details.get("experimentResults", [])
         if results:
             click.echo(f"\n  Experiment Results ({len(results)}):")
             for r in results:
-                click.echo(f"    {r.get('name')}: {r.get('verdict')} "
-                           f"(probe success: {r.get('probe_success_pct')}%)")
+                click.echo(
+                    f"    {r.get('name')}: {r.get('verdict')} "
+                    f"(probe success: {r.get('probe_success_pct')}%)"
+                )
     finally:
         store.close()
 
@@ -2722,8 +2847,14 @@ def graph_compare(run_ids, neo4j_uri, neo4j_user, neo4j_password, json_output):
         click.echo(f"\n  {'Strategy':<18s} {'Runs':<6s} {'Avg Score':<12s} {'Avg Recovery'}")
         click.echo(f"  {'─' * 50}")
         for name, data in strategies.items():
-            score_str = f"{data['avgResilienceScore']:.1f}" if data["avgResilienceScore"] is not None else "n/a"
-            rec_str = f"{data['avgRecoveryMs']:.0f}ms" if data["avgRecoveryMs"] is not None else "n/a"
+            score_str = (
+                f"{data['avgResilienceScore']:.1f}"
+                if data["avgResilienceScore"] is not None
+                else "n/a"
+            )
+            rec_str = (
+                f"{data['avgRecoveryMs']:.0f}ms" if data["avgRecoveryMs"] is not None else "n/a"
+            )
             click.echo(f"  {name:<18s} {data['runCount']:<6d} {score_str:<12s} {rec_str}")
     finally:
         store.close()
@@ -2803,8 +2934,10 @@ def query_compare(
         click.echo("No data found.")
         return
 
-    click.echo(f"\n{'Strategy':<16s} {'Runs':<6s} {'Pass%':<7s} {'Avg Score':<10s} "
-               f"{'Avg Rec.':<10s} {'P95 Rec.':<10s}")
+    click.echo(
+        f"\n{'Strategy':<16s} {'Runs':<6s} {'Pass%':<7s} {'Avg Score':<10s} "
+        f"{'Avg Rec.':<10s} {'P95 Rec.':<10s}"
+    )
     click.echo("─" * 65)
     for name, data in strategies.items():
         avg_rec = f"{data['avgMeanRecovery_ms']:.0f}ms" if data.get("avgMeanRecovery_ms") else "n/a"
@@ -2853,41 +2986,83 @@ def query_show(run_id: str, db: Optional[str]):
 
 @main.command("visualize")
 @click.option(
-    "--db", default=None,
+    "--db",
+    default=None,
     help="Path to SQLite database (uses default if not set)",
 )
 @click.option(
-    "--summary", "-s", type=click.Path(exists=True), default=None,
-    help="Path to a summary.json file (alternative to database)",
+    "--summary",
+    "-s",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to a summary.json file (legacy)",
 )
 @click.option(
-    "--output-dir", "-o", default="charts",
+    "--output-dir",
+    "-o",
+    default="charts",
     help="Directory to save generated charts",
 )
 @click.option(
-    "--scenario", default=None,
+    "--scenario",
+    default=None,
     help="Filter by scenario path (database mode only)",
 )
+@click.option(
+    "--session",
+    default=None,
+    help="Session ID to visualize (Neo4j mode)",
+)
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
 def visualize(
     db: Optional[str],
     summary: Optional[str],
     output_dir: str,
     scenario: Optional[str],
+    session: Optional[str],
+    neo4j_uri: Optional[str],
+    neo4j_user: str,
+    neo4j_password: str,
 ):
     """Generate visualization charts from experiment results.
 
-    Can read from the SQLite database or directly from a summary.json file
-    produced by the run command.
+    Can read from Neo4j graph database, SQLite database, or a legacy
+    summary.json file.
 
     \b
     Examples:
+      chaosprobe visualize --neo4j-uri bolt://localhost:7687 --session 20260402-013423
       chaosprobe visualize --db results.db -o charts/
       chaosprobe visualize --summary results/20260227-140237/summary.json
-      chaosprobe visualize --db results.db --scenario online-boutique
     """
-    from chaosprobe.output.visualize import generate_all_charts, generate_from_summary
+    from chaosprobe.output.visualize import (
+        generate_all_charts,
+        generate_from_dict,
+        generate_from_summary,
+    )
 
-    if summary:
+    if neo4j_uri:
+        store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+        try:
+            if not session:
+                # Pick the most recent session
+                sessions = store.list_sessions()
+                if not sessions:
+                    click.echo("No sessions found in Neo4j.", err=True)
+                    return
+                session = sessions[0]["session_id"]
+                click.echo(f"Using most recent session: {session}")
+            click.echo(f"Generating charts from Neo4j (session={session})...")
+            summary_data = store.get_session_visualization_data(session)
+            generated = generate_from_dict(summary_data, output_dir)
+        except ImportError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        finally:
+            store.close()
+    elif summary:
         click.echo(f"Generating charts from {summary}...")
         try:
             generated = generate_from_summary(summary, output_dir)
@@ -2895,8 +3070,9 @@ def visualize(
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
     else:  # Default to DB mode
-        click.echo(f"Generating charts from database...")
+        click.echo("Generating charts from database...")
         from chaosprobe.storage.sqlite import SQLiteStore
+
         store = SQLiteStore(db_path=db)
         try:
             generated = generate_all_charts(store, output_dir, scenario=scenario)
@@ -2917,6 +3093,153 @@ def visualize(
     html_files = [p for p in generated if p.endswith(".html")]
     if html_files:
         click.echo(f"\nOpen the report: {html_files[0]}")
+
+
+# ─────────────────────────────────────────────────────────────
+# ML export commands
+# ─────────────────────────────────────────────────────────────
+
+
+@main.command("ml-export")
+@click.option(
+    "--db",
+    default=None,
+    help="Path to SQLite database",
+)
+@click.option(
+    "--neo4j-uri",
+    default=None,
+    envvar="NEO4J_URI",
+    help="Neo4j connection URI (export directly from graph)",
+)
+@click.option(
+    "--neo4j-user",
+    default="neo4j",
+    envvar="NEO4J_USER",
+    help="Neo4j username",
+)
+@click.option(
+    "--neo4j-password",
+    default="chaosprobe",
+    envvar="NEO4J_PASSWORD",
+    help="Neo4j password",
+)
+@click.option(
+    "--output",
+    "-o",
+    required=True,
+    type=click.Path(),
+    help="Output file path (e.g. dataset.csv or dataset.parquet)",
+)
+@click.option(
+    "--format",
+    "-f",
+    "fmt",
+    type=click.Choice(["csv", "parquet"]),
+    default="csv",
+    show_default=True,
+    help="Output format",
+)
+@click.option(
+    "--resolution",
+    "-r",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Time bucket resolution in seconds (SQLite mode only)",
+)
+@click.option(
+    "--scenario",
+    default=None,
+    help="Filter by scenario path (database mode only)",
+)
+@click.option(
+    "--strategy",
+    default=None,
+    help="Filter by strategy name",
+)
+def ml_export(
+    db: Optional[str],
+    neo4j_uri: Optional[str],
+    neo4j_user: str,
+    neo4j_password: str,
+    output: str,
+    fmt: str,
+    resolution: float,
+    scenario: Optional[str],
+    strategy: Optional[str],
+):
+    """Export ML-ready aligned time-series dataset.
+
+    Reads experiment results and produces a feature matrix where each row
+    is a time bucket with all metric columns aligned and labeled with the
+    ground-truth anomaly type.
+
+    Supports two data sources: Neo4j graph database or SQLite database.
+
+    \b
+    Examples:
+      chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.csv
+      chaosprobe ml-export --db results.db -o dataset.parquet -f parquet
+    """
+    from chaosprobe.output.ml_export import (
+        export_from_neo4j,
+        export_from_sqlite,
+        write_dataset,
+    )
+
+    if neo4j_uri:
+        click.echo(f"Exporting from Neo4j ({neo4j_uri})...")
+        rows = export_from_neo4j(
+            uri=neo4j_uri,
+            user=neo4j_user,
+            password=neo4j_password,
+            strategy=strategy,
+        )
+    elif db:
+        click.echo(f"Exporting from database {db} (resolution={resolution}s)...")
+        rows = export_from_sqlite(
+            db_path=db,
+            scenario=scenario,
+            strategy=strategy,
+            resolution_s=resolution,
+        )
+    else:
+        click.echo("Error: specify --neo4j-uri (graph) or --db (database path)", err=True)
+        sys.exit(1)
+
+    if not rows:
+        click.echo("No data found to export.")
+        return
+
+    path = write_dataset(rows, output, format=fmt)
+    click.echo(f"\nExported {len(rows)} samples to {path}")
+
+    # Print dataset summary
+    strategies = set(r.get("strategy", "n/a") for r in rows)
+    anomalies = set(r.get("anomaly_label", "n/a") for r in rows)
+    click.echo(f"  Strategies: {', '.join(sorted(str(s) for s in strategies))}")
+    click.echo(f"  Anomaly types: {', '.join(sorted(str(a) for a in anomalies))}")
+
+    # Count columns (features)
+    if rows:
+        cols = set()
+        for row in rows:
+            cols.update(row.keys())
+        meta_cols = {
+            "timestamp",
+            "epoch_s",
+            "phase",
+            "strategy",
+            "anomaly_label",
+            "run_id",
+            "resilience_score",
+            "overall_verdict",
+        }
+        feature_cols = cols - meta_cols
+        click.echo(
+            f"  Features: {len(feature_cols)} metric columns + {len(meta_cols)} metadata columns"
+        )
 
 
 if __name__ == "__main__":

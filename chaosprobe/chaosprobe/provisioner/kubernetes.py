@@ -118,13 +118,15 @@ class KubernetesProvisioner:
         applier = appliers.get(kind)
         if applier:
             applier(name, spec)
-            self._applied_resources.append({
-                "kind": kind,
-                "name": name,
-                "namespace": self.namespace,
-                "file": filepath,
-                "apiVersion": api_version,
-            })
+            self._applied_resources.append(
+                {
+                    "kind": kind,
+                    "name": name,
+                    "namespace": self.namespace,
+                    "file": filepath,
+                    "apiVersion": api_version,
+                }
+            )
         else:
             print(f"    WARNING: Unsupported resource kind '{kind}' in {filepath}, skipping")
 
@@ -216,13 +218,27 @@ class KubernetesProvisioner:
         delete_opts = client.V1DeleteOptions(propagation_policy="Foreground")
 
         deleters = {
-            "ServiceAccount": lambda: self.core_api.delete_namespaced_service_account(name, self.namespace, body=delete_opts),
-            "Deployment": lambda: self.apps_api.delete_namespaced_deployment(name, self.namespace, body=delete_opts),
-            "Service": lambda: self.core_api.delete_namespaced_service(name, self.namespace, body=delete_opts),
-            "ConfigMap": lambda: self.core_api.delete_namespaced_config_map(name, self.namespace, body=delete_opts),
-            "Secret": lambda: self.core_api.delete_namespaced_secret(name, self.namespace, body=delete_opts),
-            "PodDisruptionBudget": lambda: self.policy_api.delete_namespaced_pod_disruption_budget(name, self.namespace, body=delete_opts),
-            "NetworkPolicy": lambda: self.networking_api.delete_namespaced_network_policy(name, self.namespace, body=delete_opts),
+            "ServiceAccount": lambda: self.core_api.delete_namespaced_service_account(
+                name, self.namespace, body=delete_opts
+            ),
+            "Deployment": lambda: self.apps_api.delete_namespaced_deployment(
+                name, self.namespace, body=delete_opts
+            ),
+            "Service": lambda: self.core_api.delete_namespaced_service(
+                name, self.namespace, body=delete_opts
+            ),
+            "ConfigMap": lambda: self.core_api.delete_namespaced_config_map(
+                name, self.namespace, body=delete_opts
+            ),
+            "Secret": lambda: self.core_api.delete_namespaced_secret(
+                name, self.namespace, body=delete_opts
+            ),
+            "PodDisruptionBudget": lambda: self.policy_api.delete_namespaced_pod_disruption_budget(
+                name, self.namespace, body=delete_opts
+            ),
+            "NetworkPolicy": lambda: self.networking_api.delete_namespaced_network_policy(
+                name, self.namespace, body=delete_opts
+            ),
         }
 
         deleter = deleters.get(kind)
@@ -239,7 +255,9 @@ class KubernetesProvisioner:
         if not deployments:
             return
 
-        print(f"  Waiting for {len(deployments)} deployment(s) to become ready (timeout: {timeout}s)...")
+        print(
+            f"  Waiting for {len(deployments)} deployment(s) to become ready (timeout: {timeout}s)..."
+        )
         start = time.time()
         for dep in deployments:
             name = dep["name"]

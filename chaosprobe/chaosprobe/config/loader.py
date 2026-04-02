@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-
 # Kinds that are treated as ChaosEngine experiment definitions
 CHAOS_KINDS = {"ChaosEngine"}
 

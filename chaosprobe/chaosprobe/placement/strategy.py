@@ -64,7 +64,10 @@ class NodeInfo:
     def is_schedulable(self) -> bool:
         """Check if the node accepts regular workloads."""
         for taint in self.taints:
-            if taint.get("key") in self.CONTROL_PLANE_LABEL_KEYS and taint.get("effect") == "NoSchedule":
+            if (
+                taint.get("key") in self.CONTROL_PLANE_LABEL_KEYS
+                and taint.get("effect") == "NoSchedule"
+            ):
                 return False
         return self.conditions_ready
 
@@ -226,8 +229,7 @@ def _compute_spread(
         metadata={
             "distribution": per_node,
             "description": (
-                f"{len(deployments)} deployments distributed across "
-                f"{len(node_names)} nodes"
+                f"{len(deployments)} deployments distributed across " f"{len(node_names)} nodes"
             ),
         },
     )

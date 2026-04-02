@@ -48,9 +48,7 @@ class ResultCollector:
 
         return results
 
-    def _collect_experiment_result(
-        self, engine_name: str, experiment_name: str
-    ) -> Dict[str, Any]:
+    def _collect_experiment_result(self, engine_name: str, experiment_name: str) -> Dict[str, Any]:
         """Collect result for a single experiment."""
         result: Dict[str, Any] = {
             "name": experiment_name,
@@ -89,9 +87,7 @@ class ResultCollector:
                 return None
             raise
 
-    def _get_chaos_result(
-        self, engine_name: str, experiment_name: str
-    ) -> Optional[Dict[str, Any]]:
+    def _get_chaos_result(self, engine_name: str, experiment_name: str) -> Optional[Dict[str, Any]]:
         """Get the ChaosResult for an experiment.
 
         ChaosResult name follows the pattern: <engine-name>-<experiment-type>.
@@ -178,9 +174,7 @@ class ResultCollector:
 
     def _parse_probe_success(self, status: Dict[str, Any]) -> float:
         """Parse probe success percentage from status."""
-        probe_success = status.get("experimentStatus", {}).get(
-            "probeSuccessPercentage", "0%"
-        )
+        probe_success = status.get("experimentStatus", {}).get("probeSuccessPercentage", "0%")
         if isinstance(probe_success, str):
             probe_success = probe_success.rstrip("%")
             try:
@@ -236,8 +230,7 @@ def calculate_resilience_score(
 
     total_weight = sum(weights.get(r["name"], 1.0) for r in results)
     weighted_sum = sum(
-        weights.get(r["name"], 1.0) * r.get("probeSuccessPercentage", 0)
-        for r in results
+        weights.get(r["name"], 1.0) * r.get("probeSuccessPercentage", 0) for r in results
     )
 
     return round(weighted_sum / total_weight, 2) if total_weight > 0 else 0.0

@@ -138,7 +138,11 @@ class MetricsCollector:
         return result
 
     def _collect_pod_status(self, deployment_name: str) -> Dict[str, Any]:
-        """Collect current pod status and restart counts."""
+        """Collect current pod status and restart counts.
+
+        Includes container-level granularity: per-container restart reasons,
+        resource requests/limits, and last termination state.
+        """
         try:
             pods = self.core_api.list_namespaced_pod(
                 self.namespace,
@@ -153,8 +157,61 @@ class MetricsCollector:
         for pod in pods.items:
             restarts = 0
             container_statuses = pod.status.container_statuses or []
+
+            # Container-level detail
+            containers = []
             for cs in container_statuses:
                 restarts += cs.restart_count
+
+                container_info: Dict[str, Any] = {
+                    "name": cs.name,
+                    "ready": cs.ready,
+                    "restartCount": cs.restart_count,
+                    "started": cs.started if hasattr(cs, "started") else None,
+                }
+
+                # Current state
+                if cs.state:
+                    if cs.state.running:
+                        container_info["state"] = "running"
+                        container_info["startedAt"] = (
+                            cs.state.running.started_at.isoformat()
+                            if cs.state.running.started_at
+                            else None
+                        )
+                    elif cs.state.waiting:
+                        container_info["state"] = "waiting"
+                        container_info["waitingReason"] = cs.state.waiting.reason
+                        container_info["waitingMessage"] = cs.state.waiting.message
+                    elif cs.state.terminated:
+                        container_info["state"] = "terminated"
+                        container_info["terminatedReason"] = cs.state.terminated.reason
+                        container_info["exitCode"] = cs.state.terminated.exit_code
+
+                # Last termination state (critical for OOMKills, CrashLoopBackOff)
+                if cs.last_state and cs.last_state.terminated:
+                    term = cs.last_state.terminated
+                    container_info["lastTermination"] = {
+                        "reason": term.reason,
+                        "exitCode": term.exit_code,
+                        "startedAt": term.started_at.isoformat() if term.started_at else None,
+                        "finishedAt": term.finished_at.isoformat() if term.finished_at else None,
+                        "message": term.message,
+                    }
+
+                containers.append(container_info)
+
+            # Extract resource requests/limits from pod spec
+            resource_specs = []
+            for container_spec in pod.spec.containers or []:
+                spec_info: Dict[str, Any] = {"name": container_spec.name}
+                res = container_spec.resources
+                if res:
+                    if res.requests:
+                        spec_info["requests"] = {k: str(v) for k, v in res.requests.items()}
+                    if res.limits:
+                        spec_info["limits"] = {k: str(v) for k, v in res.limits.items()}
+                resource_specs.append(spec_info)
 
             total_restarts += restarts
 
@@ -174,6 +231,8 @@ class MetricsCollector:
                     "node": pod.spec.node_name,
                     "restartCount": restarts,
                     "conditions": conditions,
+                    "containers": containers,
+                    "resourceSpecs": resource_specs,
                 }
             )
 

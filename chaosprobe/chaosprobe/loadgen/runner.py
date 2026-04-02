@@ -38,9 +38,7 @@ class LoadProfile:
         return cls(name=name, **cls.PROFILES[name])
 
     @classmethod
-    def custom(
-        cls, users: int, spawn_rate: int, duration_seconds: int
-    ) -> "LoadProfile":
+    def custom(cls, users: int, spawn_rate: int, duration_seconds: int) -> "LoadProfile":
         return cls(
             name="custom",
             users=users,
@@ -196,12 +194,18 @@ class LocustRunner:
         cmd = [
             "locust",
             "--headless",
-            "--locustfile", locustfile,
-            "--host", self.target_url,
-            "--users", str(profile.users),
-            "--spawn-rate", str(profile.spawn_rate),
-            "--run-time", f"{profile.duration_seconds}s",
-            "--csv", stats_prefix,
+            "--locustfile",
+            locustfile,
+            "--host",
+            self.target_url,
+            "--users",
+            str(profile.users),
+            "--spawn-rate",
+            str(profile.spawn_rate),
+            "--run-time",
+            f"{profile.duration_seconds}s",
+            "--csv",
+            stats_prefix,
             "--csv-full-history",
             "--only-summary",
         ]
@@ -263,34 +267,16 @@ class LocustRunner:
                 if name == "Aggregated" or req_type == "Aggregated":
                     stats.total_requests = int(row.get("Request Count", 0))
                     stats.total_failures = int(row.get("Failure Count", 0))
-                    stats.avg_response_time_ms = float(
-                        row.get("Average Response Time", 0)
-                    )
-                    stats.min_response_time_ms = float(
-                        row.get("Min Response Time", 0)
-                    )
-                    stats.max_response_time_ms = float(
-                        row.get("Max Response Time", 0)
-                    )
-                    stats.p50_response_time_ms = float(
-                        row.get("50%", 0)
-                    )
-                    stats.p95_response_time_ms = float(
-                        row.get("95%", 0)
-                    )
-                    stats.p99_response_time_ms = float(
-                        row.get("99%", 0)
-                    )
-                    stats.requests_per_second = float(
-                        row.get("Requests/s", 0)
-                    )
-                    stats.failures_per_second = float(
-                        row.get("Failures/s", 0)
-                    )
+                    stats.avg_response_time_ms = float(row.get("Average Response Time", 0))
+                    stats.min_response_time_ms = float(row.get("Min Response Time", 0))
+                    stats.max_response_time_ms = float(row.get("Max Response Time", 0))
+                    stats.p50_response_time_ms = float(row.get("50%", 0))
+                    stats.p95_response_time_ms = float(row.get("95%", 0))
+                    stats.p99_response_time_ms = float(row.get("99%", 0))
+                    stats.requests_per_second = float(row.get("Requests/s", 0))
+                    stats.failures_per_second = float(row.get("Failures/s", 0))
                     if stats.total_requests > 0:
-                        stats.error_rate = round(
-                            stats.total_failures / stats.total_requests, 4
-                        )
+                        stats.error_rate = round(stats.total_failures / stats.total_requests, 4)
                 else:
                     endpoints.append(
                         {
@@ -298,9 +284,7 @@ class LocustRunner:
                             "name": name,
                             "requests": int(row.get("Request Count", 0)),
                             "failures": int(row.get("Failure Count", 0)),
-                            "avgResponseTime_ms": float(
-                                row.get("Average Response Time", 0)
-                            ),
+                            "avgResponseTime_ms": float(row.get("Average Response Time", 0)),
                             "p95ResponseTime_ms": float(row.get("95%", 0)),
                         }
                     )

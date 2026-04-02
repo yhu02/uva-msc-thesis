@@ -13,9 +13,8 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from chaosprobe.metrics.throughput import _ContinuousProberBase
 
@@ -62,7 +61,9 @@ _PROMETHEUS_PORT = 9090
 
 
 def _query_prometheus(
-    base_url: str, query: str, timeout: float = 10.0,
+    base_url: str,
+    query: str,
+    timeout: float = 10.0,
 ) -> Optional[List[Dict[str, Any]]]:
     """Execute an instant PromQL query and return the raw result vector.
 
@@ -134,7 +135,8 @@ def _check_prometheus_url(url: str, timeout: float = 5.0) -> bool:
     """Return True if *url* responds to a Prometheus API health check."""
     try:
         req = urllib.request.Request(
-            f"{url}/api/v1/status/config", method="GET",
+            f"{url}/api/v1/status/config",
+            method="GET",
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
@@ -253,9 +255,7 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
                         ", ".join(self._prometheus_urls),
                     )
                 else:
-                    logger.warning(
-                        "No Prometheus instance found — prometheus probing disabled"
-                    )
+                    logger.warning("No Prometheus instance found — prometheus probing disabled")
                     self._available = False
                     return
 
@@ -338,11 +338,7 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
         if not series:
             return {
                 "available": False,
-                "reason": (
-                    "prometheus not found"
-                    if not self._available
-                    else "no data collected"
-                ),
+                "reason": ("prometheus not found" if not self._available else "no data collected"),
             }
 
         phases = self._split_phases(series)
@@ -365,7 +361,8 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
     # -- phase aggregation --------------------------------------------------
 
     def _split_phases(
-        self, series: List[Dict[str, Any]],
+        self,
+        series: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Aggregate metrics per phase (pre/during/post-chaos)."""
         buckets: Dict[str, List[Dict[str, Any]]] = {
@@ -414,7 +411,8 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
                     }
                     if len(sample_sums) >= 2:
                         agg[label]["stdev"] = round(
-                            statistics.stdev(sample_sums), 6,
+                            statistics.stdev(sample_sums),
+                            6,
                         )
 
             phase_summary["metrics"] = agg
@@ -425,7 +423,10 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
     # -- helpers ------------------------------------------------------------
 
     def _start_port_forward(
-        self, svc_name: str, namespace: str, remote_port: int,
+        self,
+        svc_name: str,
+        namespace: str,
+        remote_port: int,
     ) -> Optional[str]:
         """Start ``kubectl port-forward`` and return a localhost URL.
 
@@ -436,10 +437,12 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
         try:
             proc = subprocess.Popen(
                 [
-                    "kubectl", "port-forward",
+                    "kubectl",
+                    "port-forward",
                     f"svc/{svc_name}",
                     f"{local_port}:{remote_port}",
-                    "-n", namespace,
+                    "-n",
+                    namespace,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
