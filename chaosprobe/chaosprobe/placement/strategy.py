@@ -141,10 +141,16 @@ def compute_assignments(
     Raises:
         ValueError: If no schedulable nodes are available or target_node not found.
     """
-    schedulable = [n for n in nodes if n.is_schedulable]
-    if not schedulable:
+    # Prefer worker nodes — scheduling on the control plane can starve
+    # the API server and crash the cluster under load.
+    workers = [n for n in nodes if n.is_schedulable and not n.is_control_plane]
+    if not workers:
+        # Fall back to any schedulable node (single-node clusters, etc.)
+        workers = [n for n in nodes if n.is_schedulable]
+    if not workers:
         raise ValueError("No schedulable worker nodes available in the cluster")
 
+    schedulable = workers
     node_names = [n.name for n in schedulable]
 
     if strategy == PlacementStrategy.COLOCATE:

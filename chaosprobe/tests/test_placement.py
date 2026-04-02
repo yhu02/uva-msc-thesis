@@ -303,6 +303,15 @@ class TestSpreadStrategy:
         )
         assert "cp1" not in assignment.assignments.values()
 
+    def test_excludes_schedulable_cp(self, schedulable_cp_and_workers, sample_deployments):
+        """When CP has no NoSchedule taint, spread should still avoid it."""
+        assignment = compute_assignments(
+            PlacementStrategy.SPREAD, sample_deployments, schedulable_cp_and_workers
+        )
+        assert "cp1" not in assignment.assignments.values()
+        nodes_used = set(assignment.assignments.values())
+        assert nodes_used == {"worker1", "worker2"}
+
 
 # ── Random strategy tests ────────────────────────────────────
 
@@ -343,6 +352,13 @@ class TestRandomStrategy:
         valid_names = {n.name for n in two_nodes}
         for node in assignment.assignments.values():
             assert node in valid_names
+
+    def test_excludes_schedulable_cp(self, schedulable_cp_and_workers, sample_deployments):
+        """Random should never place on a schedulable control plane node."""
+        assignment = compute_assignments(
+            PlacementStrategy.RANDOM, sample_deployments, schedulable_cp_and_workers, seed=42
+        )
+        assert "cp1" not in assignment.assignments.values()
 
 
 # ── Antagonistic strategy tests ──────────────────────────────
@@ -467,6 +483,22 @@ class TestEdgeCases:
             PlacementStrategy.COLOCATE, [], two_nodes
         )
         assert len(assignment.assignments) == 0
+
+    def test_single_node_cluster_falls_back_to_cp(self):
+        """Single-node cluster with only a schedulable CP — should still work."""
+        nodes = [
+            NodeInfo(
+                name="cp1",
+                labels={"node-role.kubernetes.io/control-plane": ""},
+                allocatable_cpu_millicores=4000,
+                allocatable_memory_bytes=8 * 1024 ** 3,
+                conditions_ready=True,
+                taints=[],
+            ),
+        ]
+        deps = [DeploymentInfo(name="test")]
+        assignment = compute_assignments(PlacementStrategy.COLOCATE, deps, nodes)
+        assert assignment.assignments["test"] == "cp1"
 
 
 # ── Resource parsing tests ────────────────────────────────────

@@ -179,6 +179,28 @@ end
                 "or configure kubectl to connect to an existing cluster."
             )
 
+        # Quick kubectl check (fail fast) to avoid long TCP timeouts
+        try:
+            subprocess.run(
+                ["kubectl", "cluster-info"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            return False, (
+                "kubectl timed out after 10s while contacting the API server.\n"
+                "The cluster may be stopped or unreachable. Try these steps:\n"
+                "  1. Check if VMs are running:  virsh list --all\n"
+                "  2. Start stopped VMs:         virsh start <vm-name>\n"
+                "  3. Wait ~30s, then verify:    kubectl cluster-info\n"
+                "  4. If using Vagrant:           chaosprobe cluster vagrant up --provider=libvirt"
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # kubectl missing or returned error — fall back to client checks below
+            pass
+
         # Initialize k8s client if needed to test connectivity
         if not self._k8s_initialized:
             self._init_k8s_client()
@@ -187,12 +209,13 @@ end
             return False, "Could not initialize Kubernetes client."
 
         try:
-            self.core_api.list_namespace()
+            # Use a short request timeout so we fail fast on unreachable API servers
+            self.core_api.list_namespace(_request_timeout=5)
             return True, f"Connected to: {info['context']} ({info['server']})"
         except ApiException as e:
-            return False, f"Cluster access error: {e.reason}"
-        except Exception:
-            return False, f"Cluster unreachable at {info['server']}"
+            return False, f"Cluster access error: {getattr(e, 'reason', str(e))}"
+        except Exception as e:
+            return False, f"Cluster unreachable at {info['server']}: {e}"
 
     # -------------------------------------------------------------------------
     # Kubespray cluster management
@@ -1676,7 +1699,8 @@ end
                     "--set", "alertmanager.enabled=false",
                     "--set", "kube-state-metrics.enabled=true",
                     "--set", "prometheus-pushgateway.enabled=false",
-                    "--set", "server.persistentVolume.enabled=false",
+                    "--set", "server.persistentVolume.enabled=true",
+                    "--set", "server.persistentVolume.size=2Gi",
                     "--set", "server.retention=3d",
                     "--set", "server.global.scrape_interval=15s",
                     "--set", "server.global.evaluation_interval=15s",
@@ -1770,6 +1794,17 @@ end
             True if installation succeeded.
         """
         self._ensure_namespace("neo4j")
+        self._ensure_storage_class()
+
+        pvc_manifest = {
+            "apiVersion": "v1",
+            "kind": "PersistentVolumeClaim",
+            "metadata": {"name": "neo4j-data", "namespace": "neo4j"},
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "1Gi"}},
+            },
+        }
 
         manifest = {
             "apiVersion": "apps/v1",
@@ -1799,6 +1834,14 @@ end
                                 "requests": {"cpu": "250m", "memory": "512Mi"},
                                 "limits": {"cpu": "500m", "memory": "768Mi"},
                             },
+                            "volumeMounts": [{
+                                "name": "neo4j-data",
+                                "mountPath": "/data",
+                            }],
+                        }],
+                        "volumes": [{
+                            "name": "neo4j-data",
+                            "persistentVolumeClaim": {"claimName": "neo4j-data"},
                         }],
                     },
                 },
@@ -1820,9 +1863,19 @@ end
 
         print("Installing Neo4j...")
         try:
-            # Apply deployment
             from kubernetes.utils import create_from_dict
             k8s_client = client.ApiClient()
+
+            # Apply PVC (skip if already exists)
+            try:
+                self.core_api.read_namespaced_persistent_volume_claim("neo4j-data", "neo4j")
+            except ApiException as e:
+                if e.status == 404:
+                    create_from_dict(k8s_client, pvc_manifest)
+                else:
+                    raise
+
+            # Apply deployment
             try:
                 self.apps_api.read_namespaced_deployment("neo4j", "neo4j")
                 self.apps_api.patch_namespaced_deployment("neo4j", "neo4j", manifest)

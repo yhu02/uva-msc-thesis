@@ -3,7 +3,7 @@
 All tests use mocked Neo4j sessions so no running database is needed.
 """
 
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,6 +27,188 @@ def _make_store():
     store._driver.session.return_value.__enter__ = MagicMock(return_value=session)
     store._driver.session.return_value.__exit__ = MagicMock(return_value=False)
     return store, session
+
+
+def _make_store_with_tx():
+    """Create a Neo4jStore with mocked session and transaction."""
+    with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
+        mock_neo4j = MagicMock()
+        mock_req.return_value = mock_neo4j
+        driver = MagicMock()
+        mock_neo4j.GraphDatabase.driver.return_value = driver
+        session = MagicMock()
+        tx = MagicMock()
+        session.begin_transaction.return_value.__enter__ = MagicMock(return_value=tx)
+        session.begin_transaction.return_value.__exit__ = MagicMock(return_value=False)
+        driver.session.return_value.__enter__ = MagicMock(return_value=session)
+        driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        from chaosprobe.storage.neo4j_store import Neo4jStore
+        store = Neo4jStore("bolt://fake", "u", "p")
+        return store, tx
+
+
+def _make_run_data(**overrides):
+    """Create a minimal run data dict for testing."""
+    data = {
+        "runId": "run-001",
+        "timestamp": "2026-03-29T12:00:00Z",
+        "summary": {
+            "totalExperiments": 1,
+            "passed": 0,
+            "failed": 1,
+            "overallVerdict": "FAIL",
+            "resilienceScore": 85.0,
+        },
+        "scenario": {
+            "experiments": [
+                {
+                    "file": "experiment.yaml",
+                    "content": {
+                        "spec": {
+                            "appinfo": {"applabel": "app=checkoutservice"},
+                        },
+                    },
+                },
+            ],
+        },
+        "experiments": [
+            {
+                "name": "pod-delete",
+                "engineName": "pod-delete-abc123",
+                "result": {"verdict": "Pass", "phase": "Completed", "failStep": ""},
+                "probes": [{"name": "http-probe", "status": "passed"}],
+                "probeSuccessPercentage": 100.0,
+            },
+        ],
+        "metrics": {
+            "deploymentName": "checkoutservice",
+            "timeWindow": {
+                "start": "2026-03-29T12:00:00Z",
+                "end": "2026-03-29T12:05:00Z",
+                "duration_s": 300.0,
+            },
+            "recovery": {
+                "deploymentName": "checkoutservice",
+                "recoveryEvents": [
+                    {
+                        "deletionTime": "2026-03-29T12:01:00Z",
+                        "scheduledTime": "2026-03-29T12:01:01Z",
+                        "readyTime": "2026-03-29T12:01:03Z",
+                        "deletionToScheduled_ms": 1000,
+                        "scheduledToReady_ms": 2000,
+                        "totalRecovery_ms": 3000,
+                    },
+                ],
+                "summary": {
+                    "count": 1,
+                    "completedCycles": 1,
+                    "incompleteCycles": 0,
+                    "meanRecovery_ms": 3000.0,
+                    "medianRecovery_ms": 3000.0,
+                    "minRecovery_ms": 3000,
+                    "maxRecovery_ms": 3000,
+                    "p95Recovery_ms": 3000.0,
+                },
+            },
+            "podStatus": {
+                "pods": [
+                    {
+                        "name": "checkoutservice-abc123",
+                        "phase": "Running",
+                        "node": "worker1",
+                        "restartCount": 2,
+                        "conditions": {"Ready": {"status": "True"}},
+                    },
+                ],
+                "totalRestarts": 2,
+            },
+            "eventTimeline": [
+                {"time": "2026-03-29T12:01:00Z", "type": "DELETED",
+                 "pod": "checkoutservice-old", "phase": "Running"},
+            ],
+        },
+    }
+    data.update(overrides)
+    return data
+
+
+def _make_full_run_data(**overrides):
+    """Create run data with all metric types populated."""
+    data = _make_run_data()
+    data["metrics"]["latency"] = {
+        "timeSeries": [],
+        "phases": {
+            "pre-chaos": {"sampleCount": 5, "routes": {"/": {"mean_ms": 100}}},
+            "during-chaos": {"sampleCount": 10, "routes": {"/": {"mean_ms": 500}}},
+            "post-chaos": {"sampleCount": 5, "routes": {"/": {"mean_ms": 120}}},
+        },
+        "config": {"interval_s": 2.0},
+    }
+    data["metrics"]["resources"] = {
+        "available": True,
+        "nodeName": "worker1",
+        "phases": {
+            "pre-chaos": {
+                "sampleCount": 5,
+                "node": {"meanCpu_millicores": 200, "maxCpu_millicores": 300,
+                         "meanMemory_bytes": 1000000, "maxMemory_bytes": 1200000,
+                         "meanCpu_percent": 10.0, "maxCpu_percent": 15.0,
+                         "meanMemory_percent": 50.0, "maxMemory_percent": 60.0},
+            },
+            "during-chaos": {
+                "sampleCount": 10,
+                "node": {"meanCpu_millicores": 500, "maxCpu_millicores": 900,
+                         "meanMemory_bytes": 1500000, "maxMemory_bytes": 1800000,
+                         "meanCpu_percent": 25.0, "maxCpu_percent": 45.0,
+                         "meanMemory_percent": 75.0, "maxMemory_percent": 90.0},
+            },
+            "post-chaos": {"sampleCount": 0},
+        },
+    }
+    data["metrics"]["prometheus"] = {
+        "available": True,
+        "phases": {
+            "during-chaos": {
+                "sampleCount": 10,
+                "metrics": {"cpu_usage": {"mean": 0.5, "max": 0.9}},
+            },
+        },
+    }
+    data["metrics"]["redis"] = {
+        "phases": {
+            "during-chaos": {
+                "sampleCount": 5,
+                "redis": {"write": {"meanOpsPerSecond": 40.0}},
+            },
+        },
+    }
+    data["metrics"]["disk"] = {
+        "phases": {
+            "during-chaos": {
+                "sampleCount": 5,
+                "disk": {"write": {"meanOpsPerSecond": 5.0}},
+            },
+        },
+    }
+    data["loadGeneration"] = {
+        "profile": "steady",
+        "stats": {
+            "totalRequests": 1000,
+            "totalFailures": 50,
+            "avgResponseTime_ms": 200.0,
+            "p95ResponseTime_ms": 500.0,
+            "p99ResponseTime_ms": 800.0,
+            "requestsPerSecond": 10.0,
+        },
+    }
+    data.update(overrides)
+    return data
+
+
+def _get_tx_calls(tx, cypher_substring):
+    """Return tx.run calls whose first arg contains the given substring."""
+    return [c for c in tx.run.call_args_list if cypher_substring in str(c)]
 
 
 # ---------------------------------------------------------------------------
@@ -100,100 +282,138 @@ class TestSyncServiceDependencies:
 
 
 class TestSyncRun:
-    def _make_run_data(self, **overrides):
-        data = {
-            "runId": "run-001",
-            "timestamp": "2026-03-29T12:00:00Z",
-            "summary": {
-                "overallVerdict": "PASS",
-                "resilienceScore": 85.0,
-            },
-            "experiments": [
-                {
-                    "spec": {
-                        "spec": {
-                            "appinfo": {"applabel": "app=checkoutservice"},
-                        },
-                    },
-                },
-            ],
-            "metrics": {
-                "recovery": {
-                    "summary": {
-                        "meanRecovery_ms": 1500.0,
-                        "maxRecovery_ms": 2000.0,
-                    },
-                },
-            },
-        }
-        data.update(overrides)
-        return data
-
     def test_creates_experiment_and_strategy_nodes(self):
-        with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
-            mock_neo4j = MagicMock()
-            mock_req.return_value = mock_neo4j
-            driver = MagicMock()
-            mock_neo4j.GraphDatabase.driver.return_value = driver
-            session = MagicMock()
-            driver.session.return_value.__enter__ = MagicMock(return_value=session)
-            driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
 
-            from chaosprobe.storage.neo4j_store import Neo4jStore
-            store = Neo4jStore("bolt://fake", "u", "p")
-            store.sync_run(self._make_run_data())
+        # Verify experiment node was created
+        assert len(_get_tx_calls(tx, "ChaosRun")) > 0
+        # Verify strategy node was created
+        assert len(_get_tx_calls(tx, "PlacementStrategy")) > 0
 
-            # experiment MERGE + strategy MERGE + TARGETED_BY = 3 calls
-            assert session.run.call_count == 3
+    def test_creates_targeted_by_edges(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        targeted = _get_tx_calls(tx, "TARGETED_BY")
+        # checkoutservice from both applabel and deploymentName (deduplicated = 1)
+        assert len(targeted) == 1
 
     def test_creates_scheduled_on_edges_with_placement(self):
-        with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
-            mock_neo4j = MagicMock()
-            mock_req.return_value = mock_neo4j
-            driver = MagicMock()
-            mock_neo4j.GraphDatabase.driver.return_value = driver
-            session = MagicMock()
-            driver.session.return_value.__enter__ = MagicMock(return_value=session)
-            driver.session.return_value.__exit__ = MagicMock(return_value=False)
-
-            from chaosprobe.storage.neo4j_store import Neo4jStore
-            store = Neo4jStore("bolt://fake", "u", "p")
-
-            run_data = self._make_run_data(
-                placement={
-                    "strategy": "colocate",
-                    "seed": None,
-                    "assignments": {
-                        "frontend": "worker1",
-                        "cartservice": "worker1",
-                    },
+        store, tx = _make_store_with_tx()
+        run_data = _make_run_data(
+            placement={
+                "strategy": "colocate",
+                "seed": None,
+                "assignments": {
+                    "frontend": "worker1",
+                    "cartservice": "worker1",
                 },
-            )
-            store.sync_run(run_data)
+            },
+        )
+        store.sync_run(run_data)
 
-            # experiment + strategy + targeted_by + 2 scheduled_on = 5
-            assert session.run.call_count == 5
+        scheduled = _get_tx_calls(tx, "SCHEDULED_ON")
+        assert len(scheduled) == 2
 
     def test_infers_strategy_from_scenario_metadata(self):
-        with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
-            mock_neo4j = MagicMock()
-            mock_req.return_value = mock_neo4j
-            driver = MagicMock()
-            mock_neo4j.GraphDatabase.driver.return_value = driver
-            session = MagicMock()
-            driver.session.return_value.__enter__ = MagicMock(return_value=session)
-            driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        store, tx = _make_store_with_tx()
+        run_data = _make_run_data(
+            scenario={"metadata": {"strategy": "spread"}},
+        )
+        store.sync_run(run_data)
 
-            from chaosprobe.storage.neo4j_store import Neo4jStore
-            store = Neo4jStore("bolt://fake", "u", "p")
-            run_data = self._make_run_data(
-                scenario={"metadata": {"strategy": "spread"}},
-            )
-            store.sync_run(run_data)
+        cypher_calls = [str(c) for c in tx.run.call_args_list]
+        assert any("spread" in c for c in cypher_calls)
 
-            # Verify strategy name was "spread" in the MERGE call
-            cypher_calls = [str(c) for c in session.run.call_args_list]
-            assert any("spread" in c for c in cypher_calls)
+    def test_stores_recovery_cycles(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        # Should have DETACH DELETE + 1 CREATE for the single recovery event
+        cycle_creates = _get_tx_calls(tx, "RecoveryCycle")
+        assert len(cycle_creates) >= 2  # delete + create
+
+    def test_stores_experiment_results(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        result_creates = _get_tx_calls(tx, "ExperimentResult")
+        assert len(result_creates) >= 2  # delete + create
+
+    def test_stores_pod_snapshots(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        pod_creates = _get_tx_calls(tx, "PodSnapshot")
+        assert len(pod_creates) >= 2  # delete + create
+
+        # Verify RUNNING_ON edge is created for pods with a node
+        running_on_calls = _get_tx_calls(tx, "RUNNING_ON")
+        assert len(running_on_calls) >= 1
+
+    def test_stores_metrics_phases_for_all_types(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_full_run_data())
+
+        phase_creates = _get_tx_calls(tx, "MetricsPhase")
+        # delete (1) + latency (3 phases) + resources (2 non-empty) +
+        # prometheus (1) + redis (1) + disk (1)
+        assert len(phase_creates) >= 8
+
+    def test_stores_load_generation_data(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_full_run_data())
+
+        # Load gen stats stored on the experiment node
+        exp_calls = _get_tx_calls(tx, "load_profile")
+        assert len(exp_calls) >= 1
+
+    def test_stores_enriched_experiment_properties(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        # Verify enriched properties are in the experiment MERGE
+        exp_calls = _get_tx_calls(tx, "median_recovery_ms")
+        assert len(exp_calls) >= 1
+
+        time_calls = _get_tx_calls(tx, "time_window_start")
+        assert len(time_calls) >= 1
+
+        restart_calls = _get_tx_calls(tx, "total_restarts")
+        assert len(restart_calls) >= 1
+
+    def test_stores_event_timeline_as_json(self):
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        timeline_calls = _get_tx_calls(tx, "event_timeline")
+        assert len(timeline_calls) >= 1
+
+    def test_handles_empty_metrics(self):
+        """sync_run should not fail when metrics sections are missing."""
+        store, tx = _make_store_with_tx()
+        run_data = _make_run_data()
+        # Strip most metrics
+        run_data["metrics"] = {"deploymentName": "test"}
+        run_data["experiments"] = []
+        store.sync_run(run_data)
+
+        # Should still create experiment + strategy nodes
+        assert len(_get_tx_calls(tx, "ChaosRun")) > 0
+
+    def test_idempotent_resync(self):
+        """Calling sync_run twice should clear and recreate child nodes."""
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+        first_count = tx.run.call_count
+
+        tx.reset_mock()
+        store.sync_run(_make_run_data())
+        second_count = tx.run.call_count
+
+        # Same number of calls both times (DETACH DELETE + recreate)
+        assert first_count == second_count
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +422,7 @@ class TestSyncRun:
 
 
 class TestEnsureSchema:
-    def test_creates_six_constraints(self):
+    def test_creates_constraints_and_indexes(self):
         with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
             mock_neo4j = MagicMock()
             mock_req.return_value = mock_neo4j
@@ -216,9 +436,43 @@ class TestEnsureSchema:
             store = Neo4jStore("bolt://fake", "u", "p")
             store.ensure_schema()
 
-            assert session.run.call_count == 6
-            for c in session.run.call_args_list:
-                assert "CREATE CONSTRAINT" in c[0][0]
+            # 5 constraints + 4 indexes = 9 calls
+            assert session.run.call_count == 9
+            constraint_calls = [c for c in session.run.call_args_list
+                                if "CREATE CONSTRAINT" in c[0][0]]
+            index_calls = [c for c in session.run.call_args_list
+                           if "CREATE INDEX" in c[0][0]]
+            assert len(constraint_calls) == 5
+            assert len(index_calls) == 4
+
+
+# ---------------------------------------------------------------------------
+# Neo4jStore — status
+# ---------------------------------------------------------------------------
+
+
+class TestStatus:
+    def test_counts_all_node_types(self):
+        with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
+            mock_neo4j = MagicMock()
+            mock_req.return_value = mock_neo4j
+            driver = MagicMock()
+            mock_neo4j.GraphDatabase.driver.return_value = driver
+            session = MagicMock()
+            driver.session.return_value.__enter__ = MagicMock(return_value=session)
+            driver.session.return_value.__exit__ = MagicMock(return_value=False)
+            session.run.return_value.single.return_value = {"c": 0}
+
+            from chaosprobe.storage.neo4j_store import Neo4jStore
+            store = Neo4jStore("bolt://fake", "u", "p")
+            result = store.status()
+
+            # Should query all 9 node types
+            assert session.run.call_count == 9
+            assert "RecoveryCycle" in result
+            assert "MetricsPhase" in result
+            assert "PodSnapshot" in result
+            assert "ExperimentResult" in result
 
 
 # ---------------------------------------------------------------------------

@@ -1633,6 +1633,208 @@ def run(
         click.echo(f"  Logs:       Collecting container logs from target deployment")
     click.echo("")
 
+    # ── Pre-flight checks ──────────────────────────────────────
+    click.echo("Pre-flight checks...")
+
+    # 1. Verify all nodes are Ready
+    from kubernetes import client as k8s_client_mod, config as k8s_config
+    try:
+        k8s_config.load_incluster_config()
+    except k8s_config.ConfigException:
+        k8s_config.load_kube_config()
+    core_api = k8s_client_mod.CoreV1Api()
+
+    nodes = core_api.list_node()
+    not_ready_nodes = []
+    for node in nodes.items:
+        conditions = {c.type: c.status for c in (node.status.conditions or [])}
+        if conditions.get("Ready") != "True":
+            not_ready_nodes.append(node.metadata.name)
+    if not_ready_nodes:
+        click.echo(f"  Error: nodes not Ready: {', '.join(not_ready_nodes)}", err=True)
+        click.echo("  Fix node issues before running experiments.", err=True)
+        sys.exit(1)
+    click.echo(f"  Nodes:       {len(nodes.items)} Ready")
+
+    # 2. Clean up stale ChaosEngines
+    try:
+        custom_api = k8s_client_mod.CustomObjectsApi()
+        engines = custom_api.list_namespaced_custom_object(
+            group="litmuschaos.io", version="v1alpha1",
+            namespace=namespace, plural="chaosengines",
+        )
+        engine_items = engines.get("items", [])
+        if engine_items:
+            click.echo(f"  Cleaning up {len(engine_items)} stale ChaosEngine(s)...")
+            for eng in engine_items:
+                name = eng["metadata"]["name"]
+                custom_api.delete_namespaced_custom_object(
+                    group="litmuschaos.io", version="v1alpha1",
+                    namespace=namespace, plural="chaosengines", name=name,
+                )
+            click.echo("  ChaosEngines: cleaned")
+        else:
+            click.echo("  ChaosEngines: none (clean)")
+    except Exception as e:
+        click.echo(f"  ChaosEngines: check skipped ({e})", err=True)
+
+    # 3. Verify infrastructure pods are ready
+    def _check_pods_ready(ns: str, label: str, component: str) -> bool:
+        """Check that at least one pod matching label is Running and Ready."""
+        try:
+            pods = core_api.list_namespaced_pod(ns, label_selector=label)
+            for pod in pods.items:
+                if pod.status.phase == "Running":
+                    ready = all(
+                        cs.ready for cs in (pod.status.container_statuses or [])
+                    )
+                    if ready:
+                        return True
+        except Exception:
+            pass
+        return False
+
+    import socket
+    import subprocess as _sp
+    apps_api = k8s_client_mod.AppsV1Api()
+    _preflight_setup = None  # lazy LitmusSetup instance
+
+    def _get_setup():
+        nonlocal _preflight_setup
+        if _preflight_setup is None:
+            _preflight_setup = LitmusSetup(skip_k8s_init=True)
+            _preflight_setup._init_k8s_client()
+        return _preflight_setup
+
+    def _deployment_has_pvc(name: str, ns: str) -> bool:
+        """Check if a deployment has any PVC volume."""
+        try:
+            dep = apps_api.read_namespaced_deployment(name, ns)
+            volumes = dep.spec.template.spec.volumes or []
+            return any(v.persistent_volume_claim is not None for v in volumes)
+        except Exception:
+            return True  # can't check — assume OK
+
+    def _check_port(host: str, port: int) -> bool:
+        """Check if a TCP port is reachable."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        try:
+            sock.connect((host, port))
+            sock.close()
+            return True
+        except (ConnectionRefusedError, OSError):
+            sock.close()
+            return False
+
+    def _start_port_forward(svc: str, ns: str, ports: list[str]):
+        """Start a kubectl port-forward in the background."""
+        _sp.Popen(
+            ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+        )
+        time.sleep(3)
+
+    # Prometheus
+    if measure_prometheus:
+        # Check persistent volume — redeploy with PVC if missing
+        try:
+            if not _deployment_has_pvc("prometheus-server", "monitoring"):
+                click.echo("  Prometheus:  no persistent volume — redeploying with PVC...")
+                _get_setup().install_prometheus(wait=True)
+                click.echo("  Prometheus:  redeployed with persistent storage")
+        except Exception as e:
+            click.echo(f"  Prometheus:  could not check deployment ({e})", err=True)
+
+        prom_ready = False
+        prom_namespaces = ("monitoring", "prometheus", "kube-prometheus")
+        prom_labels = ("app=prometheus,component=server", "app.kubernetes.io/name=prometheus")
+        # Retry up to 60s — pods may still be starting after VM/node restart
+        for attempt in range(12):
+            for ns in prom_namespaces:
+                for label in prom_labels:
+                    if _check_pods_ready(ns, label, "Prometheus"):
+                        prom_ready = True
+                        break
+                if prom_ready:
+                    break
+            if prom_ready:
+                break
+            if attempt == 0:
+                click.echo("  Prometheus:  waiting for pod to become ready...")
+            time.sleep(5)
+        if prom_ready:
+            click.echo("  Prometheus:  pod ready")
+        else:
+            click.echo("  Prometheus:  WARNING - no ready pod found after 60s", err=True)
+            click.echo("               Prometheus metrics may be unavailable.", err=True)
+            click.echo("               Check: kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus", err=True)
+
+    # Neo4j
+    if neo4j_uri:
+        # Check persistent volume — redeploy with PVC if missing
+        try:
+            if not _deployment_has_pvc("neo4j", "neo4j"):
+                click.echo("  Neo4j:       no persistent volume — redeploying with PVC...")
+                _get_setup().install_neo4j(wait=True)
+                click.echo("  Neo4j:       redeployed with persistent storage")
+        except Exception as e:
+            click.echo(f"  Neo4j:       could not check deployment ({e})", err=True)
+
+        if _check_pods_ready("neo4j", "app=neo4j", "Neo4j"):
+            click.echo("  Neo4j:       pod ready")
+            # Verify bolt connectivity
+            host, port = "localhost", 7687
+            try:
+                parsed = neo4j_uri.replace("bolt://", "").replace("neo4j://", "")
+                if ":" in parsed:
+                    host, port_str = parsed.rsplit(":", 1)
+                    port = int(port_str)
+            except Exception:
+                pass
+            if _check_port(host, port):
+                click.echo(f"  Neo4j bolt:  {host}:{port} reachable")
+            else:
+                click.echo(f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward...", err=True)
+                _start_port_forward("neo4j", "neo4j", ["7687:7687", "7474:7474"])
+                if _check_port(host, port):
+                    click.echo(f"  Neo4j bolt:  {host}:{port} reachable (port-forward started)")
+                else:
+                    click.echo(f"  Neo4j bolt:  WARNING - still not reachable at {host}:{port}", err=True)
+        else:
+            click.echo("  Neo4j:       WARNING - no ready pod found in neo4j namespace", err=True)
+
+    # metrics-server — verify API works and has --kubelet-insecure-tls for Vagrant clusters
+    metrics_api_ok = False
+    try:
+        k8s_client_mod.CustomObjectsApi().list_cluster_custom_object(
+            group="metrics.k8s.io", version="v1beta1", plural="nodes",
+        )
+        metrics_api_ok = True
+        click.echo("  metrics-srv: API available")
+    except Exception:
+        # API not responding — check if deployment exists but is misconfigured
+        try:
+            ms_dep = apps_api.read_namespaced_deployment("metrics-server", "kube-system")
+            containers = ms_dep.spec.template.spec.containers or []
+            args = containers[0].args or [] if containers else []
+            if "--kubelet-insecure-tls" not in args:
+                click.echo("  metrics-srv: missing --kubelet-insecure-tls — patching...")
+                _get_setup().install_metrics_server(wait=True)
+                click.echo("  metrics-srv: patched and restarted")
+            else:
+                click.echo("  metrics-srv: WARNING - deployed but API not responding", err=True)
+        except Exception:
+            click.echo("  metrics-srv: WARNING - metrics API not available", err=True)
+            click.echo("               Resource measurements may fail.", err=True)
+
+    # 4. Wait for all application deployments to be healthy
+    click.echo("  Deployments: waiting for readiness...")
+    _wait_for_healthy_deployments(namespace, timeout=120)
+    click.echo("  Deployments: all ready")
+
+    click.echo("")
+
     # Extract target deployment from experiment spec for recovery metrics
     target_deployment = _extract_target_deployment(shared_scenario)
 
@@ -1656,6 +1858,22 @@ def run(
             from chaosprobe.storage.neo4j_store import Neo4jStore
             graph_store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
             graph_store.ensure_schema()
+            # Sync current cluster topology into the graph
+            try:
+                topo_mutator = PlacementMutator(namespace)
+                nodes_raw = topo_mutator.get_nodes()
+                deployments_raw = topo_mutator.get_deployments()
+                graph_store.sync_topology(
+                    [{"name": n.name,
+                      "cpu": n.allocatable_cpu_millicores,
+                      "memory": n.allocatable_memory_bytes,
+                      "control_plane": n.is_control_plane} for n in nodes_raw],
+                    [{"name": d.name,
+                      "namespace": d.namespace,
+                      "replicas": d.replicas} for d in deployments_raw],
+                )
+            except Exception as e:
+                click.echo(f"  Neo4j: topology sync skipped ({e})", err=True)
             graph_store.sync_service_dependencies()
             click.echo(f"  Neo4j:      connected ({neo4j_uri})")
         except ImportError:
@@ -1920,6 +2138,13 @@ def run(
                 # Generate output
                 generator = OutputGenerator(scenario, results, metrics=recovery)
                 output_data = generator.generate()
+
+                # Merge placement info so Neo4j and JSON have the strategy
+                output_data["placement"] = strategy_result.get("placement") or {
+                    "strategy": strategy_name,
+                    "seed": seed if strategy_name == "random" else None,
+                    "assignments": {},
+                }
 
                 # Merge load stats into output
                 if iter_load_stats:
@@ -2394,6 +2619,79 @@ def graph_topology(run_id, neo4j_uri, neo4j_user, neo4j_password):
 
         if topo["unscheduled"]:
             click.echo(f"\n  Unscheduled: {', '.join(topo['unscheduled'])}")
+    finally:
+        store.close()
+
+
+@graph.command("details")
+@click.argument("run_id")
+@_neo4j_uri_option
+@_neo4j_user_option
+@_neo4j_password_option
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+def graph_details(run_id, neo4j_uri, neo4j_user, neo4j_password, json_output):
+    """Show all stored data for a specific run from Neo4j."""
+    store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+    try:
+        details = store.get_run_details(run_id)
+        if not details:
+            click.echo(f"No data found for run {run_id}")
+            return
+
+        if json_output:
+            click.echo(json.dumps(details, indent=2, default=str))
+            return
+
+        exp = details["experiment"]
+        click.echo(f"\nRun: {exp.get('run_id')}")
+        click.echo(f"  Strategy:         {exp.get('strategy')}")
+        click.echo(f"  Verdict:          {exp.get('verdict')}")
+        click.echo(f"  Resilience Score: {exp.get('resilience_score')}")
+        click.echo(f"  Duration:         {exp.get('duration_s')}s")
+        click.echo(f"  Total Restarts:   {exp.get('total_restarts')}")
+
+        if exp.get("mean_recovery_ms") is not None:
+            click.echo(f"\n  Recovery:")
+            click.echo(f"    Mean:   {exp.get('mean_recovery_ms'):.0f}ms")
+            click.echo(f"    Median: {exp.get('median_recovery_ms'):.0f}ms")
+            click.echo(f"    Min:    {exp.get('min_recovery_ms')}ms")
+            click.echo(f"    Max:    {exp.get('max_recovery_ms')}ms")
+            click.echo(f"    P95:    {exp.get('p95_recovery_ms')}ms")
+            click.echo(f"    Cycles: {exp.get('completed_cycles')} completed, {exp.get('incomplete_cycles')} incomplete")
+
+        if exp.get("load_profile"):
+            click.echo(f"\n  Load Generation: {exp.get('load_profile')}")
+            click.echo(f"    Requests: {exp.get('load_total_requests')} ({exp.get('load_total_failures')} failures)")
+            click.echo(f"    Avg Response: {exp.get('load_avg_response_ms')}ms  P95: {exp.get('load_p95_response_ms')}ms")
+
+        cycles = details.get("recoveryCycles", [])
+        if cycles:
+            click.echo(f"\n  Recovery Cycles ({len(cycles)}):")
+            for c in cycles:
+                click.echo(f"    #{c.get('seq', '?')}: {c.get('total_recovery_ms')}ms "
+                           f"(sched: {c.get('deletion_to_scheduled_ms')}ms, "
+                           f"ready: {c.get('scheduled_to_ready_ms')}ms)")
+
+        phases = details.get("metricsPhases", [])
+        if phases:
+            click.echo(f"\n  Metrics Phases ({len(phases)}):")
+            for p in phases:
+                click.echo(f"    {p.get('metric_type'):<12s} {p.get('phase'):<15s} "
+                           f"({p.get('sample_count', 0)} samples)")
+
+        pods = details.get("podSnapshots", [])
+        if pods:
+            click.echo(f"\n  Pod Snapshots ({len(pods)}):")
+            for p in pods:
+                click.echo(f"    {p.get('name'):<45s} {p.get('phase'):<10s} "
+                           f"node={p.get('node')}  restarts={p.get('restart_count')}")
+
+        results = details.get("experimentResults", [])
+        if results:
+            click.echo(f"\n  Experiment Results ({len(results)}):")
+            for r in results:
+                click.echo(f"    {r.get('name')}: {r.get('verdict')} "
+                           f"(probe success: {r.get('probe_success_pct')}%)")
     finally:
         store.close()
 
