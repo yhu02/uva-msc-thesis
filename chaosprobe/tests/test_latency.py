@@ -1,15 +1,10 @@
 """Tests for the inter-service latency measurement module."""
 
-import statistics
 import threading
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 from chaosprobe.metrics.latency import (
     ContinuousLatencyProber,
-    LatencyProber,
     LatencyResult,
     LatencySample,
     ONLINE_BOUTIQUE_HTTP_ROUTES,

@@ -581,10 +581,10 @@ def cluster_vagrant():
 
 @cluster_vagrant.command("init")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
-@click.option("--control-planes", "-c", default=1, help="Number of control plane nodes")
-@click.option("--workers", "-w", default=2, help="Number of worker nodes")
-@click.option("--memory", "-m", default=2048, help="Memory per VM in MB")
-@click.option("--cpus", default=2, help="CPUs per VM")
+@click.option("--control-planes", "-c", default=1, type=int, help="Number of control plane nodes")
+@click.option("--workers", "-w", default=2, type=int, help="Number of worker nodes")
+@click.option("--memory", "-m", default=2048, type=int, help="Memory per VM in MB")
+@click.option("--cpus", default=2, type=int, help="CPUs per VM")
 @click.option("--box", default="generic/ubuntu2204", help="Vagrant box image")
 @click.option("--network-prefix", default="192.168.56", help="Network prefix for private IPs")
 @click.option("--output", "-o", type=click.Path(), help="Output directory for Vagrantfile")
@@ -1065,7 +1065,19 @@ def compare(
       chaosprobe compare run-2026-04-02-1234 run-2026-04-02-5678 --neo4j-uri bolt://localhost:7687
       chaosprobe compare baseline.json afterfix.json  # legacy JSON file mode
     """
-    if neo4j_uri:
+    # Auto-detect file mode: if both arguments look like file paths, use JSON files
+    baseline_is_file = Path(baseline).exists()
+    afterfix_is_file = Path(afterfix).exists()
+
+    if baseline_is_file and afterfix_is_file:
+        click.echo(f"Comparing JSON files: {baseline} vs {afterfix}...")
+        try:
+            baseline_data = json.loads(Path(baseline).read_text())
+            afterfix_data = json.loads(Path(afterfix).read_text())
+        except Exception as e:
+            click.echo(f"Error loading result files: {e}", err=True)
+            sys.exit(1)
+    elif neo4j_uri:
         click.echo(f"Comparing runs from Neo4j: {baseline} vs {afterfix}...")
         store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
         try:
@@ -1080,13 +1092,11 @@ def compare(
             click.echo(f"Error: run '{afterfix}' not found in Neo4j", err=True)
             sys.exit(1)
     else:
-        click.echo(f"Comparing {baseline} with {afterfix}...")
-        try:
-            baseline_data = json.loads(Path(baseline).read_text())
-            afterfix_data = json.loads(Path(afterfix).read_text())
-        except Exception as e:
-            click.echo(f"Error loading result files: {e}", err=True)
-            sys.exit(1)
+        click.echo(
+            "Error: arguments are not existing files and no --neo4j-uri provided",
+            err=True,
+        )
+        sys.exit(1)
 
     comparison = compare_runs(baseline_data, afterfix_data)
 
@@ -1555,7 +1565,7 @@ def placement_nodes():
     "--measure-prometheus/--no-measure-prometheus",
     "measure_prometheus",
     default=True,
-    show_default=False,
+    show_default=True,
     help="Query Prometheus for cluster metrics during each experiment",
 )
 @click.option(
@@ -1630,7 +1640,7 @@ def run(
       chaosprobe run -n online-boutique -i 3  # 3 iterations per strategy
     """
     strategy_list = [s.strip() for s in strategies.split(",")]
-    valid_strategies = {"baseline", "colocate", "spread", "antagonistic", "random"}
+    valid_strategies = {"baseline"} | {s.value for s in PlacementStrategy}
     for s in strategy_list:
         if s not in valid_strategies:
             click.echo(

@@ -183,6 +183,7 @@ class ContinuousResourceProber(_ContinuousProberBase):
         """Return structured resource utilization data."""
         with self._lock:
             series = list(self._time_series)
+            errors = self._probe_errors
 
         if not series:
             return {
@@ -211,8 +212,8 @@ class ContinuousResourceProber(_ContinuousProberBase):
                 "deploymentName": self._deployment_name,
             },
         }
-        if self._probe_errors > 0:
-            data["probeErrors"] = self._probe_errors
+        if errors > 0:
+            data["probeErrors"] = errors
         return data
 
     # -- phase aggregation --------------------------------------------------

@@ -2,7 +2,6 @@
 
 import os
 import pytest
-import tempfile
 
 from chaosprobe.loadgen.runner import (
     LoadProfile,

@@ -579,6 +579,25 @@ class _ContinuousProberBase:
     def _probe_loop(self) -> None:
         raise NotImplementedError
 
+    def _split_phases(self, series: List[Dict[str, Any]], metric_key: str) -> Dict[str, Any]:
+        phases: Dict[str, List[Dict[str, Any]]] = {
+            "pre-chaos": [],
+            "during-chaos": [],
+            "post-chaos": [],
+        }
+        for entry in series:
+            phases.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)
+        result = {}
+        for name, entries in phases.items():
+            if not entries:
+                result[name] = {"sampleCount": 0, metric_key: {}}
+            else:
+                result[name] = {
+                    "sampleCount": len(entries),
+                    metric_key: self._aggregate_operations(entries, metric_key),
+                }
+        return result
+
     @staticmethod
     def _aggregate_operations(
         entries: List[Dict[str, Any]],
@@ -652,7 +671,8 @@ class ContinuousRedisProber(_ContinuousProberBase):
     def result(self) -> Dict[str, Any]:
         with self._lock:
             series = list(self._time_series)
-        phases = self._split_phases(series)
+            errors = self._probe_errors
+        phases = self._split_phases(series, "redis")
         data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
@@ -662,8 +682,8 @@ class ContinuousRedisProber(_ContinuousProberBase):
                 "opsPerSample": self._ops_per_sample,
             },
         }
-        if self._probe_errors > 0:
-            data["probeErrors"] = self._probe_errors
+        if errors > 0:
+            data["probeErrors"] = errors
         return data
 
     def _probe_loop(self) -> None:
@@ -697,25 +717,6 @@ class ContinuousRedisProber(_ContinuousProberBase):
 
             self._stop_event.wait(timeout=self.interval)
 
-    def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
-        phases: Dict[str, List[Dict[str, Any]]] = {
-            "pre-chaos": [],
-            "during-chaos": [],
-            "post-chaos": [],
-        }
-        for entry in series:
-            phases.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)
-        result = {}
-        for name, entries in phases.items():
-            if not entries:
-                result[name] = {"sampleCount": 0, "redis": {}}
-            else:
-                result[name] = {
-                    "sampleCount": len(entries),
-                    "redis": self._aggregate_operations(entries, "redis"),
-                }
-        return result
-
 
 class ContinuousDiskProber(_ContinuousProberBase):
     """Runs disk I/O throughput benchmarks in a background thread during chaos.
@@ -746,7 +747,8 @@ class ContinuousDiskProber(_ContinuousProberBase):
     def result(self) -> Dict[str, Any]:
         with self._lock:
             series = list(self._time_series)
-        phases = self._split_phases(series)
+            errors = self._probe_errors
+        phases = self._split_phases(series, "disk")
         data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
@@ -758,8 +760,8 @@ class ContinuousDiskProber(_ContinuousProberBase):
                 "blockCount": self._block_count,
             },
         }
-        if self._probe_errors > 0:
-            data["probeErrors"] = self._probe_errors
+        if errors > 0:
+            data["probeErrors"] = errors
         return data
 
     def _probe_loop(self) -> None:
@@ -795,25 +797,6 @@ class ContinuousDiskProber(_ContinuousProberBase):
                     self._probe_errors += 1
 
             self._stop_event.wait(timeout=self.interval)
-
-    def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
-        phases: Dict[str, List[Dict[str, Any]]] = {
-            "pre-chaos": [],
-            "during-chaos": [],
-            "post-chaos": [],
-        }
-        for entry in series:
-            phases.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)
-        result = {}
-        for name, entries in phases.items():
-            if not entries:
-                result[name] = {"sampleCount": 0, "disk": {}}
-            else:
-                result[name] = {
-                    "sampleCount": len(entries),
-                    "disk": self._aggregate_operations(entries, "disk"),
-                }
-        return result
 
 
 # Backwards-compatible alias

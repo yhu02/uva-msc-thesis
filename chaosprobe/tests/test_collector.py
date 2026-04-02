@@ -1,9 +1,7 @@
 """Tests for the MetricsCollector container log collection."""
 
-import threading
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-import pytest
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.metrics.collector import MetricsCollector

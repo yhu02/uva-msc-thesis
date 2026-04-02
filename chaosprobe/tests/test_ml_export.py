@@ -1,9 +1,11 @@
 """Tests for ML-ready export pipeline."""
 
-import json
+import pytest
+from unittest.mock import patch
 
 from chaosprobe.output.ml_export import (
     export_run_to_rows,
+    export_from_sqlite,
     write_dataset,
 )
 
@@ -158,3 +160,38 @@ class TestWriteDataset:
         out_path = str(tmp_path / "empty.csv")
         result = write_dataset([], out_path, format="csv")
         assert result.endswith("empty.csv")
+
+    def test_parquet_import_error(self, tmp_path):
+        """Verify helpful error when pyarrow is not installed."""
+        rows = [{"a": 1}]
+        out_path = str(tmp_path / "test.parquet")
+        with patch.dict("sys.modules", {"pyarrow": None, "pyarrow.parquet": None}):
+            with pytest.raises(ImportError, match="pyarrow"):
+                write_dataset(rows, out_path, format="parquet")
+
+    def test_csv_creates_parent_dirs(self, tmp_path):
+        rows = [{"x": 1, "y": 2}]
+        out_path = str(tmp_path / "nested" / "dir" / "out.csv")
+        result = write_dataset(rows, out_path, format="csv")
+        assert "out.csv" in result
+
+
+class TestExportFromSqlite:
+    def test_roundtrip(self, tmp_path):
+        """Save a run to SQLite then export ML rows from it."""
+        from chaosprobe.storage.sqlite import SQLiteStore
+
+        db = str(tmp_path / "test.db")
+        store = SQLiteStore(db_path=db)
+        run_data = _make_run_data(strategy="spread")
+        store.save_run(run_data)
+        store.close()
+
+        rows = export_from_sqlite(db_path=db, resolution_s=5.0)
+        assert len(rows) > 0
+        assert rows[0]["strategy"] == "spread"
+
+    def test_empty_db(self, tmp_path):
+        db = str(tmp_path / "empty.db")
+        rows = export_from_sqlite(db_path=db)
+        assert rows == []

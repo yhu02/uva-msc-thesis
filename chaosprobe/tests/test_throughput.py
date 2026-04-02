@@ -1,14 +1,11 @@
 """Tests for the throughput measurement module."""
 
 import threading
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 from chaosprobe.metrics.throughput import (
     ContinuousRedisProber,
     ContinuousDiskProber,
-    ThroughputProber,
     ThroughputResult,
     ThroughputSample,
     _ContinuousProberBase,
@@ -166,7 +163,7 @@ class TestContinuousRedisProber:
             },
         ]
 
-        phases = prober._split_phases(series)
+        phases = prober._split_phases(series, "redis")
         assert phases["pre-chaos"]["sampleCount"] == 1
         assert phases["during-chaos"]["sampleCount"] == 2
         assert phases["post-chaos"]["sampleCount"] == 1
@@ -180,7 +177,7 @@ class TestContinuousRedisProber:
         prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
         prober._lock = threading.Lock()
 
-        phases = prober._split_phases([])
+        phases = prober._split_phases([], "redis")
         assert phases["pre-chaos"]["sampleCount"] == 0
         assert phases["during-chaos"]["sampleCount"] == 0
         assert phases["post-chaos"]["sampleCount"] == 0
@@ -206,7 +203,7 @@ class TestContinuousDiskProber:
             },
         ]
 
-        phases = prober._split_phases(series)
+        phases = prober._split_phases(series, "disk")
         assert phases["pre-chaos"]["sampleCount"] == 1
         assert phases["during-chaos"]["sampleCount"] == 1
         assert phases["during-chaos"]["disk"]["write"]["meanOpsPerSecond"] == 30.0

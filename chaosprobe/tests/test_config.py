@@ -1,9 +1,6 @@
 """Tests for configuration loading and validation."""
 
 import pytest
-import tempfile
-import os
-from pathlib import Path
 
 from chaosprobe.config.loader import load_scenario, merge_configs
 from chaosprobe.config.validator import validate_scenario, ValidationError, _validate_cluster_config

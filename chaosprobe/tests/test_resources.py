@@ -4,7 +4,6 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.metrics.resources import (

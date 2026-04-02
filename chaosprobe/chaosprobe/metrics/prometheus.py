@@ -334,6 +334,7 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
         """Return structured Prometheus metrics data."""
         with self._lock:
             series = list(self._time_series)
+            errors = self._probe_errors
 
         if not series:
             return {
@@ -354,8 +355,8 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
                 "namespace": self.namespace,
             },
         }
-        if self._probe_errors > 0:
-            data["probeErrors"] = self._probe_errors
+        if errors > 0:
+            data["probeErrors"] = errors
         return data
 
     # -- phase aggregation --------------------------------------------------

@@ -97,7 +97,7 @@ Validates loaded scenarios for structural correctness before execution.
 | `validate_scenario(scenario)` | Validates entire scenario. Raises `ValidationError` with aggregated errors |
 | `_validate_chaos_engine(spec, filepath)` | Checks: apiVersion, kind, experiments list, applabel, chaosServiceAccount |
 | `_validate_manifest(spec, filepath)` | Checks: apiVersion, kind, metadata.name |
-| `_validate_cluster_config(config, filepath)` | Checks: provider (vagrant/kubespray), workers.count/cpu/memory/disk |
+| `_validate_cluster_config(cluster)` | Checks: provider (vagrant/kubespray), workers.count/cpu/memory/disk |
 
 ---
 
@@ -321,7 +321,7 @@ Supports context manager protocol (`with LocustRunner(...) as runner:`).
 
 #### base.py
 
-**Abstract class: `ResultStore`**
+**Abstract class: `ResultStore`** — supports context manager protocol (`with store:`)
 
 | Method | Purpose |
 |---|---|
@@ -331,6 +331,10 @@ Supports context manager protocol (`with LocustRunner(...) as runner:`).
 | `get_metrics(run_id, metric_name)` | Get metrics for a run |
 | `compare_strategies(scenario, limit_per_strategy)` | Compare strategies across runs |
 | `export_csv(output_path)` | Export all runs to CSV |
+| `get_metric_trend(metric_name, strategy, limit)` | Get historical trend of a metric |
+| `get_metric_names()` | Return all distinct metric names |
+| `get_runs_below_threshold(metric_name, threshold, strategy)` | Find runs below a threshold |
+| `close()` | Release resources |
 
 #### sqlite.py
 
@@ -470,7 +474,7 @@ Generated charts: resilience score bars, recovery time comparison, load metrics 
 | `chaosprobe graph blast-radius <service> [--max-hops N]` | Show upstream dependents affected by a service failure |
 | `chaosprobe graph topology --run-id <id>` | Show pod-to-node placement topology for a run |
 | `chaosprobe graph details <run-id> [--json]` | Show comprehensive data for a single run |
-| `chaosprobe graph compare --session <id>` | Compare strategies within a session |
+| `chaosprobe graph compare --run-ids <id1,id2,...>` | Compare strategies across specified runs |
 
 All graph commands accept `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`.
 

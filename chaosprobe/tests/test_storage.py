@@ -1,9 +1,7 @@
 """Tests for the database storage module."""
 
-import json
 import os
 import pytest
-import tempfile
 
 from chaosprobe.storage.sqlite import SQLiteStore
 
@@ -314,3 +312,36 @@ class TestSQLiteStore:
         )
         assert len(below) == 1
         assert below[0]["strategy"] == "spread"
+
+    def test_context_manager(self, db_path, sample_run_data):
+        """SQLiteStore works as a context manager and closes on exit."""
+        with SQLiteStore(db_path=db_path) as store:
+            store.save_run(sample_run_data)
+            run = store.get_run(sample_run_data["runId"])
+            assert run is not None
+        # Connection should be closed after exiting context
+        assert store._conn is None
+
+    def test_close_idempotent(self, store):
+        """Calling close() multiple times does not raise."""
+        store.close()
+        store.close()
+        assert store._conn is None
+
+    def test_save_run_with_no_placement(self, store):
+        """save_run handles missing placement gracefully (strategy=None)."""
+        data = {
+            "runId": "run-no-placement",
+            "timestamp": "2026-04-02T01:00:00+00:00",
+            "scenario": {"directory": "test"},
+            "infrastructure": {"namespace": "default"},
+            "experiments": [],
+            "summary": {"resilienceScore": 0, "overallVerdict": "FAIL",
+                        "totalExperiments": 0, "passed": 0, "failed": 0},
+            "metrics": {},
+        }
+        store.save_run(data)
+        runs = store.list_runs()
+        assert any(r["id"] == "run-no-placement" for r in runs)
+        matching = [r for r in runs if r["id"] == "run-no-placement"]
+        assert matching[0]["strategy"] is None

@@ -613,6 +613,7 @@ class ContinuousLatencyProber:
         """Return structured latency time series and phase summaries."""
         with self._lock:
             series = list(self._time_series)
+            errors = self._probe_errors
 
         phases = self._split_phases(series)
         data: Dict[str, Any] = {
@@ -623,8 +624,8 @@ class ContinuousLatencyProber:
                 "namespace": self.namespace,
             },
         }
-        if self._probe_errors > 0:
-            data["probeErrors"] = self._probe_errors
+        if errors > 0:
+            data["probeErrors"] = errors
         return data
 
     def _probe_loop(self) -> None:

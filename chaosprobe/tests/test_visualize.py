@@ -3,8 +3,6 @@
 import json
 import os
 import pytest
-from pathlib import Path
-from unittest.mock import MagicMock
 
 from chaosprobe.output.visualize import (
     generate_from_summary,

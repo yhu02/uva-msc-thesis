@@ -7,6 +7,16 @@ from typing import Any, Dict, List, Optional
 class ResultStore(ABC):
     """Abstract interface for persisting experiment results."""
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def close(self) -> None:
+        """Release resources. Subclasses should override."""
+
     @abstractmethod
     def save_run(self, run_data: Dict[str, Any]) -> str:
         """Save a complete run result.

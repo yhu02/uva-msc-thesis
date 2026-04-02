@@ -60,6 +60,13 @@ class Neo4jStore:
         """Close the driver connection."""
         self._driver.close()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
@@ -250,8 +257,11 @@ class Neo4jStore:
                     "    e.load_total_failures = $load_fails, "
                     "    e.load_avg_response_ms = $load_avg_resp, "
                     "    e.load_p95_response_ms = $load_p95, "
+                    "    e.load_p50_response_ms = $load_p50, "
                     "    e.load_p99_response_ms = $load_p99, "
                     "    e.load_rps = $load_rps, "
+                    "    e.load_error_rate = $load_err_rate, "
+                    "    e.load_duration_s = $load_duration, "
                     "    e.node_name = $node_name, "
                     "    e.node_capacity_cpu = $node_cap_cpu, "
                     "    e.node_capacity_memory = $node_cap_mem, "
@@ -283,9 +293,12 @@ class Neo4jStore:
                     load_reqs=load_gen.get("stats", {}).get("totalRequests"),
                     load_fails=load_gen.get("stats", {}).get("totalFailures"),
                     load_avg_resp=load_gen.get("stats", {}).get("avgResponseTime_ms"),
+                    load_p50=load_gen.get("stats", {}).get("p50ResponseTime_ms"),
                     load_p95=load_gen.get("stats", {}).get("p95ResponseTime_ms"),
                     load_p99=load_gen.get("stats", {}).get("p99ResponseTime_ms"),
                     load_rps=load_gen.get("stats", {}).get("requestsPerSecond"),
+                    load_err_rate=load_gen.get("stats", {}).get("errorRate"),
+                    load_duration=load_gen.get("stats", {}).get("duration_seconds"),
                     node_name=node_info.get("nodeName"),
                     node_cap_cpu=node_info.get("capacity", {}).get("cpu"),
                     node_cap_mem=node_info.get("capacity", {}).get("memory"),
@@ -822,9 +835,8 @@ class Neo4jStore:
             s = _ensure(ts)
             s["phase"] = entry.get("phase", "")
             for route, data in entry.get("routes", {}).items():
-                safe = route.replace("/", "_").strip("_") or "root"
-                s[f"lat_{safe}_ms"] = data.get("latency_ms")
-                s[f"lat_{safe}_err"] = 1 if data.get("status") != "ok" else 0
+                s[f"latency:{route}:ms"] = data.get("latency_ms")
+                s[f"latency:{route}:error"] = 1 if data.get("status") != "ok" else 0
 
         # Resource time-series
         resources = metrics.get("resources", {})
@@ -837,12 +849,12 @@ class Neo4jStore:
                 s.setdefault("phase", entry.get("phase", ""))
                 node = entry.get("node", {})
                 s["node_cpu_millicores"] = node.get("cpu_millicores")
-                s["node_cpu_pct"] = node.get("cpu_percent")
-                s["node_mem_bytes"] = node.get("memory_bytes")
-                s["node_mem_pct"] = node.get("memory_percent")
+                s["node_cpu_percent"] = node.get("cpu_percent")
+                s["node_memory_bytes"] = node.get("memory_bytes")
+                s["node_memory_percent"] = node.get("memory_percent")
                 agg = entry.get("podAggregate", {})
-                s["pod_total_cpu"] = agg.get("totalCpu_millicores")
-                s["pod_total_mem"] = agg.get("totalMemory_bytes")
+                s["pod_total_cpu_millicores"] = agg.get("totalCpu_millicores")
+                s["pod_total_memory_bytes"] = agg.get("totalMemory_bytes")
                 s["pod_count"] = agg.get("podCount")
 
         # Redis time-series
@@ -854,8 +866,8 @@ class Neo4jStore:
             s = _ensure(ts)
             s.setdefault("phase", entry.get("phase", ""))
             for op, data in entry.get("redis", {}).items():
-                s[f"redis_{op}_ops"] = data.get("ops_per_second")
-                s[f"redis_{op}_lat"] = data.get("latency_ms")
+                s[f"redis:{op}:ops_per_s"] = data.get("ops_per_second")
+                s[f"redis:{op}:latency_ms"] = data.get("latency_ms")
 
         # Disk time-series
         disk = metrics.get("disk", {})
@@ -866,8 +878,8 @@ class Neo4jStore:
             s = _ensure(ts)
             s.setdefault("phase", entry.get("phase", ""))
             for op, data in entry.get("disk", {}).items():
-                s[f"disk_{op}_ops"] = data.get("ops_per_second")
-                s[f"disk_{op}_bps"] = data.get("bytes_per_second")
+                s[f"disk:{op}:ops_per_s"] = data.get("ops_per_second")
+                s[f"disk:{op}:bytes_per_s"] = data.get("bytes_per_second")
 
         # Prometheus time-series
         prometheus = metrics.get("prometheus", {})
@@ -889,7 +901,8 @@ class Neo4jStore:
                         except (ValueError, IndexError, TypeError):
                             pass
                     if count > 0:
-                        s[f"prom_{metric_name}"] = round(total / count, 4)
+                        s[f"prom:{metric_name}:sum"] = round(total, 4)
+                        s[f"prom:{metric_name}:avg"] = round(total / count, 4)
 
         if not samples:
             return
@@ -1278,15 +1291,54 @@ class Neo4jStore:
                     "totalRequests": exp.get("load_total_requests"),
                     "totalFailures": exp.get("load_total_failures"),
                     "avgResponseTime_ms": exp.get("load_avg_response_ms"),
+                    "p50ResponseTime_ms": exp.get("load_p50_response_ms"),
                     "p95ResponseTime_ms": exp.get("load_p95_response_ms"),
                     "p99ResponseTime_ms": exp.get("load_p99_response_ms"),
                     "requestsPerSecond": exp.get("load_rps"),
+                    "errorRate": exp.get("load_error_rate"),
+                    "duration_seconds": exp.get("load_duration_s"),
                 },
             }
+
+        # Node info
+        node_info: Dict[str, Any] = {}
+        if exp.get("node_name"):
+            node_info["nodeName"] = exp["node_name"]
+            if exp.get("node_capacity_cpu") is not None:
+                node_info["capacity"] = {
+                    "cpu": exp.get("node_capacity_cpu"),
+                    "memory": exp.get("node_capacity_memory"),
+                }
+            if exp.get("node_allocatable_cpu") is not None:
+                node_info["allocatable"] = {
+                    "cpu": exp.get("node_allocatable_cpu"),
+                    "memory": exp.get("node_allocatable_memory"),
+                }
+        if node_info:
+            metrics["nodeInfo"] = node_info
+
+        # Container logs
+        container_logs_raw = details.get("containerLogs", [])
+        if container_logs_raw:
+            pods_logs: Dict[str, Any] = {}
+            for log_entry in container_logs_raw:
+                pod_name = log_entry.get("pod_name", "")
+                container_name = log_entry.get("container_name", "")
+                pod_dict = pods_logs.setdefault(pod_name, {
+                    "restartCount": log_entry.get("restart_count", 0),
+                    "containers": {},
+                })
+                pod_dict["containers"][container_name] = {
+                    "current": log_entry.get("current_log", ""),
+                    "previous": log_entry.get("previous_log", ""),
+                }
+            if pods_logs:
+                metrics["containerLogs"] = {"pods": pods_logs}
 
         output = {
             "runId": run_id,
             "timestamp": exp.get("timestamp", ""),
+            "sessionId": exp.get("session_id", ""),
             "scenario": scenario,
             "experiments": experiments,
             "summary": {
@@ -1319,7 +1371,7 @@ class Neo4jStore:
             result = session.run(
                 "MATCH (e:ChaosRun {run_id: $rid})"
                 "-[:HAS_SAMPLE]->(s:MetricsSample) "
-                "RETURN s.data_json AS data "
+                "RETURN s.data AS data "
                 "ORDER BY s.seq",
                 rid=run_id,
             )
@@ -1338,11 +1390,10 @@ class Neo4jStore:
         for s in samples:
             routes: Dict[str, Any] = {}
             for k, v in s.items():
-                if k.startswith("lat_") and k.endswith("_ms"):
-                    route_safe = k[len("lat_") : -len("_ms")]
-                    route_key = "/" + route_safe.replace("_", "/") if route_safe != "root" else "/"
-                    err_key = f"lat_{route_safe}_err"
-                    routes[route_key] = {
+                if k.startswith("latency:") and k.endswith(":ms"):
+                    route = k[len("latency:"):-len(":ms")]
+                    err_key = f"latency:{route}:error"
+                    routes[route] = {
                         "latency_ms": v,
                         "status": "error" if s.get(err_key, 0) else "ok",
                     }
@@ -1368,13 +1419,13 @@ class Neo4jStore:
                         "phase": s.get("phase", ""),
                         "node": {
                             "cpu_millicores": s.get("node_cpu_millicores"),
-                            "cpu_percent": s.get("node_cpu_pct"),
-                            "memory_bytes": s.get("node_mem_bytes"),
-                            "memory_percent": s.get("node_mem_pct"),
+                            "cpu_percent": s.get("node_cpu_percent"),
+                            "memory_bytes": s.get("node_memory_bytes"),
+                            "memory_percent": s.get("node_memory_percent"),
                         },
                         "podAggregate": {
-                            "totalCpu_millicores": s.get("pod_total_cpu"),
-                            "totalMemory_bytes": s.get("pod_total_mem"),
+                            "totalCpu_millicores": s.get("pod_total_cpu_millicores"),
+                            "totalMemory_bytes": s.get("pod_total_memory_bytes"),
                             "podCount": s.get("pod_count"),
                         },
                     }
@@ -1388,9 +1439,9 @@ class Neo4jStore:
         for s in samples:
             ops: Dict[str, Any] = {}
             for k, v in s.items():
-                if k.startswith("redis_") and k.endswith("_ops"):
-                    op = k[len("redis_") : -len("_ops")]
-                    lat_key = f"redis_{op}_lat"
+                if k.startswith("redis:") and k.endswith(":ops_per_s"):
+                    op = k[len("redis:"):-len(":ops_per_s")]
+                    lat_key = f"redis:{op}:latency_ms"
                     ops[op] = {
                         "ops_per_second": v,
                         "latency_ms": s.get(lat_key),
@@ -1412,9 +1463,9 @@ class Neo4jStore:
         for s in samples:
             ops = {}
             for k, v in s.items():
-                if k.startswith("disk_") and k.endswith("_ops"):
-                    op = k[len("disk_") : -len("_ops")]
-                    bps_key = f"disk_{op}_bps"
+                if k.startswith("disk:") and k.endswith(":ops_per_s"):
+                    op = k[len("disk:"):-len(":ops_per_s")]
+                    bps_key = f"disk:{op}:bytes_per_s"
                     ops[op] = {
                         "ops_per_second": v,
                         "bytes_per_second": s.get(bps_key),

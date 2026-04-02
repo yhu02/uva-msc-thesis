@@ -25,6 +25,172 @@ def _bucket(epoch: float, resolution_s: float) -> float:
     return math.floor(epoch / resolution_s) * resolution_s
 
 
+# -------------------------------------------------------------------
+# Merge helpers — each populates *buckets* from one metric stream
+# -------------------------------------------------------------------
+
+_BucketMap = Dict[float, Dict[str, Any]]
+_NearestFn = Any  # Callable[[float], float]
+
+
+def _assign_phases(
+    buckets: _BucketMap,
+    bucket_keys: List[float],
+    anomaly_labels: Optional[List[Dict[str, Any]]],
+) -> None:
+    anomaly_windows: List[Tuple[float, float, str]] = []
+    if anomaly_labels:
+        for lbl in anomaly_labels:
+            if lbl.get("startTime") and lbl.get("endTime"):
+                anomaly_windows.append(
+                    (
+                        _parse_iso(lbl["startTime"]),
+                        _parse_iso(lbl["endTime"]),
+                        lbl.get("faultType", "unknown"),
+                    )
+                )
+    for bk in bucket_keys:
+        phase = "pre-chaos"
+        anomaly_type = "none"
+        for a_start, a_end, a_type in anomaly_windows:
+            if a_start <= bk <= a_end:
+                phase = "during-chaos"
+                anomaly_type = a_type
+                break
+            elif bk > a_end:
+                phase = "post-chaos"
+        buckets[bk]["phase"] = phase
+        buckets[bk]["anomaly_label"] = anomaly_type
+
+
+def _merge_latency(
+    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
+) -> None:
+    for entry in metrics.get("latency", {}).get("timeSeries", []):
+        ts = entry.get("timestamp")
+        if ts is None:
+            continue
+        bk = nearest(_parse_iso(ts))
+        if bk not in buckets:
+            continue
+        for route, data in entry.get("routes", {}).items():
+            val = data.get("latency_ms")
+            if val is not None:
+                buckets[bk][f"latency:{route}:ms"] = val
+            buckets[bk][f"latency:{route}:error"] = 1 if data.get("status") != "ok" else 0
+
+
+def _merge_resources(
+    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
+) -> None:
+    resources = metrics.get("resources", {})
+    if not resources.get("available"):
+        return
+    for entry in resources.get("timeSeries", []):
+        ts = entry.get("timestamp")
+        if ts is None:
+            continue
+        bk = nearest(_parse_iso(ts))
+        if bk not in buckets:
+            continue
+        node = entry.get("node", {})
+        buckets[bk]["node_cpu_millicores"] = node.get("cpu_millicores")
+        buckets[bk]["node_cpu_percent"] = node.get("cpu_percent")
+        buckets[bk]["node_memory_bytes"] = node.get("memory_bytes")
+        buckets[bk]["node_memory_percent"] = node.get("memory_percent")
+        agg = entry.get("podAggregate", {})
+        buckets[bk]["pod_total_cpu_millicores"] = agg.get("totalCpu_millicores")
+        buckets[bk]["pod_total_memory_bytes"] = agg.get("totalMemory_bytes")
+        buckets[bk]["pod_count"] = agg.get("podCount")
+
+
+def _merge_redis(
+    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
+) -> None:
+    for entry in metrics.get("redis", {}).get("timeSeries", []):
+        ts = entry.get("timestamp")
+        if ts is None:
+            continue
+        bk = nearest(_parse_iso(ts))
+        if bk not in buckets:
+            continue
+        for op, data in entry.get("redis", {}).items():
+            buckets[bk][f"redis:{op}:ops_per_s"] = data.get("ops_per_second")
+            buckets[bk][f"redis:{op}:latency_ms"] = data.get("latency_ms")
+
+
+def _merge_disk(
+    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
+) -> None:
+    for entry in metrics.get("disk", {}).get("timeSeries", []):
+        ts = entry.get("timestamp")
+        if ts is None:
+            continue
+        bk = nearest(_parse_iso(ts))
+        if bk not in buckets:
+            continue
+        for op, data in entry.get("disk", {}).items():
+            buckets[bk][f"disk:{op}:ops_per_s"] = data.get("ops_per_second")
+            buckets[bk][f"disk:{op}:bytes_per_s"] = data.get("bytes_per_second")
+
+
+def _merge_prometheus(
+    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
+) -> None:
+    prometheus = metrics.get("prometheus", {})
+    if not prometheus.get("available"):
+        return
+    for entry in prometheus.get("timeSeries", []):
+        ts = entry.get("timestamp")
+        if ts is None:
+            continue
+        bk = nearest(_parse_iso(ts))
+        if bk not in buckets:
+            continue
+        for metric_name, values in entry.get("metrics", {}).items():
+            total = 0.0
+            count = 0
+            for v in values:
+                try:
+                    total += float(v.get("value", [0, "0"])[1])
+                    count += 1
+                except (ValueError, IndexError, TypeError):
+                    pass
+            if count > 0:
+                buckets[bk][f"prom:{metric_name}:sum"] = round(total, 4)
+                buckets[bk][f"prom:{metric_name}:avg"] = round(total / count, 4)
+
+
+def _merge_recovery(
+    metrics: Dict[str, Any], buckets: _BucketMap, bucket_keys: List[float]
+) -> None:
+    for cycle in metrics.get("recovery", {}).get("recoveryEvents", []):
+        del_time = cycle.get("deletionTime")
+        ready_time = cycle.get("readyTime")
+        if del_time and ready_time:
+            del_epoch = _parse_iso(del_time)
+            ready_epoch = _parse_iso(ready_time)
+            for bk in bucket_keys:
+                if del_epoch <= bk <= ready_epoch:
+                    buckets[bk]["recovery_in_progress"] = 1
+                    buckets[bk]["recovery_total_ms"] = cycle.get("totalRecovery_ms")
+
+
+def _merge_events(
+    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
+) -> None:
+    for event in metrics.get("eventTimeline", []):
+        ts = event.get("time")
+        if ts is None:
+            continue
+        bk = nearest(_parse_iso(ts))
+        if bk not in buckets:
+            continue
+        etype = event.get("type", "")
+        key = f"events:{etype.lower()}_count"
+        buckets[bk][key] = buckets[bk].get(key, 0) + 1
+
+
 def align_time_series(
     metrics: Dict[str, Any],
     anomaly_labels: Optional[List[Dict[str, Any]]] = None,
@@ -80,145 +246,16 @@ def align_time_series(
         return b if b in buckets else min(bucket_keys, key=lambda k: abs(k - epoch))
 
     # ── Determine phase per bucket ────────────────────────────
-    # Use anomaly labels if available for precise phase assignment
-    anomaly_windows: List[Tuple[float, float, str]] = []
-    if anomaly_labels:
-        for lbl in anomaly_labels:
-            if lbl.get("startTime") and lbl.get("endTime"):
-                anomaly_windows.append(
-                    (
-                        _parse_iso(lbl["startTime"]),
-                        _parse_iso(lbl["endTime"]),
-                        lbl.get("faultType", "unknown"),
-                    )
-                )
+    _assign_phases(buckets, bucket_keys, anomaly_labels)
 
-    for bk in bucket_keys:
-        phase = "pre-chaos"
-        anomaly_type = "none"
-        for a_start, a_end, a_type in anomaly_windows:
-            if a_start <= bk <= a_end:
-                phase = "during-chaos"
-                anomaly_type = a_type
-                break
-            elif bk > a_end:
-                phase = "post-chaos"
-
-        buckets[bk]["phase"] = phase
-        buckets[bk]["anomaly_label"] = anomaly_type
-
-    # ── Merge latency data ────────────────────────────────────
-    latency = metrics.get("latency", {})
-    for entry in latency.get("timeSeries", []):
-        ts = entry.get("timestamp")
-        if ts is None:
-            continue
-        bk = _nearest_bucket(_parse_iso(ts))
-        if bk not in buckets:
-            continue
-        for route, data in entry.get("routes", {}).items():
-            col = f"latency:{route}:ms"
-            val = data.get("latency_ms")
-            if val is not None:
-                buckets[bk][col] = val
-            err_col = f"latency:{route}:error"
-            buckets[bk][err_col] = 1 if data.get("status") != "ok" else 0
-
-    # ── Merge resource utilization data ───────────────────────
-    resources = metrics.get("resources", {})
-    if resources.get("available"):
-        for entry in resources.get("timeSeries", []):
-            ts = entry.get("timestamp")
-            if ts is None:
-                continue
-            bk = _nearest_bucket(_parse_iso(ts))
-            if bk not in buckets:
-                continue
-            node = entry.get("node", {})
-            buckets[bk]["node_cpu_millicores"] = node.get("cpu_millicores")
-            buckets[bk]["node_cpu_percent"] = node.get("cpu_percent")
-            buckets[bk]["node_memory_bytes"] = node.get("memory_bytes")
-            buckets[bk]["node_memory_percent"] = node.get("memory_percent")
-
-            agg = entry.get("podAggregate", {})
-            buckets[bk]["pod_total_cpu_millicores"] = agg.get("totalCpu_millicores")
-            buckets[bk]["pod_total_memory_bytes"] = agg.get("totalMemory_bytes")
-            buckets[bk]["pod_count"] = agg.get("podCount")
-
-    # ── Merge Redis throughput data ───────────────────────────
-    redis = metrics.get("redis", {})
-    for entry in redis.get("timeSeries", []):
-        ts = entry.get("timestamp")
-        if ts is None:
-            continue
-        bk = _nearest_bucket(_parse_iso(ts))
-        if bk not in buckets:
-            continue
-        for op, data in entry.get("redis", {}).items():
-            buckets[bk][f"redis:{op}:ops_per_s"] = data.get("ops_per_second")
-            buckets[bk][f"redis:{op}:latency_ms"] = data.get("latency_ms")
-
-    # ── Merge disk I/O data ───────────────────────────────────
-    disk = metrics.get("disk", {})
-    for entry in disk.get("timeSeries", []):
-        ts = entry.get("timestamp")
-        if ts is None:
-            continue
-        bk = _nearest_bucket(_parse_iso(ts))
-        if bk not in buckets:
-            continue
-        for op, data in entry.get("disk", {}).items():
-            buckets[bk][f"disk:{op}:ops_per_s"] = data.get("ops_per_second")
-            buckets[bk][f"disk:{op}:bytes_per_s"] = data.get("bytes_per_second")
-
-    # ── Merge Prometheus data ─────────────────────────────────
-    prometheus = metrics.get("prometheus", {})
-    if prometheus.get("available"):
-        for entry in prometheus.get("timeSeries", []):
-            ts = entry.get("timestamp")
-            if ts is None:
-                continue
-            bk = _nearest_bucket(_parse_iso(ts))
-            if bk not in buckets:
-                continue
-            for metric_name, values in entry.get("metrics", {}).items():
-                # Aggregate across pods: sum for utilization metrics
-                total = 0.0
-                count = 0
-                for v in values:
-                    try:
-                        total += float(v.get("value", [0, "0"])[1])
-                        count += 1
-                    except (ValueError, IndexError, TypeError):
-                        pass
-                if count > 0:
-                    buckets[bk][f"prom:{metric_name}:sum"] = round(total, 4)
-                    buckets[bk][f"prom:{metric_name}:avg"] = round(total / count, 4)
-
-    # ── Merge recovery events as binary signals ───────────────
-    recovery = metrics.get("recovery", {})
-    for cycle in recovery.get("recoveryEvents", []):
-        del_time = cycle.get("deletionTime")
-        ready_time = cycle.get("readyTime")
-        if del_time and ready_time:
-            del_epoch = _parse_iso(del_time)
-            ready_epoch = _parse_iso(ready_time)
-            for bk in bucket_keys:
-                if del_epoch <= bk <= ready_epoch:
-                    buckets[bk]["recovery_in_progress"] = 1
-                    buckets[bk]["recovery_total_ms"] = cycle.get("totalRecovery_ms")
-
-    # ── Merge event timeline (pod churn counts) ───────────────
-    for event in metrics.get("eventTimeline", []):
-        ts = event.get("time")
-        if ts is None:
-            continue
-        bk = _nearest_bucket(_parse_iso(ts))
-        if bk not in buckets:
-            continue
-        etype = event.get("type", "")
-        key = f"events:{etype.lower()}_count"
-        buckets[bk][key] = buckets[bk].get(key, 0) + 1
+    # ── Merge metric streams into buckets ─────────────────────
+    _merge_latency(metrics, buckets, _nearest_bucket)
+    _merge_resources(metrics, buckets, _nearest_bucket)
+    _merge_redis(metrics, buckets, _nearest_bucket)
+    _merge_disk(metrics, buckets, _nearest_bucket)
+    _merge_prometheus(metrics, buckets, _nearest_bucket)
+    _merge_recovery(metrics, buckets, bucket_keys)
+    _merge_events(metrics, buckets, _nearest_bucket)
 
     # ── Fill defaults and return sorted rows ──────────────────
     rows = [buckets[bk] for bk in bucket_keys]
