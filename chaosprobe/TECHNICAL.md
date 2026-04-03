@@ -18,8 +18,10 @@ ChaosProbe CLI (cli.py, ~3200 lines)
       |
       +-- Config Loader (config/loader.py)
       |     +-- Validator (config/validator.py)
+      |     +-- Topology Parser (config/topology.py)
       |     Auto-classifies YAML files by kind field
       |     Loads optional cluster.yaml for provisioning config
+      |     Extracts service dependencies from deployment env vars
       |
       +-- Infrastructure Provisioner (provisioner/kubernetes.py)
       |     Applies raw K8s manifests (Deployment, Service, etc.)
@@ -87,6 +89,23 @@ Loads scenario directories or single YAML files. Auto-classifies resources by th
 | `merge_configs` | `(*configs) -> Dict` | Deep-merges configuration dictionaries |
 
 **Constants**: `CHAOS_KINDS = {"ChaosEngine"}`, `CLUSTER_CONFIG_FILE = "cluster.yaml"`
+
+#### topology.py
+
+Dynamically extracts service-to-service dependencies from Kubernetes deployment manifests by parsing environment variables (e.g. `*_SERVICE_ADDR`, `*_ADDR`). Replaces the old hardcoded service dependency graph.
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `parse_topology_from_scenario` | `(scenario: Dict) -> List[ServiceRoute]` | Extracts routes from a loaded scenario dict (checks `manifests` key) |
+| `parse_topology_from_directory` | `(directory: Union[str, Path]) -> List[ServiceRoute]` | Loads all YAML files from a directory and extracts routes |
+| `parse_topology_from_manifests` | `(manifests: List[Dict]) -> List[ServiceRoute]` | Extracts routes from a list of parsed manifest dicts |
+| `_extract_dependencies_from_deployment` | `(deployment: Dict) -> List[ServiceRoute]` | Parses a single Deployment for env-var service references |
+| `_infer_protocol` | `(env_name: str, address: str) -> str` | Infers protocol (`grpc` or `tcp`) from env name and address |
+| `_env_name_to_description` | `(env_name: str) -> str` | Converts env name (e.g. `PRODUCT_CATALOG_SERVICE_ADDR`) to human description |
+
+**Type alias**: `ServiceRoute = Tuple[str, str, str, str]` — `(source_service, target_service, protocol, description)`
+
+**Pattern matching**: Recognizes `*_SERVICE_ADDR`, `*_ADDR`, `*_SERVICE_HOST` env vars and extracts the target service name from the address value (before `:`). The source service is the deployment name.
 
 #### validator.py
 
@@ -313,7 +332,7 @@ Locust-based load generator with preset profiles and CSV stats parsing.
 
 Supports context manager protocol (`with LocustRunner(...) as runner:`).
 
-**Default locustfile**: Simulates Online Boutique browsing (index, browse, cart, checkout).
+**Default locustfile**: Simulates web application browsing (index, browse, cart, checkout). The default user class is `FrontendUser`.
 
 ---
 
@@ -507,34 +526,35 @@ Produces CSV (default) or Parquet (`--format parquet`, requires `pyarrow`) with 
 
 ```
 1. Load shared scenario (placement-experiment.yaml)
-2. Extract target deployment from ChaosEngine appinfo
-3. Create MetricsCollector for namespace
-4. Open shared SQLiteStore (results.db by default)
+2. Parse service topology from scenario manifests (config/topology.py)
+3. Extract target deployment from ChaosEngine appinfo
+4. Create MetricsCollector for namespace
+5. Open shared SQLiteStore (results.db by default)
 
 For each strategy in [baseline, colocate, spread, antagonistic, random]:
-    5. Apply placement via PlacementMutator
-    6. Wait settle-time (30s default)
+    6. Apply placement via PlacementMutator
+    7. Wait settle-time (30s default)
 
     For each iteration (1..N):
-        7. Start RecoveryWatcher(namespace, target_deployment)
-        8. Start LocustRunner with load profile (steady by default)
-        9. Record experiment_start = time.time()
-        10. ChaosRunner.run_experiments() -- blocks until engine completes
-        11. Record experiment_end = time.time()
-        12. Stop LocustRunner, collect LoadStats, cleanup temp dirs
-        13. RecoveryWatcher.stop()
-        14. ResultCollector.collect() -- ChaosResult CRDs
-        15. MetricsCollector.collect(recovery_data=watcher.result())
-        16. OutputGenerator.generate() -- build output_data dict
-        17. Neo4jStore.sync_run(output_data) -- sync to graph database
-        18. SQLiteStore.save_run(output_data) -- persist to SQLite
+        8. Start RecoveryWatcher(namespace, target_deployment)
+        9. Start LocustRunner with load profile (steady by default)
+        10. Record experiment_start = time.time()
+        11. ChaosRunner.run_experiments() -- blocks until engine completes
+        12. Record experiment_end = time.time()
+        13. Stop LocustRunner, collect LoadStats, cleanup temp dirs
+        14. RecoveryWatcher.stop()
+        15. ResultCollector.collect() -- ChaosResult CRDs
+        16. MetricsCollector.collect(recovery_data=watcher.result())
+        17. OutputGenerator.generate() -- build output_data dict
+        18. Neo4jStore.sync_run(output_data) -- sync to graph database
+        19. SQLiteStore.save_run(output_data) -- persist to SQLite
 
-    19. Clear placement constraints
-    20. Wait for rollout
+    20. Clear placement constraints
+    21. Wait for rollout
 
-21. Build comparison table + remediation log
-22. Close SQLiteStore and Neo4jStore
-23. Generate visualization charts (on by default)
+22. Build comparison table + remediation log
+23. Close SQLiteStore and Neo4jStore
+24. Generate visualization charts (on by default)
 ```
 
 ---
@@ -700,6 +720,7 @@ chaosprobe/
     cli.py                   # CLI entry point (~3200 lines)
     config/
       loader.py              # Scenario loading
+      topology.py            # Dynamic service dependency extraction
       validator.py           # Validation
     chaos/
       runner.py              # ChaosEngine execution
@@ -760,6 +781,7 @@ chaosprobe/
     test_cascade.py
     test_anomaly_labels.py
     test_remediation.py
+    test_topology.py
   pyproject.toml
   README.md
   TECHNICAL.md               # This document

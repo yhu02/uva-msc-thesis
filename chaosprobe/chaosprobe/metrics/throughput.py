@@ -1,7 +1,7 @@
 """Throughput measurement for database and disk I/O operations.
 
 Measures read/write throughput for:
-- Redis (database) operations via the cartservice/redis-cart in Online Boutique
+- Redis (database) operations via the cartservice/redis-cart
 - Disk I/O operations within pods
 
 Runs benchmark commands inside pods via kubectl exec and collects
@@ -197,7 +197,7 @@ class ThroughputProber:
 
         Args:
             target_service: Service whose pod to benchmark. Defaults to
-                redis-cart since many Online Boutique services are distroless.
+                redis-cart since many microservice pods are distroless.
             samples: Number of benchmark rounds.
             block_size_kb: Block size in KB for dd.
             count: Number of blocks per dd operation.
@@ -303,7 +303,7 @@ class ThroughputProber:
     def _find_exec_pod(self, target_service: str) -> Optional[str]:
         """Find a pod that supports shell exec for benchmarks.
 
-        Many Online Boutique pods are distroless (no shell). This tries
+        Many application pods are distroless (no shell). This tries
         the target first, verifies shell access, then falls back to pods
         known to have a shell. Results are cached to avoid repeated
         exec checks.

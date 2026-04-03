@@ -7,8 +7,6 @@ from chaosprobe.metrics.latency import (
     ContinuousLatencyProber,
     LatencyResult,
     LatencySample,
-    ONLINE_BOUTIQUE_HTTP_ROUTES,
-    ONLINE_BOUTIQUE_ROUTES,
 )
 
 
@@ -134,22 +132,6 @@ class TestLatencyResult:
         ))
         summary = result.summary()
         assert summary["stddev_ms"] == 0.0
-
-
-class TestOnlineBoutiqueRoutes:
-    def test_http_routes_defined(self):
-        assert len(ONLINE_BOUTIQUE_HTTP_ROUTES) >= 4
-        sources = [r[0] for r in ONLINE_BOUTIQUE_HTTP_ROUTES]
-        assert all(s == "frontend" for s in sources)
-
-    def test_service_routes_defined(self):
-        assert len(ONLINE_BOUTIQUE_ROUTES) >= 10
-        # Check key service pairs exist
-        pairs = [(r[0], r[1]) for r in ONLINE_BOUTIQUE_ROUTES]
-        assert ("frontend", "productcatalogservice") in pairs
-        assert ("frontend", "cartservice") in pairs
-        assert ("checkoutservice", "paymentservice") in pairs
-        assert ("cartservice", "redis-cart") in pairs
 
 
 class TestContinuousLatencyProber:

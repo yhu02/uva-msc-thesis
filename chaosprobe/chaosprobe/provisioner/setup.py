@@ -1665,9 +1665,14 @@ end
             raise RuntimeError(f"Failed to apply metrics-server manifest: {e}")
 
         # Patch to add --kubelet-insecure-tls for self-signed certs
-        # (common in Vagrant/Kubespray clusters)
+        # (common in Vagrant/Kubespray clusters) and pin to control-plane
+        # to avoid disruption from experiment placement strategies.
         patch = (
-            '{"spec":{"template":{"spec":{"containers":[{'
+            '{"spec":{"template":{"spec":{'
+            '"tolerations":[{"key":"node-role.kubernetes.io/control-plane",'
+            '"operator":"Exists","effect":"NoSchedule"}],'
+            '"nodeSelector":{"node-role.kubernetes.io/control-plane":""},'
+            '"containers":[{'
             '"name":"metrics-server",'
             '"args":["--cert-dir=/tmp","--secure-port=10250",'
             '"--kubelet-preferred-address-types='
@@ -1779,6 +1784,14 @@ end
                     "server.global.scrape_interval=15s",
                     "--set",
                     "server.global.evaluation_interval=15s",
+                    "--set",
+                    "server.tolerations[0].key=node-role.kubernetes.io/control-plane",
+                    "--set",
+                    "server.tolerations[0].operator=Exists",
+                    "--set",
+                    "server.tolerations[0].effect=NoSchedule",
+                    "--set",
+                    "server.nodeSelector.node-role\\.kubernetes\\.io/control-plane=",
                 ],
                 check=True,
             )
@@ -1894,6 +1907,16 @@ end
                 "template": {
                     "metadata": {"labels": {"app": "neo4j"}},
                     "spec": {
+                        "tolerations": [
+                            {
+                                "key": "node-role.kubernetes.io/control-plane",
+                                "operator": "Exists",
+                                "effect": "NoSchedule",
+                            },
+                        ],
+                        "nodeSelector": {
+                            "node-role.kubernetes.io/control-plane": "",
+                        },
                         "containers": [
                             {
                                 "name": "neo4j",
@@ -1918,6 +1941,12 @@ end
                                 "resources": {
                                     "requests": {"cpu": "250m", "memory": "512Mi"},
                                     "limits": {"cpu": "500m", "memory": "768Mi"},
+                                },
+                                "readinessProbe": {
+                                    "tcpSocket": {"port": 7687},
+                                    "initialDelaySeconds": 30,
+                                    "periodSeconds": 5,
+                                    "failureThreshold": 12,
                                 },
                                 "volumeMounts": [
                                     {

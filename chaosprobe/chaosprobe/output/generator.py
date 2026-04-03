@@ -31,6 +31,7 @@ class OutputGenerator:
         results: List[Dict[str, Any]],
         metrics: Optional[Dict[str, Any]] = None,
         placement: Optional[Dict[str, Any]] = None,
+        service_routes: Optional[List] = None,
     ):
         """Initialize the output generator.
 
@@ -40,11 +41,13 @@ class OutputGenerator:
             results: Collected experiment results from ResultCollector.
             metrics: Optional experiment metrics (recovery, pod status, etc.).
             placement: Optional placement dict with strategy and assignments.
+            service_routes: Optional service dependency graph tuples.
         """
         self.scenario = scenario
         self.results = results
         self.metrics = metrics
         self.placement = placement
+        self.service_routes = service_routes
 
     def generate(self) -> Dict[str, Any]:
         """Generate the complete AI output structure."""
@@ -69,6 +72,7 @@ class OutputGenerator:
             self.scenario,
             metrics=self.metrics,
             placement=self.placement,
+            service_routes=self.service_routes,
         )
 
         if self.metrics and self.metrics.get("latency"):

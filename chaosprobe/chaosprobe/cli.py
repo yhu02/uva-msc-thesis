@@ -15,6 +15,7 @@ import yaml
 from chaosprobe.chaos.runner import ChaosRunner
 from chaosprobe.collector.result_collector import ResultCollector
 from chaosprobe.config.loader import load_scenario
+from chaosprobe.config.topology import parse_topology_from_scenario
 from chaosprobe.config.validator import validate_scenario
 from chaosprobe.loadgen.runner import LoadProfile, LocustRunner
 from chaosprobe.metrics.collector import MetricsCollector
@@ -1511,8 +1512,8 @@ def placement_nodes():
 )
 @click.option(
     "--target-url",
-    default="http://frontend.online-boutique.svc.cluster.local",
-    help="Target URL for load generation",
+    default=None,
+    help="Target URL for load generation (default: auto port-forward to frontend service)",
 )
 @click.option(
     "--db",
@@ -1667,6 +1668,16 @@ def run(
     except Exception as e:
         click.echo(f"Error loading experiment: {e}", err=True)
         sys.exit(1)
+
+    # Discover service topology from deployment manifests
+    service_routes = parse_topology_from_scenario(shared_scenario) or None
+    if service_routes:
+        click.echo(
+            f"  Topology:   {len(service_routes)} service dependencies"
+            " discovered from manifests"
+        )
+    else:
+        click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
 
     # Optionally provision cluster from scenario's cluster config
     if provision:
@@ -1825,13 +1836,42 @@ def run(
             return False
 
     def _start_port_forward(svc: str, ns: str, ports: list[str]):
-        """Start a kubectl port-forward in the background."""
-        _sp.Popen(
+        """Start a kubectl port-forward in the background and track it."""
+        proc = _sp.Popen(
             ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
             stdout=_sp.DEVNULL,
             stderr=_sp.DEVNULL,
         )
+        _port_forward_procs[(svc, ns)] = proc
         time.sleep(3)
+
+    def _ensure_port_forward(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
+        """Check if port-forward is alive; restart if dead. Returns True if reachable."""
+        proc = _port_forward_procs.get((svc, ns))
+        if proc and proc.poll() is not None:
+            # Process died — restart
+            _start_port_forward(svc, ns, ports)
+        elif not proc:
+            _start_port_forward(svc, ns, ports)
+        # Verify connectivity
+        for _ in range(6):
+            if _check_port(host, port):
+                return True
+            time.sleep(2)
+        return False
+
+    def _cleanup_port_forwards():
+        """Terminate all tracked port-forward processes."""
+        for key, proc in _port_forward_procs.items():
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except _sp.TimeoutExpired:
+                    proc.kill()
+        _port_forward_procs.clear()
+
+    _port_forward_procs: Dict[tuple, Any] = {}
 
     # Prometheus
     if measure_prometheus:
@@ -1900,8 +1940,7 @@ def run(
                     f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward...",
                     err=True,
                 )
-                _start_port_forward("neo4j", "neo4j", ["7687:7687", "7474:7474"])
-                if _check_port(host, port):
+                if _ensure_port_forward("neo4j", "neo4j", ["7687:7687", "7474:7474"], host, port):
                     click.echo(f"  Neo4j bolt:  {host}:{port} reachable (port-forward started)")
                 else:
                     click.echo(
@@ -1939,6 +1978,43 @@ def run(
     _wait_for_healthy_deployments(namespace, timeout=120)
     click.echo("  Deployments: all ready")
 
+    # 5. Auto port-forward to frontend service for Locust load generation
+    frontend_pf_port = 8089
+    if target_url is None and load_profile:
+        # Find the frontend service in the namespace
+        try:
+            svc_list = core_api.list_namespaced_service(namespace)
+            frontend_svc = None
+            for svc in svc_list.items:
+                if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
+                    frontend_svc = svc.metadata.name
+                    # Use the first HTTP port
+                    for p in svc.spec.ports or []:
+                        if p.port in (80, 8080):
+                            frontend_pf_port = 8089
+                            break
+                    break
+            if frontend_svc:
+                pf_mapping = f"{frontend_pf_port}:80"
+                if _ensure_port_forward(frontend_svc, namespace,
+                                        [pf_mapping], "localhost", frontend_pf_port):
+                    target_url = f"http://localhost:{frontend_pf_port}"
+                    click.echo(f"  Load target: {target_url} (port-forward to {frontend_svc})")
+                else:
+                    click.echo(
+                        f"  Load target: WARNING - port-forward to {frontend_svc} failed",
+                        err=True,
+                    )
+                    target_url = f"http://localhost:{frontend_pf_port}"
+            else:
+                click.echo("  Load target: WARNING - no frontend service found", err=True)
+                target_url = f"http://localhost:{frontend_pf_port}"
+        except Exception as e:
+            click.echo(f"  Load target: WARNING - failed to setup port-forward ({e})", err=True)
+            target_url = f"http://localhost:{frontend_pf_port}"
+    elif target_url is None:
+        target_url = f"http://localhost:{frontend_pf_port}"
+
     click.echo("")
 
     # Extract target deployment from experiment spec for recovery metrics
@@ -1964,14 +2040,18 @@ def run(
             from chaosprobe.storage.neo4j_store import Neo4jStore
 
             # Retry connection — Neo4j may still be starting after install
-            for _attempt in range(6):
+            max_neo4j_retries = 24  # 24 × 5s = 120s total budget
+            for _attempt in range(max_neo4j_retries):
                 try:
                     graph_store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
                     break
                 except Exception:
-                    if _attempt == 5:
+                    if _attempt == max_neo4j_retries - 1:
                         raise
-                    click.echo(f"  Neo4j:      waiting for bolt to become ready ({_attempt + 1}/6)...")
+                    click.echo(
+                        f"  Neo4j:      waiting for bolt to become ready"
+                        f" ({_attempt + 1}/{max_neo4j_retries})..."
+                    )
                     time.sleep(5)
             graph_store.ensure_schema()
             # Sync current cluster topology into the graph
@@ -1996,7 +2076,7 @@ def run(
                 )
             except Exception as e:
                 click.echo(f"  Neo4j: topology sync skipped ({e})", err=True)
-            graph_store.sync_service_dependencies()
+            graph_store.sync_service_dependencies(routes=service_routes)
             click.echo(f"  Neo4j:      connected ({neo4j_uri})")
         except ImportError:
             click.echo(
@@ -2074,6 +2154,37 @@ def run(
                 # Verify all deployments are ready before proceeding
                 click.echo("    Verifying deployment readiness...")
                 _wait_for_healthy_deployments(namespace, timeout=60)
+
+                # Re-check infrastructure health between iterations
+                if neo4j_uri:
+                    _ensure_port_forward(
+                        "neo4j", "neo4j", ["7687:7687", "7474:7474"], "localhost", 7687
+                    )
+                if measure_prometheus:
+                    # Re-check Prometheus port-forward if it was in use
+                    for _pns in ("monitoring", "prometheus"):
+                        proc = _port_forward_procs.get(("prometheus-server", _pns))
+                        if proc:
+                            _ensure_port_forward(
+                                "prometheus-server", _pns,
+                                ["9090:9090"], "localhost", 9090,
+                            )
+                            break
+                if load_profile and target_url and target_url.startswith("http://localhost:"):
+                    # Re-check frontend port-forward
+                    try:
+                        svc_list = core_api.list_namespaced_service(namespace)
+                        for svc in svc_list.items:
+                            if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
+                                _ensure_port_forward(
+                                    svc.metadata.name, namespace,
+                                    [f"{frontend_pf_port}:80"],
+                                    "localhost", frontend_pf_port,
+                                )
+                                break
+                    except Exception:
+                        pass
+
                 click.echo("    Ready.")
 
                 # Run chaos experiment
@@ -2316,6 +2427,7 @@ def run(
                     results,
                     metrics=recovery,
                     placement=placement_info,
+                    service_routes=service_routes,
                 )
                 output_data = generator.generate()
 
@@ -2343,12 +2455,43 @@ def run(
 
                 # Sync to Neo4j graph if connected
                 if graph_store:
-                    try:
-                        graph_store.sync_run(output_data)
-                    except Exception as e:
-                        import traceback
-                        click.echo(f"    Warning: Neo4j sync failed: {e}", err=True)
-                        click.echo(traceback.format_exc(), err=True)
+                    _neo4j_synced = False
+                    for _neo4j_retry in range(3):
+                        try:
+                            graph_store.sync_run(output_data)
+                            _neo4j_synced = True
+                            break
+                        except Exception as e:
+                            if _neo4j_retry < 2:
+                                click.echo(
+                                    f"    Neo4j sync attempt {_neo4j_retry + 1} failed, "
+                                    "reconnecting...",
+                                    err=True,
+                                )
+                                # Re-establish port-forward and connection
+                                _ensure_port_forward(
+                                    "neo4j", "neo4j",
+                                    ["7687:7687", "7474:7474"],
+                                    "localhost", 7687,
+                                )
+                                try:
+                                    graph_store.close()
+                                except Exception:
+                                    pass
+                                try:
+                                    graph_store = Neo4jStore(
+                                        neo4j_uri, neo4j_user, neo4j_password
+                                    )
+                                except Exception:
+                                    time.sleep(5)
+                                    continue
+                            else:
+                                import traceback
+                                click.echo(
+                                    f"    Warning: Neo4j sync failed after 3 attempts: {e}",
+                                    err=True,
+                                )
+                                click.echo(traceback.format_exc(), err=True)
 
                 verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
                 score = output_data.get("summary", {}).get("resilienceScore", 0)
@@ -2504,6 +2647,9 @@ def run(
         run_store.close()
     if graph_store:
         graph_store.close()
+
+    # Terminate port-forward processes
+    _cleanup_port_forwards()
 
     click.echo("")
 

@@ -83,13 +83,13 @@ class LoadStats:
         }
 
 
-DEFAULT_LOCUSTFILE = '''"""Default Locust load test for Online Boutique frontend."""
+DEFAULT_LOCUSTFILE = '''\"\"\"Default Locust load test for a web frontend.\"\"\"
 
 from locust import HttpUser, task, between
 
 
-class OnlineBoutiqueUser(HttpUser):
-    """Simulates a user browsing the Online Boutique."""
+class FrontendUser(HttpUser):
+    \"\"\"Simulates a user browsing a web storefront.\"\"\"
 
     wait_time = between(1, 5)
 

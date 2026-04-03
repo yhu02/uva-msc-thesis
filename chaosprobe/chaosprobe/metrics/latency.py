@@ -1,9 +1,12 @@
 """Inter-service latency measurement via in-cluster probing.
 
-Measures request latency between Online Boutique microservices by executing
-curl commands inside pods. This captures real service-to-service communication
-times within the cluster, including DNS resolution, network traversal, and
-application processing.
+Measures request latency between microservices by executing commands inside
+pods.  This captures real service-to-service communication times within the
+cluster, including DNS resolution, network traversal, and application
+processing.
+
+Service dependencies are discovered dynamically via
+``config.topology.parse_topology_from_scenario()`` and passed in by the CLI.
 
 The prober runs a configurable number of samples for each service pair and
 computes statistics (mean, median, p95, p99, min, max).
@@ -23,50 +26,6 @@ from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
 logger = logging.getLogger(__name__)
-
-# Online Boutique service dependency graph
-# Each entry: (source_service, target_service, target_host, protocol, description)
-ONLINE_BOUTIQUE_ROUTES: List[Tuple[str, str, str, str, str]] = [
-    # Frontend → backend calls
-    ("frontend", "productcatalogservice", "productcatalogservice:3550", "grpc", "Product listing"),
-    ("frontend", "currencyservice", "currencyservice:7000", "grpc", "Currency conversion"),
-    ("frontend", "cartservice", "cartservice:7070", "grpc", "Cart operations"),
-    ("frontend", "recommendationservice", "recommendationservice:8080", "grpc", "Recommendations"),
-    ("frontend", "checkoutservice", "checkoutservice:5050", "grpc", "Checkout flow"),
-    ("frontend", "adservice", "adservice:9555", "grpc", "Ad serving"),
-    ("frontend", "shippingservice", "shippingservice:50051", "grpc", "Shipping quotes"),
-    # Checkout → downstream calls
-    (
-        "checkoutservice",
-        "productcatalogservice",
-        "productcatalogservice:3550",
-        "grpc",
-        "Product lookup",
-    ),
-    ("checkoutservice", "cartservice", "cartservice:7070", "grpc", "Cart retrieval"),
-    ("checkoutservice", "currencyservice", "currencyservice:7000", "grpc", "Price conversion"),
-    ("checkoutservice", "shippingservice", "shippingservice:50051", "grpc", "Shipping cost"),
-    ("checkoutservice", "paymentservice", "paymentservice:50051", "grpc", "Payment processing"),
-    ("checkoutservice", "emailservice", "emailservice:8080", "grpc", "Order confirmation"),
-    # Recommendation → product catalog
-    (
-        "recommendationservice",
-        "productcatalogservice",
-        "productcatalogservice:3550",
-        "grpc",
-        "Product list",
-    ),
-    # Cart → Redis
-    ("cartservice", "redis-cart", "redis-cart:6379", "tcp", "Session storage"),
-]
-
-# HTTP routes for latency measurement (via frontend)
-ONLINE_BOUTIQUE_HTTP_ROUTES: List[Tuple[str, str, str, str]] = [
-    ("frontend", "/", "Homepage (product catalog + recommendations + ads)", "GET"),
-    ("frontend", "/product/OLJCESPC7Z", "Product page (product catalog + currency)", "GET"),
-    ("frontend", "/cart", "Cart page (cart service + recommendations)", "GET"),
-    ("frontend", "/_healthz", "Health check (local)", "GET"),
-]
 
 
 @dataclass
@@ -172,8 +131,9 @@ class LatencyProber:
         interval: float = 1.0,
         parallel: bool = False,
         probe_pod: Optional[str] = None,
+        http_routes: Optional[List[Tuple[str, str, str, str]]] = None,
     ) -> List[LatencyResult]:
-        """Measure latency for all HTTP routes via the frontend service.
+        """Measure latency for HTTP routes.
 
         Args:
             samples: Number of samples per route.
@@ -181,20 +141,21 @@ class LatencyProber:
             parallel: If True, measure all routes concurrently per sample round.
             probe_pod: Optional pre-resolved pod name to use for probing.
                        If None, a suitable pod is discovered automatically.
+            http_routes: List of (service, path, description, method) tuples.
+                         If None, no HTTP routes are measured.
 
         Returns:
             List of LatencyResult for each route.
         """
-        # Use loadgenerator pod for HTTP measurements — it has Python and
-        # proper tools, unlike the distroless frontend/Go pods.
+        if not http_routes:
+            return []
+
         if probe_pod is None:
             probe_pod = self._find_probe_pod()
         if not probe_pod:
             return []
 
-        routes_info = [
-            (src, route, desc, method) for src, route, desc, method in ONLINE_BOUTIQUE_HTTP_ROUTES
-        ]
+        routes_info = list(http_routes)
         result_map = {}
         for source, route, description, _method in routes_info:
             result_map[route] = LatencyResult(
@@ -244,10 +205,12 @@ class LatencyProber:
         """Measure latency between service pairs using TCP connectivity checks.
 
         For gRPC services, measures TCP connection time to the service port.
-        For Redis, measures TCP connection time to port 6379.
+        For TCP services (e.g. Redis), measures TCP connection time.
 
         Args:
-            routes: Service routes to measure. Uses ONLINE_BOUTIQUE_ROUTES if None.
+            routes: Service dependency routes as (src, tgt, host, proto, desc)
+                    tuples, discovered via ``config.topology``.  If None, no
+                    service pairs are measured.
             samples: Number of samples per route.
             interval: Seconds between samples.
             parallel: If True, measure all pairs concurrently per sample round.
@@ -255,12 +218,12 @@ class LatencyProber:
         Returns:
             List of LatencyResult for each service pair.
         """
-        if routes is None:
-            routes = ONLINE_BOUTIQUE_ROUTES
+        if not routes:
+            return []
 
-        # Use a single probe pod for all TCP measurements. Many Online
-        # Boutique source pods are distroless (no shell), so we run all
-        # probes from the loadgenerator or another pod with a shell.
+        # Use a single probe pod for all TCP measurements.  Many source
+        # pods use distroless images (no shell), so we probe from a pod
+        # that has networking tools available.
         probe_pod = self._find_probe_pod()
         if not probe_pod:
             return []
@@ -311,6 +274,8 @@ class LatencyProber:
         samples: int = 10,
         interval: float = 1.0,
         parallel: bool = True,
+        service_routes: Optional[List[Tuple[str, str, str, str, str]]] = None,
+        http_routes: Optional[List[Tuple[str, str, str, str]]] = None,
     ) -> Dict[str, Any]:
         """Measure both HTTP routes and inter-service latency.
 
@@ -318,6 +283,8 @@ class LatencyProber:
             samples: Number of samples per measurement.
             interval: Seconds between samples.
             parallel: If True, measure routes concurrently.
+            service_routes: Optional service dependency graph tuples.
+            http_routes: Optional HTTP route tuples.
 
         Returns:
             Dictionary with HTTP route latencies and service pair latencies.
@@ -326,8 +293,10 @@ class LatencyProber:
             samples=samples,
             interval=interval,
             parallel=parallel,
+            http_routes=http_routes,
         )
         service_results = self.measure_service_pairs(
+            routes=service_routes,
             samples=samples,
             interval=interval,
             parallel=parallel,
@@ -365,24 +334,58 @@ class LatencyProber:
     def _find_probe_pod(self) -> Optional[str]:
         """Find a pod suitable for running probe commands.
 
-        Many Online Boutique services use distroless images (no shell).
-        We prefer pods that have Python (nanosecond-precision timing) and
-        HTTP tools. Candidates in order: loadgenerator, currencyservice,
-        emailservice, recommendationservice, adservice, paymentservice.
+        Discovers running pods in the namespace and tests whether they have
+        a usable shell.  Pods labelled ``app=loadgenerator`` are preferred
+        because they typically bundle Python and HTTP tools.
         """
-        for svc in [
-            "loadgenerator",
-            "currencyservice",
-            "emailservice",
-            "recommendationservice",
-            "adservice",
-            "paymentservice",
-        ]:
-            pod = self._find_ready_pod(svc)
-            if pod:
-                return pod
-        # Last resort: try frontend (will fail on distroless)
-        return self._find_ready_pod("frontend")
+        try:
+            pods = self.core_api.list_namespaced_pod(
+                self.namespace,
+                field_selector="status.phase=Running",
+            )
+        except ApiException:
+            return None
+
+        ready_pods: List[str] = []
+        load_gen_pods: List[str] = []
+        for pod in pods.items:
+            if not pod.status.conditions:
+                continue
+            is_ready = any(
+                c.type == "Ready" and c.status == "True"
+                for c in pod.status.conditions
+            )
+            if not is_ready:
+                continue
+            name = pod.metadata.name
+            labels = pod.metadata.labels or {}
+            if labels.get("app") == "loadgenerator":
+                load_gen_pods.append(name)
+            else:
+                ready_pods.append(name)
+
+        # Prefer loadgenerator pods, then fall back to any ready pod
+        for name in load_gen_pods + ready_pods:
+            if self._pod_has_shell(name):
+                return name
+        return None
+
+    def _pod_has_shell(self, pod_name: str) -> bool:
+        """Quick check whether *pod_name* has a usable shell."""
+        try:
+            out = stream(
+                self.core_api.connect_get_namespaced_pod_exec,
+                pod_name,
+                self.namespace,
+                command=["sh", "-c", "echo ok"],
+                stderr=True,
+                stdout=True,
+                stdin=False,
+                tty=False,
+            )
+            return "ok" in out
+        except Exception:
+            return False
 
     def _measure_http_from_pod(
         self,
@@ -568,9 +571,11 @@ class ContinuousLatencyProber:
         namespace: str,
         interval: float = 2.0,
         timeout_seconds: int = 5,
+        http_routes: Optional[List[Tuple[str, str, str, str]]] = None,
     ):
         self.namespace = namespace
         self.interval = interval
+        self._http_routes = http_routes
         self._prober = LatencyProber(namespace, timeout_seconds)
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -638,6 +643,7 @@ class ContinuousLatencyProber:
                     interval=0,
                     parallel=True,
                     probe_pod=self._cached_probe_pod,
+                    http_routes=self._http_routes,
                 )
                 now = time.time()
                 timestamp = datetime.fromtimestamp(now, tz=timezone.utc).isoformat()

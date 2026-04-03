@@ -1,6 +1,13 @@
 """Tests for anomaly label generation."""
 
+from pathlib import Path
+
+from chaosprobe.config.topology import parse_topology_from_directory
 from chaosprobe.metrics.anomaly_labels import generate_anomaly_labels
+
+# Discover routes once from the actual deploy manifests
+_DEPLOY_DIR = str(Path(__file__).parent.parent / "scenarios" / "online-boutique" / "deploy")
+_SERVICE_ROUTES = parse_topology_from_directory(_DEPLOY_DIR)
 
 
 def _make_scenario(exp_name="pod-delete", target="productcatalogservice",
@@ -57,13 +64,18 @@ class TestGenerateAnomalyLabels:
 
     def test_affected_services_for_productcatalog(self):
         scenario = _make_scenario("pod-delete", "productcatalogservice")
-        labels = generate_anomaly_labels(scenario)
+        labels = generate_anomaly_labels(scenario, service_routes=_SERVICE_ROUTES)
 
         affected = labels[0]["affectedServices"]
         # frontend, checkoutservice, recommendationservice all depend on productcatalog
         assert "frontend" in affected
         assert "checkoutservice" in affected
         assert "recommendationservice" in affected
+
+    def test_affected_services_empty_without_routes(self):
+        scenario = _make_scenario("pod-delete", "productcatalogservice")
+        labels = generate_anomaly_labels(scenario)
+        assert labels[0]["affectedServices"] == []
 
     def test_cpu_hog_parameters(self):
         scenario = _make_scenario("pod-cpu-hog", "currencyservice", env_vars=[

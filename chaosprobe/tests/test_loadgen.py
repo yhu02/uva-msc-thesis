@@ -81,7 +81,7 @@ class TestLocustRunner:
         assert os.path.exists(path)
         with open(path) as f:
             content = f.read()
-        assert "OnlineBoutiqueUser" in content
+        assert "FrontendUser" in content
 
     def test_get_locustfile_custom(self, tmp_path):
         custom_file = tmp_path / "custom_locustfile.py"

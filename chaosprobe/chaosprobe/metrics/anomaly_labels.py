@@ -8,9 +8,8 @@ These labels enable supervised learning for anomaly classification:
 each label says "anomaly type X happened at time T affecting service S."
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from chaosprobe.metrics.latency import ONLINE_BOUTIQUE_ROUTES
 
 # Mapping of LitmusChaos experiment names to anomaly categories
 EXPERIMENT_TO_ANOMALY = {
@@ -38,13 +37,25 @@ EXPERIMENT_TO_ANOMALY = {
 }
 
 
-def _get_affected_services(target_service: str) -> List[str]:
+def _get_affected_services(
+    target_service: str,
+    routes: Optional[List[Tuple[str, str, str, str, str]]] = None,
+) -> List[str]:
     """Find upstream services that depend on *target_service*.
 
-    Uses the Online Boutique dependency graph from ``latency.py``.
+    Parameters
+    ----------
+    target_service
+        The service being targeted by chaos.
+    routes
+        Service dependency graph as ``(src, tgt, host, proto, desc)`` tuples,
+        discovered via ``config.topology``.  Returns an empty list when no
+        routes are provided.
     """
+    if not routes:
+        return []
     affected = set()
-    for src, tgt, _host, _proto, _desc in ONLINE_BOUTIQUE_ROUTES:
+    for src, tgt, _host, _proto, _desc in routes:
         if tgt == target_service and src != target_service:
             affected.add(src)
     return sorted(affected)
@@ -56,6 +67,7 @@ def generate_anomaly_labels(
     experiment_start: Optional[str] = None,
     experiment_end: Optional[str] = None,
     placement: Optional[Dict[str, Any]] = None,
+    service_routes: Optional[List[Tuple[str, str, str, str, str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Generate structured anomaly labels for an experiment run.
 
@@ -73,6 +85,10 @@ def generate_anomaly_labels(
         ``metrics.timeWindow.end`` if not given.
     placement:
         Placement dict with ``strategy`` and ``assignments``.
+    service_routes:
+        Service dependency graph as ``(src, tgt, host, proto, desc)`` tuples,
+        discovered via ``config.topology``.  When *None*, affected services
+        are reported as an empty list.
 
     Returns
     -------
@@ -117,7 +133,7 @@ def generate_anomaly_labels(
                 assignments = placement.get("assignments", {})
                 target_node = assignments.get(target_service)
 
-            affected = _get_affected_services(target_service)
+            affected = _get_affected_services(target_service, service_routes)
 
             label: Dict[str, Any] = {
                 "faultType": exp_name,

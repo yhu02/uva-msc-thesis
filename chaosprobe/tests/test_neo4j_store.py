@@ -288,11 +288,32 @@ class TestSyncServiceDependencies:
 
             from chaosprobe.storage.neo4j_store import Neo4jStore
             store = Neo4jStore("bolt://fake", "u", "p")
-            store.sync_service_dependencies()
+
+            test_routes = [
+                ("frontend", "cartservice", "cartservice:7070", "grpc", "Cart"),
+                ("cartservice", "redis-cart", "redis-cart:6379", "tcp", "Redis"),
+            ]
+            store.sync_service_dependencies(routes=test_routes)
 
             # One MERGE per route + one final EXPOSES query
-            from chaosprobe.metrics.latency import ONLINE_BOUTIQUE_ROUTES
-            assert session.run.call_count == len(ONLINE_BOUTIQUE_ROUTES) + 1
+            assert session.run.call_count == len(test_routes) + 1
+
+    def test_skips_when_no_routes(self):
+        with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
+            mock_neo4j = MagicMock()
+            mock_req.return_value = mock_neo4j
+            driver = MagicMock()
+            mock_neo4j.GraphDatabase.driver.return_value = driver
+            session = MagicMock()
+            driver.session.return_value.__enter__ = MagicMock(return_value=session)
+            driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+            from chaosprobe.storage.neo4j_store import Neo4jStore
+            store = Neo4jStore("bolt://fake", "u", "p")
+            store.sync_service_dependencies()  # No routes
+
+            # Should not have called session.run at all
+            assert session.run.call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -378,9 +399,54 @@ class TestSyncRun:
         log_calls = _get_tx_calls(tx, "ContainerLog")
         assert len(log_calls) >= 2  # delete + create
 
-        # Verify HAS_CONTAINER_LOG edge
+        # Verify HAS_CONTAINER_LOG in log creation (via PodSnapshot or fallback)
         edge_calls = _get_tx_calls(tx, "HAS_CONTAINER_LOG")
-        assert len(edge_calls) >= 2  # clear + create
+        assert len(edge_calls) >= 1  # create (clear is now DETACH DELETE by run_id)
+
+    def test_container_logs_linked_via_pod_snapshot(self):
+        """Container logs should attempt to link through PodSnapshot."""
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        # The log creation query should reference PodSnapshot for linking
+        log_creates = _get_tx_calls(tx, "PodSnapshot {run_id:")
+        # At least PodSnapshot create + ContainerLog linking + BELONGS_TO
+        assert len(log_creates) >= 3
+
+    def test_pod_snapshot_belongs_to_deployment(self):
+        """PodSnapshot should be linked to its parent Deployment."""
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        belongs_to_calls = _get_tx_calls(tx, "BELONGS_TO")
+        assert len(belongs_to_calls) >= 1
+
+    def test_probe_results_stored_as_nodes(self):
+        """Probes should be stored as individual ProbeResult nodes."""
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        probe_calls = _get_tx_calls(tx, "ProbeResult")
+        # At least the clear + 1 probe create
+        assert len(probe_calls) >= 2
+
+        # Verify HAS_PROBE relationship
+        has_probe_calls = _get_tx_calls(tx, "HAS_PROBE")
+        assert len(has_probe_calls) >= 1
+
+    def test_experiment_result_no_json_probes(self):
+        """ExperimentResult should NOT store probes as JSON blob."""
+        store, tx = _make_store_with_tx()
+        store.sync_run(_make_run_data())
+
+        # The ExperimentResult CREATE should not contain a 'probes:' property
+        result_creates = [
+            c for c in tx.run.call_args_list
+            if "CREATE (r:ExperimentResult" in str(c)
+        ]
+        for call in result_creates:
+            cypher = str(call)
+            assert "probes: $probes" not in cypher
 
     def test_stores_metrics_phases_for_all_types(self):
         store, tx = _make_store_with_tx()
@@ -475,14 +541,14 @@ class TestEnsureSchema:
             store = Neo4jStore("bolt://fake", "u", "p")
             store.ensure_schema()
 
-            # 5 constraints + 9 indexes = 14 calls
-            assert session.run.call_count == 15
+            # 5 constraints + 11 indexes = 16 calls
+            assert session.run.call_count == 16
             constraint_calls = [c for c in session.run.call_args_list
                                 if "CREATE CONSTRAINT" in c[0][0]]
             index_calls = [c for c in session.run.call_args_list
                            if "CREATE INDEX" in c[0][0]]
             assert len(constraint_calls) == 5
-            assert len(index_calls) == 10
+            assert len(index_calls) == 11
 
 
 # ---------------------------------------------------------------------------
@@ -506,12 +572,13 @@ class TestStatus:
             store = Neo4jStore("bolt://fake", "u", "p")
             result = store.status()
 
-            # Should query all 12 node types
-            assert session.run.call_count == 13
+            # Should query all 14 node types
+            assert session.run.call_count == 14
             assert "RecoveryCycle" in result
             assert "MetricsPhase" in result
             assert "PodSnapshot" in result
             assert "ExperimentResult" in result
+            assert "ProbeResult" in result
             assert "MetricsSample" in result
             assert "AnomalyLabel" in result
             assert "CascadeEvent" in result

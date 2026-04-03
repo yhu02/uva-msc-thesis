@@ -21,7 +21,7 @@ from chaosprobe.metrics.throughput import _ContinuousProberBase
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Default PromQL queries for common Kubernetes / Online Boutique metrics
+# Default PromQL queries for common Kubernetes metrics
 # ---------------------------------------------------------------------------
 
 # LitmusChaos experiment pods (runners and helpers like pod-delete-*)

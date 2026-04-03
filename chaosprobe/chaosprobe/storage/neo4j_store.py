@@ -41,7 +41,7 @@ class Neo4jStore:
         store = Neo4jStore("bolt://localhost:7687", "neo4j", "password")
         store.ensure_schema()
         store.sync_topology(nodes, deployments)
-        store.sync_service_dependencies()
+        store.sync_service_dependencies(routes=service_routes)
         store.sync_run(run_data)
         store.close()
     """
@@ -92,6 +92,7 @@ class Neo4jStore:
             ("idx_cascade_event_run", "CascadeEvent", "run_id"),
             ("idx_container_log_run", "ContainerLog", "run_id"),
             ("idx_chaosrun_session", "ChaosRun", "session_id"),
+            ("idx_probe_result_run", "ProbeResult", "run_id"),
         ]
         with self._driver.session() as session:
             for cname, label, prop in constraints:
@@ -142,14 +143,21 @@ class Neo4jStore:
                     replicas=dep.get("replicas", 1),
                 )
 
-    def sync_service_dependencies(self) -> None:
-        """Populate Service nodes and DEPENDS_ON edges from the Online Boutique
-        dependency graph defined in ``metrics/latency.py``.
+    def sync_service_dependencies(self, routes=None) -> None:
+        """Populate Service nodes and DEPENDS_ON edges from the service
+        dependency graph.
+
+        Parameters
+        ----------
+        routes
+            List of ``(source, target, host, protocol, description)`` tuples,
+            discovered via ``config.topology``.  Skips silently when *None*.
         """
-        from chaosprobe.metrics.latency import ONLINE_BOUTIQUE_ROUTES
+        if not routes:
+            return
 
         with self._driver.session() as session:
-            for src, tgt, host, protocol, description in ONLINE_BOUTIQUE_ROUTES:
+            for src, tgt, host, protocol, description in routes:
                 port = ""
                 if ":" in host:
                     port = host.rsplit(":", 1)[1]
@@ -462,32 +470,73 @@ class Neo4jStore:
         run_id: str,
         experiments: List[Dict[str, Any]],
     ) -> None:
-        """Store per-chaos-experiment result nodes."""
+        """Store per-chaos-experiment result nodes with probe results."""
         self._clear_children(tx, run_id, "HAS_RESULT", "ExperimentResult")
+        # Clear orphaned ProbeResult nodes that were linked to old ExperimentResults
+        tx.run(
+            "MATCH (p:ProbeResult {run_id: $rid}) DETACH DELETE p",
+            rid=run_id,
+        )
         for exp in experiments:
             result = exp.get("result", exp.get("chaosResult", {}))
             probes = exp.get("probes", [])
+            exp_name = exp.get("name", "")
+            engine_name = exp.get("engineName", "")
             tx.run(
                 "MATCH (e:ChaosRun {run_id: $rid}) "
                 "CREATE (r:ExperimentResult {"
                 "  run_id: $rid, name: $name, engine_name: $engine, "
                 "  verdict: $verdict, "
                 "  probe_success_pct: $probe_pct, "
-                "  phase: $phase, fail_step: $fail_step, "
-                "  probes: $probes"
+                "  phase: $phase, fail_step: $fail_step"
                 "}) "
                 "CREATE (e)-[:HAS_RESULT]->(r)",
                 rid=run_id,
-                name=exp.get("name", ""),
-                engine=exp.get("engineName", ""),
+                name=exp_name,
+                engine=engine_name,
                 verdict=result.get("verdict", "Unknown"),
                 probe_pct=exp.get(
                     "probeSuccessPercentage", result.get("probeSuccessPercentage", 0)
                 ),
                 phase=result.get("phase", ""),
                 fail_step=result.get("failStep", ""),
-                probes=json.dumps(probes),
             )
+            # Create individual ProbeResult nodes linked to ExperimentResult
+            for probe in probes:
+                p_name = probe.get("name", "")
+                p_status = probe.get("status", {})
+                # Handle both flat and nested status formats
+                if isinstance(p_status, dict):
+                    p_verdict = p_status.get("verdict", "")
+                    p_description = p_status.get("description", "")
+                elif isinstance(p_status, str):
+                    p_verdict = p_status
+                    p_description = ""
+                else:
+                    p_verdict = str(p_status)
+                    p_description = ""
+                tx.run(
+                    "MATCH (r:ExperimentResult {"
+                    "  run_id: $rid, name: $exp_name, engine_name: $engine"
+                    "}) "
+                    "CREATE (p:ProbeResult {"
+                    "  run_id: $rid, "
+                    "  name: $name, "
+                    "  type: $type, "
+                    "  mode: $mode, "
+                    "  verdict: $verdict, "
+                    "  description: $desc"
+                    "}) "
+                    "CREATE (r)-[:HAS_PROBE]->(p)",
+                    rid=run_id,
+                    exp_name=exp_name,
+                    engine=engine_name,
+                    name=p_name,
+                    type=probe.get("type", ""),
+                    mode=probe.get("mode", ""),
+                    verdict=p_verdict,
+                    desc=p_description,
+                )
 
     def _sync_metrics_phases(
         self,
@@ -572,9 +621,10 @@ class Neo4jStore:
         run_id: str,
         pod_status: Dict[str, Any],
     ) -> None:
-        """Store pod status snapshots."""
+        """Store pod status snapshots with links to Deployment and K8sNode."""
         self._clear_children(tx, run_id, "HAS_POD_SNAPSHOT", "PodSnapshot")
         for pod in pod_status.get("pods", []):
+            pod_name = pod.get("name", "")
             tx.run(
                 "MATCH (e:ChaosRun {run_id: $rid}) "
                 "CREATE (p:PodSnapshot {"
@@ -584,7 +634,7 @@ class Neo4jStore:
                 "}) "
                 "CREATE (e)-[:HAS_POD_SNAPSHOT]->(p)",
                 rid=run_id,
-                name=pod.get("name", ""),
+                name=pod_name,
                 phase=pod.get("phase", ""),
                 node=pod.get("node"),
                 restarts=pod.get("restartCount", 0),
@@ -598,8 +648,26 @@ class Neo4jStore:
                     "      (n:K8sNode {name: $node}) "
                     "CREATE (p)-[:RUNNING_ON]->(n)",
                     rid=run_id,
-                    pname=pod.get("name", ""),
+                    pname=pod_name,
                     node=node_name,
+                )
+            # Link pod to its parent Deployment (pod name = deployment-<hash>)
+            # Try matching by stripping the last two hyphen-separated segments
+            parts = pod_name.rsplit("-", 2)
+            if len(parts) >= 3:
+                dep_name = parts[0]
+            elif len(parts) == 2:
+                dep_name = parts[0]
+            else:
+                dep_name = pod_name
+            if dep_name:
+                tx.run(
+                    "MATCH (p:PodSnapshot {run_id: $rid, name: $pname}), "
+                    "      (d:Deployment {name: $dep}) "
+                    "MERGE (p)-[:BELONGS_TO]->(d)",
+                    rid=run_id,
+                    pname=pod_name,
+                    dep=dep_name,
                 )
 
     # ------------------------------------------------------------------
@@ -758,14 +826,34 @@ class Neo4jStore:
             )
             pod_snapshots = [dict(r["props"]) for r in pods_result]
 
-            # Container logs
+            # Container logs (via PodSnapshot or direct fallback)
             logs_result = session.run(
-                "MATCH (e:ChaosRun {run_id: $rid})"
+                "MATCH (e:ChaosRun {run_id: $rid}) "
+                "OPTIONAL MATCH (e)-[:HAS_POD_SNAPSHOT]->(p:PodSnapshot)"
                 "-[:HAS_CONTAINER_LOG]->(l:ContainerLog) "
-                "RETURN properties(l) AS props",
+                "WITH e, collect(l) AS pod_logs "
+                "OPTIONAL MATCH (e)-[:HAS_CONTAINER_LOG]->(dl:ContainerLog) "
+                "WITH pod_logs + collect(dl) AS all_logs "
+                "UNWIND all_logs AS l "
+                "RETURN DISTINCT properties(l) AS props",
                 rid=run_id,
             )
             container_logs = [dict(r["props"]) for r in logs_result]
+
+            # Probe results (via ExperimentResult)
+            probes_result = session.run(
+                "MATCH (e:ChaosRun {run_id: $rid})"
+                "-[:HAS_RESULT]->(r:ExperimentResult)"
+                "-[:HAS_PROBE]->(p:ProbeResult) "
+                "RETURN r.name AS experiment_name, "
+                "       properties(p) AS props "
+                "ORDER BY r.name, p.name",
+                rid=run_id,
+            )
+            probe_results = [
+                {"experiment": r["experiment_name"], **dict(r["props"])}
+                for r in probes_result
+            ]
 
             return {
                 "experiment": experiment,
@@ -774,6 +862,7 @@ class Neo4jStore:
                 "metricsPhases": metrics_phases,
                 "podSnapshots": pod_snapshots,
                 "containerLogs": container_logs,
+                "probeResults": probe_results,
             }
 
     def status(self) -> Dict[str, Any]:
@@ -788,6 +877,7 @@ class Neo4jStore:
                 "PlacementStrategy",
                 "RecoveryCycle",
                 "ExperimentResult",
+                "ProbeResult",
                 "MetricsPhase",
                 "PodSnapshot",
                 "MetricsSample",
@@ -934,7 +1024,7 @@ class Neo4jStore:
         run_id: str,
         labels: List[Dict[str, Any]],
     ) -> None:
-        """Store anomaly labels for a run."""
+        """Store anomaly labels with graph edges to affected services."""
         self._clear_children(tx, run_id, "HAS_ANOMALY_LABEL", "AnomalyLabel")
         for lbl in labels:
             tx.run(
@@ -948,8 +1038,7 @@ class Neo4jStore:
                 "  target_service: $target, "
                 "  target_node: $node, "
                 "  start_time: $start, "
-                "  end_time: $end, "
-                "  affected_services: $affected"
+                "  end_time: $end"
                 "}) "
                 "CREATE (e)-[:HAS_ANOMALY_LABEL]->(a)",
                 rid=run_id,
@@ -961,19 +1050,33 @@ class Neo4jStore:
                 node=lbl.get("targetNode"),
                 start=lbl.get("startTime"),
                 end=lbl.get("endTime"),
-                affected=json.dumps(lbl.get("affectedServices", [])),
             )
-            # Link to targeted service
+            # Link to targeted service (primary)
             target_svc = lbl.get("targetService")
+            fault_type = lbl.get("faultType", "unknown")
             if target_svc:
                 tx.run(
-                    "MATCH (a:AnomalyLabel {run_id: $rid, fault_type: $fault}), "
+                    "MATCH (a:AnomalyLabel {run_id: $rid, fault_type: $fault, "
+                    "       target_service: $svc}), "
                     "      (s:Service {name: $svc}) "
                     "MERGE (a)-[:TARGETS]->(s)",
                     rid=run_id,
-                    fault=lbl.get("faultType", "unknown"),
+                    fault=fault_type,
                     svc=target_svc,
                 )
+            # Link to all affected services via AFFECTS edges
+            for affected_svc in lbl.get("affectedServices", []):
+                if affected_svc:
+                    tx.run(
+                        "MATCH (a:AnomalyLabel {run_id: $rid, fault_type: $fault, "
+                        "       target_service: $target}), "
+                        "      (s:Service {name: $svc}) "
+                        "MERGE (a)-[:AFFECTS]->(s)",
+                        rid=run_id,
+                        fault=fault_type,
+                        target=lbl.get("targetService", ""),
+                        svc=affected_svc,
+                    )
 
     # ------------------------------------------------------------------
     # Cascade timeline sync
@@ -1013,13 +1116,23 @@ class Neo4jStore:
         run_id: str,
         container_logs: Dict[str, Any],
     ) -> None:
-        """Store container logs for a run.
+        """Store container logs linked to their parent PodSnapshot nodes.
 
-        Creates one ``ContainerLog`` node per pod/container pair, storing
-        both current and previous (crash) logs. Links to the parent
-        ``ChaosRun`` and, if the pod's node is known, to the ``K8sNode``.
+        Creates one ``ContainerLog`` node per container, linked to the
+        matching ``PodSnapshot`` via ``HAS_CONTAINER_LOG``.  This models
+        the Kubernetes hierarchy: ChaosRun → PodSnapshot → ContainerLog,
+        so graph queries can traverse Deployment → Pod → Container logs.
+
+        Falls back to a direct ``ChaosRun`` link when no matching
+        ``PodSnapshot`` exists (e.g. pod was already gone at collection
+        time).
         """
-        self._clear_children(tx, run_id, "HAS_CONTAINER_LOG", "ContainerLog")
+        # Clear all ContainerLog nodes for this run (may be linked via
+        # PodSnapshot or directly to ChaosRun)
+        tx.run(
+            "MATCH (l:ContainerLog {run_id: $rid}) DETACH DELETE l",
+            rid=run_id,
+        )
         if not container_logs:
             return
         pods = container_logs.get("pods", {})
@@ -1038,7 +1151,12 @@ class Neo4jStore:
                     current_log = current_log[-max_len:]
                 if len(previous_log) > max_len:
                     previous_log = previous_log[-max_len:]
+
+                # Link to PodSnapshot if one exists for this pod,
+                # otherwise fall back to ChaosRun
                 tx.run(
+                    "OPTIONAL MATCH (p:PodSnapshot {run_id: $rid, name: $pod}) "
+                    "WITH p "
                     "MATCH (e:ChaosRun {run_id: $rid}) "
                     "CREATE (l:ContainerLog {"
                     "  run_id: $rid, pod_name: $pod, "
@@ -1048,7 +1166,10 @@ class Neo4jStore:
                     "  previous_log: $previous, "
                     "  has_previous: $has_prev"
                     "}) "
-                    "CREATE (e)-[:HAS_CONTAINER_LOG]->(l)",
+                    "FOREACH (_ IN CASE WHEN p IS NOT NULL THEN [1] ELSE [] END | "
+                    "  CREATE (p)-[:HAS_CONTAINER_LOG]->(l)) "
+                    "FOREACH (_ IN CASE WHEN p IS NULL THEN [1] ELSE [] END | "
+                    "  CREATE (e)-[:HAS_CONTAINER_LOG]->(l))",
                     rid=run_id,
                     pod=pod_name,
                     container=container_name,
@@ -1245,12 +1366,20 @@ class Neo4jStore:
         # Experiment results
         experiments = []
         for er in details.get("experimentResults", []):
-            probes = []
-            if er.get("probes"):
-                try:
-                    probes = json.loads(er["probes"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            # Reconstruct probes from ProbeResult nodes
+            probes = [
+                {
+                    "name": pr.get("name", ""),
+                    "type": pr.get("type", ""),
+                    "mode": pr.get("mode", ""),
+                    "status": {
+                        "verdict": pr.get("verdict", ""),
+                        "description": pr.get("description", ""),
+                    },
+                }
+                for pr in details.get("probeResults", [])
+                if pr.get("experiment") == er.get("name", "")
+            ]
             experiments.append(
                 {
                     "name": er.get("name", ""),
@@ -1483,15 +1612,23 @@ class Neo4jStore:
             metrics["disk"]["timeSeries"] = disk_ts
 
     def _get_anomaly_labels(self, run_id: str) -> List[Dict[str, Any]]:
-        """Return anomaly labels for a run."""
+        """Return anomaly labels for a run, reconstructing affected_services
+        from AFFECTS edges."""
         with self._driver.session() as session:
             result = session.run(
                 "MATCH (e:ChaosRun {run_id: $rid})"
                 "-[:HAS_ANOMALY_LABEL]->(a:AnomalyLabel) "
-                "RETURN properties(a) AS props",
+                "OPTIONAL MATCH (a)-[:AFFECTS]->(s:Service) "
+                "RETURN properties(a) AS props, "
+                "       collect(s.name) AS affected",
                 rid=run_id,
             )
-            return [dict(r["props"]) for r in result]
+            labels = []
+            for r in result:
+                lbl = dict(r["props"])
+                lbl["affected_services"] = r["affected"] or []
+                labels.append(lbl)
+            return labels
 
     def _get_cascade_timeline(self, run_id: str) -> List[Dict[str, Any]]:
         """Return cascade timeline for a run."""
