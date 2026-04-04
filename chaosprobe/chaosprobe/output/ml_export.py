@@ -181,7 +181,7 @@ def write_dataset(
         except ImportError:
             raise ImportError(
                 "Parquet export requires 'pyarrow'.\n" "Install with:  uv pip install pyarrow"
-            )
+            ) from None
         table = pa.Table.from_pylist(rows)
         pq.write_table(table, str(path))
     else:

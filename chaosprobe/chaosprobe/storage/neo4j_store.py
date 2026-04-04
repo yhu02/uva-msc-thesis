@@ -30,7 +30,7 @@ def _require_neo4j():
         raise ImportError(
             "Neo4j support requires the 'neo4j' package.\n"
             "Install it with:  uv pip install chaosprobe[graph]"
-        )
+        ) from None
 
 
 class Neo4jStore:

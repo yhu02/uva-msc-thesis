@@ -455,7 +455,7 @@ end
             print("Cluster deployment complete!")
             return True
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Cluster deployment failed: {e}")
+            raise RuntimeError(f"Cluster deployment failed: {e}") from e
 
     def fetch_kubeconfig(
         self,
@@ -492,7 +492,7 @@ end
             result = subprocess.run(ssh_cmd, check=True, capture_output=True, text=True)
             output_path.write_text(result.stdout)
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to fetch kubeconfig: {e}")
+            raise RuntimeError(f"Failed to fetch kubeconfig: {e}") from e
 
         # Update the server address in kubeconfig to use external IP
         with open(output_path, "r") as f:
@@ -547,7 +547,7 @@ end
             print("Cluster destroyed!")
             return True
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Cluster destruction failed: {e}")
+            raise RuntimeError(f"Cluster destruction failed: {e}") from e
 
     # -------------------------------------------------------------------------
     # Vagrant VM management
@@ -709,7 +709,7 @@ end
             result["packages_installed"] = True
             print("  Packages installed successfully")
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install packages: {e}")
+            raise RuntimeError(f"Failed to install packages: {e}") from e
 
         # Add user to groups
         print(f"Adding user '{current_user}' to libvirt and kvm groups...")
@@ -726,7 +726,7 @@ end
             result["needs_relogin"] = True
             print("  Groups added successfully")
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to add user to groups: {e}")
+            raise RuntimeError(f"Failed to add user to groups: {e}") from e
 
         # Start libvirtd service
         if not skip_service_start:
@@ -768,7 +768,7 @@ end
             result["plugin_installed"] = True
             print("  Plugin installed successfully")
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install vagrant-libvirt plugin: {e}")
+            raise RuntimeError(f"Failed to install vagrant-libvirt plugin: {e}") from e
 
         return result
 
@@ -917,7 +917,7 @@ end
             print("Vagrant VMs started successfully!")
             return True
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to start Vagrant VMs: {e}")
+            raise RuntimeError(f"Failed to start Vagrant VMs: {e}") from e
 
     def vagrant_destroy(self, vagrant_dir: Path, force: bool = False) -> bool:
         """Destroy Vagrant VMs.
@@ -945,7 +945,7 @@ end
             print("Vagrant VMs destroyed successfully!")
             return True
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to destroy Vagrant VMs: {e}")
+            raise RuntimeError(f"Failed to destroy Vagrant VMs: {e}") from e
 
     def _get_vagrant_env(self) -> dict:
         """Get environment variables for vagrant commands with libvirt support."""
@@ -989,7 +989,7 @@ end
 
             return vms
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to get Vagrant status: {e}")
+            raise RuntimeError(f"Failed to get Vagrant status: {e}") from e
 
     def get_vagrant_ssh_config(self, vagrant_dir: Path) -> list[dict]:
         """Get SSH configuration for all Vagrant VMs.
@@ -1251,7 +1251,7 @@ end
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to update helm repos: {e}")
+            raise RuntimeError(f"Failed to update helm repos: {e}") from e
 
         # Install litmus-core chart (chaos operator and CRDs)
         print("Installing LitmusChaos operator...")
@@ -1269,7 +1269,7 @@ end
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install LitmusChaos operator: {e}")
+            raise RuntimeError(f"Failed to install LitmusChaos operator: {e}") from e
 
         # Install kubernetes-chaos chart (experiment definitions)
         print("Installing LitmusChaos experiments...")
@@ -1287,7 +1287,7 @@ end
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install LitmusChaos experiments: {e}")
+            raise RuntimeError(f"Failed to install LitmusChaos experiments: {e}") from e
 
         if wait:
             return self._wait_for_litmus(timeout)
@@ -1665,7 +1665,7 @@ end
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to apply metrics-server manifest: {e}")
+            raise RuntimeError(f"Failed to apply metrics-server manifest: {e}") from e
 
         # Patch to add --kubelet-insecure-tls for self-signed certs
         # (common in Vagrant/Kubespray clusters) and pin to control-plane
@@ -1799,7 +1799,7 @@ end
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install Prometheus: {e}")
+            raise RuntimeError(f"Failed to install Prometheus: {e}") from e
 
         if wait:
             return self._wait_for_prometheus(timeout)
@@ -2017,7 +2017,7 @@ end
                 else:
                     raise
         except Exception as e:
-            raise RuntimeError(f"Failed to install Neo4j: {e}")
+            raise RuntimeError(f"Failed to install Neo4j: {e}") from e
 
         if wait:
             return self._wait_for_neo4j(timeout)
@@ -2118,7 +2118,7 @@ end
         try:
             subprocess.run(["helm", "repo", "update"], check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to update helm repos: {e}")
+            raise RuntimeError(f"Failed to update helm repos: {e}") from e
 
         print("Installing ChaosCenter dashboard...")
         try:
@@ -2134,7 +2134,7 @@ end
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install ChaosCenter: {e}")
+            raise RuntimeError(f"Failed to install ChaosCenter: {e}") from e
 
         if wait:
             return self._wait_for_chaoscenter(timeout)
@@ -2292,7 +2292,7 @@ end
             body_text = e.read().decode() if e.fp else ""
             raise RuntimeError(
                 f"ChaosCenter API error {e.code}: {body_text}"
-            )
+            ) from e
 
     def _chaoscenter_authenticate(
         self, server_url: str, username: str, password: str,
