@@ -320,12 +320,28 @@ class PlacementMutator:
         This prevents stuck rollouts when ``maxUnavailable`` rounds to 0
         for single-replica deployments using ``RollingUpdate``.
         """
+        # First switch strategy to Recreate (must remove rollingUpdate field)
+        try:
+            dep = self.apps_api.read_namespaced_deployment(deployment_name, self.namespace)
+            current_strategy = dep.spec.strategy
+            if current_strategy and current_strategy.type != "Recreate":
+                strategy_patch = {
+                    "spec": {
+                        "strategy": {"type": "Recreate", "rollingUpdate": None},
+                    }
+                }
+                self.apps_api.patch_namespaced_deployment(
+                    deployment_name, self.namespace, strategy_patch
+                )
+        except ApiException:
+            pass  # proceed with nodeSelector patch anyway
+
+        # Now apply nodeSelector
         patch = {
             "metadata": {
                 "annotations": {MANAGED_ANNOTATION: strategy_name},
             },
             "spec": {
-                "strategy": {"type": "Recreate"},
                 "template": {
                     "spec": {
                         "nodeSelector": {PLACEMENT_LABEL_KEY: node_name},
