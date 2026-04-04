@@ -468,7 +468,7 @@ class TestPrometheusProberLifecycle:
 class TestDefaultQueries:
     def test_namespace_templating(self):
         """Verify all default queries can be formatted with namespace."""
-        for _label, template in DEFAULT_QUERIES.items():
+        for template in DEFAULT_QUERIES.values():
             formatted = template.format(namespace="test-ns")
             assert "test-ns" in formatted
             assert "{namespace}" not in formatted
