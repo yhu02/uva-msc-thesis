@@ -310,7 +310,7 @@ def _compute_antagonistic(
     heavy_names = []
     light_names = []
 
-    for idx, (score, dep) in enumerate(scored):
+    for idx, (_score, dep) in enumerate(scored):
         if idx < midpoint:
             assignments[dep.name] = heavy_node
             heavy_names.append(dep.name)

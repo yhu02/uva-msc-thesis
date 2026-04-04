@@ -169,7 +169,7 @@ class ThroughputProber:
             description=f"Redis GET ({ops_per_sample} keys per sample)",
         )
 
-        for i in range(samples):
+        for _i in range(samples):
             # Write benchmark
             w_sample = self._redis_benchmark(
                 redis_pod, "write", ops_per_sample, redis_host, redis_port
@@ -220,7 +220,7 @@ class ThroughputProber:
             description=f"Sequential disk read ({block_size_kb}KB x {count} blocks)",
         )
 
-        for i in range(samples):
+        for _i in range(samples):
             w_sample = self._disk_benchmark(pod, "write", block_size_kb, count)
             write_result.samples.append(w_sample)
 

@@ -246,7 +246,7 @@ class LatencyProber:
             with ThreadPoolExecutor(max_workers=min(len(valid_routes), 8)) as pool:
                 for _ in range(samples):
                     futures = {}
-                    for idx, (ri, source, target, host) in enumerate(valid_routes):
+                    for idx, (_ri, source, target, host) in enumerate(valid_routes):
                         fut = pool.submit(
                             self._measure_tcp_from_pod,
                             probe_pod,
@@ -260,7 +260,7 @@ class LatencyProber:
                     if interval > 0:
                         time.sleep(interval)
         else:
-            for idx, (ri, source, target, host) in enumerate(valid_routes):
+            for idx, (_ri, source, target, host) in enumerate(valid_routes):
                 for _ in range(samples):
                     sample = self._measure_tcp_from_pod(probe_pod, host, source, target)
                     result_list[idx].samples.append(sample)

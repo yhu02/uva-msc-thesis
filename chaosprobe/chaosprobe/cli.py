@@ -2276,7 +2276,7 @@ def run(
 
     def _cleanup_port_forwards():
         """Terminate all tracked port-forward processes."""
-        for key, proc in _port_forward_procs.items():
+        for _key, proc in _port_forward_procs.items():
             if proc and proc.poll() is None:
                 proc.terminate()
                 try:
@@ -2916,7 +2916,7 @@ def run(
                     except Exception as e:
                         import warnings
 
-                        warnings.warn(f"Failed to save results to database: {e}")
+                        warnings.warn(f"Failed to save results to database: {e}", stacklevel=2)
 
                 # Sync to Neo4j graph if connected
                 if graph_store:
