@@ -412,7 +412,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
                 click.echo(f"  Dashboard URL: {url}")
 
     click.echo("\nYou can now run scenarios with:")
-    click.echo("  chaosprobe run <scenario-dir> --output results.json")
+    click.echo("  chaosprobe run <scenario-dir> --output-dir results/")
 
 
 @main.command()
@@ -1563,7 +1563,7 @@ def placement():
       2. Apply a placement strategy:
          chaosprobe placement apply colocate -n online-boutique
       3. Run chaos experiments under that placement:
-         chaosprobe run scenarios/online-boutique/placement-experiment.yaml -o results.json
+         chaosprobe run scenarios/online-boutique/placement-experiment.yaml --output-dir results/
       4. Clear placement and try another strategy:
          chaosprobe placement clear -n online-boutique
     """

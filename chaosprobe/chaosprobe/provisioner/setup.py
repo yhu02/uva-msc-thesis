@@ -1440,27 +1440,6 @@ end
         except subprocess.CalledProcessError:
             return False
 
-    def full_setup(self, namespace: str, experiments: Optional[list] = None) -> bool:
-        """Perform full setup: install Litmus, RBAC, and experiments.
-
-        Args:
-            namespace: Target namespace for chaos experiments.
-            experiments: List of experiment types to install.
-
-        Returns:
-            True if all setup succeeded.
-        """
-        if not self.is_litmus_installed():
-            self.install_litmus(wait=True)
-
-        self.setup_rbac(namespace)
-
-        if experiments:
-            for exp_type in experiments:
-                self.install_experiment(exp_type, namespace)
-
-        return True
-
     def _ensure_namespace(self, namespace: str):
         """Create namespace if it doesn't exist."""
         try:
