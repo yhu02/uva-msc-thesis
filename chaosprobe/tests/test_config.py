@@ -7,13 +7,6 @@ from chaosprobe.config.validator import (
     validate_scenario,
     ValidationError,
     _validate_cluster_config,
-    _validate_probe,
-    _validate_http_probe,
-    _validate_cmd_probe,
-    _validate_k8s_probe,
-    _validate_prom_probe,
-    VALID_PROBE_TYPES,
-    VALID_PROBE_MODES,
 )
 
 

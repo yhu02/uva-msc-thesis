@@ -1,15 +1,11 @@
 """Tests for the Rust cmdProbe builder pipeline."""
 
-import os
-import stat
 import textwrap
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from chaosprobe.probes.builder import (
-    DEFAULT_REGISTRY,
     MUSL_TARGET,
     ProbeBuilderError,
     RustProbeBuilder,
