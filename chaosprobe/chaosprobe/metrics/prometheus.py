@@ -302,10 +302,11 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
                     # All queries failed — Prometheus may be down
                     with self._lock:
                         self._probe_errors += 1
-                    if self._probe_errors >= 3:
+                        errors = self._probe_errors
+                    if errors >= 3:
                         logger.warning(
                             "Prometheus unreachable after %d attempts — stopping",
-                            self._probe_errors,
+                            errors,
                         )
                         self._available = False
                         break

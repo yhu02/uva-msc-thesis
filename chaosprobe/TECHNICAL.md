@@ -86,7 +86,6 @@ Loads scenario directories or single YAML files. Auto-classifies resources by th
 | `_load_yaml_directory` | `(dirpath: Path) -> Tuple[List, List]` | Loads all .yaml/.yml from directory |
 | `_detect_namespace` | `(experiments: List) -> str` | Extracts namespace from ChaosEngine appinfo. Default: `"default"` |
 | `_load_cluster_config` | `(dirpath: Path) -> Optional[Dict]` | Loads `cluster.yaml` if present in scenario dir |
-| `merge_configs` | `(*configs) -> Dict` | Deep-merges configuration dictionaries |
 
 **Constants**: `CHAOS_KINDS = {"ChaosEngine"}`, `CLUSTER_CONFIG_FILE = "cluster.yaml"`
 
@@ -291,12 +290,11 @@ Applies placement constraints to Kubernetes deployments via patch operations.
 
 #### generator.py
 
-**Class: `OutputGenerator(scenario, results, metrics=None, store=None)`**
+**Class: `OutputGenerator(scenario, results, metrics=None, placement=None, service_routes=None)`**
 
 | Method | Purpose |
 |---|---|
 | `generate()` | Full output: scenario files, infrastructure, experiments, summary, metrics. Persists to DB if store provided. |
-| `generate_minimal()` | Quick format: runId, verdict, resilienceScore, issueDetected |
 
 **Schema version**: `2.0.0`. Top-level keys: `schemaVersion`, `runId`, `timestamp`, `scenario`, `infrastructure`, `experiments`, `summary`, `metrics` (optional), `loadGeneration` (optional).
 
