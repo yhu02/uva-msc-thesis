@@ -5,7 +5,7 @@ and at least one well-formed ChaosEngine definition, including full
 validation of all LitmusChaos resilience probe types.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 # All supported LitmusChaos resilience probe types
@@ -28,7 +28,7 @@ VALID_HTTP_CRITERIA = {"==", "!=", "oneOf"}
 class ValidationError(Exception):
     """Exception raised when scenario validation fails."""
 
-    def __init__(self, message: str, errors: List[str] = None):
+    def __init__(self, message: str, errors: Optional[List[str]] = None):
         self.errors = errors or []
         detail = "; ".join(self.errors) if self.errors else ""
         full_msg = f"{message}: {detail}" if detail else message

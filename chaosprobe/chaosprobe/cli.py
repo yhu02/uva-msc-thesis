@@ -2505,7 +2505,7 @@ def run(
             from chaosprobe.storage.neo4j_store import Neo4jStore
 
             # Retry connection — Neo4j may still be starting after install
-            max_neo4j_retries = 24  # 24 × 5s = 120s total budget
+            max_neo4j_retries = 24  # 24 x 5s = 120s total budget
             for _attempt in range(max_neo4j_retries):
                 try:
                     graph_store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
