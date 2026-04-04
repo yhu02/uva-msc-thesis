@@ -2767,3 +2767,92 @@ end
             password=password,
         )
         return {"infra_id": result["infra_id"], "manifest": ""}
+
+    def chaoscenter_save_experiment(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        infra_id: str,
+        experiment_id: str,
+        name: str,
+        manifest: str,
+        description: str = "",
+    ) -> str:
+        """Save a chaos experiment in ChaosCenter.
+
+        Args:
+            gql_url: GraphQL endpoint URL.
+            project_id: ChaosCenter project ID.
+            token: Bearer token.
+            infra_id: Registered infrastructure ID.
+            experiment_id: Unique experiment ID.
+            name: Human-readable experiment name.
+            manifest: Argo Workflow manifest YAML string.
+            description: Optional description.
+
+        Returns:
+            The experiment ID as confirmed by the server.
+        """
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "mutation($pid: ID!, $req: SaveChaosExperimentRequest!) "
+                    "{ saveChaosExperiment(projectID: $pid, request: $req) }"
+                ),
+                "variables": {
+                    "pid": project_id,
+                    "req": {
+                        "id": experiment_id,
+                        "type": "Experiment",
+                        "name": name,
+                        "description": description or f"ChaosProbe experiment: {name}",
+                        "manifest": manifest,
+                        "infraID": infra_id,
+                        "tags": ["chaosprobe"],
+                    },
+                },
+            },
+            token=token,
+        )
+        return resp.get("data", {}).get("saveChaosExperiment", experiment_id)
+
+    def chaoscenter_run_experiment(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        experiment_id: str,
+    ) -> str:
+        """Trigger execution of a saved chaos experiment.
+
+        Args:
+            gql_url: GraphQL endpoint URL.
+            project_id: ChaosCenter project ID.
+            token: Bearer token.
+            experiment_id: ID of the experiment to run.
+
+        Returns:
+            The notifyID for tracking the experiment run.
+        """
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "mutation($eid: String!, $pid: ID!) "
+                    "{ runChaosExperiment(experimentID: $eid, projectID: $pid) "
+                    "{ notifyID } }"
+                ),
+                "variables": {
+                    "eid": experiment_id,
+                    "pid": project_id,
+                },
+            },
+            token=token,
+        )
+        return (
+            resp.get("data", {})
+            .get("runChaosExperiment", {})
+            .get("notifyID", "")
+        )

@@ -145,7 +145,7 @@ Validates loaded scenarios for structural correctness before execution, includin
 
 Orchestrates ChaosEngine lifecycle: create, poll, collect status, cleanup.
 
-**Class: `ChaosRunner(namespace, timeout=300)`**
+**Class: `ChaosRunner(namespace, timeout=300, chaoscenter=None)`**
 
 | Method | Purpose |
 |---|---|
@@ -153,7 +153,12 @@ Orchestrates ChaosEngine lifecycle: create, poll, collect status, cleanup.
 | `_run_single_experiment(engine_spec)` | Patches spec with unique suffix, creates CRD, waits for completion |
 | `_wait_for_engine(engine_name, start_time)` | Polls engine status every 5s until completed/timeout |
 | `_delete_chaos_engine(engine_name)` | Idempotent delete with finalizer cleanup |
+| `_cleanup_managed_engines(exclude)` | Deletes leftover `managed-by=chaosprobe` engines from previous runs |
+| `_register_with_chaoscenter(engine_spec, engine_name)` | Saves + runs experiment via ChaosCenter GraphQL API |
+| `_build_workflow_manifest(engine_spec, engine_name, instance_id)` | Generates Argo Workflow YAML wrapping a ChaosEngine |
 | `get_executed_experiments()` | Returns metadata for all executed experiments |
+
+**ChaosCenter integration**: When the optional `chaoscenter` dict is provided (keys: `token`, `project_id`, `infra_id`, `gql_url`), each experiment is registered with ChaosCenter via the `saveChaosExperiment` and `runChaosExperiment` GraphQL mutations before the ChaosEngine CRD is created. This makes experiments visible in the ChaosCenter dashboard. Registration failures are logged but do not prevent direct CRD execution (graceful degradation).
 
 **Kubernetes API**: Uses `CustomObjectsApi` for ChaosEngine CRUD on `litmuschaos.io/v1alpha1`.
 
@@ -424,8 +429,13 @@ Handles all infrastructure bootstrapping.
 |---|---|
 | Prerequisites | `check_prerequisites()` -> checks kubectl, helm, git, ssh, ansible, cluster_access |
 | LitmusChaos | `ensure_helm()`, `install_litmus()`, `setup_rbac()`, `install_experiment()` |
+| ChaosCenter API | `chaoscenter_save_experiment(...)`, `chaoscenter_run_experiment(...)` |
 | Vagrant | `create_vagrantfile()`, `vagrant_up()`, `vagrant_deploy_cluster()`, `vagrant_status()`, `vagrant_destroy()`, `vagrant_fetch_kubeconfig()` |
 | Kubespray | `deploy_cluster()`, `generate_inventory()`, `get_kubeconfig()` |
+
+**ChaosCenter API methods** (used by `ChaosRunner._register_with_chaoscenter`):
+- `chaoscenter_save_experiment(gql_url, project_id, token, infra_id, experiment_id, name, manifest)` — calls `saveChaosExperiment` GraphQL mutation
+- `chaoscenter_run_experiment(gql_url, project_id, token, experiment_id)` — calls `runChaosExperiment` GraphQL mutation, returns `notifyID`
 
 **Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 4096MB RAM per VM, Kubespray v2.24.0.
 
@@ -566,7 +576,8 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
         8. Start RecoveryWatcher(namespace, target_deployment)
         9. Start LocustRunner with load profile (steady by default)
         10. Record experiment_start = time.time()
-        11. ChaosRunner.run_experiments() -- blocks until engine completes
+        11. ChaosRunner.run_experiments() -- registers with ChaosCenter (if configured),
+            then creates ChaosEngine CRD and blocks until engine completes
         12. Record experiment_end = time.time()
         13. Stop LocustRunner, collect LoadStats, cleanup temp dirs
         14. RecoveryWatcher.stop()

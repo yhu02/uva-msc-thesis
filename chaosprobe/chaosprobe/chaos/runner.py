@@ -1,38 +1,52 @@
 """Chaos experiment runner for native LitmusChaos ChaosEngine CRDs.
 
 Accepts user-provided ChaosEngine YAML specs, applies them to the cluster,
-monitors execution, and tracks results.  If the scenario contains Rust
-cmdProbe sources, they are compiled and packaged before the experiments are
-submitted.
+monitors execution, and tracks results.  When ChaosCenter configuration is
+provided, experiments are also registered via the ChaosCenter GraphQL API
+so they appear in the dashboard.
 """
 
 import time
 import uuid
 from copy import deepcopy
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 
 class ChaosRunner:
-    """Applies native ChaosEngine CRDs and monitors their execution."""
+    """Applies native ChaosEngine CRDs and monitors their execution.
+
+    When *chaoscenter* config is supplied (token, project_id, infra_id,
+    gql_url), each experiment is saved and triggered through the
+    ChaosCenter GraphQL API so that it appears in the dashboard.
+    """
 
     PHASE_RUNNING = "Running"
     PHASE_COMPLETED = "Completed"
     PHASE_STOPPED = "Stopped"
     PHASE_ERROR = "Error"
 
-    def __init__(self, namespace: str, timeout: int = 300):
+    def __init__(
+        self,
+        namespace: str,
+        timeout: int = 300,
+        chaoscenter: Optional[Dict[str, str]] = None,
+    ):
         """Initialize the chaos runner.
 
         Args:
             namespace: Namespace where experiments run.
             timeout: Timeout in seconds for experiment completion.
+            chaoscenter: Optional dict with keys ``token``, ``project_id``,
+                ``infra_id``, ``gql_url`` for ChaosCenter integration.
         """
         self.namespace = namespace
         self.timeout = timeout
         self._run_suffix = uuid.uuid4().hex[:6]
+        self._cc = chaoscenter
 
         try:
             config.load_incluster_config()
@@ -99,6 +113,9 @@ class ChaosRunner:
 
         # Get experiment names from the engine spec
         exp_names = [e.get("name", "unknown") for e in spec.get("experiments", [])]
+
+        # Register with ChaosCenter for dashboard visibility
+        self._register_with_chaoscenter(engine_spec, engine_name)
 
         # Create the ChaosEngine
         print(f"    Creating ChaosEngine '{engine_name}'...")
@@ -271,3 +288,138 @@ class ChaosRunner:
     def get_executed_experiments(self) -> List[Dict[str, Any]]:
         """Get list of executed experiments with their metadata."""
         return self._executed_experiments
+
+    # -- ChaosCenter integration -------------------------------------------
+
+    def _register_with_chaoscenter(self, engine_spec: Dict[str, Any], engine_name: str) -> None:
+        """Register and trigger the experiment via ChaosCenter GraphQL API.
+
+        Builds an Argo Workflow manifest that wraps the ChaosEngine,
+        saves it as a ChaosCenter experiment, and triggers execution.
+        Failures are logged but do not prevent direct CRD creation.
+        """
+        if not self._cc:
+            return
+
+        from chaosprobe.provisioner.setup import LitmusSetup
+
+        experiment_id = str(uuid.uuid4())
+        instance_id = str(uuid.uuid4())
+        manifest = self._build_workflow_manifest(engine_spec, engine_name, instance_id)
+
+        setup = LitmusSetup(skip_k8s_init=True)
+        try:
+            setup.chaoscenter_save_experiment(
+                gql_url=self._cc["gql_url"],
+                project_id=self._cc["project_id"],
+                token=self._cc["token"],
+                infra_id=self._cc["infra_id"],
+                experiment_id=experiment_id,
+                name=engine_name,
+                manifest=manifest,
+            )
+            notify_id = setup.chaoscenter_run_experiment(
+                gql_url=self._cc["gql_url"],
+                project_id=self._cc["project_id"],
+                token=self._cc["token"],
+                experiment_id=experiment_id,
+            )
+            print(f"    ChaosCenter: experiment registered ({experiment_id[:8]}...)")
+            if notify_id:
+                print(f"    ChaosCenter: run triggered (notify={notify_id[:8]}...)")
+        except Exception as exc:
+            print(f"    ChaosCenter: WARNING - registration failed: {exc}")
+            print("    ChaosCenter: experiment will still run via direct CRD")
+
+    def _build_workflow_manifest(
+        self,
+        engine_spec: Dict[str, Any],
+        engine_name: str,
+        instance_id: str,
+    ) -> str:
+        """Build an Argo Workflow YAML that wraps a ChaosEngine spec.
+
+        This is the manifest format ChaosCenter expects for experiment
+        registration.  The workflow has three steps: install the
+        ChaosExperiment CRD, apply the ChaosEngine (which triggers the
+        actual fault), and revert (cleanup) when done.
+        """
+        spec = engine_spec.get("spec", {})
+        experiments = spec.get("experiments", [])
+        fault_name = experiments[0].get("name", "unknown") if experiments else "unknown"
+
+        # ChaosEngine YAML with instance_id label for cleanup
+        engine_copy = deepcopy(engine_spec)
+        engine_copy.setdefault("metadata", {}).setdefault("labels", {})["instance_id"] = instance_id
+        engine_yaml = yaml.dump(engine_copy, default_flow_style=False)
+
+        sa = spec.get("chaosServiceAccount", "litmus-admin")
+        ns = self.namespace
+
+        workflow = {
+            "apiVersion": "argoproj.io/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {
+                "name": engine_name,
+                "namespace": ns,
+                "labels": {
+                    "infra_id": self._cc.get("infra_id", ""),
+                    "step_pod_name": "",
+                    "workflow_id": "",
+                    "subject": f"{engine_name}_{ns}",
+                },
+            },
+            "spec": {
+                "arguments": {
+                    "parameters": [
+                        {"name": "adminModeNamespace", "value": ns},
+                    ],
+                },
+                "entrypoint": "chaos-entry",
+                "securityContext": {"runAsNonRoot": True, "runAsUser": 1000},
+                "serviceAccountName": sa,
+                "templates": [
+                    {
+                        "name": "chaos-entry",
+                        "steps": [
+                            [{"name": f"run-{fault_name}", "template": f"run-{fault_name}"}],
+                            [{"name": "revert-chaos", "template": "revert-chaos"}],
+                        ],
+                    },
+                    {
+                        "name": f"run-{fault_name}",
+                        "inputs": {
+                            "artifacts": [
+                                {
+                                    "name": fault_name,
+                                    "path": f"/tmp/chaosengine-{fault_name}.yaml",
+                                    "raw": {"data": engine_yaml},
+                                },
+                            ],
+                        },
+                        "container": {
+                            "image": "litmuschaos/litmus-checker:latest",
+                            "args": [
+                                f"-file=/tmp/chaosengine-{fault_name}.yaml",
+                                "-saveName=/tmp/engine-name",
+                            ],
+                        },
+                    },
+                    {
+                        "name": "revert-chaos",
+                        "container": {
+                            "image": "litmuschaos/k8s:latest",
+                            "command": ["sh", "-c"],
+                            "args": [
+                                f"kubectl delete chaosengine -l 'instance_id in"
+                                f" ({instance_id}, )' -n"
+                                " {{workflow.parameters.adminModeNamespace}}",
+                            ],
+                        },
+                    },
+                ],
+                "podGC": {"strategy": "OnWorkflowCompletion"},
+            },
+        }
+
+        return yaml.dump(workflow, default_flow_style=False)

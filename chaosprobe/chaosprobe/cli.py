@@ -2370,6 +2370,7 @@ def run(
     cc_auth_port = LitmusSetup.CHAOSCENTER_AUTH_PORT
     cc_server_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
     cc_server_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
+    chaoscenter_config = None  # set below if ChaosCenter is available
     if _check_pods_ready("litmus", "app.kubernetes.io/component=litmus-frontend", "ChaosCenter"):
         # Port-forward frontend (dashboard UI)
         if not _check_port("localhost", cc_frontend_port):
@@ -2397,12 +2398,19 @@ def run(
             _start_port_forward(cc_server_svc, "litmus", [f"{cc_server_port}:{cc_server_port}"])
 
         # Auto-configure: environment + infrastructure + subscriber
+        chaoscenter_config = None
         try:
             setup = _get_setup()
-            setup.ensure_chaoscenter_configured(
+            cc_result = setup.ensure_chaoscenter_configured(
                 namespace=namespace,
                 base_host="http://localhost",
             )
+            chaoscenter_config = {
+                "token": cc_result["token"],
+                "project_id": cc_result["project_id"],
+                "infra_id": cc_result["infra_id"],
+                "gql_url": f"http://localhost:{cc_server_port}/query",
+            }
             click.echo("  ChaosCenter: auto-configured for experiment visibility")
         except Exception as exc:
             click.echo(
@@ -2753,7 +2761,7 @@ def run(
                         resource_prober.mark_chaos_start()
                     if prometheus_prober:
                         prometheus_prober.mark_chaos_start()
-                    runner = ChaosRunner(namespace, timeout=timeout)
+                    runner = ChaosRunner(namespace, timeout=timeout, chaoscenter=chaoscenter_config)
                     runner.run_experiments(scenario.get("experiments", []))
                     experiment_end = time.time()
                     if latency_prober:
