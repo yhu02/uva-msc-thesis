@@ -81,7 +81,7 @@ Loads scenario directories or single YAML files. Auto-classifies resources by th
 
 | Function | Signature | Purpose |
 |---|---|---|
-| `load_scenario` | `(scenario_path: str) -> Dict` | Main entry point. Returns `{path, manifests, experiments, namespace, cluster (optional)}` |
+| `load_scenario` | `(scenario_path: str) -> Dict` | Main entry point. Returns `{path, manifests, experiments, namespace, cluster (optional), probes (optional)}` |
 | `_load_yaml_file` | `(filepath: Path) -> Tuple[List, List]` | Parses multi-document YAML, classifies by kind |
 | `_load_yaml_directory` | `(dirpath: Path) -> Tuple[List, List]` | Loads all .yaml/.yml from directory |
 | `_detect_namespace` | `(experiments: List) -> str` | Extracts namespace from ChaosEngine appinfo. Default: `"default"` |
@@ -293,9 +293,9 @@ Applies placement constraints to Kubernetes deployments via patch operations.
 
 | Method | Purpose |
 |---|---|
-| `generate()` | Full output: scenario files, infrastructure, experiments, summary, metrics. Persists to DB if store provided. |
+| `generate()` | Full output: scenario files, infrastructure, experiments, summary, metrics. Returns output dict (persistence is done externally). |
 
-**Schema version**: `2.0.0`. Top-level keys: `schemaVersion`, `runId`, `timestamp`, `scenario`, `infrastructure`, `experiments`, `summary`, `metrics` (optional), `loadGeneration` (optional).
+**Schema version**: `2.0.0`. Top-level keys: `schemaVersion`, `runId`, `timestamp`, `scenario`, `infrastructure`, `experiments`, `summary`, `metrics` (optional), `loadGeneration` (optional), `anomalyLabels` (optional), `cascadeTimeline` (optional).
 
 #### comparison.py
 
@@ -316,18 +316,18 @@ Generates charts correlating placement strategies with performance metrics. Requ
 | `generate_all_charts(store, output_dir, scenario=None)` | Generate all charts from database runs |
 | `generate_from_dict(summary, output_dir)` | Generate charts from an in-memory summary dict |
 | `generate_from_summary(summary_path, output_dir)` | Generate charts from a legacy summary.json file |
-| `_chart_resilience_scores(data, output_path, iteration_data)` | Bar chart of resilience scores per strategy |
-| `_chart_recovery_times(data, output_path)` | Mean/max recovery time comparison |
+| `_chart_resilience_scores(strategies, output_path, iteration_data=None)` | Bar chart of resilience scores per strategy |
+| `_chart_recovery_times(strategies, output_path, iteration_data=None)` | Mean/p95 recovery time comparison |
 | `_chart_load_metrics(strategies, output_path)` | p95 latency and error rate overlay |
 | `_chart_pod_node_heatmap(store, runs, output_path)` | Pod-to-node placement heatmap |
-| `_chart_latency_by_strategy(data, output_path)` | Inter-service latency comparison per strategy |
-| `_chart_latency_degradation(data, output_path)` | Latency degradation during chaos |
-| `_chart_throughput_by_strategy(data, output_path)` | Throughput comparison per strategy |
-| `_chart_throughput_degradation(data, output_path)` | Throughput degradation during chaos |
-| `_chart_resource_utilization(data, output_path)` | Resource utilization comparison |
-| `_chart_resource_by_phase(data, output_path)` | Resource usage by experiment phase |
-| `_chart_prometheus_by_phase(data, output_path)` | Prometheus metrics by experiment phase |
-| `_generate_html_summary(data, charts, output_dir)` | HTML report combining all charts |
+| `_chart_latency_by_strategy(latency_by_strategy, output_path)` | Inter-service latency comparison per strategy |
+| `_chart_latency_degradation(latency_by_strategy, output_path)` | Latency degradation during chaos |
+| `_chart_throughput_by_strategy(throughput_by_strategy, output_path)` | Throughput comparison per strategy |
+| `_chart_throughput_degradation(throughput_by_strategy, output_path)` | Throughput degradation during chaos |
+| `_chart_resource_utilization(resource_by_strategy, output_path)` | Resource utilization comparison |
+| `_chart_resource_by_phase(resource_by_strategy, output_path)` | Resource usage by experiment phase |
+| `_chart_prometheus_by_phase(prometheus_by_strategy, output_path)` | Prometheus metrics by experiment phase |
+| `_generate_html_summary(chart_paths, strategies, output_path, iterations=1, latency_data=None, throughput_data=None, resource_data=None, prometheus_data=None)` | HTML report combining all charts |
 
 ---
 
