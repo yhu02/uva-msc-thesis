@@ -322,6 +322,25 @@ class TestChaoscenterApiRequest:
         with pytest.raises(RuntimeError, match="ChaosCenter API error 401"):
             setup._chaoscenter_api_request("http://localhost:9002/api/query")
 
+    @patch("urllib.request.urlopen")
+    def test_raises_on_graphql_error(self, mock_urlopen):
+        setup = _make_setup()
+        response_data = {
+            "data": None,
+            "errors": [{"message": "failed to unmarshal workflow manifest1"}],
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(response_data).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        with pytest.raises(RuntimeError, match="GraphQL error.*unmarshal"):
+            setup._chaoscenter_api_request(
+                "http://localhost:9002/api/query",
+                data={"query": "mutation { fail }"},
+            )
+
 
 # ---------------------------------------------------------------------------
 # _chaoscenter_authenticate
@@ -983,11 +1002,12 @@ class TestChaosRunnerInit:
 
 class TestChaosRunnerBuildManifest:
     def test_workflow_structure(self):
-        import yaml as _yaml
+        import json as _json
 
         runner = _make_runner(cc={**_CC_CONFIG, "infra_id": "test-infra-id"})
         manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "pod-delete-engine", "inst-123")
-        parsed = _yaml.safe_load(manifest)
+        # Must be valid JSON (not YAML) for ChaosCenter
+        parsed = _json.loads(manifest)
 
         assert parsed["apiVersion"] == "argoproj.io/v1alpha1"
         assert parsed["kind"] == "Workflow"
@@ -995,6 +1015,41 @@ class TestChaosRunnerBuildManifest:
         assert parsed["metadata"]["labels"]["infra_id"] == "test-infra-id"
         assert parsed["spec"]["serviceAccountName"] == "litmus-admin"
         assert len(parsed["spec"]["templates"]) == 3
+
+    def test_engine_uses_generate_name(self):
+        import json as _json
+        import yaml as _yaml
+
+        runner = _make_runner()
+        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
+        parsed = _json.loads(manifest)
+        # Find the artifact template with the embedded ChaosEngine YAML
+        run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
+        engine_yaml = run_template["inputs"]["artifacts"][0]["raw"]["data"]
+        engine = _yaml.safe_load(engine_yaml)
+        assert "generateName" in engine["metadata"]
+        assert "name" not in engine["metadata"]
+
+    def test_engine_has_probe_ref_annotation(self):
+        import json as _json
+        import yaml as _yaml
+
+        runner = _make_runner()
+        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
+        parsed = _json.loads(manifest)
+        run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
+        engine_yaml = run_template["inputs"]["artifacts"][0]["raw"]["data"]
+        engine = _yaml.safe_load(engine_yaml)
+        assert engine["metadata"]["annotations"]["probeRef"] == "[]"
+
+    def test_fault_template_has_weight_label(self):
+        import json as _json
+
+        runner = _make_runner()
+        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
+        parsed = _json.loads(manifest)
+        run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
+        assert run_template["metadata"]["labels"]["weight"] == "10"
 
 
 class TestChaosRunnerRunExperiments:

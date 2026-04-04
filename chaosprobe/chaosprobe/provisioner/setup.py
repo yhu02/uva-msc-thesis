@@ -2287,7 +2287,21 @@ end
             req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                return _json.loads(resp.read().decode())
+                result = _json.loads(resp.read().decode())
+            # Surface GraphQL-level errors that arrive with HTTP 200
+            if (
+                isinstance(result, dict)
+                and result.get("errors")
+                and result.get("data") is None
+            ):
+                errors = result["errors"]
+                msg = (
+                    errors[0].get("message", str(errors))
+                    if errors
+                    else str(result)
+                )
+                raise RuntimeError(f"ChaosCenter GraphQL error: {msg}")
+            return result
         except urllib.error.HTTPError as e:
             body_text = e.read().decode() if e.fp else ""
             raise RuntimeError(
@@ -2816,7 +2830,7 @@ end
             },
             token=token,
         )
-        return resp.get("data", {}).get("saveChaosExperiment", experiment_id)
+        return (resp.get("data") or {}).get("saveChaosExperiment", experiment_id)
 
     def chaoscenter_run_experiment(
         self,
@@ -2852,7 +2866,7 @@ end
             token=token,
         )
         return (
-            resp.get("data", {})
+            (resp.get("data") or {})
             .get("runChaosExperiment", {})
             .get("notifyID", "")
         )
@@ -2895,4 +2909,4 @@ end
             },
             token=token,
         )
-        return resp.get("data", {}).get("getExperimentRun", {})
+        return (resp.get("data") or {}).get("getExperimentRun", {})

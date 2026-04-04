@@ -5,6 +5,7 @@ ChaosCenter experiments (Argo Workflow format), triggers execution,
 and polls for completion via the ``getExperimentRun`` query.
 """
 
+import json as _json
 import time
 import uuid
 from copy import deepcopy
@@ -237,19 +238,34 @@ class ChaosRunner:
         engine_name: str,
         instance_id: str,
     ) -> str:
-        """Build an Argo Workflow YAML wrapping a ChaosEngine spec.
+        """Build an Argo Workflow JSON manifest wrapping a ChaosEngine spec.
 
-        This is the manifest format ChaosCenter expects.  The workflow
-        has three steps: install the ChaosExperiment CRD, apply the
-        ChaosEngine (which triggers the fault), and revert (cleanup).
+        ChaosCenter parses the manifest with ``json.Unmarshal`` (Go),
+        so the manifest **must** be JSON — not YAML.
+
+        The ChaosEngine embedded in the artifact ``raw.data`` stays as
+        YAML (ChaosCenter's ``processExperimentManifest`` uses
+        ``yaml.Unmarshal`` for the inner engine).
+
+        The engine must use ``generateName`` (not ``name``) so
+        ChaosCenter can extract the fault name for probe/weight
+        processing.
         """
         spec = engine_spec.get("spec", {})
         experiments = spec.get("experiments", [])
         fault_name = experiments[0].get("name", "unknown") if experiments else "unknown"
 
-        # Tag the engine with instance_id for cleanup
+        # Build the inner ChaosEngine for the artifact data.
+        # ChaosCenter expects ``generateName`` (not ``name``) on the engine.
         engine_copy = deepcopy(engine_spec)
-        engine_copy.setdefault("metadata", {}).setdefault("labels", {})["instance_id"] = instance_id
+        engine_meta = engine_copy.setdefault("metadata", {})
+        engine_meta.setdefault("labels", {})["instance_id"] = instance_id
+        # Use generateName so ChaosCenter can extract the fault name
+        if "name" in engine_meta and "generateName" not in engine_meta:
+            engine_meta["generateName"] = engine_meta.pop("name") + "-"
+        # ChaosCenter requires a probeRef annotation; an empty list
+        # signals "no probes" and avoids validation errors.
+        engine_meta.setdefault("annotations", {}).setdefault("probeRef", "[]")
         engine_yaml = yaml.dump(engine_copy, default_flow_style=False)
 
         sa = spec.get("chaosServiceAccount", "litmus-admin")
@@ -296,6 +312,11 @@ class ChaosRunner:
                                 },
                             ],
                         },
+                        "metadata": {
+                            "labels": {
+                                "weight": "10",
+                            },
+                        },
                         "container": {
                             "image": "litmuschaos/litmus-checker:latest",
                             "args": [
@@ -321,4 +342,4 @@ class ChaosRunner:
             },
         }
 
-        return yaml.dump(workflow, default_flow_style=False)
+        return _json.dumps(workflow)
