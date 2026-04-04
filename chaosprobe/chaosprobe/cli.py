@@ -2370,8 +2370,14 @@ def run(
     cc_auth_port = LitmusSetup.CHAOSCENTER_AUTH_PORT
     cc_server_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
     cc_server_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
-    chaoscenter_config = None  # set below if ChaosCenter is available
-    if _check_pods_ready("litmus", "app.kubernetes.io/component=litmus-frontend", "ChaosCenter"):
+    chaoscenter_config = None  # set below once ChaosCenter is configured
+    if not _check_pods_ready("litmus", "app.kubernetes.io/component=litmus-frontend", "ChaosCenter"):
+        raise click.ClickException(
+            "ChaosCenter frontend pods are not ready in the 'litmus' namespace.\n"
+            "  All experiments run through the ChaosCenter API.\n"
+            "  Run 'chaosprobe dashboard install' first."
+        )
+    else:
         # Port-forward frontend (dashboard UI)
         if not _check_port("localhost", cc_frontend_port):
             _start_port_forward(
@@ -2398,7 +2404,6 @@ def run(
             _start_port_forward(cc_server_svc, "litmus", [f"{cc_server_port}:{cc_server_port}"])
 
         # Auto-configure: environment + infrastructure + subscriber
-        chaoscenter_config = None
         try:
             setup = _get_setup()
             cc_result = setup.ensure_chaoscenter_configured(
@@ -2413,14 +2418,11 @@ def run(
             }
             click.echo("  ChaosCenter: auto-configured for experiment visibility")
         except Exception as exc:
-            click.echo(
-                f"  ChaosCenter: WARNING - auto-setup failed: {exc}",
-                err=True,
-            )
-            click.echo(
-                "               Experiments may not appear in the dashboard.",
-                err=True,
-            )
+            raise click.ClickException(
+                f"ChaosCenter auto-setup failed: {exc}\n"
+                "  All experiments run through the ChaosCenter API.\n"
+                "  Ensure ChaosCenter is installed and reachable."
+            ) from exc
 
     # metrics-server — verify API works and has --kubelet-insecure-tls for Vagrant clusters
     try:

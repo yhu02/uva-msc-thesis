@@ -2856,3 +2856,43 @@ end
             .get("runChaosExperiment", {})
             .get("notifyID", "")
         )
+
+    def chaoscenter_get_experiment_run(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        notify_id: str,
+    ) -> dict[str, Any]:
+        """Query the status of a running experiment.
+
+        Args:
+            gql_url: GraphQL endpoint URL.
+            project_id: ChaosCenter project ID.
+            token: Bearer token.
+            notify_id: The notifyID returned by ``runChaosExperiment``.
+
+        Returns:
+            Dict with at least ``phase`` key (e.g. ``Running``,
+            ``Completed``, ``Error``).  Also includes
+            ``resiliencyScore``, ``faultsPassed``, ``faultsFailed``,
+            ``totalFaults`` when available.
+        """
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "query($pid: ID!, $nid: ID) "
+                    "{ getExperimentRun(projectID: $pid, notifyID: $nid) "
+                    "{ experimentRunID phase resiliencyScore "
+                    "faultsPassed faultsFailed faultsAwaited "
+                    "faultsStopped totalFaults } }"
+                ),
+                "variables": {
+                    "pid": project_id,
+                    "nid": notify_id,
+                },
+            },
+            token=token,
+        )
+        return resp.get("data", {}).get("getExperimentRun", {})

@@ -897,131 +897,204 @@ class TestChaoscenterSaveExperiment:
         )
         assert result == "notify-abc"
 
-
-# ---------------------------------------------------------------------------
-# ChaosRunner ChaosCenter integration
-# ---------------------------------------------------------------------------
-
-
-class TestChaosRunnerChaosCenter:
-    @patch("chaosprobe.chaos.runner.config")
-    def test_runner_accepts_chaoscenter_config(self, mock_config):
-        """ChaosRunner should accept optional chaoscenter parameter."""
-        from chaosprobe.chaos.runner import ChaosRunner
-
-        cc = {
-            "token": "tok",
-            "project_id": "pid",
-            "infra_id": "iid",
-            "gql_url": "http://localhost:9002/query",
+    @patch.object(LitmusSetup, "_chaoscenter_api_request")
+    def test_get_experiment_run_returns_phase(self, mock_req):
+        mock_req.return_value = {
+            "data": {
+                "getExperimentRun": {
+                    "experimentRunID": "run-1",
+                    "phase": "Completed",
+                    "resiliencyScore": 100.0,
+                    "faultsPassed": 1,
+                    "faultsFailed": 0,
+                    "faultsAwaited": 0,
+                    "faultsStopped": 0,
+                    "totalFaults": 1,
+                }
+            }
         }
-        runner = ChaosRunner("test-ns", chaoscenter=cc)
-        assert runner._cc == cc
+        setup = _make_setup()
+        result = setup.chaoscenter_get_experiment_run(
+            gql_url="http://localhost:9002/query",
+            project_id="proj-1",
+            token="tok",
+            notify_id="notify-abc",
+        )
+        assert result["phase"] == "Completed"
+        assert result["resiliencyScore"] == 100.0
+        assert result["totalFaults"] == 1
 
-    @patch("chaosprobe.chaos.runner.config")
-    def test_runner_without_chaoscenter_config(self, mock_config):
-        """ChaosRunner should work without chaoscenter parameter."""
+
+# ---------------------------------------------------------------------------
+# ChaosRunner -- GraphQL-only execution
+# ---------------------------------------------------------------------------
+
+_CC_CONFIG = {
+    "token": "tok",
+    "project_id": "pid",
+    "infra_id": "iid",
+    "gql_url": "http://localhost:9002/query",
+}
+
+_ENGINE_SPEC = {
+    "apiVersion": "litmuschaos.io/v1alpha1",
+    "kind": "ChaosEngine",
+    "metadata": {"name": "test-engine", "namespace": "online-boutique"},
+    "spec": {
+        "chaosServiceAccount": "litmus-admin",
+        "experiments": [{"name": "pod-delete"}],
+    },
+}
+
+
+def _make_runner(cc=None):
+    """Create a ChaosRunner with LitmusSetup mocked."""
+    from chaosprobe.chaos.runner import ChaosRunner
+
+    with patch("chaosprobe.chaos.runner.LitmusSetup"):
+        runner = ChaosRunner("test-ns", chaoscenter=cc or _CC_CONFIG)
+    return runner
+
+
+class TestChaosRunnerInit:
+    def test_accepts_valid_config(self):
+        runner = _make_runner()
+        assert runner._cc == _CC_CONFIG
+
+    def test_raises_without_config(self):
         from chaosprobe.chaos.runner import ChaosRunner
 
-        runner = ChaosRunner("test-ns")
-        assert runner._cc is None
+        with pytest.raises(ValueError, match="ChaosCenter configuration is required"):
+            ChaosRunner("test-ns")
 
-    @patch("chaosprobe.chaos.runner.config")
-    def test_build_workflow_manifest(self, mock_config):
-        """Verify the Argo Workflow YAML structure."""
+    def test_raises_with_none_config(self):
+        from chaosprobe.chaos.runner import ChaosRunner
+
+        with pytest.raises(ValueError, match="ChaosCenter configuration is required"):
+            ChaosRunner("test-ns", chaoscenter=None)
+
+    def test_raises_with_missing_keys(self):
+        from chaosprobe.chaos.runner import ChaosRunner
+
+        with patch("chaosprobe.chaos.runner.LitmusSetup"):
+            with pytest.raises(ValueError, match="missing keys"):
+                ChaosRunner("test-ns", chaoscenter={"token": "tok"})
+
+
+class TestChaosRunnerBuildManifest:
+    def test_workflow_structure(self):
         import yaml as _yaml
-        from chaosprobe.chaos.runner import ChaosRunner
 
-        cc = {
-            "token": "tok",
-            "project_id": "pid",
-            "infra_id": "test-infra-id",
-            "gql_url": "http://localhost:9002/query",
-        }
-        runner = ChaosRunner("online-boutique", chaoscenter=cc)
-
-        engine_spec = {
-            "apiVersion": "litmuschaos.io/v1alpha1",
-            "kind": "ChaosEngine",
-            "metadata": {"name": "pod-delete-engine", "namespace": "online-boutique"},
-            "spec": {
-                "chaosServiceAccount": "litmus-admin",
-                "experiments": [{"name": "pod-delete"}],
-            },
-        }
-
-        manifest = runner._build_workflow_manifest(engine_spec, "pod-delete-engine", "inst-123")
+        runner = _make_runner(cc={**_CC_CONFIG, "infra_id": "test-infra-id"})
+        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "pod-delete-engine", "inst-123")
         parsed = _yaml.safe_load(manifest)
 
         assert parsed["apiVersion"] == "argoproj.io/v1alpha1"
         assert parsed["kind"] == "Workflow"
-        assert parsed["metadata"]["namespace"] == "online-boutique"
+        assert parsed["metadata"]["namespace"] == "test-ns"
         assert parsed["metadata"]["labels"]["infra_id"] == "test-infra-id"
         assert parsed["spec"]["serviceAccountName"] == "litmus-admin"
-        # Should have 3 templates: entry, run-fault, revert
         assert len(parsed["spec"]["templates"]) == 3
 
-    @patch("chaosprobe.chaos.runner.config")
-    @patch("chaosprobe.provisioner.setup.LitmusSetup.chaoscenter_run_experiment")
-    @patch("chaosprobe.provisioner.setup.LitmusSetup.chaoscenter_save_experiment")
-    def test_register_with_chaoscenter_calls_save_and_run(
-        self, mock_save, mock_run, mock_config
-    ):
-        """Verify _register_with_chaoscenter calls save then run."""
-        from chaosprobe.chaos.runner import ChaosRunner
 
-        mock_save.return_value = "exp-id"
-        mock_run.return_value = "notify-id"
-
-        cc = {
-            "token": "tok",
-            "project_id": "pid",
-            "infra_id": "iid",
-            "gql_url": "http://localhost:9002/query",
+class TestChaosRunnerRunExperiments:
+    def test_save_run_poll_cycle(self):
+        runner = _make_runner()
+        runner._setup.chaoscenter_save_experiment.return_value = "exp-id"
+        runner._setup.chaoscenter_run_experiment.return_value = "notify-id"
+        runner._setup.chaoscenter_get_experiment_run.return_value = {
+            "phase": "Completed",
+            "resiliencyScore": 100.0,
+            "faultsPassed": 1,
+            "faultsFailed": 0,
+            "totalFaults": 1,
         }
-        runner = ChaosRunner("test-ns", chaoscenter=cc)
 
-        engine_spec = {
-            "apiVersion": "litmuschaos.io/v1alpha1",
-            "kind": "ChaosEngine",
-            "metadata": {"name": "test-engine"},
-            "spec": {"experiments": [{"name": "pod-delete"}]},
+        results = runner.run_experiments([{"file": "test.yaml", "spec": _ENGINE_SPEC}])
+
+        assert len(results) == 1
+        assert results[0]["status"] == "Completed"
+        assert results[0]["resiliencyScore"] == 100.0
+        runner._setup.chaoscenter_save_experiment.assert_called_once()
+        runner._setup.chaoscenter_run_experiment.assert_called_once()
+        runner._setup.chaoscenter_get_experiment_run.assert_called_once()
+
+    def test_save_failure_records_error(self):
+        runner = _make_runner()
+        runner._setup.chaoscenter_save_experiment.side_effect = RuntimeError("API down")
+
+        results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
+
+        assert len(results) == 1
+        assert results[0]["status"] == "error"
+        assert "API down" in results[0]["error"]
+        runner._setup.chaoscenter_run_experiment.assert_not_called()
+
+    def test_run_failure_records_error(self):
+        runner = _make_runner()
+        runner._setup.chaoscenter_save_experiment.return_value = "eid"
+        runner._setup.chaoscenter_run_experiment.side_effect = RuntimeError("trigger fail")
+
+        results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
+
+        assert len(results) == 1
+        assert results[0]["status"] == "error"
+        assert "trigger fail" in results[0]["error"]
+
+    @patch("chaosprobe.chaos.runner.time")
+    def test_poll_timeout(self, mock_time):
+        """Runner should return timeout status when phase never becomes terminal."""
+        # time.time() is called many times: start_time, while-condition,
+        # elapsed, end_time, etc.  Supply enough values then jump past timeout.
+        times = [0] * 4 + [400] * 10
+        mock_time.time.side_effect = times
+        mock_time.sleep = MagicMock()
+
+        runner = _make_runner()
+        runner._setup.chaoscenter_save_experiment.return_value = "eid"
+        runner._setup.chaoscenter_run_experiment.return_value = "nid"
+        runner._setup.chaoscenter_get_experiment_run.return_value = {
+            "phase": "Running",
         }
-        runner._register_with_chaoscenter(engine_spec, "test-engine-abc123")
 
-        mock_save.assert_called_once()
-        mock_run.assert_called_once()
+        results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
 
-    @patch("chaosprobe.chaos.runner.config")
-    def test_register_skipped_without_config(self, mock_config):
-        """No ChaosCenter calls when config is None."""
-        from chaosprobe.chaos.runner import ChaosRunner
+        assert len(results) == 1
+        assert results[0]["status"] == "timeout"
 
-        runner = ChaosRunner("test-ns", chaoscenter=None)
-        # Should not raise — just returns immediately
-        runner._register_with_chaoscenter({"spec": {"experiments": []}}, "test")
+    def test_poll_transient_error_retries(self):
+        """Transient errors during polling should be retried."""
+        runner = _make_runner()
+        runner._setup.chaoscenter_save_experiment.return_value = "eid"
+        runner._setup.chaoscenter_run_experiment.return_value = "nid"
+        runner._setup.chaoscenter_get_experiment_run.side_effect = [
+            RuntimeError("transient"),
+            {"phase": "Completed", "resiliencyScore": 80.0,
+             "faultsPassed": 1, "faultsFailed": 0, "totalFaults": 1},
+        ]
 
-    @patch("chaosprobe.chaos.runner.config")
-    @patch("chaosprobe.provisioner.setup.LitmusSetup.chaoscenter_save_experiment")
-    def test_register_failure_does_not_raise(self, mock_save, mock_config):
-        """ChaosCenter failures should be logged, not raised."""
-        from chaosprobe.chaos.runner import ChaosRunner
+        with patch("chaosprobe.chaos.runner.time") as mock_time:
+            mock_time.time.side_effect = [
+                0,                  # start_time
+                0, 0,               # poll loop iter 1: while check, elapsed
+                5, 5,               # poll loop iter 2: while check, elapsed
+                10, 10, 10,         # final elapsed + endTime + extra
+            ]
+            mock_time.sleep = MagicMock()
+            results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
 
-        mock_save.side_effect = RuntimeError("API down")
+        assert results[0]["status"] == "Completed"
+        assert runner._setup.chaoscenter_get_experiment_run.call_count == 2
 
-        cc = {
-            "token": "tok",
-            "project_id": "pid",
-            "infra_id": "iid",
-            "gql_url": "http://localhost:9002/query",
+    def test_get_executed_experiments(self):
+        runner = _make_runner()
+        assert runner.get_executed_experiments() == []
+
+        runner._setup.chaoscenter_save_experiment.return_value = "eid"
+        runner._setup.chaoscenter_run_experiment.return_value = "nid"
+        runner._setup.chaoscenter_get_experiment_run.return_value = {
+            "phase": "Completed", "resiliencyScore": 100.0,
+            "faultsPassed": 1, "faultsFailed": 0, "totalFaults": 1,
         }
-        runner = ChaosRunner("test-ns", chaoscenter=cc)
-
-        engine_spec = {
-            "apiVersion": "litmuschaos.io/v1alpha1",
-            "kind": "ChaosEngine",
-            "metadata": {"name": "test"},
-            "spec": {"experiments": [{"name": "pod-delete"}]},
-        }
-        # Should not raise — gracefully handled
-        runner._register_with_chaoscenter(engine_spec, "test-engine")
+        runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
+        assert len(runner.get_executed_experiments()) == 1

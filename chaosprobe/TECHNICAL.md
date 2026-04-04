@@ -143,24 +143,24 @@ Validates loaded scenarios for structural correctness before execution, includin
 
 #### runner.py
 
-Orchestrates ChaosEngine lifecycle: create, poll, collect status, cleanup.
+Runs chaos experiments exclusively through the ChaosCenter GraphQL API.  Each ChaosEngine YAML spec is wrapped in an Argo Workflow manifest, saved via `saveChaosExperiment`, triggered via `runChaosExperiment`, and monitored via `getExperimentRun`.
 
-**Class: `ChaosRunner(namespace, timeout=300, chaoscenter=None)`**
+**Class: `ChaosRunner(namespace, timeout=300, chaoscenter=<required>)`**
 
 | Method | Purpose |
 |---|---|
-| `run_experiments(experiments)` | Runs all ChaosEngine experiments sequentially |
-| `_run_single_experiment(engine_spec)` | Patches spec with unique suffix, creates CRD, waits for completion |
-| `_wait_for_engine(engine_name, start_time)` | Polls engine status every 5s until completed/timeout |
-| `_delete_chaos_engine(engine_name)` | Idempotent delete with finalizer cleanup |
-| `_cleanup_managed_engines(exclude)` | Deletes leftover `managed-by=chaosprobe` engines from previous runs |
-| `_register_with_chaoscenter(engine_spec, engine_name)` | Saves + runs experiment via ChaosCenter GraphQL API |
+| `run_experiments(experiments)` | Saves, triggers, and polls all experiments via ChaosCenter |
+| `_run_single_experiment(engine_spec)` | Patches spec with unique suffix, saves/runs/polls a single experiment |
+| `_poll_experiment_run(notify_id, start_time)` | Polls `getExperimentRun` every 5s until terminal phase or timeout |
 | `_build_workflow_manifest(engine_spec, engine_name, instance_id)` | Generates Argo Workflow YAML wrapping a ChaosEngine |
 | `get_executed_experiments()` | Returns metadata for all executed experiments |
 
-**ChaosCenter integration**: When the optional `chaoscenter` dict is provided (keys: `token`, `project_id`, `infra_id`, `gql_url`), each experiment is registered with ChaosCenter via the `saveChaosExperiment` and `runChaosExperiment` GraphQL mutations before the ChaosEngine CRD is created. This makes experiments visible in the ChaosCenter dashboard. Registration failures are logged but do not prevent direct CRD execution (graceful degradation).
+**ChaosCenter config** (required dict with keys: `token`, `project_id`, `infra_id`, `gql_url`):
+- `chaoscenter_save_experiment` → registers experiment with Argo Workflow manifest
+- `chaoscenter_run_experiment` → triggers execution, returns `notifyID`
+- `chaoscenter_get_experiment_run` → polls run status by `notifyID`
 
-**Kubernetes API**: Uses `CustomObjectsApi` for ChaosEngine CRUD on `litmuschaos.io/v1alpha1`.
+**Terminal phases**: `Completed`, `Completed_With_Error`, `Stopped`, `Error`, `Timeout`, `Terminated`, `Skipped`.
 
 ---
 
@@ -433,9 +433,10 @@ Handles all infrastructure bootstrapping.
 | Vagrant | `create_vagrantfile()`, `vagrant_up()`, `vagrant_deploy_cluster()`, `vagrant_status()`, `vagrant_destroy()`, `vagrant_fetch_kubeconfig()` |
 | Kubespray | `deploy_cluster()`, `generate_inventory()`, `get_kubeconfig()` |
 
-**ChaosCenter API methods** (used by `ChaosRunner._register_with_chaoscenter`):
+**ChaosCenter API methods** (used by `ChaosRunner`):
 - `chaoscenter_save_experiment(gql_url, project_id, token, infra_id, experiment_id, name, manifest)` — calls `saveChaosExperiment` GraphQL mutation
 - `chaoscenter_run_experiment(gql_url, project_id, token, experiment_id)` — calls `runChaosExperiment` GraphQL mutation, returns `notifyID`
+- `chaoscenter_get_experiment_run(gql_url, project_id, token, notify_id)` — calls `getExperimentRun` GraphQL query, returns phase + fault stats
 
 **Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 4096MB RAM per VM, Kubespray v2.24.0.
 
@@ -576,8 +577,8 @@ For each strategy in [baseline, colocate, spread, antagonistic, random]:
         8. Start RecoveryWatcher(namespace, target_deployment)
         9. Start LocustRunner with load profile (steady by default)
         10. Record experiment_start = time.time()
-        11. ChaosRunner.run_experiments() -- registers with ChaosCenter (if configured),
-            then creates ChaosEngine CRD and blocks until engine completes
+        11. ChaosRunner.run_experiments() -- saves experiment in ChaosCenter,
+            triggers via GraphQL, polls getExperimentRun until completion
         12. Record experiment_end = time.time()
         13. Stop LocustRunner, collect LoadStats, cleanup temp dirs
         14. RecoveryWatcher.stop()
