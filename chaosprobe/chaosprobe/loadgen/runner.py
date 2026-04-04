@@ -301,16 +301,3 @@ class LocustRunner:
                 shutil.rmtree(tmpdir, ignore_errors=True)
         self._temp_dirs.clear()
         self._stats_dir = None
-
-    def run_and_collect(self, profile: LoadProfile) -> LoadStats:
-        """Convenience method: run load test to completion and collect stats.
-
-        Args:
-            profile: Load profile configuration.
-
-        Returns:
-            Collected load generation statistics.
-        """
-        self.start(profile)
-        self.wait()
-        return self.collect_stats()

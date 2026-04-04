@@ -191,24 +191,6 @@ class PlacementMutator:
 
         return assignment
 
-    def apply_assignment(
-        self,
-        assignment: NodeAssignment,
-        wait: bool = True,
-        timeout: int = 300,
-    ) -> None:
-        """Apply a pre-computed NodeAssignment.
-
-        Args:
-            assignment: The assignment to apply.
-            wait: Wait for rollouts to complete.
-            timeout: Timeout for rollout completion.
-        """
-        self._apply_assignment(assignment)
-
-        if wait:
-            self._wait_for_rollouts(list(assignment.assignments.keys()), timeout)
-
     def clear_placement(
         self,
         deployments: Optional[List[str]] = None,

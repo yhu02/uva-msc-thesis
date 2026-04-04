@@ -278,7 +278,6 @@ Applies placement constraints to Kubernetes deployments via patch operations.
 | `get_nodes()` | Queries all cluster nodes with resource info and taints |
 | `get_deployments()` | Lists deployments with aggregated resource requests |
 | `apply_strategy(strategy, target_node=None, seed=None)` | Computes + applies strategy, waits for rollout |
-| `apply_assignment(assignment)` | Applies pre-computed NodeAssignment |
 | `clear_placement()` | Removes nodeSelector from all managed deployments |
 | `get_current_placement()` | Returns per-deployment placement state |
 

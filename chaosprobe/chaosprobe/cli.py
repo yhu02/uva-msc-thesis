@@ -1300,7 +1300,7 @@ def dashboard_status(json_output: bool):
         return
 
     click.echo("ChaosCenter Status:")
-    click.echo(f"  Installed: Yes")
+    click.echo("  Installed: Yes")
     click.echo(f"  Ready: {'Yes' if info['ready'] else 'No'}")
     if info["frontend_url"]:
         click.echo(f"  Dashboard URL: {info['frontend_url']}")

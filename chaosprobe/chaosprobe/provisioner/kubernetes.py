@@ -60,10 +60,6 @@ class KubernetesProvisioner:
 
         return self._applied_resources
 
-    def get_applied_resources(self) -> List[Dict[str, Any]]:
-        """Return metadata about applied resources."""
-        return self._applied_resources
-
     def cleanup(self):
         """Delete all applied resources (in reverse order)."""
         for resource in reversed(self._applied_resources):

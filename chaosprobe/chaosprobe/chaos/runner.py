@@ -42,45 +42,6 @@ class ChaosRunner:
         self.custom_api = client.CustomObjectsApi()
         self._executed_experiments: List[Dict[str, Any]] = []
 
-    def build_rust_probes(
-        self,
-        scenario: Dict[str, Any],
-        registry: str = "chaosprobe",
-        load_kind: bool = False,
-    ) -> Dict[str, str]:
-        """Build Rust cmdProbe binaries and patch experiment specs.
-
-        Discovers Rust probe sources in the scenario's ``probes/``
-        directory, compiles them to static Linux binaries, builds
-        container images, and patches the corresponding ``cmdProbe``
-        ``source.image`` fields in the experiment specs.
-
-        Args:
-            scenario: Loaded scenario dict (must have ``path`` key and
-                optionally ``probes`` key from the loader).
-            registry: Container registry prefix for image tags.
-            load_kind: Load built images into a local kind cluster.
-
-        Returns:
-            Mapping of probe name → image tag.  Empty dict if no Rust
-            probes were found.
-        """
-        rust_probes = scenario.get("probes", [])
-        if not rust_probes:
-            return {}
-
-        from chaosprobe.probes.builder import RustProbeBuilder, patch_probe_images
-
-        builder = RustProbeBuilder(registry=registry, load_kind=load_kind)
-        built_images = builder.build_all(scenario["path"])
-
-        if built_images:
-            patched = patch_probe_images(scenario["experiments"], built_images)
-            if patched:
-                print(f"  Patched {patched} cmdProbe(s) with built images")
-
-        return built_images
-
     def run_experiments(self, experiments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Run all ChaosEngine experiments.
 
