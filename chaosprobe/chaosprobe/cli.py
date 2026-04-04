@@ -3063,6 +3063,16 @@ def run(
 
     overall_results["remediationLog"] = generate_remediation_log(overall_results)
 
+    # ── Write JSON result files ──
+    import json as _json_mod
+
+    for strat_name, strat_data in overall_results.get("strategies", {}).items():
+        strat_path = results_dir / f"{strat_name}.json"
+        strat_path.write_text(_json_mod.dumps(strat_data, indent=2, default=str))
+
+    summary_path = results_dir / "summary.json"
+    summary_path.write_text(_json_mod.dumps(overall_results, indent=2, default=str))
+
     # ── Print final summary ──
     click.echo(f"\n{'=' * 60}")
     click.echo("EXPERIMENT RESULTS")

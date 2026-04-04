@@ -19,6 +19,7 @@ from chaosprobe.provisioner.setup import LitmusSetup
 _TERMINAL_PHASES = frozenset({
     "Completed",
     "Completed_With_Error",
+    "Completed_With_Probe_Failure",
     "Stopped",
     "Error",
     "Timeout",
@@ -331,6 +332,7 @@ class ChaosRunner:
                             "image": "litmuschaos/k8s:latest",
                             "command": ["sh", "-c"],
                             "args": [
+                                "sleep 15 && "
                                 f"kubectl delete chaosengine -l 'instance_id in"
                                 f" ({instance_id}, )' -n"
                                 " {{workflow.parameters.adminModeNamespace}}",

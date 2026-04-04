@@ -160,7 +160,7 @@ Runs chaos experiments exclusively through the ChaosCenter GraphQL API.  Each Ch
 - `chaoscenter_run_experiment` → triggers execution, returns `notifyID`
 - `chaoscenter_get_experiment_run` → polls run status by `notifyID`
 
-**Terminal phases**: `Completed`, `Completed_With_Error`, `Stopped`, `Error`, `Timeout`, `Terminated`, `Skipped`.
+**Terminal phases**: `Completed`, `Completed_With_Error`, `Completed_With_Probe_Failure`, `Stopped`, `Error`, `Timeout`, `Terminated`, `Skipped`.
 
 ---
 
