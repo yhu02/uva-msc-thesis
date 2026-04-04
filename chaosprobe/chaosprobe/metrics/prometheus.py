@@ -164,13 +164,6 @@ def discover_prometheus_urls(namespace: str = "monitoring") -> List[str]:
     return reachable
 
 
-# Keep backward-compatible alias
-def discover_prometheus_url(namespace: str = "monitoring") -> Optional[str]:
-    """Return the first reachable Prometheus URL, or *None*."""
-    urls = discover_prometheus_urls(namespace)
-    return urls[0] if urls else None
-
-
 # ---------------------------------------------------------------------------
 # Continuous Prometheus prober
 # ---------------------------------------------------------------------------

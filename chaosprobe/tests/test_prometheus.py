@@ -13,7 +13,6 @@ from chaosprobe.metrics.prometheus import (
     DEFAULT_QUERIES,
     _find_prometheus_service,
     _query_prometheus,
-    discover_prometheus_url,
     discover_prometheus_urls,
 )
 
@@ -218,27 +217,6 @@ class TestFindPrometheusService:
         assert len(result) == 2
         assert ("prometheus-server", "monitoring", 9090) in result
         assert ("prometheus-k8s", "prometheus", 9090) in result
-
-
-class TestDiscoverPrometheusUrl:
-    @patch("chaosprobe.metrics.prometheus._find_prometheus_service", return_value=[])
-    def test_returns_none_when_no_service(self, _mock):
-        result = discover_prometheus_url()
-        assert result is None
-
-    @patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True)
-    @patch("chaosprobe.metrics.prometheus._find_prometheus_service",
-           return_value=[("prometheus-server", "monitoring", 9090)])
-    def test_returns_direct_url_when_reachable(self, _mock_find, _mock_check):
-        result = discover_prometheus_url()
-        assert result == "http://prometheus-server.monitoring:9090"
-
-    @patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=False)
-    @patch("chaosprobe.metrics.prometheus._find_prometheus_service",
-           return_value=[("prometheus-server", "monitoring", 9090)])
-    def test_returns_none_when_unreachable(self, _mock_find, _mock_check):
-        result = discover_prometheus_url()
-        assert result is None
 
 
 class TestDiscoverPrometheusUrls:

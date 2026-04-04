@@ -797,7 +797,3 @@ class ContinuousDiskProber(_ContinuousProberBase):
                     self._probe_errors += 1
 
             self._stop_event.wait(timeout=self.interval)
-
-
-# Backwards-compatible alias
-ContinuousThroughputProber = ContinuousRedisProber
