@@ -495,7 +495,7 @@ end
             raise RuntimeError(f"Failed to fetch kubeconfig: {e}") from e
 
         # Update the server address in kubeconfig to use external IP
-        with open(output_path, "r") as f:
+        with open(output_path) as f:
             kubeconfig_content = f.read()
 
         # Replace internal IP with control plane host IP

@@ -206,6 +206,7 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
         queries: Optional[Dict[str, str]] = None,
     ):
         super().__init__(namespace, interval, name="prometheus-prober")
+        self._consecutive_failures: int = 0
         # Accept both singular and plural for convenience
         if prometheus_urls:
             self._prometheus_urls: List[str] = list(prometheus_urls)
@@ -302,15 +303,17 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
                     # All queries failed — Prometheus may be down
                     with self._lock:
                         self._probe_errors += 1
-                        errors = self._probe_errors
-                    if errors >= 3:
+                        self._consecutive_failures += 1
+                        consecutive = self._consecutive_failures
+                    if consecutive >= 3:
                         logger.warning(
-                            "Prometheus unreachable after %d attempts — stopping",
-                            errors,
+                            "Prometheus unreachable after %d consecutive attempts — stopping",
+                            consecutive,
                         )
                         self._available = False
                         break
                 else:
+                    self._consecutive_failures = 0
                     entry["metrics"] = metrics
                     with self._lock:
                         self._time_series.append(entry)
@@ -473,6 +476,12 @@ class ContinuousPrometheusProber(_ContinuousProberBase):
             try:
                 proc.terminate()
                 proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
             except Exception:
                 pass
         self._port_forward_procs.clear()
