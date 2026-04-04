@@ -772,26 +772,6 @@ end
 
         return result
 
-    def ensure_libvirt(self) -> dict:
-        """Ensure libvirt is installed, installing if necessary.
-
-        Returns:
-            Dictionary with libvirt status.
-        """
-        status = self._check_libvirt()
-
-        if status["all_ready"]:
-            return status
-
-        # Install if not ready
-        install_result = self.install_libvirt()
-
-        # Re-check status
-        status = self._check_libvirt()
-        status["install_result"] = install_result
-
-        return status
-
     def create_vagrantfile(
         self,
         cluster_name: str = "chaosprobe",
