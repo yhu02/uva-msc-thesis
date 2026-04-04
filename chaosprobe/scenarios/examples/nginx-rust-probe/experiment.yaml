@@ -1,0 +1,86 @@
+# Demonstrates Rust cmdProbe binaries with ChaosProbe.
+#
+# The probes/ directory contains two Rust probes:
+#   - check-endpoint.rs  (single-file, compiled with rustc)
+#   - check-dns/         (full Cargo project)
+#
+# Both are automatically compiled and packaged into container images
+# at experiment run time. The source.image fields below are patched
+# automatically by ChaosProbe.
+#
+# To build probes manually:
+#   chaosprobe probe build scenarios/examples/nginx-rust-probe
+
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: nginx-rust-probe
+spec:
+  engineState: active
+  appinfo:
+    appns: default
+    applabel: app=nginx
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "30"
+            - name: CHAOS_INTERVAL
+              value: "10"
+            - name: FORCE
+              value: "true"
+        probe:
+          # ── Rust single-file probe ──────────────────────
+          # Compiled from probes/check-endpoint.rs
+          - name: check-endpoint
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-endpoint
+              comparator:
+                type: string
+                criteria: contains
+                value: "REACHABLE"
+              source:
+                image: auto  # patched by ChaosProbe build
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 2
+
+          # ── Rust Cargo project probe ────────────────────
+          # Compiled from probes/check-dns/
+          - name: check-dns
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-dns
+              comparator:
+                type: string
+                criteria: contains
+                value: "DNS_OK"
+              source:
+                image: auto  # patched by ChaosProbe build
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 2
+
+          # ── Standard httpProbe alongside Rust probes ────
+          - name: nginx-http
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://nginx-service.default.svc.cluster.local:80
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 2s
+              retry: 3

@@ -252,6 +252,21 @@ def ensure_litmus_setup(
     else:
         click.echo("  Neo4j: available")
 
+    # Install ChaosCenter (dashboard) in the background — not required for experiments
+    if not setup.is_chaoscenter_installed():
+        if not prereqs.get("helm"):
+            click.echo("  ChaosCenter: skipped (helm not available)")
+        else:
+            click.echo("  ChaosCenter: installing in background (not blocking experiments)...")
+            try:
+                setup.install_chaoscenter(wait=False)
+                click.echo("  ChaosCenter: Helm release deployed, pods starting up")
+                click.echo("    Run 'chaosprobe dashboard status' to check progress")
+            except Exception as e:
+                click.echo(f"  WARNING: Failed to install ChaosCenter: {e}", err=True)
+    else:
+        click.echo("  ChaosCenter: available")
+
     return True
 
 
@@ -286,12 +301,18 @@ def main():
     help="Namespace for chaos experiments",
 )
 @click.option("--skip-litmus", is_flag=True, help="Skip LitmusChaos installation")
-def init(namespace: str, skip_litmus: bool):
+@click.option(
+    "--skip-dashboard",
+    is_flag=True,
+    help="Skip ChaosCenter dashboard installation",
+)
+def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     """Initialize ChaosProbe and install LitmusChaos on existing cluster.
 
     This command sets up all prerequisites for running chaos experiments:
     - Installs Helm and LitmusChaos automatically
     - Creates RBAC configuration
+    - Installs the ChaosCenter dashboard by default (disable with --skip-dashboard)
 
     Requires an existing Kubernetes cluster. Options:
     - Use 'chaosprobe cluster vagrant init/up/deploy' for local development
@@ -358,6 +379,38 @@ def init(namespace: str, skip_litmus: bool):
         sys.exit(1)
 
     click.echo("\nChaosProbe initialized successfully!")
+
+    if not skip_dashboard:
+        if not setup.is_chaoscenter_installed():
+            click.echo("\nInstalling ChaosCenter dashboard...")
+            try:
+                ok = setup.install_chaoscenter(wait=True)
+                if ok:
+                    click.echo("  ChaosCenter installed successfully!")
+                    url = setup.get_dashboard_url()
+                    if url:
+                        click.echo(f"  Dashboard URL: {url}")
+                    click.echo(
+                        f"  Default credentials: "
+                        f"username={setup.CHAOSCENTER_DEFAULT_USER} "
+                        f"password={setup.CHAOSCENTER_DEFAULT_PASS}"
+                    )
+                    click.echo(f"\n  Connecting namespace '{namespace}' to ChaosCenter...")
+                    try:
+                        setup.connect_infrastructure(namespace=namespace)
+                        click.echo("  Infrastructure registered successfully!")
+                    except Exception as e:
+                        click.echo(f"  Warning: Could not register infrastructure: {e}")
+                else:
+                    click.echo("  ChaosCenter installation timed out.", err=True)
+            except Exception as e:
+                click.echo(f"  Error installing ChaosCenter: {e}", err=True)
+        else:
+            click.echo("\nChaosCenter is already installed.")
+            url = setup.get_dashboard_url()
+            if url:
+                click.echo(f"  Dashboard URL: {url}")
+
     click.echo("\nYou can now run scenarios with:")
     click.echo("  chaosprobe run <scenario-dir> --output results.json")
 
@@ -399,6 +452,17 @@ def status(json_output: bool):
         click.echo(f"    Server: {prereqs['cluster_server']}")
     click.echo(f"  LitmusChaos installed: {'Yes' if prereqs['litmus_installed'] else 'No'}")
     click.echo(f"  LitmusChaos ready: {'Yes' if prereqs['litmus_ready'] else 'No'}")
+    click.echo(
+        f"  ChaosCenter dashboard: "
+        f"{'Installed' if prereqs['chaoscenter_installed'] else 'Not installed'}"
+    )
+    if prereqs["chaoscenter_installed"]:
+        click.echo(
+            f"  ChaosCenter ready: {'Yes' if prereqs['chaoscenter_ready'] else 'No'}"
+        )
+        url = setup.get_dashboard_url()
+        if url:
+            click.echo(f"  Dashboard URL: {url}")
 
     if prereqs["all_ready"]:
         click.echo("\nAll systems ready!")
@@ -584,8 +648,18 @@ def cluster_vagrant():
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
 @click.option("--control-planes", "-c", default=1, type=int, help="Number of control plane nodes")
 @click.option("--workers", "-w", default=2, type=int, help="Number of worker nodes")
-@click.option("--memory", "-m", default=2048, type=int, help="Memory per VM in MB")
-@click.option("--cpus", default=2, type=int, help="CPUs per VM")
+@click.option(
+    "--memory", "-m", default=None, type=int,
+    help="Memory for ALL VMs in MB (overrides --cp-memory/--worker-memory)",
+)
+@click.option(
+    "--cpus", default=None, type=int,
+    help="CPUs for ALL VMs (overrides --cp-cpus/--worker-cpus)",
+)
+@click.option("--cp-memory", default=4096, type=int, help="Memory for control plane VMs in MB")
+@click.option("--cp-cpus", default=2, type=int, help="CPUs for control plane VMs")
+@click.option("--worker-memory", default=4096, type=int, help="Memory for worker VMs in MB")
+@click.option("--worker-cpus", default=2, type=int, help="CPUs for worker VMs")
 @click.option("--box", default="generic/ubuntu2204", help="Vagrant box image")
 @click.option("--network-prefix", default="192.168.56", help="Network prefix for private IPs")
 @click.option("--output", "-o", type=click.Path(), help="Output directory for Vagrantfile")
@@ -593,8 +667,12 @@ def vagrant_init(
     name: str,
     control_planes: int,
     workers: int,
-    memory: int,
-    cpus: int,
+    memory: Optional[int],
+    cpus: Optional[int],
+    cp_memory: int,
+    cp_cpus: int,
+    worker_memory: int,
+    worker_cpus: int,
     box: str,
     network_prefix: str,
     output: Optional[str],
@@ -616,6 +694,10 @@ def vagrant_init(
             num_workers=workers,
             vm_memory=memory,
             vm_cpus=cpus,
+            cp_memory=cp_memory,
+            cp_cpus=cp_cpus,
+            worker_memory=worker_memory,
+            worker_cpus=worker_cpus,
             box_image=box,
             network_prefix=network_prefix,
             output_dir=output_dir,
@@ -1135,6 +1217,323 @@ def cleanup(namespace: str, cleanup_all: bool):
     else:
         provisioner.cleanup()
         click.echo("Resources cleaned up successfully")
+
+
+# ─────────────────────────────────────────────────────────────
+# Dashboard commands — ChaosCenter management
+# ─────────────────────────────────────────────────────────────
+
+
+@main.group()
+def dashboard():
+    """Manage the ChaosCenter dashboard.
+
+    Install and interact with the official LitmusChaos web UI
+    (ChaosCenter) for visualising running experiments, resilience
+    scores, and infrastructure status.
+
+    \b
+    Quick start:
+      chaosprobe dashboard install
+      chaosprobe dashboard open
+      chaosprobe dashboard connect -n <namespace>
+    """
+    pass
+
+
+@dashboard.command("install")
+@click.option(
+    "--service-type",
+    type=click.Choice(["NodePort", "LoadBalancer"], case_sensitive=False),
+    default="NodePort",
+    help="Service type for the frontend (default: NodePort)",
+)
+@click.option("--timeout", default=300, help="Timeout in seconds (default: 300)")
+def dashboard_install(service_type: str, timeout: int):
+    """Install ChaosCenter dashboard on the current cluster."""
+    setup = LitmusSetup()
+
+    if setup.is_chaoscenter_installed():
+        click.echo("ChaosCenter is already installed.")
+        url = setup.get_dashboard_url()
+        if url:
+            click.echo(f"Dashboard URL: {url}")
+        return
+
+    click.echo("Installing ChaosCenter dashboard...")
+    try:
+        ok = setup.install_chaoscenter(
+            service_type=service_type, wait=True, timeout=timeout,
+        )
+        if ok:
+            click.echo("ChaosCenter installed successfully!")
+            url = setup.get_dashboard_url()
+            if url:
+                click.echo(f"\nDashboard URL: {url}")
+            click.echo(
+                f"\nDefault credentials:  "
+                f"username={setup.CHAOSCENTER_DEFAULT_USER}  "
+                f"password={setup.CHAOSCENTER_DEFAULT_PASS}"
+            )
+        else:
+            click.echo("ChaosCenter installation timed out.", err=True)
+            sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@dashboard.command("status")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+def dashboard_status(json_output: bool):
+    """Show ChaosCenter pod health and dashboard URL."""
+    setup = LitmusSetup()
+    info = setup.get_chaoscenter_status()
+
+    if json_output:
+        click.echo(json.dumps(info, indent=2))
+        return
+
+    if not info["installed"]:
+        click.echo("ChaosCenter is not installed.")
+        click.echo("Run 'chaosprobe dashboard install' to install it.")
+        return
+
+    click.echo("ChaosCenter Status:")
+    click.echo(f"  Installed: Yes")
+    click.echo(f"  Ready: {'Yes' if info['ready'] else 'No'}")
+    if info["frontend_url"]:
+        click.echo(f"  Dashboard URL: {info['frontend_url']}")
+
+    if info["pods"]:
+        click.echo("\n  Pods:")
+        for pod in info["pods"]:
+            ready_str = "Ready" if pod["ready"] else pod["phase"]
+            click.echo(f"    {pod['name']}: {ready_str}")
+
+
+@dashboard.command("open")
+def dashboard_open():
+    """Print the ChaosCenter dashboard URL (or start port-forward)."""
+    setup = LitmusSetup()
+
+    if not setup.is_chaoscenter_installed():
+        click.echo("ChaosCenter is not installed.", err=True)
+        click.echo("Run 'chaosprobe dashboard install' first.")
+        sys.exit(1)
+
+    url = setup.get_dashboard_url()
+    if url:
+        click.echo(url)
+    else:
+        click.echo("Cannot determine external URL. Starting port-forward...")
+        click.echo(
+            f"  kubectl port-forward svc/{setup.CHAOSCENTER_FRONTEND_SVC} "
+            f"{setup.CHAOSCENTER_FRONTEND_PORT}:{setup.CHAOSCENTER_FRONTEND_PORT} "
+            f"-n {setup.LITMUS_NAMESPACE}"
+        )
+        click.echo(f"\nThen open: http://localhost:{setup.CHAOSCENTER_FRONTEND_PORT}")
+
+
+@dashboard.command("connect")
+@click.option(
+    "--namespace", "-n", required=True, help="Namespace to register as chaos infrastructure",
+)
+@click.option("--username", default="", help="ChaosCenter username (default: admin)")
+@click.option("--password", default="", help="ChaosCenter password (default: litmus)")
+def dashboard_connect(namespace: str, username: str, password: str):
+    """Register a namespace as chaos infrastructure in ChaosCenter."""
+    setup = LitmusSetup()
+
+    if not setup.is_chaoscenter_installed():
+        click.echo("ChaosCenter is not installed.", err=True)
+        click.echo("Run 'chaosprobe dashboard install' first.")
+        sys.exit(1)
+
+    click.echo(f"Connecting namespace '{namespace}' to ChaosCenter...")
+    try:
+        result = setup.connect_infrastructure(
+            namespace=namespace, username=username, password=password,
+        )
+        click.echo(f"Infrastructure registered: {result['infra_id']}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@dashboard.command("credentials")
+def dashboard_credentials():
+    """Show default ChaosCenter login credentials."""
+    click.echo(f"Username: {LitmusSetup.CHAOSCENTER_DEFAULT_USER}")
+    click.echo(f"Password: {LitmusSetup.CHAOSCENTER_DEFAULT_PASS}")
+    click.echo("\nChange the password after first login for production use.")
+
+
+# ─────────────────────────────────────────────────────────────
+# Probe commands — Rust cmdProbe builder
+# ─────────────────────────────────────────────────────────────
+
+
+@main.group()
+def probe():
+    """Build and manage Rust cmdProbe binaries.
+
+    Create Rust probes that are compiled to static Linux binaries,
+    packaged into minimal container images, and automatically injected
+    into ChaosEngine cmdProbe specs.
+
+    \b
+    Workflow:
+      1. chaosprobe probe init <name> --scenario <path>
+      2. Edit the generated Rust source
+      3. chaosprobe probe build <scenario>
+      4. chaosprobe run ... (auto-builds if probes/ dir exists)
+    """
+    pass
+
+
+@probe.command("init")
+@click.argument("name")
+@click.option(
+    "--scenario",
+    "-s",
+    type=click.Path(exists=True, file_okay=False),
+    required=True,
+    help="Scenario directory to create the probe in",
+)
+@click.option(
+    "--single-file",
+    is_flag=True,
+    help="Create a single .rs file instead of a full Cargo project",
+)
+def probe_init(name: str, scenario: str, single_file: bool):
+    """Scaffold a new Rust cmdProbe.
+
+    Creates a ready-to-edit probe in SCENARIO/probes/NAME/.
+
+    \b
+    Examples:
+      chaosprobe probe init check-db -s scenarios/online-boutique
+      chaosprobe probe init health --single-file -s scenarios/nginx
+    """
+    from chaosprobe.probes.templates import (
+        generate_cargo_toml,
+        generate_main_rs,
+        generate_single_file_rs,
+    )
+
+    scenario_path = Path(scenario).resolve()
+    probes_dir = scenario_path / "probes"
+    probes_dir.mkdir(exist_ok=True)
+
+    if single_file:
+        target = probes_dir / f"{name}.rs"
+        if target.exists():
+            click.echo(f"Error: {target} already exists", err=True)
+            sys.exit(1)
+        target.write_text(generate_single_file_rs(name))
+        click.echo(f"Created single-file probe: {target}")
+    else:
+        proj_dir = probes_dir / name
+        if proj_dir.exists():
+            click.echo(f"Error: {proj_dir} already exists", err=True)
+            sys.exit(1)
+        src_dir = proj_dir / "src"
+        src_dir.mkdir(parents=True)
+        (proj_dir / "Cargo.toml").write_text(generate_cargo_toml(name))
+        (src_dir / "main.rs").write_text(generate_main_rs(name))
+        click.echo(f"Created Cargo probe project: {proj_dir}/")
+        click.echo(f"  Edit: {src_dir / 'main.rs'}")
+        click.echo(f"  Build: chaosprobe probe build {scenario}")
+
+    click.echo(
+        f"\nAdd a cmdProbe referencing this probe to your experiment YAML:\n"
+        f"  - name: {name}\n"
+        f"    type: cmdProbe\n"
+        f"    mode: Edge\n"
+        f"    cmdProbe/inputs:\n"
+        f"      command: /probe/{name}\n"
+        f"      comparator:\n"
+        f"        type: string\n"
+        f"        criteria: contains\n"
+        f"        value: \"OK\"\n"
+        f"      source:\n"
+        f"        image: auto  # patched at build time\n"
+        f"    runProperties:\n"
+        f"      probeTimeout: 10s\n"
+        f"      interval: 5s\n"
+        f"      retry: 2"
+    )
+
+
+@probe.command("build")
+@click.argument("scenario", type=click.Path(exists=True))
+@click.option(
+    "--registry",
+    "-r",
+    default="chaosprobe",
+    help="Container registry prefix (default: chaosprobe)",
+)
+@click.option(
+    "--kind-load",
+    is_flag=True,
+    help="Load built images into local kind cluster",
+)
+def probe_build(scenario: str, registry: str, kind_load: bool):
+    """Compile Rust probes and build container images.
+
+    Discovers .rs files and Cargo projects in SCENARIO/probes/,
+    compiles them to static Linux binaries, and packages them as
+    container images.
+
+    \b
+    Examples:
+      chaosprobe probe build scenarios/online-boutique
+      chaosprobe probe build scenarios/nginx -r docker.io/myuser
+    """
+    from chaosprobe.probes.builder import RustProbeBuilder, ProbeBuilderError
+
+    scenario_path = str(Path(scenario).resolve())
+    builder = RustProbeBuilder(registry=registry, load_kind=kind_load)
+
+    probes = builder.discover_probes(scenario_path)
+    if not probes:
+        click.echo(f"No Rust probes found in {scenario_path}/probes/")
+        return
+
+    click.echo(f"Found {len(probes)} probe(s):")
+    for p in probes:
+        click.echo(f"  {p['name']} ({p['kind']})")
+
+    click.echo()
+    try:
+        images = builder.build_all(scenario_path)
+    except ProbeBuilderError as e:
+        click.echo(f"Build failed: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"\nBuilt {len(images)} image(s):")
+    for name, tag in images.items():
+        click.echo(f"  {name}: {tag}")
+
+
+@probe.command("list")
+@click.argument("scenario", type=click.Path(exists=True))
+def probe_list(scenario: str):
+    """List Rust probes discovered in a scenario directory."""
+    from chaosprobe.probes.builder import RustProbeBuilder
+
+    scenario_path = str(Path(scenario).resolve())
+    probes = RustProbeBuilder.discover_probes(scenario_path)
+
+    if not probes:
+        click.echo(f"No Rust probes found in {scenario_path}/probes/")
+        return
+
+    click.echo(f"Probes in {scenario_path}/probes/:")
+    for p in probes:
+        kind_label = "Cargo project" if p["kind"] == "cargo" else "single file"
+        click.echo(f"  {p['name']} ({kind_label}) — {p['path']}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1679,6 +2078,21 @@ def run(
     else:
         click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
 
+    # Auto-build Rust cmdProbes if probes/ directory exists
+    if shared_scenario.get("probes"):
+        click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
+        try:
+            from chaosprobe.probes.builder import RustProbeBuilder, patch_probe_images
+
+            builder = RustProbeBuilder(registry="chaosprobe", load_kind=True)
+            built_images = builder.build_all(shared_scenario["path"])
+            if built_images:
+                n = patch_probe_images(shared_scenario["experiments"], built_images)
+                click.echo(f"  Built and patched {n} cmdProbe image(s)")
+        except Exception as e:
+            click.echo(f"Warning: Rust probe build failed: {e}", err=True)
+            click.echo("  Continuing without auto-built probes...", err=True)
+
     # Optionally provision cluster from scenario's cluster config
     if provision:
         cluster_config = shared_scenario.get("cluster")
@@ -1948,6 +2362,57 @@ def run(
                     )
         else:
             click.echo("  Neo4j:       WARNING - no ready pod found in neo4j namespace", err=True)
+
+    # ChaosCenter — port-forward dashboard + API, then auto-configure
+    cc_frontend_svc = LitmusSetup.CHAOSCENTER_FRONTEND_SVC
+    cc_frontend_port = LitmusSetup.CHAOSCENTER_FRONTEND_PORT
+    cc_auth_svc = LitmusSetup.CHAOSCENTER_AUTH_SVC
+    cc_auth_port = LitmusSetup.CHAOSCENTER_AUTH_PORT
+    cc_server_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
+    cc_server_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
+    if _check_pods_ready("litmus", "app.kubernetes.io/component=litmus-frontend", "ChaosCenter"):
+        # Port-forward frontend (dashboard UI)
+        if not _check_port("localhost", cc_frontend_port):
+            _start_port_forward(
+                cc_frontend_svc,
+                "litmus",
+                [f"{cc_frontend_port}:{cc_frontend_port}"],
+            )
+            if _check_port("localhost", cc_frontend_port):
+                click.echo(
+                    f"  ChaosCenter: http://localhost:{cc_frontend_port} (port-forward started)"
+                )
+            else:
+                click.echo(
+                    f"  ChaosCenter: WARNING - port-forward to localhost:{cc_frontend_port} failed",
+                    err=True,
+                )
+        else:
+            click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port}")
+
+        # Port-forward auth server + GraphQL server for API access
+        if not _check_port("localhost", cc_auth_port):
+            _start_port_forward(cc_auth_svc, "litmus", [f"{cc_auth_port}:{cc_auth_port}"])
+        if not _check_port("localhost", cc_server_port):
+            _start_port_forward(cc_server_svc, "litmus", [f"{cc_server_port}:{cc_server_port}"])
+
+        # Auto-configure: environment + infrastructure + subscriber
+        try:
+            setup = _get_setup()
+            setup.ensure_chaoscenter_configured(
+                namespace=namespace,
+                base_host="http://localhost",
+            )
+            click.echo("  ChaosCenter: auto-configured for experiment visibility")
+        except Exception as exc:
+            click.echo(
+                f"  ChaosCenter: WARNING - auto-setup failed: {exc}",
+                err=True,
+            )
+            click.echo(
+                "               Experiments may not appear in the dashboard.",
+                err=True,
+            )
 
     # metrics-server — verify API works and has --kubelet-insecure-tls for Vagrant clusters
     try:
@@ -2650,6 +3115,16 @@ def run(
 
     # Terminate port-forward processes
     _cleanup_port_forwards()
+
+    # Show ChaosCenter dashboard link if available
+    try:
+        dash_setup = LitmusSetup()
+        if dash_setup.is_chaoscenter_installed():
+            dash_url = dash_setup.get_dashboard_url()
+            if dash_url:
+                click.echo(f"  ChaosCenter dashboard: {dash_url}")
+    except Exception:
+        pass
 
     click.echo("")
 

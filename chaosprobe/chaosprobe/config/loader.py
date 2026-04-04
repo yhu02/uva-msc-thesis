@@ -62,6 +62,9 @@ def load_scenario(scenario_path: str) -> Dict[str, Any]:
     # Load cluster configuration if present
     cluster = _load_cluster_config(Path(scenario_dir))
 
+    # Detect Rust cmdProbe sources
+    rust_probes = _detect_rust_probes(Path(scenario_dir))
+
     result = {
         "path": scenario_dir,
         "manifests": manifests,
@@ -71,6 +74,9 @@ def load_scenario(scenario_path: str) -> Dict[str, Any]:
 
     if cluster:
         result["cluster"] = cluster
+
+    if rust_probes:
+        result["probes"] = rust_probes
 
     return result
 
@@ -145,6 +151,43 @@ def _load_cluster_config(scenario_dir: Path) -> Optional[Dict[str, Any]]:
         return None
 
     return data.get("cluster", data)
+
+
+def _detect_rust_probes(scenario_dir: Path) -> List[Dict[str, Any]]:
+    """Detect Rust cmdProbe sources in a ``probes/`` subdirectory.
+
+    Returns:
+        List of probe descriptors with name, path, and kind
+        (``single_file`` or ``cargo``).  Empty list if no probes found.
+    """
+    probes_dir = scenario_dir / "probes"
+    if not probes_dir.is_dir():
+        return []
+
+    found: List[Dict[str, Any]] = []
+
+    # Single .rs files
+    for rs_file in sorted(probes_dir.glob("*.rs")):
+        found.append(
+            {
+                "name": rs_file.stem,
+                "path": str(rs_file.resolve()),
+                "kind": "single_file",
+            }
+        )
+
+    # Cargo project directories
+    for child in sorted(probes_dir.iterdir()):
+        if child.is_dir() and (child / "Cargo.toml").exists():
+            found.append(
+                {
+                    "name": child.name,
+                    "path": str(child.resolve()),
+                    "kind": "cargo",
+                }
+            )
+
+    return found
 
 
 def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,13 +1,16 @@
 """Automatic setup and installation of LitmusChaos and dependencies."""
 
+import json as _json
 import os
 import platform
 import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -23,6 +26,17 @@ class LitmusSetup:
     KUBESPRAY_DIR = Path.home() / ".chaosprobe" / "kubespray"
     VAGRANT_DIR = Path.home() / ".chaosprobe" / "vagrant"
 
+    # ChaosCenter (dashboard) constants
+    CHAOSCENTER_HELM_CHART = "litmuschaos/litmus"
+    CHAOSCENTER_RELEASE_NAME = "chaos"
+    CHAOSCENTER_FRONTEND_SVC = "chaos-litmus-frontend-service"
+    CHAOSCENTER_SERVER_SVC = "chaos-litmus-server-service"
+    CHAOSCENTER_AUTH_SVC = "chaos-litmus-auth-server-service"
+    CHAOSCENTER_FRONTEND_PORT = 9091
+    CHAOSCENTER_SERVER_PORT = 9002
+    CHAOSCENTER_DEFAULT_USER = "admin"
+    CHAOSCENTER_DEFAULT_PASS = "litmus"
+
     VAGRANTFILE_TEMPLATE = """# -*- mode: ruby -*-
 # vi: set ft=ruby :
 
@@ -32,8 +46,10 @@ class LitmusSetup:
 CLUSTER_NAME = "{cluster_name}"
 NUM_CONTROL_PLANES = {num_control_planes}
 NUM_WORKERS = {num_workers}
-VM_MEMORY = {vm_memory}
-VM_CPUS = {vm_cpus}
+CP_MEMORY = {cp_memory}
+CP_CPUS = {cp_cpus}
+WORKER_MEMORY = {worker_memory}
+WORKER_CPUS = {worker_cpus}
 BOX_IMAGE = "{box_image}"
 NETWORK_PREFIX = "{network_prefix}"
 
@@ -49,14 +65,14 @@ Vagrant.configure("2") do |config|
 
       node.vm.provider "virtualbox" do |vb|
         vb.name = "#{{CLUSTER_NAME}}-cp#{{i}}"
-        vb.memory = VM_MEMORY
-        vb.cpus = VM_CPUS
+        vb.memory = CP_MEMORY
+        vb.cpus = CP_CPUS
         vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
       end
 
       node.vm.provider "libvirt" do |lv|
-        lv.memory = VM_MEMORY
-        lv.cpus = VM_CPUS
+        lv.memory = CP_MEMORY
+        lv.cpus = CP_CPUS
       end
 
       # Enable password-less sudo
@@ -75,14 +91,14 @@ Vagrant.configure("2") do |config|
 
       node.vm.provider "virtualbox" do |vb|
         vb.name = "#{{CLUSTER_NAME}}-worker#{{i}}"
-        vb.memory = VM_MEMORY
-        vb.cpus = VM_CPUS
+        vb.memory = WORKER_MEMORY
+        vb.cpus = WORKER_CPUS
         vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
       end
 
       node.vm.provider "libvirt" do |lv|
-        lv.memory = VM_MEMORY
-        lv.cpus = VM_CPUS
+        lv.memory = WORKER_MEMORY
+        lv.cpus = WORKER_CPUS
       end
 
       # Enable password-less sudo
@@ -781,8 +797,12 @@ end
         cluster_name: str = "chaosprobe",
         num_control_planes: int = 1,
         num_workers: int = 2,
-        vm_memory: int = 2048,
-        vm_cpus: int = 2,
+        vm_memory: int | None = None,
+        vm_cpus: int | None = None,
+        cp_memory: int = 4096,
+        cp_cpus: int = 2,
+        worker_memory: int = 4096,
+        worker_cpus: int = 2,
         box_image: str = "generic/ubuntu2204",
         network_prefix: str = "192.168.56",
         output_dir: Optional[Path] = None,
@@ -793,8 +813,12 @@ end
             cluster_name: Name for the cluster.
             num_control_planes: Number of control plane nodes.
             num_workers: Number of worker nodes.
-            vm_memory: Memory per VM in MB.
-            vm_cpus: CPUs per VM.
+            vm_memory: Legacy shorthand — sets both cp_memory and worker_memory.
+            vm_cpus: Legacy shorthand — sets both cp_cpus and worker_cpus.
+            cp_memory: Memory for control plane VMs in MB.
+            cp_cpus: CPUs for control plane VMs.
+            worker_memory: Memory for worker VMs in MB.
+            worker_cpus: CPUs for worker VMs.
             box_image: Vagrant box image to use.
             network_prefix: Network prefix for private IPs (e.g., 192.168.56).
             output_dir: Directory to create Vagrantfile in.
@@ -802,6 +826,14 @@ end
         Returns:
             Path to the created Vagrantfile directory.
         """
+        # Legacy single-value overrides both roles
+        if vm_memory is not None:
+            cp_memory = vm_memory
+            worker_memory = vm_memory
+        if vm_cpus is not None:
+            cp_cpus = vm_cpus
+            worker_cpus = vm_cpus
+
         if output_dir is None:
             output_dir = self.VAGRANT_DIR / cluster_name
         else:
@@ -813,8 +845,10 @@ end
             cluster_name=cluster_name,
             num_control_planes=num_control_planes,
             num_workers=num_workers,
-            vm_memory=vm_memory,
-            vm_cpus=vm_cpus,
+            cp_memory=cp_memory,
+            cp_cpus=cp_cpus,
+            worker_memory=worker_memory,
+            worker_cpus=worker_cpus,
             box_image=box_image,
             network_prefix=network_prefix,
         )
@@ -834,11 +868,12 @@ end
     ) -> Path:
         """Provision a cluster from a scenario's cluster configuration.
 
-        Reads worker specs (count, cpu, memory, disk) from the scenario's
-        cluster config and creates/starts Vagrant VMs with those specs.
+        Reads node specs from the scenario's cluster config and creates/starts
+        Vagrant VMs with those specs.
 
         Args:
             cluster_config: Cluster configuration dict with keys:
+                - control_plane: {cpu, memory} (optional, defaults apply)
                 - workers: {count, cpu, memory, disk}
                 - provider: Optional provider override
             cluster_name: Name for the cluster.
@@ -847,23 +882,26 @@ end
         Returns:
             Path to the Vagrant directory.
         """
+        cp = cluster_config.get("control_plane", {})
         workers = cluster_config.get("workers", {})
         num_workers = workers.get("count", 2)
-        vm_cpus = workers.get("cpu", 2)
-        vm_memory = workers.get("memory", 2048)
         config_provider = cluster_config.get("provider", provider)
 
         vagrant_dir = self.create_vagrantfile(
             cluster_name=cluster_name,
             num_control_planes=1,
             num_workers=num_workers,
-            vm_memory=vm_memory,
-            vm_cpus=vm_cpus,
+            cp_memory=cp.get("memory", 4096),
+            cp_cpus=cp.get("cpu", 2),
+            worker_memory=workers.get("memory", 4096),
+            worker_cpus=workers.get("cpu", 2),
         )
 
         print(
             f"Provisioning cluster from scenario config: "
-            f"{num_workers} workers, {vm_cpus} CPU, {vm_memory}MB RAM"
+            f"CP {cp.get('cpu', 2)} CPU / {cp.get('memory', 4096)}MB, "
+            f"{num_workers} workers {workers.get('cpu', 2)} CPU / "
+            f"{workers.get('memory', 4096)}MB"
         )
 
         self.vagrant_up(vagrant_dir, provider=config_provider)
@@ -1485,6 +1523,12 @@ end
             "cluster_access": self._check_cluster_access(),
             "litmus_installed": self.is_litmus_installed() if self._k8s_initialized else False,
             "litmus_ready": self.is_litmus_ready() if self._k8s_initialized else False,
+            "chaoscenter_installed": (
+                self.is_chaoscenter_installed() if self._k8s_initialized else False
+            ),
+            "chaoscenter_ready": (
+                self.is_chaoscenter_ready() if self._k8s_initialized else False
+            ),
         }
         results["all_ready"] = all(
             [
@@ -2038,3 +2082,729 @@ end
                 pass
             time.sleep(5)
         return False
+
+    # -------------------------------------------------------------------------
+    # ChaosCenter (Dashboard) management
+    # -------------------------------------------------------------------------
+
+    def is_chaoscenter_installed(self) -> bool:
+        """Check if ChaosCenter dashboard is installed."""
+        if not self._k8s_initialized:
+            return False
+        try:
+            svcs = self.core_api.list_namespaced_service(self.LITMUS_NAMESPACE)
+            svc_names = {s.metadata.name for s in svcs.items}
+            return self.CHAOSCENTER_FRONTEND_SVC in svc_names
+        except Exception:
+            return False
+
+    def is_chaoscenter_ready(self) -> bool:
+        """Check if ChaosCenter pods are running and ready."""
+        if not self.is_chaoscenter_installed():
+            return False
+        try:
+            deployments = self.apps_api.list_namespaced_deployment(self.LITMUS_NAMESPACE)
+            required_fragments = ["frontend", "server", "auth"]
+            for frag in required_fragments:
+                found_ready = False
+                for dep in deployments.items:
+                    if frag in dep.metadata.name.lower():
+                        if (
+                            dep.status.ready_replicas is not None
+                            and dep.status.ready_replicas == dep.spec.replicas
+                        ):
+                            found_ready = True
+                            break
+                if not found_ready:
+                    return False
+            return True
+        except Exception:
+            return False
+
+    def install_chaoscenter(
+        self,
+        service_type: str = "NodePort",
+        wait: bool = True,
+        timeout: int = 300,
+    ) -> bool:
+        """Install ChaosCenter (full dashboard) using Helm.
+
+        This installs the full ``litmuschaos/litmus`` chart which includes:
+        frontend, GraphQL server, auth-server, MongoDB, subscriber,
+        chaos-operator, chaos-exporter, and workflow-controller.
+
+        Args:
+            service_type: Kubernetes service type for frontend (NodePort or LoadBalancer).
+            wait: Whether to wait for all pods to become ready.
+            timeout: Timeout in seconds.
+
+        Returns:
+            True if installation succeeded.
+        """
+        self._ensure_namespace(self.LITMUS_NAMESPACE)
+
+        # Ensure the helm repo is present
+        try:
+            subprocess.run(
+                [
+                    "helm", "repo", "add", "litmuschaos",
+                    "https://litmuschaos.github.io/litmus-helm/",
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError:
+            pass  # repo may already exist
+
+        try:
+            subprocess.run(["helm", "repo", "update"], check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to update helm repos: {e}")
+
+        print("Installing ChaosCenter dashboard...")
+        try:
+            subprocess.run(
+                [
+                    "helm", "upgrade", "--install",
+                    self.CHAOSCENTER_RELEASE_NAME,
+                    self.CHAOSCENTER_HELM_CHART,
+                    "--namespace", self.LITMUS_NAMESPACE,
+                    "--set", f"portal.frontend.service.type={service_type}",
+                    "--set", f"portal.server.service.type={service_type}",
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to install ChaosCenter: {e}")
+
+        if wait:
+            return self._wait_for_chaoscenter(timeout)
+        return True
+
+    def _wait_for_chaoscenter(self, timeout: int) -> bool:
+        """Wait for ChaosCenter to become ready."""
+        start = time.time()
+        last_status = ""
+        while time.time() - start < timeout:
+            if self.is_chaoscenter_ready():
+                print("  ChaosCenter: all pods ready")
+                return True
+            # Print progress so the user doesn't think we're stuck
+            try:
+                pods = self.core_api.list_namespaced_pod(self.LITMUS_NAMESPACE)
+                statuses = []
+                for pod in pods.items:
+                    name = pod.metadata.name
+                    phase = pod.status.phase or "Unknown"
+                    cs = pod.status.container_statuses or []
+                    if cs and all(c.ready for c in cs):
+                        statuses.append(f"{name}=Ready")
+                    else:
+                        # Show init container status if stuck there
+                        init_cs = pod.status.init_container_statuses or []
+                        if init_cs and not all(c.ready for c in init_cs):
+                            statuses.append(f"{name}=Init")
+                        else:
+                            statuses.append(f"{name}={phase}")
+                status_line = ", ".join(sorted(statuses))
+                elapsed = int(time.time() - start)
+                msg = f"  Waiting for ChaosCenter pods ({elapsed}s): {status_line}"
+                if msg != last_status:
+                    print(msg)
+                    last_status = msg
+            except Exception:
+                pass
+            time.sleep(10)
+        return False
+
+    def get_chaoscenter_status(self) -> dict:
+        """Return detailed status of the ChaosCenter deployment.
+
+        Returns:
+            Dictionary with keys: installed, ready, pods, frontend_url.
+        """
+        result: dict[str, Any] = {
+            "installed": self.is_chaoscenter_installed(),
+            "ready": False,
+            "pods": [],
+            "frontend_url": None,
+        }
+        if not result["installed"]:
+            return result
+
+        result["ready"] = self.is_chaoscenter_ready()
+
+        try:
+            pods = self.core_api.list_namespaced_pod(self.LITMUS_NAMESPACE)
+            for pod in pods.items:
+                containers = pod.status.container_statuses or []
+                result["pods"].append(
+                    {
+                        "name": pod.metadata.name,
+                        "phase": pod.status.phase,
+                        "ready": all(c.ready for c in containers),
+                    }
+                )
+        except Exception:
+            pass
+
+        result["frontend_url"] = self.get_dashboard_url()
+        return result
+
+    def get_dashboard_url(self) -> Optional[str]:
+        """Detect and return the ChaosCenter frontend URL.
+
+        Supports NodePort services (returns ``http://<node>:<nodePort>``)
+        and LoadBalancer services.  Returns ``None`` when the URL cannot
+        be determined.
+        """
+        if not self._k8s_initialized:
+            return None
+        try:
+            svc = self.core_api.read_namespaced_service(
+                self.CHAOSCENTER_FRONTEND_SVC, self.LITMUS_NAMESPACE,
+            )
+        except Exception:
+            return None
+
+        svc_type = svc.spec.type
+        port_obj = svc.spec.ports[0] if svc.spec.ports else None
+        if port_obj is None:
+            return None
+
+        if svc_type == "LoadBalancer":
+            ingress = (svc.status.load_balancer or {}).ingress
+            if ingress:
+                host = ingress[0].ip or ingress[0].hostname
+                return f"http://{host}:{port_obj.port}"
+            return None
+
+        if svc_type == "NodePort" and port_obj.node_port:
+            node_ip = self._get_node_ip()
+            if node_ip:
+                return f"http://{node_ip}:{port_obj.node_port}"
+            return None
+
+        return None
+
+    def _get_node_ip(self) -> Optional[str]:
+        """Return the IP of the first schedulable node."""
+        try:
+            nodes = self.core_api.list_node()
+            for node in nodes.items:
+                for addr in node.status.addresses:
+                    if addr.type == "InternalIP":
+                        return addr.address
+        except Exception:
+            pass
+        return None
+
+    def _chaoscenter_api_request(
+        self,
+        url: str,
+        method: str = "POST",
+        data: Optional[dict] = None,
+        token: Optional[str] = None,
+        headers: Optional[dict] = None,
+    ) -> dict:
+        """Make an HTTP request to the ChaosCenter API.
+
+        Args:
+            url: Full URL including endpoint path.
+            method: HTTP method.
+            data: JSON-serialisable body (for POST/PUT).
+            token: Bearer token for authenticated requests.
+            headers: Additional HTTP headers.
+
+        Returns:
+            Parsed JSON response as a dict.
+        """
+        body = _json.dumps(data).encode() if data else None
+        req = urllib.request.Request(url, data=body, method=method)
+        req.add_header("Content-Type", "application/json")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return _json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            body_text = e.read().decode() if e.fp else ""
+            raise RuntimeError(
+                f"ChaosCenter API error {e.code}: {body_text}"
+            )
+
+    def _chaoscenter_authenticate(
+        self, server_url: str, username: str, password: str,
+    ) -> dict:
+        """Authenticate against ChaosCenter and return login response.
+
+        Args:
+            server_url: Base URL of the auth server (e.g. ``http://host:port``).
+            username: ChaosCenter username.
+            password: ChaosCenter password.
+
+        Returns:
+            Dict with ``accessToken``, ``projectID``, and other keys.
+        """
+        resp = self._chaoscenter_api_request(
+            f"{server_url}/login",
+            data={"username": username, "password": password},
+        )
+        token = (
+            resp.get("accessToken")
+            or resp.get("access_token")
+            or resp.get("token")
+        )
+        if not token:
+            raise RuntimeError("Failed to obtain ChaosCenter access token")
+        return resp
+
+    CHAOSCENTER_AUTH_PORT = 9003
+    CHAOSCENTER_MANAGED_PASS = "ChaosProbe1!"
+
+    def _chaoscenter_change_password(
+        self, auth_url: str, username: str, old_password: str, new_password: str,
+    ) -> None:
+        """Change ChaosCenter password via the auth API."""
+        self._chaoscenter_api_request(
+            f"{auth_url}/update/password",
+            data={
+                "username": username,
+                "oldPassword": old_password,
+                "newPassword": new_password,
+            },
+        )
+
+    def _chaoscenter_gql_url(self, base_host: str) -> str:
+        """Return the GraphQL endpoint URL for a given host."""
+        return f"{base_host}:{self.CHAOSCENTER_SERVER_PORT}/query"
+
+    def _chaoscenter_auth_url(self, base_host: str) -> str:
+        """Return the auth server base URL for a given host."""
+        return f"{base_host}:{self.CHAOSCENTER_AUTH_PORT}"
+
+    def _chaoscenter_login(
+        self,
+        auth_url: str,
+        username: str = "",
+        password: str = "",
+    ) -> tuple[str, str]:
+        """Authenticate and return (token, project_id).
+
+        Tries the provided password first, then the managed password,
+        then the factory default.  If the factory default works the
+        password is automatically rotated to the managed password.
+        """
+        username = username or self.CHAOSCENTER_DEFAULT_USER
+        candidates = []
+        if password:
+            candidates.append(password)
+        if self.CHAOSCENTER_MANAGED_PASS not in candidates:
+            candidates.append(self.CHAOSCENTER_MANAGED_PASS)
+        if self.CHAOSCENTER_DEFAULT_PASS not in candidates:
+            candidates.append(self.CHAOSCENTER_DEFAULT_PASS)
+
+        last_err: Optional[Exception] = None
+        for pwd in candidates:
+            try:
+                resp = self._chaoscenter_authenticate(auth_url, username, pwd)
+                token = (
+                    resp.get("accessToken")
+                    or resp.get("access_token")
+                    or resp.get("token")
+                )
+                project_id = resp.get("projectID", "")
+
+                # Auto-rotate factory default → managed password
+                if pwd == self.CHAOSCENTER_DEFAULT_PASS and pwd != self.CHAOSCENTER_MANAGED_PASS:
+                    try:
+                        self._chaoscenter_change_password(
+                            auth_url, username,
+                            self.CHAOSCENTER_DEFAULT_PASS,
+                            self.CHAOSCENTER_MANAGED_PASS,
+                        )
+                        # Re-login with the new password
+                        resp2 = self._chaoscenter_authenticate(
+                            auth_url, username, self.CHAOSCENTER_MANAGED_PASS,
+                        )
+                        token = (
+                            resp2.get("accessToken")
+                            or resp2.get("access_token")
+                            or resp2.get("token")
+                        )
+                        project_id = resp2.get("projectID", project_id)
+                        print(
+                            "  ChaosCenter: default password rotated to managed password"
+                        )
+                    except Exception:
+                        pass  # keep using the default-password token
+
+                return token, project_id
+            except Exception as exc:
+                last_err = exc
+
+        raise RuntimeError(
+            f"ChaosCenter authentication failed (tried {len(candidates)} passwords): {last_err}"
+        )
+
+    def _chaoscenter_list_environments(
+        self, gql_url: str, project_id: str, token: str,
+    ) -> list[dict]:
+        """Return existing environments for the given project."""
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "query($pid: ID!) { listEnvironments(projectID: $pid) "
+                    "{ environments { environmentID name } } }"
+                ),
+                "variables": {"pid": project_id},
+            },
+            token=token,
+        )
+        return (
+            resp.get("data", {})
+            .get("listEnvironments", {})
+            .get("environments", [])
+        )
+
+    def _chaoscenter_list_infras(
+        self, gql_url: str, project_id: str, token: str,
+    ) -> list[dict]:
+        """Return registered infrastructures for the given project."""
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "query($pid: ID!) { listInfras(projectID: $pid) "
+                    "{ infras { infraID name environmentID isActive "
+                    "isInfraConfirmed infraNamespace } } }"
+                ),
+                "variables": {"pid": project_id},
+            },
+            token=token,
+        )
+        return (
+            resp.get("data", {})
+            .get("listInfras", {})
+            .get("infras", [])
+        )
+
+    def _chaoscenter_create_environment(
+        self, gql_url: str, project_id: str, env_name: str, token: str,
+    ) -> str:
+        """Create a ChaosCenter environment and return its ID."""
+        env_query = (
+            "mutation($pid: ID!, $req: CreateEnvironmentRequest!) "
+            "{ createEnvironment(projectID: $pid, request: $req) "
+            "{ environmentID } }"
+        )
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": env_query,
+                "variables": {
+                    "pid": project_id,
+                    "req": {
+                        "name": env_name,
+                        "environmentID": env_name,
+                        "type": "NON_PROD",
+                    },
+                },
+            },
+            token=token,
+        )
+        return (
+            resp.get("data", {})
+            .get("createEnvironment", {})
+            .get("environmentID", env_name)
+        )
+
+    def _chaoscenter_server_internal_url(self) -> str:
+        """Return the cluster-internal URL of the ChaosCenter frontend.
+
+        The ChaosCenter server derives ``SERVER_ADDR`` by appending
+        ``/api/query`` to the ``Referer`` header.  Inside the cluster the
+        subscriber must reach the server through the **frontend** service
+        (which proxies ``/api/`` to the GraphQL server), so we use the
+        frontend service DNS name here.
+        """
+        return (
+            f"http://{self.CHAOSCENTER_FRONTEND_SVC}"
+            f".{self.LITMUS_NAMESPACE}.svc.cluster.local"
+            f":{self.CHAOSCENTER_FRONTEND_PORT}"
+        )
+
+    def _chaoscenter_register_infra(
+        self,
+        gql_url: str,
+        project_id: str,
+        env_id: str,
+        namespace: str,
+        token: str,
+    ) -> dict:
+        """Register namespace as infrastructure and return {infraID, manifest}."""
+        infra_query = (
+            "mutation($pid: ID!, $req: RegisterInfraRequest!) "
+            "{ registerInfra(projectID: $pid, request: $req) "
+            "{ infraID manifest token } }"
+        )
+        # The server reads the Referer header to build the SERVER_ADDR
+        # that the subscriber uses *inside the cluster*.  Must be the
+        # cluster-internal service URL, not a localhost port-forward.
+        referer = self._chaoscenter_server_internal_url()
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": infra_query,
+                "variables": {
+                    "pid": project_id,
+                    "req": {
+                        "name": f"chaosprobe-{namespace}",
+                        "environmentID": env_id,
+                        "description": f"ChaosProbe infra for {namespace}",
+                        "infraNamespace": namespace,
+                        "infraScope": "namespace",
+                        "infrastructureType": "Kubernetes",
+                        "platformName": "kubernetes",
+                        "infraNsExists": True,
+                        "skipSsl": True,
+                    },
+                },
+            },
+            token=token,
+            headers={"Referer": referer},
+        )
+        result = resp.get("data", {}).get("registerInfra", {})
+        if not result.get("infraID"):
+            raise RuntimeError("Failed to register infrastructure in ChaosCenter")
+        return result
+
+    def _apply_manifest(self, manifest: str, namespace: str) -> None:
+        """Write *manifest* to a temp file and ``kubectl apply`` it."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False,
+        ) as f:
+            f.write(manifest)
+            f.flush()
+            try:
+                subprocess.run(
+                    ["kubectl", "apply", "-f", f.name, "-n", namespace],
+                    check=True,
+                    capture_output=True,
+                )
+            finally:
+                os.unlink(f.name)
+
+    def ensure_chaoscenter_configured(
+        self,
+        namespace: str,
+        base_host: str = "http://localhost",
+        username: str = "",
+        password: str = "",
+        timeout: int = 120,
+    ) -> dict:
+        """Idempotently configure ChaosCenter for *namespace*.
+
+        1. Authenticate (auto-rotates default password).
+        2. Create environment ``chaosprobe-<ns>`` if absent.
+        3. Register infrastructure + apply subscriber if absent.
+        4. Wait for subscriber pod to appear.
+
+        Args:
+            namespace: Target Kubernetes namespace.
+            base_host: Scheme + host (no port), e.g. ``http://localhost``.
+            username: ChaosCenter username.
+            password: ChaosCenter password (optional — tries managed/default).
+            timeout: Seconds to wait for subscriber readiness.
+
+        Returns:
+            Dict with ``token``, ``project_id``, ``environment_id``,
+            ``infra_id`` keys.
+        """
+        auth_url = self._chaoscenter_auth_url(base_host)
+        gql_url = self._chaoscenter_gql_url(base_host)
+
+        # --- authenticate ------------------------------------------------
+        token, project_id = self._chaoscenter_login(
+            auth_url, username=username, password=password,
+        )
+        if not project_id:
+            raise RuntimeError("ChaosCenter login did not return a projectID")
+
+        env_name = f"chaosprobe-{namespace}"
+
+        # --- environment -------------------------------------------------
+        envs = self._chaoscenter_list_environments(gql_url, project_id, token)
+        env_ids = {e["environmentID"] for e in envs}
+        if env_name not in env_ids:
+            self._chaoscenter_create_environment(gql_url, project_id, env_name, token)
+            print(f"  ChaosCenter: created environment '{env_name}'")
+        else:
+            print(f"  ChaosCenter: environment '{env_name}' exists")
+
+        # --- infrastructure ----------------------------------------------
+        infras = self._chaoscenter_list_infras(gql_url, project_id, token)
+        existing = [
+            i for i in infras
+            if i.get("infraNamespace") == namespace
+            and i.get("environmentID") == env_name
+        ]
+
+        if existing and existing[0].get("isActive"):
+            infra_id = existing[0]["infraID"]
+            print(f"  ChaosCenter: infrastructure already active ({infra_id})")
+        elif existing:
+            # Infra registered but subscriber not yet connected — don't
+            # re-register (which would create a duplicate).  Just ensure
+            # the subscriber deployment exists and wait for it.
+            infra_id = existing[0]["infraID"]
+            confirmed = existing[0].get("isInfraConfirmed", False)
+            print(
+                f"  ChaosCenter: infrastructure registered, "
+                f"awaiting subscriber connection ({infra_id})"
+            )
+            if not confirmed:
+                # Subscriber may have been evicted — check if deployment exists
+                try:
+                    self.apps_api.read_namespaced_deployment(
+                        "subscriber", namespace,
+                    )
+                except ApiException as exc:
+                    if exc.status == 404:
+                        # Deployment gone — re-apply the manifest by
+                        # fetching it from the server
+                        print("  ChaosCenter: subscriber deployment missing — re-applying")
+                        try:
+                            manifest_resp = self._chaoscenter_api_request(
+                                gql_url,
+                                data={
+                                    "query": (
+                                        "query($pid: ID!, $iid: String!) "
+                                        "{ getInfraManifest(projectID: $pid, "
+                                        "infraID: $iid) }"
+                                    ),
+                                    "variables": {
+                                        "pid": project_id,
+                                        "iid": infra_id,
+                                    },
+                                },
+                                token=token,
+                                headers={
+                                    "Referer": self._chaoscenter_server_internal_url(),
+                                },
+                            )
+                            manifest = (
+                                manifest_resp.get("data", {})
+                                .get("getInfraManifest", "")
+                            )
+                            if manifest:
+                                self._apply_manifest(manifest, namespace)
+                        except Exception as e:
+                            print(f"  ChaosCenter: WARNING - could not re-apply manifest: {e}")
+
+            # Wait for subscriber pod readiness
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    pods = self.core_api.list_namespaced_pod(
+                        namespace,
+                        label_selector="app=subscriber",
+                    )
+                    if pods.items and all(
+                        c.ready
+                        for p in pods.items
+                        for c in (p.status.container_statuses or [])
+                    ):
+                        print("  ChaosCenter: subscriber pod ready")
+                        break
+                except Exception:
+                    pass
+                time.sleep(5)
+            else:
+                print(
+                    "  ChaosCenter: WARNING - subscriber pod not ready "
+                    f"after {timeout}s (check cluster resources)",
+                )
+        else:
+            # No infra exists — register a new one
+            result = self._chaoscenter_register_infra(
+                gql_url, project_id, env_name, namespace, token,
+            )
+            infra_id = result["infraID"]
+            manifest = result.get("manifest", "")
+            if manifest:
+                self._apply_manifest(manifest, namespace)
+                print(f"  ChaosCenter: subscriber manifest applied to '{namespace}'")
+
+            # Wait for subscriber pod
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    pods = self.core_api.list_namespaced_pod(
+                        namespace,
+                        label_selector="app=subscriber",
+                    )
+                    if pods.items and all(
+                        c.ready
+                        for p in pods.items
+                        for c in (p.status.container_statuses or [])
+                    ):
+                        print("  ChaosCenter: subscriber pod ready")
+                        break
+                except Exception:
+                    pass
+                time.sleep(5)
+            else:
+                print(
+                    "  ChaosCenter: WARNING - subscriber pod not ready "
+                    f"after {timeout}s",
+                )
+
+        return {
+            "token": token,
+            "project_id": project_id,
+            "environment_id": env_name,
+            "infra_id": infra_id,
+        }
+
+    def connect_infrastructure(
+        self,
+        namespace: str,
+        dashboard_url: Optional[str] = None,
+        username: str = "",
+        password: str = "",
+    ) -> dict:
+        """Register a namespace as chaos infrastructure in ChaosCenter.
+
+        This authenticates to ChaosCenter, creates a new environment
+        (if needed), and registers the namespace as a Kubernetes
+        infrastructure via the GraphQL API.
+
+        Args:
+            namespace: The Kubernetes namespace to register.
+            dashboard_url: Override auto-detected dashboard URL.
+            username: ChaosCenter username (defaults to ``admin``).
+            password: ChaosCenter password (defaults to ``litmus``).
+
+        Returns:
+            Dict with ``infra_id`` and ``manifest`` keys on success.
+        """
+        base_url = dashboard_url or self.get_dashboard_url()
+        if not base_url:
+            raise RuntimeError(
+                "Cannot detect ChaosCenter URL. Is it installed and ready?"
+            )
+
+        # Derive scheme + host (strip port)
+        base_host = base_url.rsplit(":", 1)[0]
+
+        result = self.ensure_chaoscenter_configured(
+            namespace=namespace,
+            base_host=base_host,
+            username=username,
+            password=password,
+        )
+        return {"infra_id": result["infra_id"], "manifest": ""}
