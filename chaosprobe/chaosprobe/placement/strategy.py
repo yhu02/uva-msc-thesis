@@ -171,12 +171,17 @@ def compute_assignments(
 def _pick_best_worker(nodes: List[NodeInfo]) -> str:
     """Pick the best node for heavy workloads, preferring workers over control plane.
 
-    Sorts by: (is_worker, allocatable_cpu) so worker nodes are always
-    preferred. Only falls back to control plane if no workers exist.
+    Sorts by: (is_worker, allocatable_memory, allocatable_cpu) so worker
+    nodes with the most allocatable memory are preferred.  Memory is the
+    primary resource constraint in small clusters.
     """
     return max(
         nodes,
-        key=lambda n: (not n.is_control_plane, n.allocatable_cpu_millicores),
+        key=lambda n: (
+            not n.is_control_plane,
+            n.allocatable_memory_bytes,
+            n.allocatable_cpu_millicores,
+        ),
     ).name
 
 

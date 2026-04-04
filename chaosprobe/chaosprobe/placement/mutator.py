@@ -231,11 +231,15 @@ class PlacementMutator:
                         "annotations": {MANAGED_ANNOTATION: None},
                     },
                     "spec": {
+                        "strategy": {
+                            "type": "RollingUpdate",
+                            "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"},
+                        },
                         "template": {
                             "spec": {
                                 "nodeSelector": node_selector if node_selector else None,
                             }
-                        }
+                        },
                     },
                 }
                 self.apps_api.patch_namespaced_deployment(name, self.namespace, patch)
@@ -309,17 +313,24 @@ class PlacementMutator:
     def _patch_deployment_placement(
         self, deployment_name: str, node_name: str, strategy_name: str
     ) -> None:
-        """Patch a deployment with nodeSelector for placement."""
+        """Patch a deployment with nodeSelector for placement.
+
+        Temporarily switches the deployment to ``Recreate`` strategy
+        so the old pod is terminated before the new one is created.
+        This prevents stuck rollouts when ``maxUnavailable`` rounds to 0
+        for single-replica deployments using ``RollingUpdate``.
+        """
         patch = {
             "metadata": {
                 "annotations": {MANAGED_ANNOTATION: strategy_name},
             },
             "spec": {
+                "strategy": {"type": "Recreate"},
                 "template": {
                     "spec": {
                         "nodeSelector": {PLACEMENT_LABEL_KEY: node_name},
                     }
-                }
+                },
             },
         }
         try:
