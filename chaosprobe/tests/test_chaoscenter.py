@@ -283,7 +283,7 @@ class TestInstallChaoscenter:
     def test_install_raises_on_failure(self, mock_run):
         setup = _make_setup()
         with patch.object(setup, "_ensure_namespace"):
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match="helm not found"):
                 setup.install_chaoscenter()
 
 

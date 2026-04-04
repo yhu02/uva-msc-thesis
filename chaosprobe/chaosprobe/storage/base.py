@@ -14,8 +14,9 @@ class ResultStore(ABC):
         self.close()
         return False
 
+    @abstractmethod
     def close(self) -> None:
-        """Release resources. Subclasses should override."""
+        """Release resources. Subclasses must override."""
 
     @abstractmethod
     def save_run(self, run_data: Dict[str, Any]) -> str:
