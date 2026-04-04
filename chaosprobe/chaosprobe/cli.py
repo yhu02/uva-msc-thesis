@@ -2276,7 +2276,7 @@ def run(
 
     def _cleanup_port_forwards():
         """Terminate all tracked port-forward processes."""
-        for _key, proc in _port_forward_procs.items():
+        for proc in _port_forward_procs.values():
             if proc and proc.poll() is None:
                 proc.terminate()
                 try:
