@@ -226,6 +226,23 @@ class TestContinuousProberBase:
         prober._chaos_end_time = now - 5
         assert prober._current_phase(now) == "post-chaos"
 
+    def test_current_phase_uses_now_parameter(self):
+        """now parameter must drive the phase decision, not just timestamp presence."""
+        import time
+        prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
+        prober._lock = threading.Lock()
+
+        base = time.time()
+        prober._chaos_start_time = base + 10
+        prober._chaos_end_time = base + 20
+
+        # now before chaos start → pre-chaos
+        assert prober._current_phase(base) == "pre-chaos"
+        # now during chaos → during-chaos
+        assert prober._current_phase(base + 15) == "during-chaos"
+        # now after chaos end → post-chaos
+        assert prober._current_phase(base + 25) == "post-chaos"
+
     def test_aggregate_operations(self):
         entries = [
             {"redis": {"write": {"ops_per_second": 100, "latency_ms": 10, "status": "ok"}}},

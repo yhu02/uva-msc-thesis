@@ -696,9 +696,9 @@ class ContinuousLatencyProber:
         with self._lock:
             chaos_start = self._chaos_start_time
             chaos_end = self._chaos_end_time
-        if chaos_start is None:
+        if chaos_start is None or now < chaos_start:
             return "pre-chaos"
-        if chaos_end is None:
+        if chaos_end is None or now < chaos_end:
             return "during-chaos"
         return "post-chaos"
 
