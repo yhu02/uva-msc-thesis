@@ -11,8 +11,18 @@ Run experiments iteratively, diagnose results, fix issues, commit changes, and l
 - Working directory: `/home/yhu02/uva-msc-thesis/chaosprobe`
 - Cluster: 3-node Vagrant/Kubespray k8s cluster (~2Gi RAM per node)
 - Application: Online Boutique microservices in namespace `online-boutique`
+- ChaosCenter: running in namespace `litmus` (dashboard on port 9091, GraphQL on 9002, auth on 9003)
 - Neo4j: running in-cluster (namespace `neo4j`, password `chaosprobe`)
 - Package manager: `uv`
+
+### Architecture Note
+
+All experiments run exclusively through the **ChaosCenter GraphQL API**:
+1. `saveChaosExperiment` — registers the Argo Workflow manifest (JSON format)
+2. `runChaosExperiment` — triggers execution, returns a `notifyID`
+3. `getExperimentRun` — polls run status until a terminal phase
+
+The ChaosCenter subscriber deploys the Argo Workflow to the cluster, which in turn creates the ChaosEngine CRD. There is no direct Kubernetes ChaosEngine creation.
 
 ## Loop Procedure
 
@@ -29,16 +39,21 @@ uv run chaosprobe status
 ```
 
 Verify:
-- All 3 nodes are `Ready`
+- All nodes are `Ready`
 - All Online Boutique pods are `Running` and `1/1` ready
 - Neo4j pod is running
-- No leftover ChaosEngine resources: `kubectl get chaosengine -n online-boutique`
-- If stale ChaosEngines exist: `kubectl delete chaosengine --all -n online-boutique`
+- ChaosCenter pods are running: `kubectl get pods -n litmus`
+- No leftover ChaosEngine/Workflow resources: `kubectl get chaosengine,workflows -n online-boutique`
+- If stale resources exist: `kubectl delete chaosengine,workflows --all -n online-boutique`
+- Argo workflow controller is running: `kubectl get pods -n online-boutique -l app=workflow-controller`
 
 If the cluster is unhealthy, diagnose and fix before proceeding. Common issues:
 - Pods stuck in `CrashLoopBackOff` or `Pending` (check `kubectl describe pod`)
 - Nodes `NotReady` (check `kubectl describe node`)
 - Neo4j down (redeploy: run `uv run python -c "from chaosprobe.provisioner.setup import LitmusSetup; s=LitmusSetup(skip_k8s_init=True); s._init_k8s_client(); s.install_neo4j()"`)
+- ChaosCenter not ready: `uv run chaosprobe dashboard install`
+- Argo Workflow controller stuck: `kubectl rollout restart deployment/workflow-controller -n online-boutique`
+- Workflow stuck in Pending: check Argo CRDs exist (`kubectl get crd | grep argoproj`), check workflow-controller logs
 
 ### Step 2: Run Experiment
 
@@ -125,7 +140,7 @@ done
 **Red flags to investigate:**
 - Strategy with `"status": "error"` -- check the error message, fix root cause
 - `resilienceScore` of 0 or 100 for ALL strategies -- probes may be misconfigured
-- No recovery events -- pod-delete may not be working, check ChaosEngine status
+- No recovery events -- pod-delete may not be working, check ChaosCenter experiment runs and Argo Workflow status
 - Prometheus `available: false` -- check prometheus-server pod
 - All strategies have identical scores across all iterations -- experiment may not be differentiating
 - `meanRecovery_ms` > 30000 -- pods may be stuck, check node resources
@@ -158,8 +173,11 @@ If diagnosis reveals problems:
 #### Cluster issues
 - Pods not recovering: `kubectl rollout restart deployment/<name> -n online-boutique`
 - Node resource pressure: `kubectl top nodes` and `kubectl top pods -n online-boutique`
-- Leftover chaos resources: `kubectl delete chaosengine --all -n online-boutique`
-- LitmusChaos not ready: `uv run chaosprobe init -n online-boutique`
+- Leftover chaos resources: `kubectl delete chaosengine,workflows --all -n online-boutique`
+- ChaosCenter not ready: `uv run chaosprobe dashboard install`
+- LitmusChaos RBAC not ready: `uv run chaosprobe init -n online-boutique`
+- Argo Workflow controller errors: check logs with `kubectl logs -n online-boutique -l app=workflow-controller --tail=30`
+- Workflow stuck in Pending: ensure Argo CRDs are installed (`workflowtasksets.argoproj.io`, `workflowtaskresults.argoproj.io`)
 
 #### Data quality issues
 - If Prometheus data is missing: verify `kubectl get pods -n monitoring` and restart if needed
