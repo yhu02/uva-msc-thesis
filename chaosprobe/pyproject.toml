@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 graph = ["neo4j>=5.0.0"]
+parquet = ["pyarrow>=12.0.0"]
 
 [project.scripts]
 chaosprobe = "chaosprobe.cli:main"

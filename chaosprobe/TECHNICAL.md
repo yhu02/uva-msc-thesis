@@ -425,10 +425,10 @@ Handles all infrastructure bootstrapping.
 |---|---|
 | Prerequisites | `check_prerequisites()` -> checks kubectl, helm, git, ssh, ansible, cluster_access |
 | LitmusChaos | `ensure_helm()`, `install_litmus()`, `setup_rbac()`, `install_experiment()` |
-| Vagrant | `vagrant_init()`, `vagrant_up()`, `vagrant_deploy()`, `vagrant_status()`, `vagrant_ssh()`, `vagrant_destroy()`, `vagrant_kubeconfig()` |
-| Kubespray | `cluster_create()`, `cluster_destroy()`, `get_kubeconfig()` |
+| Vagrant | `create_vagrantfile()`, `vagrant_up()`, `vagrant_deploy_cluster()`, `vagrant_status()`, `vagrant_destroy()`, `vagrant_fetch_kubeconfig()` |
+| Kubespray | `deploy_cluster()`, `generate_inventory()`, `get_kubeconfig()` |
 
-**Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 2048MB RAM per VM, Kubespray v2.24.0.
+**Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 4096MB RAM per VM, Kubespray v2.24.0.
 
 ---
 
@@ -529,10 +529,10 @@ All graph commands accept `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`.
 
 | Command | Purpose |
 |---|---|
-| `chaosprobe ml-export --neo4j-uri <uri> --session <id> -o <dir>` | Export aligned time-series dataset from Neo4j |
-| `chaosprobe ml-export --db <path> -o <dir>` | Export from SQLite |
+| `chaosprobe ml-export --neo4j-uri <uri> -o <file>` | Export aligned time-series dataset from Neo4j |
+| `chaosprobe ml-export --db <path> -o <file>` | Export from SQLite |
 
-Produces CSV (default) or Parquet (`--format parquet`, requires `pyarrow`) with aligned features and anomaly labels.
+Produces CSV (default) or Parquet (`--format parquet`, requires `pyarrow[parquet]`) with aligned features and anomaly labels.
 
 ### Cluster Management
 
