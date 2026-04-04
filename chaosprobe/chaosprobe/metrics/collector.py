@@ -97,8 +97,10 @@ class MetricsCollector:
                 },
             }
 
-        # Extract raw events from watcher for the timeline
-        event_timeline = recovery_data.pop("rawEvents", [])
+        # Extract raw events from watcher for the timeline (non-destructive)
+        event_timeline = recovery_data.get("rawEvents", [])
+        # Exclude rawEvents from the recovery section to avoid duplication
+        recovery_section = {k: v for k, v in recovery_data.items() if k != "rawEvents"}
 
         result = {
             "deploymentName": deployment_name,
@@ -107,7 +109,7 @@ class MetricsCollector:
                 "end": datetime.fromtimestamp(until_time, tz=timezone.utc).isoformat(),
                 "duration_s": round(until_time - since_time, 1),
             },
-            "recovery": recovery_data,
+            "recovery": recovery_section,
             "podStatus": pod_status,
             "eventTimeline": event_timeline,
             "nodeInfo": node_info,
