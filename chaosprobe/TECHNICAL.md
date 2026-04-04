@@ -109,14 +109,34 @@ Dynamically extracts service-to-service dependencies from Kubernetes deployment 
 
 #### validator.py
 
-Validates loaded scenarios for structural correctness before execution.
+Validates loaded scenarios for structural correctness before execution, including comprehensive validation of all LitmusChaos resilience probe types.
 
 | Function | Purpose |
 |---|---|
 | `validate_scenario(scenario)` | Validates entire scenario. Raises `ValidationError` with aggregated errors |
-| `_validate_chaos_engine(spec, filepath)` | Checks: apiVersion, kind, experiments list, applabel, chaosServiceAccount |
+| `_validate_chaos_engine(spec, filepath)` | Checks: apiVersion, kind, experiments list, applabel, chaosServiceAccount, probes |
+| `_validate_probe(probe, filepath, exp_name)` | Validates probe name, type, mode, runProperties, and type-specific inputs |
+| `_validate_run_properties(run_props, prefix)` | Checks: probeTimeout, interval, retry |
+| `_validate_http_probe(probe, prefix)` | Validates httpProbe/inputs: url, method (get/post), criteria, responseCode |
+| `_validate_cmd_probe(probe, prefix)` | Validates cmdProbe/inputs: command, comparator, optional source.image |
+| `_validate_k8s_probe(probe, prefix)` | Validates k8sProbe/inputs: group, version, resource, namespace, operation |
+| `_validate_prom_probe(probe, prefix)` | Validates promProbe/inputs: endpoint, query/queryPath, comparator |
+| `_validate_comparator(comparator, prefix)` | Validates comparator block: type (string/int/float), criteria, value |
 | `_validate_manifest(spec, filepath)` | Checks: apiVersion, kind, metadata.name |
 | `_validate_cluster_config(cluster)` | Checks: provider (vagrant/kubespray), workers.count/cpu/memory/disk |
+
+**Supported probe types**: `httpProbe`, `cmdProbe`, `k8sProbe`, `promProbe`
+
+**Supported probe modes**: `SOT`, `EOT`, `Edge`, `Continuous`, `OnChaos`
+
+**Probe type details**:
+
+| Probe Type | Key Inputs | Use Case |
+|---|---|---|
+| `httpProbe` | `url`, `method` (get/post), `criteria`, `responseCode` | Health checks via HTTP GET/POST |
+| `cmdProbe` | `command`, `comparator`, optional `source` image | Shell command health checks |
+| `k8sProbe` | `group`, `version`, `resource`, `namespace`, `operation` (present/absent/create/delete) | Kubernetes resource state verification |
+| `promProbe` | `endpoint`, `query`/`queryPath`, `comparator` | Prometheus metrics-based SLO checks |
 
 ---
 
@@ -144,7 +164,7 @@ Orchestrates ChaosEngine lifecycle: create, poll, collect status, cleanup.
 
 #### result_collector.py
 
-Collects ChaosResult CRDs and calculates resilience metrics.
+Collects ChaosResult CRDs and calculates resilience metrics. Supports all LitmusChaos probe types (httpProbe, cmdProbe, k8sProbe, promProbe) with type-aware parsing.
 
 **Class: `ResultCollector(namespace)`**
 
@@ -154,7 +174,10 @@ Collects ChaosResult CRDs and calculates resilience metrics.
 | `_collect_experiment_result(engine_name, exp_name)` | Gathers engine status, ChaosResult, verdict, probe success |
 | `_get_chaos_result(engine_name, exp_name)` | Tries multiple naming patterns for ChaosResult lookup |
 | `_parse_chaos_result(chaos_result)` | Extracts phase, verdict, probe success %, probe statuses |
+| `_parse_probe_status(probe_status)` | Normalises probe type names and extracts per-phase verdicts |
 | `_determine_verdict(result)` | Returns "Pass", "Fail", or "Awaited" |
+
+**Probe type normalisation**: Maps LitmusChaos type names (e.g. `HTTPProbe`, `CmdProbe`, `K8sProbe`, `PromProbe`) to canonical names (`httpProbe`, `cmdProbe`, `k8sProbe`, `promProbe`).
 
 **Module function: `calculate_resilience_score(results, weights=None) -> float`**
 - Weighted average of probe success percentages (0-100)

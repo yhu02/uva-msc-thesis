@@ -1,12 +1,26 @@
 """Result collector for LitmusChaos experiment results.
 
 Collects ChaosResult CRDs based on engine names from the runner.
+Supports all resilience probe types: httpProbe, cmdProbe, k8sProbe, promProbe.
 """
 
 from typing import Any, Dict, List, Optional
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+
+
+# Map LitmusChaos probe type identifiers to canonical names
+PROBE_TYPE_MAP = {
+    "HTTPProbe": "httpProbe",
+    "httpProbe": "httpProbe",
+    "CmdProbe": "cmdProbe",
+    "cmdProbe": "cmdProbe",
+    "K8sProbe": "k8sProbe",
+    "k8sProbe": "k8sProbe",
+    "PromProbe": "promProbe",
+    "promProbe": "promProbe",
+}
 
 
 class ResultCollector:
@@ -160,15 +174,7 @@ class ResultCollector:
 
         probe_statuses = status.get("probeStatuses", [])
         if probe_statuses:
-            parsed["probes"] = [
-                {
-                    "name": p.get("name", ""),
-                    "type": p.get("type", ""),
-                    "mode": p.get("mode", ""),
-                    "status": p.get("status", {}),
-                }
-                for p in probe_statuses
-            ]
+            parsed["probes"] = [self._parse_probe_status(p) for p in probe_statuses]
 
         return parsed
 
@@ -182,6 +188,38 @@ class ResultCollector:
             except ValueError:
                 return 0.0
         return float(probe_success)
+
+    def _parse_probe_status(self, probe_status: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse a single probe status entry with type-aware details.
+
+        Normalises the type field to the canonical probe type name and
+        extracts phase-specific verdicts from the status map.
+        """
+        raw_type = probe_status.get("type", "")
+        canonical_type = PROBE_TYPE_MAP.get(raw_type, raw_type)
+
+        parsed: Dict[str, Any] = {
+            "name": probe_status.get("name", ""),
+            "type": canonical_type,
+            "mode": probe_status.get("mode", ""),
+            "status": probe_status.get("status", {}),
+        }
+
+        # Extract phase verdicts from the status map
+        # LitmusChaos reports per-phase results like:
+        #   {"Continuous": "Passed 👍"} or {"Pre Chaos": "Passed 👍", "Post Chaos": "Passed 👍"}
+        status_map = probe_status.get("status", {})
+        if isinstance(status_map, dict):
+            phase_verdicts = {}
+            for phase, verdict_str in status_map.items():
+                if phase == "verdict" or phase == "description":
+                    continue
+                if isinstance(verdict_str, str):
+                    phase_verdicts[phase] = "Pass" if "Passed" in verdict_str else "Fail"
+            if phase_verdicts:
+                parsed["phaseVerdicts"] = phase_verdicts
+
+        return parsed
 
     def _determine_verdict(self, result: Dict[str, Any]) -> str:
         """Determine the overall verdict for an experiment."""

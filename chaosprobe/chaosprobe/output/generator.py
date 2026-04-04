@@ -153,17 +153,47 @@ class OutputGenerator:
     # ── Summary section ───────────────────────────────────────
 
     def _generate_summary(self) -> Dict[str, Any]:
-        """Generate summary section."""
+        """Generate summary section with probe-type breakdown."""
         total = len(self.results)
         passed = sum(1 for r in self.results if r.get("verdict") == "Pass")
         failed = sum(1 for r in self.results if r.get("verdict") == "Fail")
         resilience_score = calculate_resilience_score(self.results)
         overall_verdict = "PASS" if passed == total and total > 0 else "FAIL"
 
-        return {
+        summary: Dict[str, Any] = {
             "totalExperiments": total,
             "passed": passed,
             "failed": failed,
             "resilienceScore": resilience_score,
             "overallVerdict": overall_verdict,
         }
+
+        # Build probe-type breakdown across all experiments
+        probe_summary: Dict[str, Dict[str, int]] = {}
+        for result in self.results:
+            probes = result.get("chaosResult", {}).get("probes", [])
+            for probe in probes:
+                ptype = probe.get("type", "unknown")
+                if ptype not in probe_summary:
+                    probe_summary[ptype] = {"total": 0, "passed": 0, "failed": 0}
+                probe_summary[ptype]["total"] += 1
+                status = probe.get("status", {})
+                verdict = status.get("verdict", "") if isinstance(status, dict) else ""
+                if verdict == "Pass":
+                    probe_summary[ptype]["passed"] += 1
+                elif verdict == "Fail":
+                    probe_summary[ptype]["failed"] += 1
+                else:
+                    # Check phaseVerdicts for per-phase results
+                    phase_verdicts = probe.get("phaseVerdicts", {})
+                    if phase_verdicts:
+                        all_pass = all(v == "Pass" for v in phase_verdicts.values())
+                        if all_pass:
+                            probe_summary[ptype]["passed"] += 1
+                        else:
+                            probe_summary[ptype]["failed"] += 1
+
+        if probe_summary:
+            summary["probeBreakdown"] = probe_summary
+
+        return summary

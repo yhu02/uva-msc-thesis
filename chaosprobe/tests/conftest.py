@@ -86,7 +86,7 @@ def sample_scenario():
 
 @pytest.fixture
 def sample_results():
-    """Sample passing experiment results from ResultCollector."""
+    """Sample passing experiment results from ResultCollector with all probe types."""
     return [
         {
             "name": "pod-delete",
@@ -109,7 +109,25 @@ def sample_results():
                         "type": "httpProbe",
                         "mode": "Continuous",
                         "status": {"verdict": "Pass"},
-                    }
+                    },
+                    {
+                        "name": "cmd-probe",
+                        "type": "cmdProbe",
+                        "mode": "Edge",
+                        "status": {"verdict": "Pass"},
+                    },
+                    {
+                        "name": "k8s-probe",
+                        "type": "k8sProbe",
+                        "mode": "EOT",
+                        "status": {"verdict": "Pass"},
+                    },
+                    {
+                        "name": "prom-probe",
+                        "type": "promProbe",
+                        "mode": "Continuous",
+                        "status": {"verdict": "Pass"},
+                    },
                 ],
             },
         }
