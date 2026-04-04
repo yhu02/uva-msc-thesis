@@ -96,13 +96,13 @@ Dynamically extracts service-to-service dependencies from Kubernetes deployment 
 | Function | Signature | Purpose |
 |---|---|---|
 | `parse_topology_from_scenario` | `(scenario: Dict) -> List[ServiceRoute]` | Extracts routes from a loaded scenario dict (checks `manifests` key) |
-| `parse_topology_from_directory` | `(directory: Union[str, Path]) -> List[ServiceRoute]` | Loads all YAML files from a directory and extracts routes |
+| `parse_topology_from_directory` | `(deploy_dir: str) -> List[ServiceRoute]` | Loads all YAML files from a directory and extracts routes |
 | `parse_topology_from_manifests` | `(manifests: List[Dict]) -> List[ServiceRoute]` | Extracts routes from a list of parsed manifest dicts |
 | `_extract_dependencies_from_deployment` | `(deployment: Dict) -> List[ServiceRoute]` | Parses a single Deployment for env-var service references |
-| `_infer_protocol` | `(env_name: str, address: str) -> str` | Infers protocol (`grpc` or `tcp`) from env name and address |
+| `_infer_protocol` | `(target_service: str, port: str) -> str` | Infers protocol (`grpc` or `tcp`) from service name and port |
 | `_env_name_to_description` | `(env_name: str) -> str` | Converts env name (e.g. `PRODUCT_CATALOG_SERVICE_ADDR`) to human description |
 
-**Type alias**: `ServiceRoute = Tuple[str, str, str, str]` — `(source_service, target_service, protocol, description)`
+**Type alias**: `ServiceRoute = Tuple[str, str, str, str, str]` — `(source_service, target_service, target_host, protocol, description)`
 
 **Pattern matching**: Recognizes `*_SERVICE_ADDR`, `*_ADDR`, `*_SERVICE_HOST` env vars and extracts the target service name from the address value (before `:`). The source service is the deployment name.
 
@@ -225,9 +225,9 @@ Orchestrates post-experiment data collection and merges it with pre-collected wa
 
 | Method | Purpose |
 |---|---|
-| `collect(deployment_name, since_time, until_time, recovery_data=None)` | Unified metrics with recovery, pod status, node info |
+| `collect(deployment_name, since_time, until_time, recovery_data=None, latency_data=None, redis_data=None, disk_data=None, resource_data=None, prometheus_data=None, collect_logs=False)` | Unified metrics with recovery, pod status, node info, and continuous prober data |
 | `_collect_pod_status(deployment_name)` | Current pod phases, restart counts, conditions |
-| `_collect_node_info(deployment_name)` | Node allocatable/capacity for CPU and memory |
+| `_collect_node_info(node_name)` | Node allocatable/capacity for CPU and memory |
 
 **Output structure**:
 ```json
@@ -314,13 +314,20 @@ Generates charts correlating placement strategies with performance metrics. Requ
 
 | Function | Purpose |
 |---|---|
-| `generate_all_charts(store, output_dir)` | Generate all charts from database runs |
+| `generate_all_charts(store, output_dir, scenario=None)` | Generate all charts from database runs |
 | `generate_from_dict(summary, output_dir)` | Generate charts from an in-memory summary dict |
 | `generate_from_summary(summary_path, output_dir)` | Generate charts from a legacy summary.json file |
-| `_resilience_score_chart(data, output_dir)` | Bar chart of resilience scores per strategy |
-| `_recovery_time_chart(data, output_dir)` | Mean/max recovery time comparison |
-| `_load_metrics_chart(data, output_dir)` | p95 latency and error rate overlay |
-| `_pod_node_heatmap(data, output_dir)` | Pod-to-node placement heatmap |
+| `_chart_resilience_scores(data, output_path, iteration_data)` | Bar chart of resilience scores per strategy |
+| `_chart_recovery_times(data, output_path)` | Mean/max recovery time comparison |
+| `_chart_load_metrics(strategies, output_path)` | p95 latency and error rate overlay |
+| `_chart_pod_node_heatmap(store, runs, output_path)` | Pod-to-node placement heatmap |
+| `_chart_latency_by_strategy(data, output_path)` | Inter-service latency comparison per strategy |
+| `_chart_latency_degradation(data, output_path)` | Latency degradation during chaos |
+| `_chart_throughput_by_strategy(data, output_path)` | Throughput comparison per strategy |
+| `_chart_throughput_degradation(data, output_path)` | Throughput degradation during chaos |
+| `_chart_resource_utilization(data, output_path)` | Resource utilization comparison |
+| `_chart_resource_by_phase(data, output_path)` | Resource usage by experiment phase |
+| `_chart_prometheus_by_phase(data, output_path)` | Prometheus metrics by experiment phase |
 | `_generate_html_summary(data, charts, output_dir)` | HTML report combining all charts |
 
 ---
