@@ -43,6 +43,7 @@ def _make_prober(**kwargs):
     prober._chaos_start_time = None
     prober._chaos_end_time = None
     prober._probe_errors = 0
+    prober._consecutive_failures = 0
     prober._thread_name = "prometheus-prober"
     prober.namespace = kwargs.get("namespace", "online-boutique")
     prober.interval = kwargs.get("interval", 10.0)
@@ -151,7 +152,7 @@ class TestQueryPrometheus:
 
 
 # ---------------------------------------------------------------------------
-# discover_prometheus_url
+# discover_prometheus_urls / _find_prometheus_service
 # ---------------------------------------------------------------------------
 
 
