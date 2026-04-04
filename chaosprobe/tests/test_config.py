@@ -2,7 +2,7 @@
 
 import pytest
 
-from chaosprobe.config.loader import load_scenario, merge_configs
+from chaosprobe.config.loader import load_scenario
 from chaosprobe.config.validator import (
     validate_scenario,
     ValidationError,
@@ -134,26 +134,6 @@ spec:
         """Test loading from an empty directory raises ValueError."""
         with pytest.raises(ValueError, match="No YAML files found"):
             load_scenario(str(tmp_path))
-
-    def test_merge_configs(self):
-        """Test merging configuration dictionaries."""
-        base = {
-            "a": 1,
-            "b": {"c": 2, "d": 3},
-        }
-        override = {
-            "b": {"c": 10, "e": 5},
-            "f": 6,
-        }
-
-        merged = merge_configs(base, override)
-
-        assert merged["a"] == 1
-        assert merged["b"]["c"] == 10
-        assert merged["b"]["d"] == 3
-        assert merged["b"]["e"] == 5
-        assert merged["f"] == 6
-
 
 class TestConfigValidator:
     """Tests for scenario validation."""

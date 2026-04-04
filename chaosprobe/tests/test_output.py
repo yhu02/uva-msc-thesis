@@ -65,16 +65,6 @@ class TestOutputGenerator:
         assert output["summary"]["passed"] == 0
         assert output["summary"]["failed"] == 1
 
-    def test_generate_minimal_output(self, sample_scenario, sample_results):
-        """Test generating minimal output format."""
-        generator = OutputGenerator(sample_scenario, sample_results)
-        output = generator.generate_minimal()
-
-        assert "runId" in output
-        assert output["verdict"] == "PASS"
-        assert output["resilienceScore"] == 95.0
-        assert output["issueDetected"] is False
-
     def test_experiment_details(self, sample_scenario, failed_results):
         """Test that experiment section includes probe details."""
         generator = OutputGenerator(sample_scenario, failed_results)

@@ -188,25 +188,3 @@ def _detect_rust_probes(scenario_dir: Path) -> List[Dict[str, Any]]:
             )
 
     return found
-
-
-def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep merge multiple configuration dictionaries.
-
-    Later configs override earlier ones for conflicting keys.
-    """
-    result: Dict[str, Any] = {}
-    for config in configs:
-        result = _deep_merge(result, config)
-    return result
-
-
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep merge two dictionaries."""
-    result = base.copy()
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result

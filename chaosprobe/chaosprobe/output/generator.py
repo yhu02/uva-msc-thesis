@@ -83,16 +83,6 @@ class OutputGenerator:
 
         return output
 
-    def generate_minimal(self) -> Dict[str, Any]:
-        """Generate minimal output for quick AI consumption."""
-        summary = self._generate_summary()
-        return {
-            "runId": f"run-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H%M%S')}-{uuid.uuid4().hex[:6]}",
-            "verdict": summary["overallVerdict"],
-            "resilienceScore": summary["resilienceScore"],
-            "issueDetected": summary["overallVerdict"] == "FAIL",
-        }
-
     # ── Scenario section ─────────────────────────────────────
 
     def _generate_scenario_section(self) -> Dict[str, Any]:
