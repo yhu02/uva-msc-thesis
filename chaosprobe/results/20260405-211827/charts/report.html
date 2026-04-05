@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>ChaosProbe Experiment Results</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 40px; background: #f5f5f5; }
+        h1 { color: #333; }
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; background: white; }
+        th, td { border: 1px solid #ddd; padding: 12px 16px; text-align: left; }
+        th { background: #4CAF50; color: white; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .charts { margin: 20px 0; }
+        img { border: 1px solid #ddd; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>ChaosProbe - Experiment Results</h1>
+
+    <h2>Strategy Comparison (2 iterations per strategy)</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Runs</th>
+            <th>Avg Resilience Score</th>
+            <th>Pass Rate</th>
+            <th>Mean Recovery (ms)</th>
+            <th>Median Recovery (ms)</th>
+            <th>P95 Recovery (ms)</th>
+        </tr>
+        
+        <tr>
+            <td>random</td>
+            <td>2</td>
+            <td>0.0</td>
+            <td>0%</td>
+            <td>1379.4</td>
+            <td>1379.4</td>
+            <td>2285.0</td>
+        </tr>
+        <tr>
+            <td>spread</td>
+            <td>2</td>
+            <td>0.0</td>
+            <td>0%</td>
+            <td>1595.5</td>
+            <td>1595.5</td>
+            <td>4171.0</td>
+        </tr>
+    </table>
+
+    
+    <h2>Inter-Service Latency</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Route</th>
+            <th>Pre-Chaos Mean (ms)</th>
+            <th>During Chaos Mean (ms)</th>
+            <th>During Chaos P95 (ms)</th>
+            <th>Post-Chaos Mean (ms)</th>
+            <th>Errors During Chaos</th>
+        </tr>
+        
+    </table>
+
+    
+    <h2>I/O Throughput</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Operation</th>
+            <th>Pre-Chaos Ops/s</th>
+            <th>During Chaos Ops/s</th>
+            <th>During Chaos Latency (ms)</th>
+            <th>During Chaos Bandwidth</th>
+            <th>Post-Chaos Ops/s</th>
+        </tr>
+        
+            <tr>
+                <td>random</td>
+                <td>redis-read</td>
+                <td>50.9</td>
+                <td>42.5</td>
+                <td>24.82</td>
+                <td>n/a</td>
+                <td>48.8</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>redis-write</td>
+                <td>47.6</td>
+                <td>41.2</td>
+                <td>26.07</td>
+                <td>n/a</td>
+                <td>47.9</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>disk-read</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>disk-write</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>redis-read</td>
+                <td>44.9</td>
+                <td>46.1</td>
+                <td>21.79</td>
+                <td>n/a</td>
+                <td>49.3</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>redis-write</td>
+                <td>46.6</td>
+                <td>45.6</td>
+                <td>22.04</td>
+                <td>n/a</td>
+                <td>52.2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>disk-read</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>disk-write</td>
+                <td>n/a</td>
+                <td>5.0</td>
+                <td>200.00</td>
+                <td>2.5 MB/s</td>
+                <td>n/a</td>
+            </tr>
+    </table>
+
+    
+    <h2>Node Resource Utilization</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Phase</th>
+            <th>Mean CPU (%)</th>
+            <th>Mean Memory (%)</th>
+            <th>Samples</th>
+        </tr>
+        
+            <tr>
+                <td>random</td>
+                <td>pre-chaos</td>
+                <td>10.2</td>
+                <td>62.2</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>during-chaos</td>
+                <td>18.3</td>
+                <td>63.5</td>
+                <td>37</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>post-chaos</td>
+                <td>15.2</td>
+                <td>63.2</td>
+                <td>3</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>pre-chaos</td>
+                <td>5.8</td>
+                <td>70.1</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>during-chaos</td>
+                <td>9.7</td>
+                <td>70.4</td>
+                <td>38</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>post-chaos</td>
+                <td>5.2</td>
+                <td>69.8</td>
+                <td>3</td>
+            </tr>
+    </table>
+
+    
+    <h2>Prometheus Cluster Metrics</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Metric</th>
+            <th>Phase</th>
+            <th>Mean</th>
+            <th>Max</th>
+            <th>Samples</th>
+        </tr>
+        
+            <tr>
+                <td>random</td>
+                <td>cpu_throttling</td>
+                <td>pre-chaos</td>
+                <td>0.0088</td>
+                <td>0.0088</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>cpu_throttling</td>
+                <td>during-chaos</td>
+                <td>0.2988</td>
+                <td>0.5256</td>
+                <td>18</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>cpu_throttling</td>
+                <td>post-chaos</td>
+                <td>0.5384</td>
+                <td>0.5406</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>cpu_usage</td>
+                <td>pre-chaos</td>
+                <td>0.0252</td>
+                <td>0.0253</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>cpu_usage</td>
+                <td>during-chaos</td>
+                <td>0.1244</td>
+                <td>0.1840</td>
+                <td>18</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>cpu_usage</td>
+                <td>post-chaos</td>
+                <td>0.1956</td>
+                <td>0.1983</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>memory_usage</td>
+                <td>pre-chaos</td>
+                <td>314118144.0000</td>
+                <td>315850752.0000</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>memory_usage</td>
+                <td>during-chaos</td>
+                <td>376892529.7778</td>
+                <td>399032320.0000</td>
+                <td>18</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>memory_usage</td>
+                <td>post-chaos</td>
+                <td>396343296.0000</td>
+                <td>396689408.0000</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>network_receive_bytes</td>
+                <td>pre-chaos</td>
+                <td>5386.5144</td>
+                <td>5499.3743</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>network_receive_bytes</td>
+                <td>during-chaos</td>
+                <td>34930.7267</td>
+                <td>52696.8310</td>
+                <td>18</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>network_receive_bytes</td>
+                <td>post-chaos</td>
+                <td>54238.7061</td>
+                <td>54893.5671</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>pod_ready_count</td>
+                <td>pre-chaos</td>
+                <td>14.0000</td>
+                <td>14.0000</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>pod_ready_count</td>
+                <td>during-chaos</td>
+                <td>14.0000</td>
+                <td>14.0000</td>
+                <td>18</td>
+            </tr>
+            <tr>
+                <td>random</td>
+                <td>pod_ready_count</td>
+                <td>post-chaos</td>
+                <td>14.0000</td>
+                <td>14.0000</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_throttling</td>
+                <td>pre-chaos</td>
+                <td>0.5406</td>
+                <td>0.5455</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_throttling</td>
+                <td>during-chaos</td>
+                <td>0.7087</td>
+                <td>0.8167</td>
+                <td>19</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_throttling</td>
+                <td>post-chaos</td>
+                <td>0.6501</td>
+                <td>0.6503</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_usage</td>
+                <td>pre-chaos</td>
+                <td>0.1307</td>
+                <td>0.1341</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_usage</td>
+                <td>during-chaos</td>
+                <td>0.2439</td>
+                <td>0.2998</td>
+                <td>19</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_usage</td>
+                <td>post-chaos</td>
+                <td>0.2794</td>
+                <td>0.2801</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>memory_usage</td>
+                <td>pre-chaos</td>
+                <td>1019195392.0000</td>
+                <td>1021341696.0000</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>memory_usage</td>
+                <td>during-chaos</td>
+                <td>999714600.4211</td>
+                <td>1105383424.0000</td>
+                <td>19</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>memory_usage</td>
+                <td>post-chaos</td>
+                <td>553478144.0000</td>
+                <td>553775104.0000</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_receive_bytes</td>
+                <td>pre-chaos</td>
+                <td>30330.0008</td>
+                <td>31134.8744</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_receive_bytes</td>
+                <td>during-chaos</td>
+                <td>75826.8055</td>
+                <td>100112.8493</td>
+                <td>19</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_receive_bytes</td>
+                <td>post-chaos</td>
+                <td>106847.6381</td>
+                <td>108071.6188</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>pod_ready_count</td>
+                <td>pre-chaos</td>
+                <td>17.0000</td>
+                <td>17.0000</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>pod_ready_count</td>
+                <td>during-chaos</td>
+                <td>16.9474</td>
+                <td>17.0000</td>
+                <td>19</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>pod_ready_count</td>
+                <td>post-chaos</td>
+                <td>17.0000</td>
+                <td>17.0000</td>
+                <td>2</td>
+            </tr>
+    </table>
+
+    <h2>Charts</h2>
+    <div class="charts">
+        <img src="recovery_times.png" style="max-width:100%; margin:10px 0;">
+<img src="throughput_by_strategy.png" style="max-width:100%; margin:10px 0;">
+<img src="throughput_degradation.png" style="max-width:100%; margin:10px 0;">
+<img src="resource_utilization.png" style="max-width:100%; margin:10px 0;">
+<img src="resource_by_phase.png" style="max-width:100%; margin:10px 0;">
+<img src="prometheus_by_phase.png" style="max-width:100%; margin:10px 0;">
+
+    </div>
+</body>
+</html>
