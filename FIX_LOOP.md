@@ -318,7 +318,7 @@ After all strategies:
 1. Clears placement constraints
 2. Writes per-strategy JSON + summary.json to `results/<timestamp>/`
 3. Generates HTML visualizations in `results/<timestamp>/charts/`
-4. Closes Neo4j and SQLite connections
+4. Closes Neo4j connections
 5. Kills all port-forward processes
 
 ### Expected output:
