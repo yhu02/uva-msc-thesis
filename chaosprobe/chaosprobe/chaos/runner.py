@@ -337,7 +337,7 @@ class ChaosRunner:
                         },
                     },
                 ],
-                "podGC": {"strategy": "OnWorkflowCompletion"},
+                "podGC": {"strategy": "OnWorkflowSuccess"},
             },
         }
 

@@ -1858,7 +1858,7 @@ def placement_nodes():
 @click.option(
     "--timeout",
     "-t",
-    default=300,
+    default=600,
     type=int,
     help="Timeout per experiment in seconds",
 )
