@@ -1005,9 +1005,10 @@ class TestChaosRunnerBuildManifest:
         import json as _json
 
         runner = _make_runner(cc={**_CC_CONFIG, "infra_id": "test-infra-id"})
-        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "pod-delete-engine", "inst-123")
+        manifest, wf_name = runner._build_workflow_manifest(_ENGINE_SPEC, "pod-delete-engine", "inst-123")
         # Must be valid JSON (not YAML) for ChaosCenter
         parsed = _json.loads(manifest)
+        assert len(wf_name) <= 38
 
         assert parsed["apiVersion"] == "argoproj.io/v1alpha1"
         assert parsed["kind"] == "Workflow"
@@ -1021,7 +1022,7 @@ class TestChaosRunnerBuildManifest:
         import yaml as _yaml
 
         runner = _make_runner()
-        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
+        manifest, _ = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
         parsed = _json.loads(manifest)
         # Find the artifact template with the embedded ChaosEngine YAML
         run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
@@ -1035,7 +1036,7 @@ class TestChaosRunnerBuildManifest:
         import yaml as _yaml
 
         runner = _make_runner()
-        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
+        manifest, _ = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
         parsed = _json.loads(manifest)
         run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
         engine_yaml = run_template["inputs"]["artifacts"][0]["raw"]["data"]
@@ -1046,7 +1047,7 @@ class TestChaosRunnerBuildManifest:
         import json as _json
 
         runner = _make_runner()
-        manifest = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
+        manifest, _ = runner._build_workflow_manifest(_ENGINE_SPEC, "test", "inst-1")
         parsed = _json.loads(manifest)
         run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
         assert run_template["metadata"]["labels"]["weight"] == "10"

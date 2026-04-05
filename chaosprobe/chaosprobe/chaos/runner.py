@@ -127,7 +127,7 @@ class ChaosRunner:
         # -- save -------------------------------------------------------
         experiment_id = str(uuid.uuid4())
         instance_id = str(uuid.uuid4())
-        manifest = self._build_workflow_manifest(engine_spec, engine_name, instance_id)
+        manifest, wf_name = self._build_workflow_manifest(engine_spec, engine_name, instance_id)
 
         try:
             self._setup.chaoscenter_save_experiment(
@@ -136,7 +136,7 @@ class ChaosRunner:
                 token=self._cc["token"],
                 infra_id=self._cc["infra_id"],
                 experiment_id=experiment_id,
-                name=engine_name,
+                name=wf_name,
                 manifest=manifest,
             )
             print(f"    ChaosCenter: experiment saved ({experiment_id[:8]}...)")
@@ -238,8 +238,11 @@ class ChaosRunner:
         engine_spec: Dict[str, Any],
         engine_name: str,
         instance_id: str,
-    ) -> str:
+    ) -> tuple[str, str]:
         """Build an Argo Workflow JSON manifest wrapping a ChaosEngine spec.
+
+        Returns:
+            Tuple of (JSON manifest string, workflow name used).
 
         ChaosCenter parses the manifest with ``json.Unmarshal`` (Go),
         so the manifest **must** be JSON — not YAML.
@@ -349,4 +352,4 @@ class ChaosRunner:
             },
         }
 
-        return _json.dumps(workflow)
+        return _json.dumps(workflow), wf_name
