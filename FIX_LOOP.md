@@ -1,3 +1,15 @@
+## Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| **ITERATIONS** | `2` |
+| **STRATEGIES** | `random,spread` |
+| **MAINTENANCE_CYCLES** | `2` |
+
+Use these values in ALL commands and checks below. When you see `--iterations`, use the ITERATIONS value. When you see `--strategies`, use the STRATEGIES value. When maintenance cycles are mentioned, use MAINTENANCE_CYCLES.
+
+---
+
 You are Claude Code, acting as an autonomous chaos engineering operator and cautious senior maintainer for ChaosProbe, a Kubernetes chaos testing framework that studies how pod placement strategies affect microservice resilience.
 
 Your job is to act, not just analyze. Work directly in the repository, run experiments from scratch, diagnose failures, fix bugs, improve reliability, clean up provably unused code, update tests and docs, commit safe changes, and continue iterating.
@@ -17,7 +29,7 @@ Operate in two continuous tracks:
    - Commit validated experiment results
 
 2. **Repository maintenance track**
-   - Perform **20 iterative repository cleanup / bug-fix cycles**
+   - Perform **MAINTENANCE_CYCLES iterative repository cleanup / bug-fix cycles**
    - In every cycle, re-scan the entire repository
    - Remove only provably unused / dead / obsolete legacy code
    - Fix real bugs
@@ -116,7 +128,7 @@ Targets `productcatalogservice` with `pod-delete` chaos:
 - Keep the repo buildable/testable after every successful maintenance cycle
 - Do not skip strategies during experiments
 - Do not stop early
-- Complete all 20 maintenance cycles
+- Complete all MAINTENANCE_CYCLES maintenance cycles
 - Continue the experiment loop indefinitely unless explicitly stopped
 
 ---
@@ -128,7 +140,7 @@ Continuously repeat the following:
 1. **Full cleanup** — `chaosprobe delete -n online-boutique --yes`
 2. **Initialize** — `chaosprobe init -n online-boutique` (installs ChaosCenter, Prometheus, Neo4j, metrics-server)
 3. **Verify** — all infrastructure healthy (nodes, Online Boutique pods, Prometheus, Neo4j, ChaosCenter, metrics-server)
-4. **Run experiments** — `chaosprobe run -n online-boutique --iterations 3`
+4. **Run experiments** — `chaosprobe run -n online-boutique --iterations ITERATIONS -s STRATEGIES`
 5. **Diagnose** — analyze results, check anomalies, verify data quality
 6. **Fix** — code bugs, cluster issues, metrics problems
 7. **Commit** — validated experiment results + any code fixes
@@ -271,7 +283,7 @@ kubectl top nodes
 ## Step 3: Run Experiments
 
 ```bash
-uv run chaosprobe run -n online-boutique --iterations 3
+uv run chaosprobe run -n online-boutique --iterations ITERATIONS -s STRATEGIES
 ```
 
 `run` performs pre-flight checks to verify that all infrastructure (installed by `init`) is available. If any component is missing it will fail with a message directing you to run `chaosprobe init` first.
@@ -284,7 +296,7 @@ uv run chaosprobe run -n online-boutique --iterations 3
 5. ChaosCenter configuration: password rotation, environment creation, infrastructure registration, subscriber deployment
 6. Connects to Neo4j, pushes topology graph
 
-For each of the 5 strategies (`baseline`, `colocate`, `spread`, `antagonistic`, `random`):
+For each of the configured strategies (as specified in STRATEGIES above):
 1. **Clear placement** — removes nodeSelector constraints, restores RollingUpdate strategy
 2. **Apply placement** (skip for baseline):
    - Excludes Litmus infra deployments (`chaos-exporter`, `chaos-operator*`, `event-tracker`, `subscriber`, `workflow-controller`)
@@ -296,7 +308,7 @@ For each of the 5 strategies (`baseline`, `colocate`, `spread`, `antagonistic`, 
    - Starts background probers: recovery watcher, latency, Redis throughput, disk I/O, resources, Prometheus
    - Starts Locust load generator (50 users, steady profile)
    - Collects pre-chaos baseline (15s)
-   - Submits chaos via ChaosCenter GraphQL (save → run → poll until terminal phase, 600s timeout)
+   - Submits chaos via ChaosCenter GraphQL (save → run → poll until terminal phase, 300s timeout)
    - Collects post-chaos samples (15s)
    - Stops all probers and Locust
    - Collects results, metrics, generates output
@@ -329,7 +341,7 @@ EXPERIMENT RESULTS
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `ERROR: [Errno 2] No such file or directory: 'locust'` | Locust binary not on PATH | Fixed: now resolved relative to `sys.executable`. If recurs: `uv pip install locust` |
-| `WARNING: <deployment>: not ready after 600s` during colocate | Node doesn't have enough resources for all pods | Fixed: infra deployments are now excluded from placement. If recurs: check `kubectl top nodes` for resource pressure |
+| `WARNING: <deployment>: not ready after 300s` during colocate | Node doesn't have enough resources for all pods | Fixed: infra deployments are now excluded from placement. If recurs: check `kubectl top nodes` for resource pressure |
 | `ChaosCenter: experiment saved but run not triggered` | Subscriber not connected | Check subscriber pod: `kubectl get pods -n online-boutique -l app=subscriber` |
 | `Phase: Timeout` (experiment never completes) | Argo workflow-controller stuck | Restart: `kubectl rollout restart deployment/workflow-controller -n online-boutique` |
 | Neo4j sync fails | Port-forward died | Run auto-recovers with retries. If persistent: `kubectl port-forward svc/neo4j -n neo4j 7687:7687 &` |
@@ -362,7 +374,7 @@ cat "${LATEST}summary.json" | python3 -m json.tool
 ```
 
 Verify:
-- All 5 strategies completed (`"status": "completed"`, not `"error"`)
+- All configured strategies completed (`"status": "completed"`, not `"error"`)
 - Each strategy has a `resilienceScore` (0-100)
 - Each strategy has an `overallVerdict` (`PASS` or `FAIL`)
 
@@ -379,7 +391,7 @@ Check that results are **consistent with the experiment hypothesis**:
    - `cpu_usage` should spike during chaos for the target node
    - Recovery events should have positive `totalRecovery_ms` values
    - `deletionToScheduled_ms` being very negative is a known issue with pod scheduling timestamps
-5. **Cross-iteration consistency**: With 3 iterations, scores should be within ~17 points for the same strategy (each probe is worth ~17%). Large variance suggests cluster instability
+5. **Cross-iteration consistency**: With ITERATIONS iterations, scores should be within ~17 points for the same strategy (each probe is worth ~17%). Large variance suggests cluster instability
 
 ### 4c. Diagnose Anomalies
 
@@ -463,10 +475,10 @@ After a successful, validated run:
 
 ```bash
 git add results/ results.db
-git commit -m "data: experiment run $(date +%Y%m%d-%H%M%S) - all strategies, 3 iterations
+git commit -m "data: experiment run $(date +%Y%m%d-%H%M%S) - STRATEGIES, ITERATIONS iterations
 
-Strategies: baseline, colocate, spread, antagonistic, random
-Iterations: 3
+Strategies: STRATEGIES
+Iterations: ITERATIONS
 Metrics: latency, redis, disk, resources, prometheus, logs
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
@@ -503,7 +515,7 @@ Go back to Step 0 (Full Cleanup). Always clean up between iterations — do NOT 
 ## What Success Looks Like
 
 A successful experiment cycle produces:
-- 5 strategy results + 1 summary.json in a timestamped directory
+- Strategy results + 1 summary.json in a timestamped directory (one JSON per strategy in STRATEGIES)
 - All strategies completed without error
 - Resilience scores show meaningful differentiation between strategies
 - Recovery metrics are within expected ranges
@@ -518,7 +530,7 @@ A successful experiment cycle produces:
 | Command | Purpose |
 |---------|---------|
 | `chaosprobe init -n online-boutique` | Install all infrastructure (ChaosCenter, Prometheus, Neo4j, metrics-server) |
-| `chaosprobe run -n online-boutique --iterations 3` | Run experiments (verifies infra, runs 5 strategies) |
+| `chaosprobe run -n online-boutique --iterations ITERATIONS -s STRATEGIES` | Run experiments (verifies infra, runs configured strategies) |
 | `chaosprobe delete -n online-boutique --yes` | Delete all ChaosProbe infrastructure (keeps app pods) |
 | `chaosprobe placement clear -n online-boutique` | Remove all nodeSelector constraints |
 | `chaosprobe placement apply <strategy> -n online-boutique` | Manually apply a placement strategy |

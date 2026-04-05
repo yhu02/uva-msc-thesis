@@ -290,10 +290,24 @@ class PlacementMutator:
         """Apply a NodeAssignment by patching deployments with nodeSelector.
 
         Uses the built-in kubernetes.io/hostname label — no custom node
-        labeling needed.
+        labeling needed.  Patches are applied in parallel for speed.
         """
-        for dep_name, node_name in assignment.assignments.items():
-            self._patch_deployment_placement(dep_name, node_name, assignment.strategy.value)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        items = list(assignment.assignments.items())
+        with ThreadPoolExecutor(max_workers=min(len(items), 8)) as executor:
+            futures = {
+                executor.submit(
+                    self._patch_deployment_placement, dep_name, node_name, assignment.strategy.value
+                ): dep_name
+                for dep_name, node_name in items
+            }
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    dep = futures[future]
+                    click.echo(f"  WARNING: Failed to patch '{dep}': {e}")
 
     def _cleanup_legacy_labels(self) -> None:
         """Remove legacy chaosprobe.io/placement-zone labels from nodes."""
@@ -376,6 +390,8 @@ class PlacementMutator:
         generation AND that all replicas are updated and ready.
         This prevents false positives from stale pod status.
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         click.echo(f"  Waiting for {len(deployment_names)} rollout(s) (timeout: {timeout}s)...")
         start = time.time()
 
@@ -385,34 +401,41 @@ class PlacementMutator:
         pending = set(deployment_names)
         while pending and (time.time() - start) < timeout:
             still_pending = set()
-            for name in pending:
-                try:
-                    dep = self.apps_api.read_namespaced_deployment(name, self.namespace)
-                    desired = dep.spec.replicas or 1
-                    generation = dep.metadata.generation or 0
-                    observed = (
-                        dep.status.observed_generation
-                        if dep.status and dep.status.observed_generation
-                        else 0
-                    )
-                    ready = (dep.status.ready_replicas or 0) if dep.status else 0
-                    updated = (dep.status.updated_replicas or 0) if dep.status else 0
-                    available = (dep.status.available_replicas or 0) if dep.status else 0
+            # Check all pending deployments in parallel
+            with ThreadPoolExecutor(max_workers=min(len(pending), 8)) as executor:
+                futures = {
+                    executor.submit(
+                        self.apps_api.read_namespaced_deployment, name, self.namespace
+                    ): name
+                    for name in pending
+                }
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        dep = future.result()
+                        desired = dep.spec.replicas or 1
+                        generation = dep.metadata.generation or 0
+                        observed = (
+                            dep.status.observed_generation
+                            if dep.status and dep.status.observed_generation
+                            else 0
+                        )
+                        ready = (dep.status.ready_replicas or 0) if dep.status else 0
+                        updated = (dep.status.updated_replicas or 0) if dep.status else 0
+                        available = (dep.status.available_replicas or 0) if dep.status else 0
 
-                    # Controller must have observed the latest spec change
-                    # AND all replicas must be updated, ready, and available
-                    if (
-                        observed >= generation
-                        and updated >= desired
-                        and ready >= desired
-                        and available >= desired
-                    ):
-                        elapsed = int(time.time() - start)
-                        click.echo(f"    {name}: ready ({elapsed}s)")
-                    else:
+                        if (
+                            observed >= generation
+                            and updated >= desired
+                            and ready >= desired
+                            and available >= desired
+                        ):
+                            elapsed = int(time.time() - start)
+                            click.echo(f"    {name}: ready ({elapsed}s)")
+                        else:
+                            still_pending.add(name)
+                    except ApiException:
                         still_pending.add(name)
-                except ApiException:
-                    still_pending.add(name)
 
             pending = still_pending
             if pending:

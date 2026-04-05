@@ -191,35 +191,28 @@ def ensure_litmus_setup(
     # ── Pre-flight checks: verify infrastructure is available ──
     ok = True
 
-    if not setup.is_local_path_provisioner_running():
-        click.echo("  local-path-provisioner: NOT FOUND — run 'chaosprobe init' first", err=True)
-        ok = False
-    else:
-        click.echo("  local-path-provisioner: available")
+    from concurrent.futures import ThreadPoolExecutor
 
-    if not setup.is_metrics_server_installed():
-        click.echo("  metrics-server: NOT FOUND — run 'chaosprobe init' first", err=True)
-        ok = False
-    else:
-        click.echo("  metrics-server: available")
+    def _check_component(check_fn, name):
+        return name, check_fn()
 
-    if not setup.is_prometheus_installed():
-        click.echo("  Prometheus: NOT FOUND — run 'chaosprobe init' first", err=True)
-        ok = False
-    else:
-        click.echo("  Prometheus: available")
+    checks = [
+        (setup.is_local_path_provisioner_running, "local-path-provisioner"),
+        (setup.is_metrics_server_installed, "metrics-server"),
+        (setup.is_prometheus_installed, "Prometheus"),
+        (setup.is_neo4j_installed, "Neo4j"),
+        (setup.is_chaoscenter_installed, "ChaosCenter"),
+    ]
 
-    if not setup.is_neo4j_installed():
-        click.echo("  Neo4j: NOT FOUND — run 'chaosprobe init' first", err=True)
-        ok = False
-    else:
-        click.echo("  Neo4j: available")
-
-    if not setup.is_chaoscenter_installed():
-        click.echo("  ChaosCenter: NOT FOUND — run 'chaosprobe init' first", err=True)
-        ok = False
-    else:
-        click.echo("  ChaosCenter: available")
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(_check_component, fn, name) for fn, name in checks]
+        for future in futures:
+            name, available = future.result()
+            if not available:
+                click.echo(f"  {name}: NOT FOUND — run 'chaosprobe init' first", err=True)
+                ok = False
+            else:
+                click.echo(f"  {name}: available")
 
     if not ok:
         click.echo(
@@ -259,8 +252,12 @@ def main():
 # ---------------------------------------------------------------------------
 import socket as _socket_mod
 import subprocess as _sp_mod
+import threading as _threading_mod
 
 _pf_procs: Dict[tuple, Any] = {}
+_pf_specs: Dict[tuple, list[str]] = {}  # (svc, ns) -> ports list for auto-restart
+_pf_monitor_event: Optional[_threading_mod.Event] = None
+_pf_monitor_thread: Optional[_threading_mod.Thread] = None
 
 
 def _pf_check_port(host: str, port: int) -> bool:
@@ -284,6 +281,7 @@ def _pf_start(svc: str, ns: str, ports: list[str]):
         stderr=_sp_mod.DEVNULL,
     )
     _pf_procs[(svc, ns)] = proc
+    _pf_specs[(svc, ns)] = ports
     time.sleep(3)
 
 
@@ -305,8 +303,50 @@ def _pf_ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> boo
     return False
 
 
+def _pf_monitor_loop(stop_event: _threading_mod.Event):
+    """Background loop that restarts dead port-forward processes."""
+    while not stop_event.is_set():
+        for key, proc in list(_pf_procs.items()):
+            if proc and proc.poll() is not None:
+                # Process died — restart it
+                svc, ns = key
+                ports = _pf_specs.get(key, [])
+                if ports:
+                    new_proc = _sp_mod.Popen(
+                        ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
+                        stdout=_sp_mod.DEVNULL,
+                        stderr=_sp_mod.DEVNULL,
+                    )
+                    _pf_procs[key] = new_proc
+        stop_event.wait(10)  # check every 10 seconds
+
+
+def _pf_monitor_start():
+    """Start the background port-forward health monitor."""
+    global _pf_monitor_event, _pf_monitor_thread
+    if _pf_monitor_thread and _pf_monitor_thread.is_alive():
+        return
+    _pf_monitor_event = _threading_mod.Event()
+    _pf_monitor_thread = _threading_mod.Thread(
+        target=_pf_monitor_loop, args=(_pf_monitor_event,), daemon=True, name="pf-monitor"
+    )
+    _pf_monitor_thread.start()
+
+
+def _pf_monitor_stop():
+    """Stop the background port-forward health monitor."""
+    global _pf_monitor_event, _pf_monitor_thread
+    if _pf_monitor_event:
+        _pf_monitor_event.set()
+    if _pf_monitor_thread:
+        _pf_monitor_thread.join(timeout=15)
+    _pf_monitor_event = None
+    _pf_monitor_thread = None
+
+
 def _pf_cleanup():
-    """Terminate all tracked port-forward processes."""
+    """Stop the monitor and terminate all tracked port-forward processes."""
+    _pf_monitor_stop()
     for proc in _pf_procs.values():
         if proc and proc.poll() is None:
             proc.terminate()
@@ -315,6 +355,7 @@ def _pf_cleanup():
             except _sp_mod.TimeoutExpired:
                 proc.kill()
     _pf_procs.clear()
+    _pf_specs.clear()
 
 
 @main.command()
@@ -415,46 +456,77 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
         click.echo(f"  Error: {e}", err=True)
         sys.exit(1)
 
-    # ── Install infrastructure components ──
+    # ── Install infrastructure components (parallel) ──
 
-    # metrics-server (needed for resource probing)
-    if not setup.is_metrics_server_installed():
-        click.echo("\nInstalling metrics-server...")
-        try:
-            if setup.install_metrics_server(wait=True):
-                click.echo("  metrics-server installed successfully")
-            else:
-                click.echo("  WARNING: metrics-server installed but not yet ready", err=True)
-        except Exception as e:
-            click.echo(f"  WARNING: Failed to install metrics-server: {e}", err=True)
-    else:
-        click.echo("\nmetrics-server: already installed")
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from kubernetes.client import ApiException
 
-    # Prometheus (needed for cluster metrics)
-    if not setup.is_prometheus_installed():
-        click.echo("\nInstalling Prometheus...")
+    def _deployment_has_pvc(name: str, ns: str) -> bool:
+        """Check if a deployment has any PVC volume."""
         try:
-            if setup.install_prometheus(wait=True):
-                click.echo("  Prometheus installed successfully")
-            else:
-                click.echo("  WARNING: Prometheus installed but not yet ready", err=True)
-        except Exception as e:
-            click.echo(f"  WARNING: Failed to install Prometheus: {e}", err=True)
-    else:
-        click.echo("\nPrometheus: already installed")
+            dep = setup.apps_api.read_namespaced_deployment(name, ns)
+            volumes = dep.spec.template.spec.volumes or []
+            return any(v.persistent_volume_claim is not None for v in volumes)
+        except Exception:
+            return True  # can't check — assume OK
 
-    # Neo4j (needed for graph storage)
-    if not setup.is_neo4j_installed():
-        click.echo("\nInstalling Neo4j...")
-        try:
-            if setup.install_neo4j(wait=True):
-                click.echo("  Neo4j installed successfully")
-            else:
-                click.echo("  WARNING: Neo4j installed but not yet ready", err=True)
-        except Exception as e:
-            click.echo(f"  WARNING: Failed to install Neo4j: {e}", err=True)
-    else:
-        click.echo("\nNeo4j: already installed")
+    def _install_metrics_server():
+        if setup.is_metrics_server_installed():
+            # Verify --kubelet-insecure-tls is present
+            try:
+                dep = setup.apps_api.read_namespaced_deployment(
+                    "metrics-server", "kube-system"
+                )
+                containers = dep.spec.template.spec.containers or []
+                args = containers[0].args or [] if containers else []
+                if "--kubelet-insecure-tls" not in args:
+                    setup.install_metrics_server(wait=True)
+                    return "metrics-server", "repaired (added --kubelet-insecure-tls)"
+            except Exception:
+                pass
+            return "metrics-server", "already installed"
+        if setup.install_metrics_server(wait=True):
+            return "metrics-server", "installed"
+        return "metrics-server", "installed but not yet ready"
+
+    def _install_prometheus():
+        if setup.is_prometheus_installed():
+            # Verify PVC is attached
+            if not _deployment_has_pvc("prometheus-server", "monitoring"):
+                setup.install_prometheus(wait=True)
+                return "Prometheus", "repaired (added persistent storage)"
+            return "Prometheus", "already installed"
+        if setup.install_prometheus(wait=True):
+            return "Prometheus", "installed"
+        return "Prometheus", "installed but not yet ready"
+
+    def _install_neo4j():
+        if setup.is_neo4j_installed():
+            # Verify PVC is attached
+            if not _deployment_has_pvc("neo4j", "neo4j"):
+                setup.install_neo4j(wait=True)
+                return "Neo4j", "repaired (added persistent storage)"
+            return "Neo4j", "already installed"
+        if setup.install_neo4j(wait=True):
+            return "Neo4j", "installed"
+        return "Neo4j", "installed but not yet ready"
+
+    click.echo("\nInstalling infrastructure components (parallel)...")
+    install_errors = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_install_metrics_server): "metrics-server",
+            executor.submit(_install_prometheus): "Prometheus",
+            executor.submit(_install_neo4j): "Neo4j",
+        }
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                name, status = future.result()
+                click.echo(f"  {name}: {status}")
+            except Exception as e:
+                click.echo(f"  WARNING: Failed to install {label}: {e}", err=True)
+                install_errors.append(label)
 
     click.echo("\nChaosProbe initialized successfully!")
 
@@ -2105,7 +2177,7 @@ def placement_nodes():
 @click.option(
     "--timeout",
     "-t",
-    default=600,
+    default=300,
     type=int,
     help="Timeout per experiment in seconds",
 )
@@ -2455,10 +2527,6 @@ def run(
             pass
         return False
 
-    import socket
-    import subprocess as _sp
-
-    apps_api = k8s_client_mod.AppsV1Api()
     _preflight_setup = None  # lazy LitmusSetup instance
 
     def _get_setup():
@@ -2468,76 +2536,14 @@ def run(
             _preflight_setup._init_k8s_client()
         return _preflight_setup
 
-    def _deployment_has_pvc(name: str, ns: str) -> bool:
-        """Check if a deployment has any PVC volume."""
-        try:
-            dep = apps_api.read_namespaced_deployment(name, ns)
-            volumes = dep.spec.template.spec.volumes or []
-            return any(v.persistent_volume_claim is not None for v in volumes)
-        except Exception:
-            return True  # can't check — assume OK
-
     def _check_port(host: str, port: int) -> bool:
-        """Check if a TCP port is reachable."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(3)
-        try:
-            sock.connect((host, port))
-            sock.close()
-            return True
-        except (ConnectionRefusedError, OSError):
-            sock.close()
-            return False
+        return _pf_check_port(host, port)
 
-    def _start_port_forward(svc: str, ns: str, ports: list[str]):
-        """Start a kubectl port-forward in the background and track it."""
-        proc = _sp.Popen(
-            ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
-            stdout=_sp.DEVNULL,
-            stderr=_sp.DEVNULL,
-        )
-        _port_forward_procs[(svc, ns)] = proc
-        time.sleep(3)
-
-    def _ensure_port_forward(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
-        """Check if port-forward is alive; restart if dead. Returns True if reachable."""
-        proc = _port_forward_procs.get((svc, ns))
-        if proc and proc.poll() is not None:
-            # Process died — restart
-            _start_port_forward(svc, ns, ports)
-        elif not proc:
-            _start_port_forward(svc, ns, ports)
-        # Verify connectivity
-        for _ in range(6):
-            if _check_port(host, port):
-                return True
-            time.sleep(2)
-        return False
-
-    def _cleanup_port_forwards():
-        """Terminate all tracked port-forward processes."""
-        for proc in _port_forward_procs.values():
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except _sp.TimeoutExpired:
-                    proc.kill()
-        _port_forward_procs.clear()
-
-    _port_forward_procs: Dict[tuple, Any] = {}
+    # 3. Verify infrastructure pods are ready and set up port-forwards
+    #    Repair/reinstall is NOT done here — run 'chaosprobe init' for that.
 
     # Prometheus
     if measure_prometheus:
-        # Check persistent volume — redeploy with PVC if missing
-        try:
-            if not _deployment_has_pvc("prometheus-server", "monitoring"):
-                click.echo("  Prometheus:  no persistent volume — redeploying with PVC...")
-                _get_setup().install_prometheus(wait=True)
-                click.echo("  Prometheus:  redeployed with persistent storage")
-        except Exception as e:
-            click.echo(f"  Prometheus:  could not check deployment ({e})", err=True)
-
         prom_ready = False
         prom_namespaces = ("monitoring", "prometheus", "kube-prometheus")
         prom_labels = ("app=prometheus,component=server", "app.kubernetes.io/name=prometheus")
@@ -2559,26 +2565,13 @@ def run(
             click.echo("  Prometheus:  pod ready")
         else:
             click.echo("  Prometheus:  WARNING - no ready pod found after 60s", err=True)
-            click.echo("               Prometheus metrics may be unavailable.", err=True)
-            click.echo(
-                "               Check: kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus",
-                err=True,
-            )
+            click.echo("               Run 'chaosprobe init' to reinstall.", err=True)
 
     # Neo4j
     if neo4j_uri:
-        # Check persistent volume — redeploy with PVC if missing
-        try:
-            if not _deployment_has_pvc("neo4j", "neo4j"):
-                click.echo("  Neo4j:       no persistent volume — redeploying with PVC...")
-                _get_setup().install_neo4j(wait=True)
-                click.echo("  Neo4j:       redeployed with persistent storage")
-        except Exception as e:
-            click.echo(f"  Neo4j:       could not check deployment ({e})", err=True)
-
         if _check_pods_ready("neo4j", "app=neo4j", "Neo4j"):
             click.echo("  Neo4j:       pod ready")
-            # Verify bolt connectivity
+            # Verify bolt connectivity — port-forward if needed
             host, port = "localhost", 7687
             try:
                 parsed = neo4j_uri.replace("bolt://", "").replace("neo4j://", "")
@@ -2592,16 +2585,15 @@ def run(
             else:
                 click.echo(
                     f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward...",
-                    err=True,
                 )
-                if _ensure_port_forward("neo4j", "neo4j", ["7687:7687", "7474:7474"], host, port):
+                if _pf_ensure("neo4j", "neo4j", ["7687:7687", "7474:7474"], host, port):
                     click.echo(f"  Neo4j bolt:  {host}:{port} reachable (port-forward started)")
                 else:
                     click.echo(
                         f"  Neo4j bolt:  WARNING - still not reachable at {host}:{port}", err=True
                     )
         else:
-            click.echo("  Neo4j:       WARNING - no ready pod found in neo4j namespace", err=True)
+            click.echo("  Neo4j:       WARNING - no ready pod. Run 'chaosprobe init'.", err=True)
 
     # ChaosCenter — port-forward dashboard + API, then auto-configure
     cc_frontend_svc = LitmusSetup.CHAOSCENTER_FRONTEND_SVC
@@ -2615,12 +2607,12 @@ def run(
         raise click.ClickException(
             "ChaosCenter frontend pods are not ready in the 'litmus' namespace.\n"
             "  All experiments run through the ChaosCenter API.\n"
-            "  Run 'chaosprobe dashboard install' first."
+            "  Run 'chaosprobe init' first."
         )
     else:
         # Port-forward frontend (dashboard UI)
         if not _check_port("localhost", cc_frontend_port):
-            _start_port_forward(
+            _pf_start(
                 cc_frontend_svc,
                 "litmus",
                 [f"{cc_frontend_port}:{cc_frontend_port}"],
@@ -2639,9 +2631,9 @@ def run(
 
         # Port-forward auth server + GraphQL server for API access
         if not _check_port("localhost", cc_auth_port):
-            _start_port_forward(cc_auth_svc, "litmus", [f"{cc_auth_port}:{cc_auth_port}"])
+            _pf_start(cc_auth_svc, "litmus", [f"{cc_auth_port}:{cc_auth_port}"])
         if not _check_port("localhost", cc_server_port):
-            _start_port_forward(cc_server_svc, "litmus", [f"{cc_server_port}:{cc_server_port}"])
+            _pf_start(cc_server_svc, "litmus", [f"{cc_server_port}:{cc_server_port}"])
 
         # Auto-configure: environment + infrastructure + subscriber
         try:
@@ -2664,7 +2656,7 @@ def run(
                 "  Ensure ChaosCenter is installed and reachable."
             ) from exc
 
-    # metrics-server — verify API works and has --kubelet-insecure-tls for Vagrant clusters
+    # metrics-server — verify API works
     try:
         k8s_client_mod.CustomObjectsApi().list_cluster_custom_object(
             group="metrics.k8s.io",
@@ -2673,20 +2665,8 @@ def run(
         )
         click.echo("  metrics-srv: API available")
     except Exception:
-        # API not responding — check if deployment exists but is misconfigured
-        try:
-            ms_dep = apps_api.read_namespaced_deployment("metrics-server", "kube-system")
-            containers = ms_dep.spec.template.spec.containers or []
-            args = containers[0].args or [] if containers else []
-            if "--kubelet-insecure-tls" not in args:
-                click.echo("  metrics-srv: missing --kubelet-insecure-tls — patching...")
-                _get_setup().install_metrics_server(wait=True)
-                click.echo("  metrics-srv: patched and restarted")
-            else:
-                click.echo("  metrics-srv: WARNING - deployed but API not responding", err=True)
-        except Exception:
-            click.echo("  metrics-srv: WARNING - metrics API not available", err=True)
-            click.echo("               Resource measurements may fail.", err=True)
+        click.echo("  metrics-srv: WARNING - metrics API not available", err=True)
+        click.echo("               Run 'chaosprobe init' to install/repair.", err=True)
 
     # 4. Wait for all application deployments to be healthy
     click.echo("  Deployments: waiting for readiness...")
@@ -2711,8 +2691,8 @@ def run(
                     break
             if frontend_svc:
                 pf_mapping = f"{frontend_pf_port}:80"
-                if _ensure_port_forward(frontend_svc, namespace,
-                                        [pf_mapping], "localhost", frontend_pf_port):
+                if _pf_ensure(frontend_svc, namespace,
+                              [pf_mapping], "localhost", frontend_pf_port):
                     target_url = f"http://localhost:{frontend_pf_port}"
                     click.echo(f"  Load target: {target_url} (port-forward to {frontend_svc})")
                 else:
@@ -2731,6 +2711,9 @@ def run(
         target_url = f"http://localhost:{frontend_pf_port}"
 
     click.echo("")
+
+    # Start background monitor that auto-restarts dead port-forwards
+    _pf_monitor_start()
 
     # Extract target deployment from experiment spec for recovery metrics
     target_deployment = _extract_target_deployment(shared_scenario)
@@ -2883,16 +2866,18 @@ def run(
                 _wait_for_healthy_deployments(namespace, timeout=60)
 
                 # Re-check infrastructure health between iterations
+                # (monitor thread auto-restarts dead port-forwards, but
+                #  explicit checks verify connectivity before each iteration)
                 if neo4j_uri:
-                    _ensure_port_forward(
+                    _pf_ensure(
                         "neo4j", "neo4j", ["7687:7687", "7474:7474"], "localhost", 7687
                     )
                 if measure_prometheus:
                     # Re-check Prometheus port-forward if it was in use
                     for _pns in ("monitoring", "prometheus"):
-                        proc = _port_forward_procs.get(("prometheus-server", _pns))
+                        proc = _pf_procs.get(("prometheus-server", _pns))
                         if proc:
-                            _ensure_port_forward(
+                            _pf_ensure(
                                 "prometheus-server", _pns,
                                 ["9090:9090"], "localhost", 9090,
                             )
@@ -2903,7 +2888,7 @@ def run(
                         svc_list = core_api.list_namespaced_service(namespace)
                         for svc in svc_list.items:
                             if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
-                                _ensure_port_forward(
+                                _pf_ensure(
                                     svc.metadata.name, namespace,
                                     [f"{frontend_pf_port}:80"],
                                     "localhost", frontend_pf_port,
@@ -2928,60 +2913,65 @@ def run(
 
                 # Start real-time recovery watcher before experiment
                 watcher = RecoveryWatcher(namespace, target_deployment)
-                watcher.start()
 
-                # Start continuous latency prober if requested
+                # Create probers (constructors are cheap)
                 latency_prober = None
                 latency_data = None
-                if measure_latency:
-                    click.echo("    Starting inter-service latency probing...")
-                    latency_prober = ContinuousLatencyProber(namespace)
-                    latency_prober.start()
-
-                # Start continuous Redis prober if requested
                 redis_prober = None
                 redis_data = None
-                if measure_redis:
-                    click.echo("    Starting Redis throughput probing...")
-                    redis_prober = ContinuousRedisProber(namespace)
-                    redis_prober.start()
-
-                # Start continuous disk prober if requested
                 disk_prober = None
                 disk_data = None
+                resource_prober = None
+                resource_data = None
+                prometheus_prober = None
+                prometheus_data = None
+                iter_locust_runner = None
+                iter_load_stats = None
+
+                if measure_latency:
+                    latency_prober = ContinuousLatencyProber(namespace)
+                if measure_redis:
+                    redis_prober = ContinuousRedisProber(namespace)
                 if measure_disk:
-                    click.echo("    Starting disk I/O throughput probing...")
                     disk_prober = ContinuousDiskProber(
                         namespace,
                         disk_target=target_deployment,
                     )
-                    disk_prober.start()
-
-                # Start continuous resource prober if requested
-                resource_prober = None
-                resource_data = None
                 if measure_resources:
-                    click.echo("    Starting resource utilization probing...")
                     resource_prober = ContinuousResourceProber(
                         namespace,
                         target_deployment,
                     )
-                    resource_prober.start()
-
-                # Start continuous Prometheus prober if requested
-                prometheus_prober = None
-                prometheus_data = None
                 if measure_prometheus:
-                    click.echo("    Starting Prometheus metrics collection...")
                     prometheus_prober = ContinuousPrometheusProber(
                         namespace,
                         prometheus_urls=list(prometheus_url) if prometheus_url else None,
                     )
-                    prometheus_prober.start()
+
+                # Start watcher + all probers in parallel (each .start() may do K8s API calls)
+                probers_to_start = [
+                    (label, p)
+                    for label, p in [
+                        ("recovery watcher", watcher),
+                        ("inter-service latency probing", latency_prober),
+                        ("Redis throughput probing", redis_prober),
+                        ("disk I/O throughput probing", disk_prober),
+                        ("resource utilization probing", resource_prober),
+                        ("Prometheus metrics collection", prometheus_prober),
+                    ]
+                    if p is not None
+                ]
+                labels = [l for l, _ in probers_to_start if l != "recovery watcher"]
+                if labels:
+                    click.echo(f"    Starting {', '.join(labels)}...")
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                with ThreadPoolExecutor(max_workers=len(probers_to_start)) as executor:
+                    futures = {executor.submit(p.start): label for label, p in probers_to_start}
+                    for f in as_completed(futures):
+                        f.result()  # propagate any exception
 
                 # Start Locust load generation if requested
-                iter_locust_runner = None
-                iter_load_stats = None
                 if load_profile:
                     profile = LoadProfile.from_name(load_profile)
                     url = target_url
@@ -3041,11 +3031,34 @@ def run(
                         click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
                         time.sleep(post_chaos_window)
                 finally:
-                    # Always stop Locust, latency prober, and watcher even if experiment fails.
-                    # Each block is independent so one failure doesn't skip the rest.
+                    # Stop all probers + watcher in parallel — .stop() joins threads
+                    active_probers = [
+                        p
+                        for p in [
+                            iter_locust_runner,
+                            latency_prober,
+                            redis_prober,
+                            disk_prober,
+                            resource_prober,
+                            prometheus_prober,
+                            watcher,
+                        ]
+                        if p is not None
+                    ]
+                    if active_probers:
+                        with ThreadPoolExecutor(
+                            max_workers=len(active_probers)
+                        ) as executor:
+                            stop_futs = {executor.submit(p.stop): p for p in active_probers}
+                            for f in as_completed(stop_futs):
+                                try:
+                                    f.result()
+                                except Exception:
+                                    pass  # individual errors handled below
+
+                    # Collect results sequentially (instant after stop)
                     if iter_locust_runner:
                         try:
-                            iter_locust_runner.stop()
                             iter_load_stats = iter_locust_runner.collect_stats()
                             click.echo(
                                 f"    Load: {iter_load_stats.total_requests} reqs, "
@@ -3058,7 +3071,6 @@ def run(
                             iter_locust_runner.cleanup()
                     if latency_prober:
                         try:
-                            latency_prober.stop()
                             latency_data = latency_prober.result()
                             phase_data = latency_data.get("phases", {})
                             during = phase_data.get("during-chaos", {})
@@ -3070,7 +3082,6 @@ def run(
                             )
                     if redis_prober:
                         try:
-                            redis_prober.stop()
                             redis_data = redis_prober.result()
                             rp = redis_data.get("phases", {}).get("during-chaos", {})
                             click.echo(
@@ -3080,7 +3091,6 @@ def run(
                             click.echo(f"    Warning: failed to collect Redis data: {e}", err=True)
                     if disk_prober:
                         try:
-                            disk_prober.stop()
                             disk_data = disk_prober.result()
                             dp = disk_data.get("phases", {}).get("during-chaos", {})
                             click.echo(f"    Disk: {dp.get('sampleCount', 0)} samples during chaos")
@@ -3088,7 +3098,6 @@ def run(
                             click.echo(f"    Warning: failed to collect disk data: {e}", err=True)
                     if resource_prober:
                         try:
-                            resource_prober.stop()
                             resource_data = resource_prober.result()
                             if resource_data.get("available"):
                                 rp = resource_data.get("phases", {}).get("during-chaos", {})
@@ -3105,7 +3114,6 @@ def run(
                             )
                     if prometheus_prober:
                         try:
-                            prometheus_prober.stop()
                             prometheus_data = prometheus_prober.result()
                             if prometheus_data.get("available"):
                                 pp = prometheus_data.get("phases", {}).get("during-chaos", {})
@@ -3120,7 +3128,6 @@ def run(
                             click.echo(
                                 f"    Warning: failed to collect Prometheus data: {e}", err=True
                             )
-                    watcher.stop()
 
                 recovery_data = watcher.result()
 
@@ -3187,7 +3194,7 @@ def run(
                                     err=True,
                                 )
                                 # Re-establish port-forward and connection
-                                _ensure_port_forward(
+                                _pf_ensure(
                                     "neo4j", "neo4j",
                                     ["7687:7687", "7474:7474"],
                                     "localhost", 7687,
@@ -3374,8 +3381,8 @@ def run(
     if graph_store:
         graph_store.close()
 
-    # Terminate port-forward processes
-    _cleanup_port_forwards()
+    # Terminate port-forward processes and monitor
+    _pf_cleanup()
 
     # Show ChaosCenter dashboard link if available
     try:

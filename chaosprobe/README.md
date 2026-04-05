@@ -276,7 +276,7 @@ uv run chaosprobe run -n online-boutique -i 3
 uv run chaosprobe run -n online-boutique -e scenarios/online-boutique/placement-experiment.yaml
 
 # Custom output directory and settings
-uv run chaosprobe run -n online-boutique -o results/my-run --timeout 600 --seed 42
+uv run chaosprobe run -n online-boutique -o results/my-run --timeout 300 --seed 42
 
 # Use ramp load profile instead of steady
 uv run chaosprobe run -n online-boutique --load-profile ramp
