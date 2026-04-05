@@ -1449,6 +1449,20 @@ def delete(namespace: str, keep_app: bool):
     )
     click.echo("  metrics-server deleted")
 
+    # 6b. Delete local-path-provisioner (local-path-storage namespace)
+    click.echo("Deleting local-path-provisioner (local-path-storage namespace)...")
+    result = _del_sp.run(
+        ["kubectl", "delete", "namespace", "local-path-storage", "--timeout=60s"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode == 0:
+        click.echo("  local-path-storage namespace deleted")
+    else:
+        if "not found" in result.stderr.lower():
+            click.echo("  local-path-storage namespace not found (already deleted)")
+        else:
+            click.echo(f"  Warning: {result.stderr.strip()}")
+
     # 7. Remove orphaned Litmus infra deployments from target namespace
     click.echo(f"Removing Litmus infra from {namespace}...")
     infra_deps = [
@@ -1468,10 +1482,10 @@ def delete(namespace: str, keep_app: bool):
     for resource in ["chaosengines", "chaosresults"]:
         _del_sp.run(
             ["kubectl", "delete", resource, "--all",
-             "-n", namespace, "--ignore-not-found"],
-            capture_output=True, timeout=30,
+             "-n", namespace, "--ignore-not-found", "--timeout=120s"],
+            capture_output=True, timeout=180,
         )
-    for phase in ["Succeeded", "Failed"]:
+    for phase in ["Succeeded", "Failed", "Completed"]:
         _del_sp.run(
             ["kubectl", "delete", "pods",
              f"--field-selector=status.phase=={phase}",
@@ -1481,8 +1495,8 @@ def delete(namespace: str, keep_app: bool):
     click.echo("  Chaos resources cleaned")
 
     click.echo("\nAll ChaosProbe infrastructure deleted.")
-    click.echo("Application deployments in '{namespace}' were kept.")
-    click.echo("Run 'chaosprobe init -n {namespace}' to re-initialize.")
+    click.echo(f"Application deployments in '{namespace}' were kept.")
+    click.echo(f"Run 'chaosprobe init -n {namespace}' to re-initialize.")
 
 
 # ─────────────────────────────────────────────────────────────
