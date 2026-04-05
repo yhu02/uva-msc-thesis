@@ -13,7 +13,6 @@ def compute_cascade_timeline(
     latency_data: Dict[str, Any],
     anomaly_labels: Optional[List[Dict[str, Any]]] = None,
     degradation_factor: float = 2.0,
-    error_threshold: float = 0.5,
 ) -> Dict[str, Any]:
     """Detect cascading degradation across service routes.
 
@@ -31,9 +30,6 @@ def compute_cascade_timeline(
     degradation_factor:
         A route is degraded when its latency exceeds
         ``baseline_mean * degradation_factor``.
-    error_threshold:
-        A route is degraded when its error rate in a window exceeds
-        this fraction (0.0-1.0).
 
     Returns
     -------
@@ -166,6 +162,5 @@ def compute_cascade_timeline(
             "totalMonitored": total_routes,
             "cascadeRatio": round(affected_count / total_routes, 3) if total_routes > 0 else 0,
             "degradationFactor": degradation_factor,
-            "errorThreshold": error_threshold,
         },
     }
