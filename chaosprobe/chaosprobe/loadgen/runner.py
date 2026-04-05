@@ -6,6 +6,7 @@ to replace the passive Google loadgenerator.
 
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -192,7 +193,7 @@ class LocustRunner:
         stats_prefix = os.path.join(self._stats_dir, "stats")
 
         cmd = [
-            "locust",
+            os.path.join(os.path.dirname(sys.executable), "locust"),
             "--headless",
             "--locustfile",
             locustfile,

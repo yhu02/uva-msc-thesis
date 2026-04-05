@@ -2329,6 +2329,7 @@ end
 
     def _chaoscenter_change_password(
         self, auth_url: str, username: str, old_password: str, new_password: str,
+        token: str = "",
     ) -> None:
         """Change ChaosCenter password via the auth API."""
         self._chaoscenter_api_request(
@@ -2338,6 +2339,7 @@ end
                 "oldPassword": old_password,
                 "newPassword": new_password,
             },
+            token=token,
         )
 
     def _chaoscenter_gql_url(self, base_host: str) -> str:
@@ -2387,6 +2389,7 @@ end
                             auth_url, username,
                             self.CHAOSCENTER_DEFAULT_PASS,
                             self.CHAOSCENTER_MANAGED_PASS,
+                            token=token,
                         )
                         # Re-login with the new password
                         resp2 = self._chaoscenter_authenticate(
@@ -2430,8 +2433,8 @@ end
         return (
             resp.get("data", {})
             .get("listEnvironments", {})
-            .get("environments", [])
-        )
+            .get("environments")
+        ) or []
 
     def _chaoscenter_list_infras(
         self, gql_url: str, project_id: str, token: str,
@@ -2452,8 +2455,8 @@ end
         return (
             resp.get("data", {})
             .get("listInfras", {})
-            .get("infras", [])
-        )
+            .get("infras")
+        ) or []
 
     def _chaoscenter_create_environment(
         self, gql_url: str, project_id: str, env_name: str, token: str,

@@ -293,6 +293,69 @@ def main():
     pass
 
 
+# ---------------------------------------------------------------------------
+# Module-level port-forward helpers (used by init and run)
+# ---------------------------------------------------------------------------
+import socket as _socket_mod
+import subprocess as _sp_mod
+
+_pf_procs: Dict[tuple, Any] = {}
+
+
+def _pf_check_port(host: str, port: int) -> bool:
+    """Check if a TCP port is reachable."""
+    sock = _socket_mod.socket(_socket_mod.AF_INET, _socket_mod.SOCK_STREAM)
+    sock.settimeout(3)
+    try:
+        sock.connect((host, port))
+        sock.close()
+        return True
+    except (ConnectionRefusedError, OSError):
+        sock.close()
+        return False
+
+
+def _pf_start(svc: str, ns: str, ports: list[str]):
+    """Start a kubectl port-forward in the background and track it."""
+    proc = _sp_mod.Popen(
+        ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
+        stdout=_sp_mod.DEVNULL,
+        stderr=_sp_mod.DEVNULL,
+    )
+    _pf_procs[(svc, ns)] = proc
+    time.sleep(3)
+
+
+def _pf_ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
+    """Check if port-forward is alive; restart if dead. Returns True if reachable."""
+    proc = _pf_procs.get((svc, ns))
+    if proc and proc.poll() is not None:
+        _pf_start(svc, ns, ports)
+    elif not proc:
+        _pf_start(svc, ns, ports)
+    for attempt in range(15):
+        if _pf_check_port(host, port):
+            return True
+        # If process died, restart it before retrying
+        proc = _pf_procs.get((svc, ns))
+        if proc and proc.poll() is not None:
+            _pf_start(svc, ns, ports)
+        time.sleep(2)
+    return False
+
+
+def _pf_cleanup():
+    """Terminate all tracked port-forward processes."""
+    for proc in _pf_procs.values():
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except _sp_mod.TimeoutExpired:
+                proc.kill()
+    _pf_procs.clear()
+
+
 @main.command()
 @click.option(
     "--namespace",
@@ -397,10 +460,35 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
                     )
                     click.echo(f"\n  Connecting namespace '{namespace}' to ChaosCenter...")
                     try:
-                        setup.connect_infrastructure(namespace=namespace)
+                        _cc_auth_svc = LitmusSetup.CHAOSCENTER_AUTH_SVC
+                        _cc_auth_port = LitmusSetup.CHAOSCENTER_AUTH_PORT
+                        _cc_server_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
+                        _cc_server_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
+                        if not _pf_ensure(
+                            _cc_auth_svc, "litmus",
+                            [f"{_cc_auth_port}:{_cc_auth_port}"],
+                            "localhost", _cc_auth_port,
+                        ):
+                            raise RuntimeError(
+                                f"Port-forward to auth server (:{_cc_auth_port}) not reachable"
+                            )
+                        if not _pf_ensure(
+                            _cc_server_svc, "litmus",
+                            [f"{_cc_server_port}:{_cc_server_port}"],
+                            "localhost", _cc_server_port,
+                        ):
+                            raise RuntimeError(
+                                f"Port-forward to GraphQL server (:{_cc_server_port}) not reachable"
+                            )
+                        setup.ensure_chaoscenter_configured(
+                            namespace=namespace,
+                            base_host="http://localhost",
+                        )
                         click.echo("  Infrastructure registered successfully!")
                     except Exception as e:
                         click.echo(f"  Warning: Could not register infrastructure: {e}")
+                    finally:
+                        _pf_cleanup()
                 else:
                     click.echo("  ChaosCenter installation timed out.", err=True)
             except Exception as e:
@@ -2060,6 +2148,11 @@ def run(
 
     # Load the shared experiment file once
     experiment_file = Path(experiment)
+    if not experiment_file.exists():
+        # Try package-relative path
+        pkg_path = Path(__file__).resolve().parent.parent / experiment
+        if pkg_path.exists():
+            experiment_file = pkg_path
     try:
         shared_scenario = load_scenario(str(experiment_file))
         validate_scenario(shared_scenario)
@@ -2596,9 +2689,22 @@ def run(
             else:
                 click.echo(f"\n  Step 2: Applying {strategy_name} placement...")
                 strat = PlacementStrategy(strategy_name)
+                # Exclude Litmus/ChaosCenter infrastructure deployments from
+                # placement — they must remain on their current nodes to keep
+                # the chaos infrastructure healthy.
+                _infra_prefixes = (
+                    "chaos-exporter", "chaos-operator", "event-tracker",
+                    "subscriber", "workflow-controller",
+                )
+                all_deps = mutator.get_deployments()
+                app_deps = [
+                    d.name for d in all_deps
+                    if not d.name.startswith(_infra_prefixes)
+                ]
                 assignment = mutator.apply_strategy(
                     strategy=strat,
                     seed=seed if strategy_name == "random" else None,
+                    deployments=app_deps if app_deps else None,
                     wait=True,
                     timeout=timeout,
                 )
