@@ -323,8 +323,6 @@ Generates charts correlating placement strategies with performance metrics. Requ
 | `generate_from_summary(summary_path, output_dir)` | Generate charts from a legacy summary.json file |
 | `_chart_resilience_scores(strategies, output_path, iteration_data=None)` | Bar chart of resilience scores per strategy |
 | `_chart_recovery_times(strategies, output_path, iteration_data=None)` | Mean/p95 recovery time comparison |
-| `_chart_load_metrics(strategies, output_path)` | p95 latency and error rate overlay |
-| `_chart_pod_node_heatmap(store, runs, output_path)` | Pod-to-node placement heatmap |
 | `_chart_latency_by_strategy(latency_by_strategy, output_path)` | Inter-service latency comparison per strategy |
 | `_chart_latency_degradation(latency_by_strategy, output_path)` | Latency degradation during chaos |
 | `_chart_throughput_by_strategy(throughput_by_strategy, output_path)` | Throughput comparison per strategy |
