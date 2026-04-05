@@ -1,8 +1,8 @@
 """ML-ready dataset export pipeline.
 
-Reads experiment results from Neo4j or SQLite storage and produces
-aligned, labeled feature matrices suitable for training anomaly
-classification and remediation models.
+Reads experiment results from Neo4j storage and produces aligned,
+labeled feature matrices suitable for training anomaly classification
+and remediation models.
 
 Supports CSV output format with optional Parquet support (requires
 ``pyarrow``).
@@ -68,48 +68,6 @@ def export_run_to_rows(
         row["overall_verdict"] = verdict
 
     return rows
-
-
-def export_from_sqlite(
-    db_path: Optional[str] = None,
-    scenario: Optional[str] = None,
-    strategy: Optional[str] = None,
-    resolution_s: float = 5.0,
-    limit: int = 100,
-) -> List[Dict[str, Any]]:
-    """Export aligned rows from SQLite-stored experiment runs.
-
-    Parameters
-    ----------
-    db_path:
-        Path to the SQLite database. Uses default if ``None``.
-    scenario:
-        Optional scenario filter.
-    strategy:
-        Optional strategy filter.
-    resolution_s:
-        Bucket width in seconds.
-    limit:
-        Maximum number of runs to export.
-
-    Returns
-    -------
-    Concatenated list of rows from all matching runs.
-    """
-    from chaosprobe.storage.sqlite import SQLiteStore
-
-    store = SQLiteStore(db_path=db_path)
-    runs = store.list_runs(scenario=scenario, strategy=strategy, limit=limit)
-
-    all_rows: List[Dict[str, Any]] = []
-    for run_meta in runs:
-        run_data = store.get_run(run_meta["id"])
-        if run_data:
-            rows = export_run_to_rows(run_data, resolution_s=resolution_s)
-            all_rows.extend(rows)
-
-    store.close()
-    return all_rows
 
 
 def export_from_neo4j(

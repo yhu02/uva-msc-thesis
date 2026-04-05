@@ -32,13 +32,6 @@ from chaosprobe.provisioner.kubernetes import KubernetesProvisioner
 from chaosprobe.provisioner.setup import LitmusSetup
 
 
-def _get_store(db_path: Optional[str] = None):
-    """Get a SQLiteStore instance (uses default path if none given)."""
-    from chaosprobe.storage.sqlite import SQLiteStore
-
-    return SQLiteStore(db_path=db_path)
-
-
 def _print_cluster_recovery_hints(setup: LitmusSetup) -> None:
     """Detect cluster state and print concrete recovery commands."""
     import subprocess as _sp
@@ -1354,12 +1347,15 @@ def delete(namespace: str, keep_app: bool):
     - Prometheus (monitoring namespace)
     - Neo4j (neo4j namespace)
     - metrics-server
+    - local-path-provisioner (local-path-storage namespace)
     - Litmus infra deployments in the target namespace
     - Stale ChaosEngines, ChaosResults, and completed pods
 
+    Namespace deletions run in parallel for speed.
     Application deployments (e.g. Online Boutique) are kept by default.
     """
     import subprocess as _del_sp
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     setup = LitmusSetup(skip_k8s_init=True)
     is_valid, _ = setup.validate_cluster()
@@ -1387,83 +1383,7 @@ def delete(namespace: str, keep_app: bool):
     except Exception as e:
         click.echo(f"  Warning: {e}")
 
-    # 3. Delete litmus namespace (ChaosCenter + operator + CRDs)
-    click.echo("Deleting ChaosCenter (litmus namespace)...")
-    result = _del_sp.run(
-        ["kubectl", "delete", "namespace", "litmus", "--timeout=120s"],
-        capture_output=True, text=True, timeout=180,
-    )
-    if result.returncode == 0:
-        click.echo("  litmus namespace deleted")
-    else:
-        if "not found" in result.stderr.lower():
-            click.echo("  litmus namespace not found (already deleted)")
-        else:
-            click.echo(f"  Warning: {result.stderr.strip()}")
-
-    # 4. Delete Prometheus (monitoring namespace)
-    click.echo("Deleting Prometheus (monitoring namespace)...")
-    result = _del_sp.run(
-        ["kubectl", "delete", "namespace", "monitoring", "--timeout=120s"],
-        capture_output=True, text=True, timeout=180,
-    )
-    if result.returncode == 0:
-        click.echo("  monitoring namespace deleted")
-    else:
-        if "not found" in result.stderr.lower():
-            click.echo("  monitoring namespace not found (already deleted)")
-        else:
-            click.echo(f"  Warning: {result.stderr.strip()}")
-
-    # 5. Delete Neo4j (neo4j namespace)
-    click.echo("Deleting Neo4j (neo4j namespace)...")
-    result = _del_sp.run(
-        ["kubectl", "delete", "namespace", "neo4j", "--timeout=120s"],
-        capture_output=True, text=True, timeout=180,
-    )
-    if result.returncode == 0:
-        click.echo("  neo4j namespace deleted")
-    else:
-        if "not found" in result.stderr.lower():
-            click.echo("  neo4j namespace not found (already deleted)")
-        else:
-            click.echo(f"  Warning: {result.stderr.strip()}")
-
-    # 6. Delete metrics-server
-    click.echo("Deleting metrics-server...")
-    result = _del_sp.run(
-        ["kubectl", "delete", "deployment", "metrics-server",
-         "-n", "kube-system", "--ignore-not-found"],
-        capture_output=True, text=True, timeout=30,
-    )
-    # Also delete the service and APIService
-    _del_sp.run(
-        ["kubectl", "delete", "service", "metrics-server",
-         "-n", "kube-system", "--ignore-not-found"],
-        capture_output=True, timeout=30,
-    )
-    _del_sp.run(
-        ["kubectl", "delete", "apiservice", "v1beta1.metrics.k8s.io",
-         "--ignore-not-found"],
-        capture_output=True, timeout=30,
-    )
-    click.echo("  metrics-server deleted")
-
-    # 6b. Delete local-path-provisioner (local-path-storage namespace)
-    click.echo("Deleting local-path-provisioner (local-path-storage namespace)...")
-    result = _del_sp.run(
-        ["kubectl", "delete", "namespace", "local-path-storage", "--timeout=60s"],
-        capture_output=True, text=True, timeout=120,
-    )
-    if result.returncode == 0:
-        click.echo("  local-path-storage namespace deleted")
-    else:
-        if "not found" in result.stderr.lower():
-            click.echo("  local-path-storage namespace not found (already deleted)")
-        else:
-            click.echo(f"  Warning: {result.stderr.strip()}")
-
-    # 7. Remove orphaned Litmus infra deployments from target namespace
+    # 3. Remove Litmus infra deployments from target namespace (before ns deletion)
     click.echo(f"Removing Litmus infra from {namespace}...")
     infra_deps = [
         "chaos-exporter", "chaos-operator-ce", "event-tracker",
@@ -1477,7 +1397,7 @@ def delete(namespace: str, keep_app: bool):
         )
     click.echo(f"  Litmus infra deployments removed from {namespace}")
 
-    # 8. Clean stale CRDs and completed pods in target namespace
+    # 4. Clean stale CRDs and completed pods in target namespace
     click.echo(f"Cleaning chaos resources in {namespace}...")
     for resource in ["chaosengines", "chaosresults"]:
         _del_sp.run(
@@ -1493,6 +1413,53 @@ def delete(namespace: str, keep_app: bool):
             capture_output=True, timeout=30,
         )
     click.echo("  Chaos resources cleaned")
+
+    # 5. Delete infrastructure namespaces + metrics-server in PARALLEL
+    def _delete_namespace(ns: str, label: str) -> str:
+        """Delete a namespace and return a status message."""
+        result = _del_sp.run(
+            ["kubectl", "delete", "namespace", ns, "--timeout=120s"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode == 0:
+            return f"  {label}: deleted"
+        if "not found" in result.stderr.lower():
+            return f"  {label}: not found (already deleted)"
+        return f"  {label}: Warning: {result.stderr.strip()}"
+
+    def _delete_metrics_server() -> str:
+        """Delete metrics-server components and return a status message."""
+        _del_sp.run(
+            ["kubectl", "delete", "deployment", "metrics-server",
+             "-n", "kube-system", "--ignore-not-found"],
+            capture_output=True, text=True, timeout=30,
+        )
+        _del_sp.run(
+            ["kubectl", "delete", "service", "metrics-server",
+             "-n", "kube-system", "--ignore-not-found"],
+            capture_output=True, timeout=30,
+        )
+        _del_sp.run(
+            ["kubectl", "delete", "apiservice", "v1beta1.metrics.k8s.io",
+             "--ignore-not-found"],
+            capture_output=True, timeout=30,
+        )
+        return "  metrics-server: deleted"
+
+    click.echo("Deleting infrastructure (parallel)...")
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {
+            executor.submit(_delete_namespace, "litmus", "ChaosCenter (litmus)"): "litmus",
+            executor.submit(_delete_namespace, "monitoring", "Prometheus (monitoring)"): "monitoring",
+            executor.submit(_delete_namespace, "neo4j", "Neo4j (neo4j)"): "neo4j",
+            executor.submit(_delete_namespace, "local-path-storage", "local-path-provisioner (local-path-storage)"): "local-path-storage",
+            executor.submit(_delete_metrics_server): "metrics-server",
+        }
+        for future in as_completed(futures):
+            try:
+                click.echo(future.result())
+            except Exception as e:
+                click.echo(f"  {futures[future]}: Warning: {e}")
 
     click.echo("\nAll ChaosProbe infrastructure deleted.")
     click.echo(f"Application deployments in '{namespace}' were kept.")
@@ -2190,11 +2157,6 @@ def placement_nodes():
     help="Target URL for load generation (default: auto port-forward to frontend service)",
 )
 @click.option(
-    "--db",
-    default="results.db",
-    help="Path to SQLite database for persisting results",
-)
-@click.option(
     "--visualize/--no-visualize",
     "do_visualize",
     default=True,
@@ -2285,7 +2247,6 @@ def run(
     load_profile: Optional[str],
     locustfile: Optional[str],
     target_url: Optional[str],
-    db: Optional[str],
     do_visualize: bool,
     measure_latency: bool,
     measure_redis: bool,
@@ -2785,7 +2746,6 @@ def run(
     total = len(strategy_list)
     passed = 0
     failed = 0
-    run_store = _get_store(db)
 
     # Neo4j graph store — primary data store
     graph_store = None
@@ -3211,15 +3171,6 @@ def run(
                         "stats": iter_load_stats.to_dict(),
                     }
 
-                # Persist to database
-                if run_store:
-                    try:
-                        run_store.save_run(output_data)
-                    except Exception as e:
-                        import warnings
-
-                        warnings.warn(f"Failed to save results to database: {e}", stacklevel=2)
-
                 # Sync to Neo4j graph if connected
                 if graph_store:
                     _neo4j_synced = False
@@ -3419,9 +3370,7 @@ def run(
         except ImportError as e:
             click.echo(f"  Skipping visualization: {e}", err=True)
 
-    # Close shared database connection
-    if run_store:
-        run_store.close()
+    # Close graph database connection
     if graph_store:
         graph_store.close()
 
@@ -3804,135 +3753,11 @@ def graph_compare(run_ids, neo4j_uri, neo4j_user, neo4j_password, json_output):
 
 
 # ─────────────────────────────────────────────────────────────
-# Database query commands
-# ─────────────────────────────────────────────────────────────
-
-
-@main.group()
-def query():
-    """Query stored experiment results from the database."""
-    pass
-
-
-@query.command("runs")
-@click.option("--scenario", "-s", default=None, help="Filter by scenario path")
-@click.option("--strategy", default=None, help="Filter by strategy name")
-@click.option("--limit", "-l", default=20, type=int, help="Max results to return")
-@click.option("--db", default=None, help="Path to database file")
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-def query_runs(
-    scenario: Optional[str],
-    strategy: Optional[str],
-    limit: int,
-    db: Optional[str],
-    json_output: bool,
-):
-    """List experiment runs stored in the database."""
-    from chaosprobe.storage.sqlite import SQLiteStore
-
-    store = SQLiteStore(db_path=db)
-    runs = store.list_runs(scenario=scenario, strategy=strategy, limit=limit)
-    store.close()
-
-    if json_output:
-        click.echo(json.dumps(runs, indent=2))
-        return
-
-    if not runs:
-        click.echo("No runs found.")
-        return
-
-    click.echo(f"{'Run ID':<40s} {'Timestamp':<22s} {'Strategy':<14s} {'Verdict':<8s} {'Score'}")
-    click.echo("─" * 95)
-    for r in runs:
-        click.echo(
-            f"{r['id']:<40s} {r['timestamp'][:19]:<22s} "
-            f"{(r['strategy'] or 'n/a'):<14s} {r['overall_verdict']:<8s} "
-            f"{r['resilience_score']:.1f}"
-        )
-
-
-@query.command("compare")
-@click.option("--scenario", "-s", default=None, help="Filter by scenario path")
-@click.option("--db", default=None, help="Path to database file")
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-def query_compare(
-    scenario: Optional[str],
-    db: Optional[str],
-    json_output: bool,
-):
-    """Compare strategies across stored runs."""
-    from chaosprobe.storage.sqlite import SQLiteStore
-
-    store = SQLiteStore(db_path=db)
-    comparison = store.compare_strategies(scenario=scenario)
-    store.close()
-
-    if json_output:
-        click.echo(json.dumps(comparison, indent=2))
-        return
-
-    strategies = comparison.get("strategies", {})
-    if not strategies:
-        click.echo("No data found.")
-        return
-
-    click.echo(
-        f"\n{'Strategy':<16s} {'Runs':<6s} {'Pass%':<7s} {'Avg Score':<10s} "
-        f"{'Avg Rec.':<10s} {'P95 Rec.':<10s}"
-    )
-    click.echo("─" * 65)
-    for name, data in strategies.items():
-        avg_rec = f"{data['avgMeanRecovery_ms']:.0f}ms" if data.get("avgMeanRecovery_ms") else "n/a"
-        p95_rec = f"{data['avgP95Recovery_ms']:.0f}ms" if data.get("avgP95Recovery_ms") else "n/a"
-        click.echo(
-            f"{name:<16s} {data['runCount']:<6d} {data['passRate']:<7.0%} "
-            f"{data['avgResilienceScore']:<10.1f} {avg_rec:<10s} {p95_rec:<10s}"
-        )
-
-
-@query.command("export")
-@click.option("--output", "-o", required=True, type=click.Path(), help="Output CSV file path")
-@click.option("--db", default=None, help="Path to database file")
-def query_export(output: str, db: Optional[str]):
-    """Export all runs to CSV."""
-    from chaosprobe.storage.sqlite import SQLiteStore
-
-    store = SQLiteStore(db_path=db)
-    path = store.export_csv(output)
-    store.close()
-    click.echo(f"Exported to {path}")
-
-
-@query.command("show")
-@click.argument("run_id")
-@click.option("--db", default=None, help="Path to database file")
-def query_show(run_id: str, db: Optional[str]):
-    """Show full details of a specific run."""
-    from chaosprobe.storage.sqlite import SQLiteStore
-
-    store = SQLiteStore(db_path=db)
-    run = store.get_run(run_id)
-    store.close()
-
-    if not run:
-        click.echo(f"Run '{run_id}' not found.", err=True)
-        sys.exit(1)
-
-    click.echo(json.dumps(run, indent=2))
-
-
-# ─────────────────────────────────────────────────────────────
 # Visualization commands
 # ─────────────────────────────────────────────────────────────
 
 
 @main.command("visualize")
-@click.option(
-    "--db",
-    default=None,
-    help="Path to SQLite database (uses default if not set)",
-)
 @click.option(
     "--summary",
     "-s",
@@ -3947,11 +3772,6 @@ def query_show(run_id: str, db: Optional[str]):
     help="Directory to save generated charts",
 )
 @click.option(
-    "--scenario",
-    default=None,
-    help="Filter by scenario path (database mode only)",
-)
-@click.option(
     "--session",
     default=None,
     help="Session ID to visualize (Neo4j mode)",
@@ -3960,10 +3780,8 @@ def query_show(run_id: str, db: Optional[str]):
 @_neo4j_user_option
 @_neo4j_password_option
 def visualize(
-    db: Optional[str],
     summary: Optional[str],
     output_dir: str,
-    scenario: Optional[str],
     session: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: str,
@@ -3971,17 +3789,14 @@ def visualize(
 ):
     """Generate visualization charts from experiment results.
 
-    Can read from Neo4j graph database, SQLite database, or a legacy
-    summary.json file.
+    Can read from Neo4j graph database or a legacy summary.json file.
 
     \b
     Examples:
       chaosprobe visualize --neo4j-uri bolt://localhost:7687 --session 20260402-013423
-      chaosprobe visualize --db results.db -o charts/
       chaosprobe visualize --summary results/20260227-140237/summary.json
     """
     from chaosprobe.output.visualize import (
-        generate_all_charts,
         generate_from_dict,
         generate_from_summary,
     )
@@ -4012,18 +3827,9 @@ def visualize(
         except ImportError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
-    else:  # Default to DB mode
-        click.echo("Generating charts from database...")
-        from chaosprobe.storage.sqlite import SQLiteStore
-
-        store = SQLiteStore(db_path=db)
-        try:
-            generated = generate_all_charts(store, output_dir, scenario=scenario)
-        except ImportError as e:
-            click.echo(f"Error: {e}", err=True)
-            sys.exit(1)
-        finally:
-            store.close()
+    else:
+        click.echo("Error: specify --neo4j-uri or --summary", err=True)
+        sys.exit(1)
 
     if not generated:
         click.echo("No data available to visualize.")
@@ -4044,11 +3850,6 @@ def visualize(
 
 
 @main.command("ml-export")
-@click.option(
-    "--db",
-    default=None,
-    help="Path to SQLite database",
-)
 @click.option(
     "--neo4j-uri",
     default=None,
@@ -4084,72 +3885,44 @@ def visualize(
     help="Output format",
 )
 @click.option(
-    "--resolution",
-    "-r",
-    type=float,
-    default=5.0,
-    show_default=True,
-    help="Time bucket resolution in seconds (SQLite mode only)",
-)
-@click.option(
-    "--scenario",
-    default=None,
-    help="Filter by scenario path (database mode only)",
-)
-@click.option(
     "--strategy",
     default=None,
     help="Filter by strategy name",
 )
 def ml_export(
-    db: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
     output: str,
     fmt: str,
-    resolution: float,
-    scenario: Optional[str],
     strategy: Optional[str],
 ):
     """Export ML-ready aligned time-series dataset.
 
-    Reads experiment results and produces a feature matrix where each row
-    is a time bucket with all metric columns aligned and labeled with the
-    ground-truth anomaly type.
-
-    Supports two data sources: Neo4j graph database or SQLite database.
+    Reads experiment results from Neo4j and produces a feature matrix
+    where each row is a time bucket with all metric columns aligned and
+    labeled with the ground-truth anomaly type.
 
     \b
     Examples:
       chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.csv
-      chaosprobe ml-export --db results.db -o dataset.parquet -f parquet
     """
     from chaosprobe.output.ml_export import (
         export_from_neo4j,
-        export_from_sqlite,
         write_dataset,
     )
 
-    if neo4j_uri:
-        click.echo(f"Exporting from Neo4j ({neo4j_uri})...")
-        rows = export_from_neo4j(
-            uri=neo4j_uri,
-            user=neo4j_user,
-            password=neo4j_password,
-            strategy=strategy,
-        )
-    elif db:
-        click.echo(f"Exporting from database {db} (resolution={resolution}s)...")
-        rows = export_from_sqlite(
-            db_path=db,
-            scenario=scenario,
-            strategy=strategy,
-            resolution_s=resolution,
-        )
-    else:
-        click.echo("Error: specify --neo4j-uri (graph) or --db (database path)", err=True)
+    if not neo4j_uri:
+        click.echo("Error: --neo4j-uri is required", err=True)
         sys.exit(1)
+
+    click.echo(f"Exporting from Neo4j ({neo4j_uri})...")
+    rows = export_from_neo4j(
+        uri=neo4j_uri,
+        user=neo4j_user,
+        password=neo4j_password,
+        strategy=strategy,
+    )
 
     if not rows:
         click.echo("No data found to export.")

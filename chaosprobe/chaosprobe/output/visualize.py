@@ -28,62 +28,6 @@ def check_matplotlib():
         )
 
 
-def generate_all_charts(
-    store,
-    output_dir: str,
-    scenario: Optional[str] = None,
-) -> List[str]:
-    """Generate all charts from database data.
-
-    Args:
-        store: SQLiteStore instance.
-        output_dir: Directory to save chart images.
-        scenario: Optional scenario filter.
-
-    Returns:
-        List of generated file paths.
-    """
-    check_matplotlib()
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    generated = []
-
-    comparison = store.compare_strategies(scenario=scenario)
-    strategies = comparison.get("strategies", {})
-
-    if not strategies:
-        return generated
-
-    # 1. Resilience score comparison (box plot style bar chart)
-    path = _chart_resilience_scores(strategies, output_path)
-    if path:
-        generated.append(path)
-
-    # 2. Recovery time comparison
-    path = _chart_recovery_times(strategies, output_path)
-    if path:
-        generated.append(path)
-
-    # 3. Load generation metrics (if available)
-    path = _chart_load_metrics(strategies, output_path)
-    if path:
-        generated.append(path)
-
-    # 4. Pod-node heatmap from individual runs
-    runs = store.list_runs(scenario=scenario, limit=100)
-    path = _chart_pod_node_heatmap(store, runs, output_path)
-    if path:
-        generated.append(path)
-
-    # 5. Generate HTML summary
-    html_path = _generate_html_summary(generated, strategies, output_path)
-    if html_path:
-        generated.append(html_path)
-
-    return generated
-
-
 def generate_from_summary(
     summary_path: str,
     output_dir: str,

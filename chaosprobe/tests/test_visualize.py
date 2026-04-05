@@ -6,7 +6,6 @@ import pytest
 
 from chaosprobe.output.visualize import (
     generate_from_summary,
-    generate_all_charts,
     _strategy_colors,
     _chart_resilience_scores,
     _chart_recovery_times,
@@ -177,47 +176,6 @@ class TestGenerateFromSummary:
 
         generated = generate_from_summary(str(summary_file), str(tmp_path / "charts"))
         assert generated == []
-
-
-class TestGenerateAllCharts:
-    def test_generate_from_db(self, tmp_path):
-        from chaosprobe.storage.sqlite import SQLiteStore
-
-        db_path = str(tmp_path / "test.db")
-        store = SQLiteStore(db_path=db_path)
-
-        # Insert sample runs
-        for strategy in ["baseline", "colocate", "spread"]:
-            store.save_run({
-                "runId": f"run-{strategy}",
-                "timestamp": "2026-03-20T12:00:00+00:00",
-                "scenario": {"directory": "/scenarios/test"},
-                "infrastructure": {"namespace": "test"},
-                "experiments": [],
-                "summary": {
-                    "totalExperiments": 1,
-                    "passed": 1,
-                    "failed": 0,
-                    "resilienceScore": 90.0 if strategy == "spread" else 70.0,
-                    "overallVerdict": "PASS",
-                },
-                "metrics": {
-                    "recovery": {
-                        "summary": {
-                            "meanRecovery_ms": 1000.0,
-                            "p95Recovery_ms": 2000.0,
-                        }
-                    }
-                },
-                "placement": {"strategy": strategy, "assignments": {}},
-            })
-
-        charts_dir = str(tmp_path / "charts")
-        generated = generate_all_charts(store, charts_dir)
-        store.close()
-
-        assert len(generated) > 0
-        assert any(p.endswith(".html") for p in generated)
 
 
 class TestLatencyCharts:
