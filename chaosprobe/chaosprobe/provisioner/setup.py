@@ -1858,7 +1858,7 @@ end
         try:
             pods = self.core_api.list_namespaced_pod(
                 namespace="local-path-storage",
-                label_selector="app.kubernetes.io/name=local-path-provisioner",
+                label_selector="app=local-path-provisioner",
             )
             for pod in pods.items:
                 if pod.status.phase == "Running":
