@@ -272,17 +272,25 @@ class ChaosRunner:
         sa = spec.get("chaosServiceAccount", "litmus-admin")
         ns = self.namespace
 
+        # ChaosCenter appends a 14-char timestamp and Argo appends an
+        # ~11-char hash to the workflow name to create the step pod name.
+        # K8s labels have a 63-char limit, so the workflow name must be
+        # ≤ 38 chars to keep the pod name within limits.
+        wf_name = engine_name
+        if len(wf_name) > 38:
+            wf_name = wf_name[:31] + "-" + uuid.uuid4().hex[:6]
+
         workflow = {
             "apiVersion": "argoproj.io/v1alpha1",
             "kind": "Workflow",
             "metadata": {
-                "name": engine_name,
+                "name": wf_name,
                 "namespace": ns,
                 "labels": {
                     "infra_id": self._cc.get("infra_id", ""),
                     "step_pod_name": "",
                     "workflow_id": "",
-                    "subject": f"{engine_name}_{ns}",
+                    "subject": f"{wf_name}_{ns}",
                 },
             },
             "spec": {
