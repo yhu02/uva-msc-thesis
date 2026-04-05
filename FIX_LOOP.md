@@ -59,9 +59,9 @@ You must keep both tracks moving. If experiments are blocked by code or infrastr
 |-----------|-----------|---------------|-------|
 | `online-boutique` | 12 microservices (Online Boutique) | Pre-deployed (assumed to exist) | adservice, cartservice, checkoutservice, currencyservice, emailservice, frontend, loadgenerator, paymentservice, productcatalogservice, recommendationservice, redis-cart, shippingservice |
 | `litmus` | ChaosCenter (frontend, server, auth, MongoDB) | `chaosprobe init` via `litmuschaos/litmus` Helm chart | Release name: `chaos`. Also installs litmus-core operator + kubernetes-chaos experiment CRDs |
-| `monitoring` | Prometheus + kube-state-metrics | `chaosprobe run` auto-installs via `prometheus-community/prometheus` Helm chart | Pinned to control-plane. 2Gi PVC, 3d retention |
-| `neo4j` | Neo4j 5-community | `chaosprobe run` auto-installs via plain Deployment+Service | 512Mi–768Mi RAM, 1Gi PVC. Auth: `neo4j`/`chaosprobe` |
-| `kube-system` | metrics-server | `chaosprobe run` auto-installs from official manifest | Patched with `--kubelet-insecure-tls` for self-signed certs |
+| `monitoring` | Prometheus + kube-state-metrics | `chaosprobe init` via `prometheus-community/prometheus` Helm chart | Pinned to control-plane. 2Gi PVC, 3d retention |
+| `neo4j` | Neo4j 5-community | `chaosprobe init` via plain Deployment+Service | 512Mi–768Mi RAM, 1Gi PVC. Auth: `neo4j`/`chaosprobe` |
+| `kube-system` | metrics-server | `chaosprobe init` from official manifest | Patched with `--kubelet-insecure-tls` for self-signed certs |
 | `online-boutique` | Litmus subscriber, chaos-operator, chaos-exporter, event-tracker, workflow-controller | Deployed by ChaosCenter when infrastructure is registered | These are ChaosCenter infra pods — do NOT include in placement experiments |
 
 ### ChaosCenter Services (in `litmus` namespace)
@@ -125,8 +125,8 @@ Targets `productcatalogservice` with `pod-delete` chaos:
 
 Continuously repeat the following:
 
-1. **Full cleanup** — delete `litmus` namespace, orphaned infra deployments, stale ChaosEngines/ChaosResults, completed pods
-2. **Initialize** — `chaosprobe init -n online-boutique`
+1. **Full cleanup** — `chaosprobe delete -n online-boutique --yes`
+2. **Initialize** — `chaosprobe init -n online-boutique` (installs ChaosCenter, Prometheus, Neo4j, metrics-server)
 3. **Verify** — all infrastructure healthy (nodes, Online Boutique pods, Prometheus, Neo4j, ChaosCenter, metrics-server)
 4. **Run experiments** — `chaosprobe run -n online-boutique --iterations 3`
 5. **Diagnose** — analyze results, check anomalies, verify data quality
@@ -146,45 +146,37 @@ If a blocking issue occurs:
 
 ## Step 0: Full Cleanup (Between Iterations)
 
-Clean state is critical. ChaosCenter and its in-namespace infrastructure (subscriber, chaos-operator, workflow-controller, etc.) must be fully removed between iterations to avoid stale state.
+Clean state is critical. Use the `delete` command to remove all ChaosProbe infrastructure:
 
 ```bash
 cd /home/yhu02/uva-msc-thesis/chaosprobe
+uv run chaosprobe delete -n online-boutique --yes
+```
 
-# 1. Kill any lingering port-forwards
-pkill -f 'kubectl port-forward' 2>/dev/null || true
+This deletes:
+- ChaosCenter (`litmus` namespace)
+- Prometheus (`monitoring` namespace)
+- Neo4j (`neo4j` namespace)
+- metrics-server
+- Litmus infra deployments in `online-boutique` (subscriber, chaos-operator, etc.)
+- Stale ChaosEngines, ChaosResults, completed/failed pods
+- Clears any placement constraints
+- Kills lingering port-forwards
 
-# 2. Clear placement constraints (if any)
-uv run chaosprobe placement clear -n online-boutique 2>/dev/null || true
+Application deployments (Online Boutique) are kept.
 
-# 3. Delete ChaosCenter and all Litmus components
-kubectl delete namespace litmus --timeout=120s 2>/dev/null || true
-
-# 4. Wait for namespace to fully terminate
-while kubectl get ns litmus 2>/dev/null | grep -q Terminating; do sleep 5; done
-
-# 5. Remove orphaned Litmus infra deployments from online-boutique
-for dep in chaos-exporter chaos-operator-ce event-tracker subscriber workflow-controller; do
-  kubectl delete deployment "$dep" -n online-boutique --ignore-not-found 2>/dev/null
-done
-
-# 6. Clean up stale CRDs and completed pods
-kubectl delete chaosengines --all -n online-boutique --ignore-not-found 2>/dev/null || true
-kubectl delete chaosresults --all -n online-boutique --ignore-not-found 2>/dev/null || true
-kubectl delete pods -n online-boutique --field-selector=status.phase==Succeeded --ignore-not-found 2>/dev/null || true
-kubectl delete pods -n online-boutique --field-selector=status.phase==Failed --ignore-not-found 2>/dev/null || true
-
-# 7. Verify clean state — should show exactly 12 Running app pods
+After delete, verify clean state:
+```bash
 kubectl get pods -n online-boutique --no-headers
 ```
 
-**Expected**: 12 pods (all Online Boutique microservices), all `Running 1/1`. No `chaos-*`, `subscriber`, `event-tracker`, or `workflow-controller` pods. If any pods are Pending/CrashLoopBackOff, diagnose with `kubectl describe pod`.
+**Expected**: 12 pods (all Online Boutique microservices), all `Running 1/1`. No `chaos-*`, `subscriber`, `event-tracker`, or `workflow-controller` pods.
 
 ---
 
 ## Step 1: Initialize — `chaosprobe init`
 
-This installs ChaosCenter (Litmus operator + ChaosCenter dashboard + CRDs + experiment definitions) and registers the target namespace as ChaosCenter infrastructure.
+This installs all ChaosProbe infrastructure and registers the target namespace for experiments.
 
 ```bash
 uv run chaosprobe init -n online-boutique
@@ -195,23 +187,26 @@ uv run chaosprobe init -n online-boutique
 2. Validates cluster connectivity
 3. Installs LitmusChaos operator (`litmus-core` Helm chart) + experiment CRDs (`kubernetes-chaos` Helm chart)
 4. Sets up RBAC (ServiceAccount + ClusterRole + ClusterRoleBinding) in target namespace
-5. Installs ChaosCenter dashboard (`litmuschaos/litmus` Helm chart, release name `chaos`)
-6. Waits for ChaosCenter pods to become ready
-7. Port-forwards to auth (9003) and GraphQL (9002) servers
-8. Rotates default password from `litmus` to `ChaosProbe1!`
-9. Creates ChaosCenter environment `chaosprobe-online-boutique`
-10. Registers infrastructure and deploys subscriber to `online-boutique` namespace
-11. Waits for subscriber pod to be ready
+5. Installs **metrics-server** (from official manifest, patched with `--kubelet-insecure-tls`)
+6. Installs **Prometheus** (`prometheus-community/prometheus` Helm chart in `monitoring` namespace)
+7. Installs **Neo4j** (Deployment+Service in `neo4j` namespace, auth: `neo4j`/`chaosprobe`)
+8. Installs ChaosCenter dashboard (`litmuschaos/litmus` Helm chart, release name `chaos`)
+9. Waits for ChaosCenter pods to become ready
+10. Port-forwards to auth (9003) and GraphQL (9002) servers
+11. Rotates default password from `litmus` to `ChaosProbe1!`
+12. Creates ChaosCenter environment `chaosprobe-online-boutique`
+13. Registers infrastructure and deploys subscriber to `online-boutique` namespace
+14. Waits for subscriber pod to be ready
 
 ### What `init` does NOT do:
-- Does **not** install Prometheus (→ auto-installed by `run`)
-- Does **not** install Neo4j (→ auto-installed by `run`)
-- Does **not** install metrics-server (→ auto-installed by `run`)
 - Does **not** deploy Online Boutique (assumed to already exist)
 
 ### Expected output:
 ```
 ChaosProbe initialized successfully!
+  metrics-server installed successfully
+  Prometheus installed successfully
+  Neo4j installed successfully
 Installing ChaosCenter dashboard...
   ChaosCenter: all pods ready
   ChaosCenter installed successfully!
@@ -254,13 +249,13 @@ kubectl get pods -n litmus --no-headers
 kubectl get pods -n online-boutique -l 'app in (subscriber,chaos-operator,chaos-exporter,event-tracker,workflow-controller)'
 # Expected: subscriber Running, others may take a moment
 
-# Prometheus (may not exist yet — auto-installed by run)
-kubectl get pods -n monitoring --no-headers 2>/dev/null
-# Expected: prometheus-server Running (if previously installed)
+# Prometheus
+kubectl get pods -n monitoring --no-headers
+# Expected: prometheus-server Running
 
-# Neo4j (may not exist yet — auto-installed by run)
-kubectl get pods -n neo4j --no-headers 2>/dev/null
-# Expected: neo4j-0 Running (if previously installed)
+# Neo4j
+kubectl get pods -n neo4j --no-headers
+# Expected: neo4j-0 Running
 
 # metrics-server
 kubectl get deployment metrics-server -n kube-system --no-headers 2>/dev/null
@@ -279,20 +274,12 @@ kubectl top nodes
 uv run chaosprobe run -n online-boutique --iterations 3
 ```
 
-### What `run` auto-installs (if missing):
-1. **Helm** — auto-downloaded if not on PATH
-2. **LitmusChaos operator + CRDs** — Helm install
-3. **RBAC** — ServiceAccount + ClusterRoleBinding
-4. **Experiment definitions** — `pod-delete` CRD installed to target namespace
-5. **metrics-server** — from official manifest, patched with `--kubelet-insecure-tls`
-6. **Prometheus** — `prometheus-community/prometheus` Helm chart in `monitoring` namespace
-7. **Neo4j** — plain Deployment+Service in `neo4j` namespace (512Mi–768Mi RAM, bolt on 7687)
-8. **ChaosCenter** — non-blocking background install (if not already installed by `init`)
+`run` performs pre-flight checks to verify that all infrastructure (installed by `init`) is available. If any component is missing it will fail with a message directing you to run `chaosprobe init` first.
 
 ### What `run` does:
 1. Loads experiment from `scenarios/online-boutique/placement-experiment.yaml`
 2. Parses service topology from `scenarios/online-boutique/deploy/` manifests
-3. Runs `ensure_litmus_setup()` — installs missing components (see above)
+3. Runs `ensure_litmus_setup()` — pre-flight check that LitmusChaos, metrics-server, Prometheus, Neo4j, and ChaosCenter are installed (does NOT install anything)
 4. Pre-flight checks: node readiness, stale ChaosEngine cleanup, Prometheus/Neo4j/ChaosCenter health, port-forwards
 5. ChaosCenter configuration: password rotation, environment creation, infrastructure registration, subscriber deployment
 6. Connects to Neo4j, pushes topology graph
@@ -530,8 +517,9 @@ A successful experiment cycle produces:
 
 | Command | Purpose |
 |---------|---------|
-| `chaosprobe init -n online-boutique` | Install ChaosCenter + register infrastructure |
-| `chaosprobe run -n online-boutique --iterations 3` | Full experiment loop (auto-installs Prometheus, Neo4j, metrics-server) |
+| `chaosprobe init -n online-boutique` | Install all infrastructure (ChaosCenter, Prometheus, Neo4j, metrics-server) |
+| `chaosprobe run -n online-boutique --iterations 3` | Run experiments (verifies infra, runs 5 strategies) |
+| `chaosprobe delete -n online-boutique --yes` | Delete all ChaosProbe infrastructure (keeps app pods) |
 | `chaosprobe placement clear -n online-boutique` | Remove all nodeSelector constraints |
 | `chaosprobe placement apply <strategy> -n online-boutique` | Manually apply a placement strategy |
 | `chaosprobe status` | Check ChaosProbe and dependency health |

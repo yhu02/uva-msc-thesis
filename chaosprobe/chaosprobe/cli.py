@@ -141,15 +141,19 @@ def ensure_litmus_setup(
     experiment_types: list,
     auto_setup: bool = True,
 ) -> bool:
-    """Ensure LitmusChaos is installed and configured.
+    """Pre-flight check that all infrastructure is installed.
+
+    Verifies that LitmusChaos, metrics-server, Prometheus, Neo4j, and
+    ChaosCenter are available.  Does NOT install anything — run
+    'chaosprobe init' first to set up the infrastructure.
 
     Args:
         namespace: Target namespace for experiments.
         experiment_types: List of experiment type names (e.g. ["pod-delete"]).
-        auto_setup: Whether to automatically install if missing.
+        auto_setup: Ignored (kept for backward compatibility).
 
     Returns:
-        True if setup is ready.
+        True if all infrastructure is ready.
     """
     setup = LitmusSetup(skip_k8s_init=True)
     prereqs = setup.check_prerequisites()
@@ -170,29 +174,13 @@ def ensure_litmus_setup(
     prereqs = setup.check_prerequisites()
 
     if not prereqs["litmus_installed"]:
-        if not auto_setup:
-            click.echo(
-                "Error: LitmusChaos not installed. Run 'chaosprobe init' first.",
-                err=True,
-            )
-            return False
-
-        if not prereqs["helm"]:
-            click.echo("Helm not found. Installing automatically...")
-            try:
-                setup.ensure_helm()
-                click.echo("  Helm installed successfully")
-            except Exception as e:
-                click.echo(f"Error installing helm: {e}", err=True)
-                return False
-
-        click.echo("LitmusChaos not found. Installing automatically...")
-        try:
-            setup.install_litmus(wait=True)
-            click.echo("  LitmusChaos installed successfully")
-        except Exception as e:
-            click.echo(f"Error installing LitmusChaos: {e}", err=True)
-            return False
+        click.echo(
+            "Error: LitmusChaos not installed. Run 'chaosprobe init -n {0}' first.".format(
+                namespace
+            ),
+            err=True,
+        )
+        return False
 
     click.echo("Setting up RBAC for namespace...")
     try:
@@ -207,67 +195,41 @@ def ensure_litmus_setup(
         if not setup.install_experiment(exp_type, namespace):
             click.echo(f"  WARNING: Failed to install experiment '{exp_type}'", err=True)
 
-    # Ensure metrics-server is installed (needed for resource probing)
+    # ── Pre-flight checks: verify infrastructure is available ──
+    ok = True
+
     if not setup.is_metrics_server_installed():
-        click.echo("metrics-server not found. Installing automatically...")
-        try:
-            if setup.install_metrics_server(wait=True):
-                click.echo("  metrics-server installed successfully")
-            else:
-                click.echo("  WARNING: metrics-server installed but not yet ready", err=True)
-        except Exception as e:
-            click.echo(f"  WARNING: Failed to install metrics-server: {e}", err=True)
+        click.echo("  metrics-server: NOT FOUND — run 'chaosprobe init' first", err=True)
+        ok = False
     else:
         click.echo("  metrics-server: available")
 
-    # Ensure Prometheus is installed (needed for cluster metrics)
     if not setup.is_prometheus_installed():
-        if not prereqs.get("helm"):
-            click.echo("  Prometheus: skipped (helm not available)")
-        else:
-            click.echo("Prometheus not found. Installing automatically...")
-            try:
-                if setup.install_prometheus(wait=True):
-                    click.echo("  Prometheus installed successfully")
-                else:
-                    click.echo("  WARNING: Prometheus installed but not yet ready", err=True)
-            except Exception as e:
-                click.echo(f"  WARNING: Failed to install Prometheus: {e}", err=True)
+        click.echo("  Prometheus: NOT FOUND — run 'chaosprobe init' first", err=True)
+        ok = False
     else:
         click.echo("  Prometheus: available")
 
-    # Ensure Neo4j is installed (needed for graph storage)
     if not setup.is_neo4j_installed():
-        if not prereqs.get("helm"):
-            click.echo("  Neo4j: skipped (helm not available)")
-        else:
-            click.echo("Neo4j not found. Installing automatically...")
-            try:
-                if setup.install_neo4j(wait=True):
-                    click.echo("  Neo4j installed successfully")
-                else:
-                    click.echo("  WARNING: Neo4j installed but not yet ready", err=True)
-            except Exception as e:
-                click.echo(f"  WARNING: Failed to install Neo4j: {e}", err=True)
+        click.echo("  Neo4j: NOT FOUND — run 'chaosprobe init' first", err=True)
+        ok = False
     else:
         click.echo("  Neo4j: available")
 
-    # Install ChaosCenter (dashboard) in the background — not required for experiments
     if not setup.is_chaoscenter_installed():
-        if not prereqs.get("helm"):
-            click.echo("  ChaosCenter: skipped (helm not available)")
-        else:
-            click.echo("  ChaosCenter: installing in background (not blocking experiments)...")
-            try:
-                setup.install_chaoscenter(wait=False)
-                click.echo("  ChaosCenter: Helm release deployed, pods starting up")
-                click.echo("    Run 'chaosprobe dashboard status' to check progress")
-            except Exception as e:
-                click.echo(f"  WARNING: Failed to install ChaosCenter: {e}", err=True)
+        click.echo("  ChaosCenter: NOT FOUND — run 'chaosprobe init' first", err=True)
+        ok = False
     else:
         click.echo("  ChaosCenter: available")
 
-    return True
+    if not ok:
+        click.echo(
+            "\nError: Missing infrastructure. Run 'chaosprobe init -n {0}' to install.".format(
+                namespace
+            ),
+            err=True,
+        )
+    return ok
 
 
 def _extract_experiment_types(scenario: dict) -> list:
@@ -370,12 +332,14 @@ def _pf_cleanup():
     help="Skip ChaosCenter dashboard installation",
 )
 def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
-    """Initialize ChaosProbe and install LitmusChaos on existing cluster.
+    """Initialize ChaosProbe and install all infrastructure on existing cluster.
 
     This command sets up all prerequisites for running chaos experiments:
     - Installs Helm and LitmusChaos automatically
     - Creates RBAC configuration
+    - Installs metrics-server, Prometheus, and Neo4j
     - Installs the ChaosCenter dashboard by default (disable with --skip-dashboard)
+    - Registers the target namespace as ChaosCenter infrastructure
 
     Requires an existing Kubernetes cluster. Options:
     - Use 'chaosprobe cluster vagrant init/up/deploy' for local development
@@ -440,6 +404,47 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     except Exception as e:
         click.echo(f"  Error: {e}", err=True)
         sys.exit(1)
+
+    # ── Install infrastructure components ──
+
+    # metrics-server (needed for resource probing)
+    if not setup.is_metrics_server_installed():
+        click.echo("\nInstalling metrics-server...")
+        try:
+            if setup.install_metrics_server(wait=True):
+                click.echo("  metrics-server installed successfully")
+            else:
+                click.echo("  WARNING: metrics-server installed but not yet ready", err=True)
+        except Exception as e:
+            click.echo(f"  WARNING: Failed to install metrics-server: {e}", err=True)
+    else:
+        click.echo("\nmetrics-server: already installed")
+
+    # Prometheus (needed for cluster metrics)
+    if not setup.is_prometheus_installed():
+        click.echo("\nInstalling Prometheus...")
+        try:
+            if setup.install_prometheus(wait=True):
+                click.echo("  Prometheus installed successfully")
+            else:
+                click.echo("  WARNING: Prometheus installed but not yet ready", err=True)
+        except Exception as e:
+            click.echo(f"  WARNING: Failed to install Prometheus: {e}", err=True)
+    else:
+        click.echo("\nPrometheus: already installed")
+
+    # Neo4j (needed for graph storage)
+    if not setup.is_neo4j_installed():
+        click.echo("\nInstalling Neo4j...")
+        try:
+            if setup.install_neo4j(wait=True):
+                click.echo("  Neo4j installed successfully")
+            else:
+                click.echo("  WARNING: Neo4j installed but not yet ready", err=True)
+        except Exception as e:
+            click.echo(f"  WARNING: Failed to install Neo4j: {e}", err=True)
+    else:
+        click.echo("\nNeo4j: already installed")
 
     click.echo("\nChaosProbe initialized successfully!")
 
@@ -1307,6 +1312,162 @@ def cleanup(namespace: str, cleanup_all: bool):
         click.echo("Resources cleaned up successfully")
 
 
+@main.command()
+@click.option(
+    "--namespace",
+    "-n",
+    default="online-boutique",
+    help="Target namespace to clean chaos resources from",
+)
+@click.option(
+    "--keep-app",
+    is_flag=True,
+    default=True,
+    help="Keep application deployments (default: true)",
+)
+@click.confirmation_option(
+    prompt="This will delete ChaosCenter, Prometheus, Neo4j, metrics-server, "
+    "and all chaos resources. Continue?",
+)
+def delete(namespace: str, keep_app: bool):
+    """Delete all ChaosProbe infrastructure and experiment artifacts.
+
+    Removes everything installed by 'chaosprobe init' and 'chaosprobe run':
+    - ChaosCenter (litmus namespace)
+    - Prometheus (monitoring namespace)
+    - Neo4j (neo4j namespace)
+    - metrics-server
+    - Litmus infra deployments in the target namespace
+    - Stale ChaosEngines, ChaosResults, and completed pods
+
+    Application deployments (e.g. Online Boutique) are kept by default.
+    """
+    import subprocess as _del_sp
+
+    setup = LitmusSetup(skip_k8s_init=True)
+    is_valid, _ = setup.validate_cluster()
+    if not is_valid:
+        click.echo("Error: No reachable cluster.", err=True)
+        sys.exit(1)
+    setup._init_k8s_client()
+
+    # 1. Kill lingering port-forwards
+    click.echo("Stopping port-forwards...")
+    _del_sp.run(["pkill", "-f", "kubectl port-forward"],
+                capture_output=True, timeout=10)
+    _pf_cleanup()
+
+    # 2. Clear placement constraints
+    click.echo(f"Clearing placement constraints in {namespace}...")
+    try:
+        from chaosprobe.placement.mutator import PlacementMutator
+        mutator = PlacementMutator(namespace)
+        cleared = mutator.clear_placement(wait=True, timeout=120)
+        if cleared:
+            click.echo(f"  Cleared {len(cleared)} deployment(s)")
+        else:
+            click.echo("  No placement constraints found")
+    except Exception as e:
+        click.echo(f"  Warning: {e}")
+
+    # 3. Delete litmus namespace (ChaosCenter + operator + CRDs)
+    click.echo("Deleting ChaosCenter (litmus namespace)...")
+    result = _del_sp.run(
+        ["kubectl", "delete", "namespace", "litmus", "--timeout=120s"],
+        capture_output=True, text=True, timeout=180,
+    )
+    if result.returncode == 0:
+        click.echo("  litmus namespace deleted")
+    else:
+        if "not found" in result.stderr.lower():
+            click.echo("  litmus namespace not found (already deleted)")
+        else:
+            click.echo(f"  Warning: {result.stderr.strip()}")
+
+    # 4. Delete Prometheus (monitoring namespace)
+    click.echo("Deleting Prometheus (monitoring namespace)...")
+    result = _del_sp.run(
+        ["kubectl", "delete", "namespace", "monitoring", "--timeout=120s"],
+        capture_output=True, text=True, timeout=180,
+    )
+    if result.returncode == 0:
+        click.echo("  monitoring namespace deleted")
+    else:
+        if "not found" in result.stderr.lower():
+            click.echo("  monitoring namespace not found (already deleted)")
+        else:
+            click.echo(f"  Warning: {result.stderr.strip()}")
+
+    # 5. Delete Neo4j (neo4j namespace)
+    click.echo("Deleting Neo4j (neo4j namespace)...")
+    result = _del_sp.run(
+        ["kubectl", "delete", "namespace", "neo4j", "--timeout=120s"],
+        capture_output=True, text=True, timeout=180,
+    )
+    if result.returncode == 0:
+        click.echo("  neo4j namespace deleted")
+    else:
+        if "not found" in result.stderr.lower():
+            click.echo("  neo4j namespace not found (already deleted)")
+        else:
+            click.echo(f"  Warning: {result.stderr.strip()}")
+
+    # 6. Delete metrics-server
+    click.echo("Deleting metrics-server...")
+    result = _del_sp.run(
+        ["kubectl", "delete", "deployment", "metrics-server",
+         "-n", "kube-system", "--ignore-not-found"],
+        capture_output=True, text=True, timeout=30,
+    )
+    # Also delete the service and APIService
+    _del_sp.run(
+        ["kubectl", "delete", "service", "metrics-server",
+         "-n", "kube-system", "--ignore-not-found"],
+        capture_output=True, timeout=30,
+    )
+    _del_sp.run(
+        ["kubectl", "delete", "apiservice", "v1beta1.metrics.k8s.io",
+         "--ignore-not-found"],
+        capture_output=True, timeout=30,
+    )
+    click.echo("  metrics-server deleted")
+
+    # 7. Remove orphaned Litmus infra deployments from target namespace
+    click.echo(f"Removing Litmus infra from {namespace}...")
+    infra_deps = [
+        "chaos-exporter", "chaos-operator-ce", "event-tracker",
+        "subscriber", "workflow-controller",
+    ]
+    for dep in infra_deps:
+        _del_sp.run(
+            ["kubectl", "delete", "deployment", dep,
+             "-n", namespace, "--ignore-not-found"],
+            capture_output=True, timeout=30,
+        )
+    click.echo(f"  Litmus infra deployments removed from {namespace}")
+
+    # 8. Clean stale CRDs and completed pods in target namespace
+    click.echo(f"Cleaning chaos resources in {namespace}...")
+    for resource in ["chaosengines", "chaosresults"]:
+        _del_sp.run(
+            ["kubectl", "delete", resource, "--all",
+             "-n", namespace, "--ignore-not-found"],
+            capture_output=True, timeout=30,
+        )
+    for phase in ["Succeeded", "Failed"]:
+        _del_sp.run(
+            ["kubectl", "delete", "pods",
+             f"--field-selector=status.phase=={phase}",
+             "-n", namespace, "--ignore-not-found"],
+            capture_output=True, timeout=30,
+        )
+    click.echo("  Chaos resources cleaned")
+
+    click.echo("\nAll ChaosProbe infrastructure deleted.")
+    click.echo("Application deployments in '{namespace}' were kept.")
+    click.echo("Run 'chaosprobe init -n {namespace}' to re-initialize.")
+
+
 # ─────────────────────────────────────────────────────────────
 # Dashboard commands — ChaosCenter management
 # ─────────────────────────────────────────────────────────────
@@ -1963,11 +2124,6 @@ def placement_nodes():
     help="Seconds to wait after placement before running experiment",
 )
 @click.option(
-    "--no-auto-setup",
-    is_flag=True,
-    help="Disable automatic LitmusChaos installation",
-)
-@click.option(
     "--experiment",
     "-e",
     default="scenarios/online-boutique/placement-experiment.yaml",
@@ -2092,7 +2248,6 @@ def run(
     timeout: int,
     seed: int,
     settle_time: int,
-    no_auto_setup: bool,
     experiment: str,
     iterations: int,
     provision: bool,
@@ -2207,7 +2362,7 @@ def run(
 
     # Ensure LitmusChaos is ready once (all placement experiments use the same types)
     experiment_types = _extract_experiment_types(shared_scenario)
-    if not ensure_litmus_setup(namespace, experiment_types, auto_setup=not no_auto_setup):
+    if not ensure_litmus_setup(namespace, experiment_types):
         click.echo("Error: LitmusChaos setup failed", err=True)
         sys.exit(1)
 
