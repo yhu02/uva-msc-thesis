@@ -1851,7 +1851,45 @@ end
         except Exception:
             pass
 
-        print("No StorageClass found. Installing local-path-provisioner...")
+        self._install_local_path_provisioner()
+
+    def is_local_path_provisioner_running(self) -> bool:
+        """Check if the local-path-provisioner pod is running."""
+        try:
+            pods = self.core_api.list_namespaced_pod(
+                namespace="local-path-storage",
+                label_selector="app.kubernetes.io/name=local-path-provisioner",
+            )
+            for pod in pods.items:
+                if pod.status.phase == "Running":
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def ensure_local_path_provisioner(self) -> bool:
+        """Ensure local-path-provisioner is installed and running.
+
+        Checks both the StorageClass and the provisioner pod. Re-applies
+        the manifest if the pod is missing (e.g. after namespace deletion).
+
+        Returns:
+            True if provisioner is running after the check.
+        """
+        if self.is_local_path_provisioner_running():
+            return True
+        self._install_local_path_provisioner()
+        # Wait briefly for the pod to start
+        import time
+        for _ in range(15):
+            time.sleep(2)
+            if self.is_local_path_provisioner_running():
+                return True
+        return False
+
+    def _install_local_path_provisioner(self) -> None:
+        """Apply the local-path-provisioner manifest."""
+        print("Installing local-path-provisioner...")
         subprocess.run(
             [
                 "kubectl",

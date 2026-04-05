@@ -198,6 +198,12 @@ def ensure_litmus_setup(
     # ── Pre-flight checks: verify infrastructure is available ──
     ok = True
 
+    if not setup.is_local_path_provisioner_running():
+        click.echo("  local-path-provisioner: NOT FOUND — run 'chaosprobe init' first", err=True)
+        ok = False
+    else:
+        click.echo("  local-path-provisioner: available")
+
     if not setup.is_metrics_server_installed():
         click.echo("  metrics-server: NOT FOUND — run 'chaosprobe init' first", err=True)
         ok = False
@@ -378,6 +384,17 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
 
     setup._init_k8s_client()
     prereqs = setup.check_prerequisites()
+
+    # Ensure local-path-provisioner is running (needed for PVCs)
+    click.echo("\nEnsuring local-path-provisioner...")
+    if setup.is_local_path_provisioner_running():
+        click.echo("  local-path-provisioner: already running")
+    else:
+        click.echo("  local-path-provisioner not found, installing...")
+        if setup.ensure_local_path_provisioner():
+            click.echo("  local-path-provisioner: running")
+        else:
+            click.echo("  WARNING: local-path-provisioner may not be ready yet", err=True)
 
     if not skip_litmus and not prereqs["litmus_installed"]:
         if not prereqs["helm"]:
