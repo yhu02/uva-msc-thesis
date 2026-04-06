@@ -121,6 +121,7 @@ class ChaosRunner:
             spec["appinfo"] = appinfo
 
         spec.setdefault("annotationCheck", "false")
+        spec.setdefault("jobCleanUpPolicy", "delete")
 
         exp_names = [e.get("name", "unknown") for e in spec.get("experiments", [])]
 
@@ -275,6 +276,36 @@ class ChaosRunner:
         sa = spec.get("chaosServiceAccount", "litmus-admin")
         ns = self.namespace
 
+        # Build a minimal ChaosExperiment CR for the install-chaos-faults
+        # template.  ChaosCenter's UI reads this to display fault metadata.
+        fault_cr = {
+            "apiVersion": "litmuschaos.io/v1alpha1",
+            "kind": "ChaosExperiment",
+            "metadata": {
+                "name": fault_name,
+                "namespace": ns,
+            },
+            "description": {"message": f"Injects {fault_name} fault"},
+            "spec": {
+                "definition": {
+                    "scope": "Namespaced",
+                    "permissions": [],
+                    "image": "litmuschaos/go-runner:latest",
+                    "args": [f"-name={fault_name}"],
+                    "command": ["/bin/bash"],
+                    "env": [
+                        e_var
+                        for exp in experiments
+                        for e_var in exp.get("spec", {})
+                        .get("components", {})
+                        .get("env", [])
+                    ],
+                    "labels": {"name": fault_name},
+                },
+            },
+        }
+        fault_cr_yaml = yaml.dump(fault_cr, default_flow_style=False)
+
         # ChaosCenter appends a 14-char timestamp and Argo appends an
         # ~11-char hash to the workflow name to create the step pod name.
         # K8s labels have a 63-char limit, so the workflow name must be
@@ -308,10 +339,31 @@ class ChaosRunner:
                 "templates": [
                     {
                         "name": "chaos-entry",
+                        "inputs": {},
                         "steps": [
+                            [{"name": "install-chaos-faults", "template": "install-chaos-faults"}],
                             [{"name": f"run-{fault_name}", "template": f"run-{fault_name}"}],
                             [{"name": "revert-chaos", "template": "revert-chaos"}],
                         ],
+                    },
+                    {
+                        "name": "install-chaos-faults",
+                        "inputs": {
+                            "artifacts": [
+                                {
+                                    "name": fault_name,
+                                    "path": f"/tmp/{fault_name}.yaml",
+                                    "raw": {"data": fault_cr_yaml},
+                                },
+                            ],
+                        },
+                        "container": {
+                            "image": "litmuschaos/k8s:latest",
+                            "command": ["sh", "-c"],
+                            "args": [
+                                "echo 'ChaosExperiment already installed by chaosprobe init'",
+                            ],
+                        },
                     },
                     {
                         "name": f"run-{fault_name}",
@@ -339,16 +391,19 @@ class ChaosRunner:
                     },
                     {
                         "name": "revert-chaos",
+                        "inputs": {},
                         "container": {
                             "image": "litmuschaos/k8s:latest",
                             "command": ["sh", "-c"],
                             "args": [
-                                "echo 'ChaosEngine cleanup delegated to pre-flight checks'",
+                                f"kubectl delete chaosengine -l 'instance_id in"
+                                f" ({instance_id}, )' -n"
+                                " {{workflow.parameters.adminModeNamespace}}",
                             ],
                         },
                     },
                 ],
-                "podGC": {"strategy": "OnWorkflowSuccess"},
+                "podGC": {"strategy": "OnWorkflowCompletion"},
             },
         }
 

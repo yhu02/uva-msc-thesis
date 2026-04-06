@@ -1015,7 +1015,11 @@ class TestChaosRunnerBuildManifest:
         assert parsed["metadata"]["namespace"] == "test-ns"
         assert parsed["metadata"]["labels"]["infra_id"] == "test-infra-id"
         assert parsed["spec"]["serviceAccountName"] == "litmus-admin"
-        assert len(parsed["spec"]["templates"]) == 3
+        assert len(parsed["spec"]["templates"]) == 4
+        # Verify install-chaos-faults template exists for ChaosCenter UI
+        install_templates = [t for t in parsed["spec"]["templates"] if t["name"] == "install-chaos-faults"]
+        assert len(install_templates) == 1
+        assert "artifacts" in install_templates[0]["inputs"]
 
     def test_engine_uses_generate_name(self):
         import json as _json

@@ -2513,6 +2513,31 @@ def run(
     except Exception as e:
         click.echo(f"  ChaosEngines: check skipped ({e})", err=True)
 
+    # 2b. Clean up stale Argo workflow pods (Error/Failed from previous runs)
+    try:
+        wf_pods = core_api.list_namespaced_pod(
+            namespace,
+            label_selector="workflows.argoproj.io/workflow",
+        )
+        stale_phases = {"Failed", "Error", "Succeeded"}
+        stale_pods = [
+            p
+            for p in wf_pods.items
+            if p.status.phase in stale_phases
+        ]
+        if stale_pods:
+            click.echo(f"  Cleaning up {len(stale_pods)} stale workflow pod(s)...")
+            for pod in stale_pods:
+                core_api.delete_namespaced_pod(
+                    name=pod.metadata.name,
+                    namespace=namespace,
+                )
+            click.echo("  Workflow pods: cleaned")
+        else:
+            click.echo("  Workflow pods: none stale")
+    except Exception as e:
+        click.echo(f"  Workflow pods: check skipped ({e})", err=True)
+
     # 3. Verify infrastructure pods are ready
     def _check_pods_ready(ns: str, label: str, component: str) -> bool:
         """Check that at least one pod matching label is Running and Ready."""
@@ -2787,6 +2812,42 @@ def run(
                 "Neo4j is required as the primary data store. Check connection and retry.", err=True
             )
             sys.exit(1)
+
+    # Fresh-start: clear any stale placement constraints, then rollout
+    # restart all app deployments so every run begins with clean pods.
+    click.echo("  Clearing stale placement constraints...")
+    mutator.clear_placement(wait=False)
+    click.echo("  Restarting app deployments for a clean baseline...")
+    try:
+        _apps_api = k8s_client_mod.AppsV1Api()
+        _all_deps = _apps_api.list_namespaced_deployment(namespace)
+        _restart_names = [
+            d.metadata.name
+            for d in _all_deps.items
+            if d.metadata.name not in _LITMUS_INFRA_DEPLOYMENTS
+        ]
+        _now = datetime.now(timezone.utc).isoformat()
+        for _dep_name in _restart_names:
+            _apps_api.patch_namespaced_deployment(
+                name=_dep_name,
+                namespace=namespace,
+                body={
+                    "spec": {
+                        "template": {
+                            "metadata": {
+                                "annotations": {
+                                    "chaosprobe.io/restartedAt": _now,
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        click.echo(f"    Triggered rollout restart for {len(_restart_names)} deployment(s)")
+        _wait_for_healthy_deployments(namespace, timeout=180)
+        click.echo("    All deployments ready (fresh pods)")
+    except Exception as e:
+        click.echo(f"    WARNING: rollout restart failed ({e})", err=True)
 
     for idx, strategy_name in enumerate(strategy_list, 1):
         click.echo(f"\n{'─' * 60}")
@@ -3407,8 +3468,20 @@ def _extract_target_deployment(scenario: Dict[str, Any]) -> str:
     return "checkoutservice"
 
 
+_LITMUS_INFRA_DEPLOYMENTS = frozenset({
+    "chaos-exporter",
+    "chaos-operator-ce",
+    "event-tracker",
+    "subscriber",
+    "workflow-controller",
+})
+
+
 def _wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
-    """Wait until all deployments in the namespace have all replicas ready."""
+    """Wait until all application deployments in the namespace have all replicas ready.
+
+    Litmus infrastructure deployments are excluded from the check.
+    """
     from kubernetes import client
     from kubernetes import config as k8s_config
 
@@ -3424,6 +3497,8 @@ def _wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
         all_ready = True
         deps = apps_api.list_namespaced_deployment(namespace)
         for dep in deps.items:
+            if dep.metadata.name in _LITMUS_INFRA_DEPLOYMENTS:
+                continue
             desired = dep.spec.replicas or 1
             ready = (dep.status.ready_replicas or 0) if dep.status else 0
             available = (dep.status.available_replicas or 0) if dep.status else 0
@@ -3437,6 +3512,8 @@ def _wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
     # Log which deployments are not ready but don't fail
     deps = apps_api.list_namespaced_deployment(namespace)
     for dep in deps.items:
+        if dep.metadata.name in _LITMUS_INFRA_DEPLOYMENTS:
+            continue
         desired = dep.spec.replicas or 1
         ready = (dep.status.ready_replicas or 0) if dep.status else 0
         if ready < desired:
