@@ -4,7 +4,7 @@
 |-----------|-------|
 | **ITERATIONS** | `2` |
 | **STRATEGIES** | `random,spread` |
-| **MAINTENANCE_CYCLES** | `2` |
+| **MAINTENANCE_CYCLES** | `20` |
 
 Use these values in ALL commands and checks below. When you see `--iterations`, use the ITERATIONS value. When you see `--strategies`, use the STRATEGIES value. When maintenance cycles are mentioned, use MAINTENANCE_CYCLES.
 
