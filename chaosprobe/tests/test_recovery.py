@@ -9,8 +9,7 @@ from chaosprobe.metrics.recovery import RecoveryWatcher
 
 def _make_watcher():
     """Create a RecoveryWatcher with mocked Kubernetes client."""
-    with patch("chaosprobe.metrics.recovery.config") as mock_config:
-        mock_config.ConfigException = Exception
+    with patch("chaosprobe.metrics.recovery.ensure_k8s_config"):
         with patch("chaosprobe.metrics.recovery.client") as mock_client:
             mock_client.CoreV1Api.return_value = MagicMock()
             watcher = RecoveryWatcher("default", "nginx")

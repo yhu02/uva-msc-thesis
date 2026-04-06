@@ -10,10 +10,11 @@ import statistics
 import time
 from typing import Any, Dict, List, Optional
 
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 
-from chaosprobe.metrics.throughput import _ContinuousProberBase
+from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.base import ContinuousProberBase
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def parse_memory_quantity(value: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-class ContinuousResourceProber(_ContinuousProberBase):
+class ContinuousResourceProber(ContinuousProberBase):
     """Polls Kubernetes Metrics API for node and pod resource utilization.
 
     Captures CPU (millicores) and memory (bytes) for the node hosting the
@@ -107,10 +108,7 @@ class ContinuousResourceProber(_ContinuousProberBase):
         self._node_capacity_mem: Optional[int] = None  # bytes
         self._metrics_available: bool = True
 
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
+        ensure_k8s_config()
 
         self._custom_api = client.CustomObjectsApi()
         self._core_api = client.CoreV1Api()

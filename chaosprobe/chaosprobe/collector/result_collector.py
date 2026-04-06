@@ -6,8 +6,10 @@ Supports all resilience probe types: httpProbe, cmdProbe, k8sProbe, promProbe.
 
 from typing import Any, Dict, List, Optional
 
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client.rest import ApiException
+
+from chaosprobe.k8s import ensure_k8s_config
 
 
 # Map LitmusChaos probe type identifiers to canonical names
@@ -34,10 +36,7 @@ class ResultCollector:
         """
         self.namespace = namespace
 
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
+        ensure_k8s_config()
 
         self.custom_api = client.CustomObjectsApi()
 

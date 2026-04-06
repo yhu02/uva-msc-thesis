@@ -11,7 +11,9 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from kubernetes import client, config, watch
+from kubernetes import client, watch
+
+from chaosprobe.k8s import ensure_k8s_config
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +35,7 @@ class RecoveryWatcher:
         self.deployment_name = deployment_name
         self._label_selector = f"app={deployment_name}"
 
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
+        ensure_k8s_config()
 
         self.core_api = client.CoreV1Api()
 

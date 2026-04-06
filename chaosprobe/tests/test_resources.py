@@ -218,7 +218,7 @@ class TestContinuousResourceProberResult:
 
 
 class TestContinuousResourceProberApiUnavailable:
-    @patch("chaosprobe.metrics.resources.config")
+    @patch("chaosprobe.metrics.resources.ensure_k8s_config")
     @patch("chaosprobe.metrics.resources.client")
     def test_start_without_metrics_server(self, mock_client, mock_config):
         """When metrics-server is not installed, start() should not spawn a thread."""
@@ -246,7 +246,7 @@ class TestContinuousResourceProberApiUnavailable:
         assert prober._metrics_available is False
         assert prober._thread is None  # no thread spawned
 
-    @patch("chaosprobe.metrics.resources.config")
+    @patch("chaosprobe.metrics.resources.ensure_k8s_config")
     @patch("chaosprobe.metrics.resources.client")
     def test_start_without_pods(self, mock_client, mock_config):
         """When no pods found, start() should disable itself."""

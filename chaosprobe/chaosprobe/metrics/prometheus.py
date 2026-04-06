@@ -16,7 +16,8 @@ import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
-from chaosprobe.metrics.throughput import _ContinuousProberBase
+from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.base import ContinuousProberBase
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +96,9 @@ def _find_prometheus_service() -> List[Tuple[str, str, int]]:
     Returns a list of ``(service_name, namespace, port)`` tuples.
     """
     try:
-        from kubernetes import client, config
+        from kubernetes import client
 
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
+        ensure_k8s_config()
 
         core = client.CoreV1Api()
     except Exception:
@@ -169,7 +167,7 @@ def discover_prometheus_urls(namespace: str = "monitoring") -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-class ContinuousPrometheusProber(_ContinuousProberBase):
+class ContinuousPrometheusProber(ContinuousProberBase):
     """Queries one or more Prometheus instances at intervals during a chaos
     experiment.
 

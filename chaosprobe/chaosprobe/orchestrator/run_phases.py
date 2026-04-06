@@ -6,6 +6,7 @@ functions so the top-level orchestrator stays small and readable.
 
 from __future__ import annotations
 
+import statistics
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -295,202 +296,83 @@ def run_preflight_checks(
 
 
 # ---------------------------------------------------------------------------
-# 2.  Prober lifecycle helpers
+# 2.  Neo4j graph store initialisation
 # ---------------------------------------------------------------------------
 
-def create_and_start_probers(
+def init_graph_store(
+    neo4j_uri: str,
+    neo4j_user: str,
+    neo4j_password: str,
     namespace: str,
-    target_deployment: str,
-    *,
-    measure_latency: bool,
-    measure_redis: bool,
-    measure_disk: bool,
-    measure_resources: bool,
-    measure_prometheus: bool,
-    prometheus_url: Tuple[str, ...],
-) -> Dict[str, Any]:
-    """Create continuous probers and start them in parallel.
+    service_routes: Any = None,
+) -> Any:
+    """Connect to Neo4j, ensure schema, and sync topology.
 
-    Returns a dict keyed by prober name with the prober instances (or
-    None for disabled probers).
+    Returns the connected ``Neo4jStore`` instance.
+    Raises on failure (caller should handle and exit).
     """
-    from chaosprobe.metrics.latency import ContinuousLatencyProber
-    from chaosprobe.metrics.prometheus import ContinuousPrometheusProber
-    from chaosprobe.metrics.recovery import RecoveryWatcher
-    from chaosprobe.metrics.resources import ContinuousResourceProber
-    from chaosprobe.metrics.throughput import ContinuousDiskProber, ContinuousRedisProber
+    from chaosprobe.storage.neo4j_store import Neo4jStore
 
-    watcher = RecoveryWatcher(namespace, target_deployment)
-    latency_prober = ContinuousLatencyProber(namespace) if measure_latency else None
-    redis_prober = ContinuousRedisProber(namespace) if measure_redis else None
-    disk_prober = (
-        ContinuousDiskProber(namespace, disk_target=target_deployment)
-        if measure_disk
-        else None
-    )
-    resource_prober = (
-        ContinuousResourceProber(namespace, target_deployment)
-        if measure_resources
-        else None
-    )
-    prometheus_prober = (
-        ContinuousPrometheusProber(
-            namespace,
-            prometheus_urls=list(prometheus_url) if prometheus_url else None,
-        )
-        if measure_prometheus
-        else None
-    )
-
-    probers_to_start = [
-        (label, p)
-        for label, p in [
-            ("recovery watcher", watcher),
-            ("inter-service latency probing", latency_prober),
-            ("Redis throughput probing", redis_prober),
-            ("disk I/O throughput probing", disk_prober),
-            ("resource utilization probing", resource_prober),
-            ("Prometheus metrics collection", prometheus_prober),
-        ]
-        if p is not None
-    ]
-    labels = [l for l, _ in probers_to_start if l != "recovery watcher"]
-    if labels:
-        click.echo(f"    Starting {', '.join(labels)}...")
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    with ThreadPoolExecutor(max_workers=len(probers_to_start)) as executor:
-        futures = {executor.submit(p.start): label for label, p in probers_to_start}
-        for f in as_completed(futures):
-            f.result()
-
-    return {
-        "watcher": watcher,
-        "latency": latency_prober,
-        "redis": redis_prober,
-        "disk": disk_prober,
-        "resource": resource_prober,
-        "prometheus": prometheus_prober,
-    }
-
-
-def stop_and_collect_probers(
-    probers: Dict[str, Any],
-    locust_runner: Any = None,
-) -> Dict[str, Any]:
-    """Stop all probers and collect their results.
-
-    Returns a dict with keys matching prober names, values are result dicts.
-    Also includes ``load_stats`` if a Locust runner was active.
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    active = [
-        p
-        for p in [
-            locust_runner,
-            probers.get("latency"),
-            probers.get("redis"),
-            probers.get("disk"),
-            probers.get("resource"),
-            probers.get("prometheus"),
-            probers.get("watcher"),
-        ]
-        if p is not None
-    ]
-    if active:
-        with ThreadPoolExecutor(max_workers=len(active)) as executor:
-            stop_futs = {executor.submit(p.stop): p for p in active}
-            for f in as_completed(stop_futs):
-                try:
-                    f.result()
-                except Exception:
-                    pass
-
-    results: Dict[str, Any] = {}
-
-    # Locust
-    if locust_runner:
+    max_retries = 24  # 24 × 5 s = 120 s total budget
+    store: Optional[Neo4jStore] = None
+    for attempt in range(max_retries):
         try:
-            stats = locust_runner.collect_stats()
-            results["load_stats"] = stats
+            store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
+            break
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
             click.echo(
-                f"    Load: {stats.total_requests} reqs, "
-                f"p95={stats.p95_response_time_ms:.0f}ms, "
-                f"err={stats.error_rate:.2%}"
+                f"  Neo4j:      waiting for bolt to become ready"
+                f" ({attempt + 1}/{max_retries})..."
             )
-        except Exception as e:
-            click.echo(f"    Warning: failed to collect load stats: {e}", err=True)
-        finally:
-            locust_runner.cleanup()
+            time.sleep(5)
 
-    # Latency
-    if probers.get("latency"):
-        try:
-            data = probers["latency"].result()
-            results["latency"] = data
-            phase_data = data.get("phases", {})
-            during = phase_data.get("during-chaos", {})
-            click.echo(f"    Latency: {during.get('sampleCount', 0)} samples during chaos")
-        except Exception as e:
-            click.echo(f"    Warning: failed to collect latency data: {e}", err=True)
+    assert store is not None
+    store.ensure_schema()
 
-    # Redis
-    if probers.get("redis"):
-        try:
-            data = probers["redis"].result()
-            results["redis"] = data
-            rp = data.get("phases", {}).get("during-chaos", {})
-            click.echo(f"    Redis: {rp.get('sampleCount', 0)} samples during chaos")
-        except Exception as e:
-            click.echo(f"    Warning: failed to collect Redis data: {e}", err=True)
+    # Sync current cluster topology into the graph
+    try:
+        from chaosprobe.placement.mutator import PlacementMutator
 
-    # Disk
-    if probers.get("disk"):
-        try:
-            data = probers["disk"].result()
-            results["disk"] = data
-            dp = data.get("phases", {}).get("during-chaos", {})
-            click.echo(f"    Disk: {dp.get('sampleCount', 0)} samples during chaos")
-        except Exception as e:
-            click.echo(f"    Warning: failed to collect disk data: {e}", err=True)
+        topo_mutator = PlacementMutator(namespace)
+        nodes_raw = topo_mutator.get_nodes()
+        deployments_raw = topo_mutator.get_deployments()
+        store.sync_topology(
+            [
+                {
+                    "name": n.name,
+                    "cpu": n.allocatable_cpu_millicores,
+                    "memory": n.allocatable_memory_bytes,
+                    "control_plane": n.is_control_plane,
+                }
+                for n in nodes_raw
+            ],
+            [
+                {"name": d.name, "namespace": d.namespace, "replicas": d.replicas}
+                for d in deployments_raw
+            ],
+        )
+    except Exception as e:
+        click.echo(f"  Neo4j: topology sync skipped ({e})", err=True)
 
-    # Resources
-    if probers.get("resource"):
-        try:
-            data = probers["resource"].result()
-            results["resource"] = data
-            if data.get("available"):
-                rp = data.get("phases", {}).get("during-chaos", {})
-                click.echo(f"    Resources: {rp.get('sampleCount', 0)} samples during chaos")
-            else:
-                click.echo(f"    Resources: {data.get('reason', 'unavailable')}")
-        except Exception as e:
-            click.echo(f"    Warning: failed to collect resource data: {e}", err=True)
-
-    # Prometheus
-    if probers.get("prometheus"):
-        try:
-            data = probers["prometheus"].result()
-            results["prometheus"] = data
-            if data.get("available"):
-                pp = data.get("phases", {}).get("during-chaos", {})
-                click.echo(f"    Prometheus: {pp.get('sampleCount', 0)} samples during chaos")
-            else:
-                click.echo(f"    Prometheus: {data.get('reason', 'unavailable')}")
-        except Exception as e:
-            click.echo(f"    Warning: failed to collect Prometheus data: {e}", err=True)
-
-    # Recovery watcher
-    if probers.get("watcher"):
-        results["recovery"] = probers["watcher"].result()
-
-    return results
+    store.sync_service_dependencies(routes=service_routes)
+    click.echo(f"  Neo4j:      connected ({neo4j_uri})")
+    return store
 
 
 # ---------------------------------------------------------------------------
-# 3.  Final summary output
+# 3.  Prober lifecycle helpers (delegated to probers.py)
+# ---------------------------------------------------------------------------
+
+from chaosprobe.orchestrator.probers import (  # noqa: E402, F401
+    create_and_start_probers,
+    stop_and_collect_probers,
+)
+
+
+# ---------------------------------------------------------------------------
+# 4.  Final summary output
 # ---------------------------------------------------------------------------
 
 def write_run_results(
@@ -646,3 +528,54 @@ def _build_comparison_table_impl(
             row["maxRecovery_ms"] = recovery.get("maxRecovery_ms")
         table.append(row)
     return table
+
+
+# ---------------------------------------------------------------------------
+# 6.  Multi-iteration aggregation
+# ---------------------------------------------------------------------------
+
+def aggregate_iterations(
+    iteration_results: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Compute aggregated statistics across multiple iterations."""
+    scores = [ir["resilienceScore"] for ir in iteration_results]
+    verdicts = [ir["verdict"] for ir in iteration_results]
+    pass_count = sum(1 for v in verdicts if v == "PASS")
+
+    agg: Dict[str, Any] = {
+        "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
+        "passRate": round(pass_count / len(verdicts), 2),
+        "meanResilienceScore": round(statistics.mean(scores), 1),
+        "totalExperiments": len(iteration_results),
+        "passed": pass_count,
+        "failed": len(verdicts) - pass_count,
+    }
+
+    # Aggregate recovery metrics from metrics.recovery.summary
+    all_recovery_times: List[float] = []
+    for ir in iteration_results:
+        rm = ir.get("metrics", {})
+        if rm:
+            summary = rm.get("recovery", {}).get("summary", {})
+            mean_r = summary.get("meanRecovery_ms")
+            if mean_r is not None:
+                all_recovery_times.append(mean_r)
+
+    if all_recovery_times:
+        all_max = []
+        for ir in iteration_results:
+            rm = ir.get("metrics", {})
+            if rm:
+                max_r = rm.get("recovery", {}).get("summary", {}).get("maxRecovery_ms")
+                if max_r is not None:
+                    all_max.append(max_r)
+
+        agg["meanRecoveryTime_ms"] = round(statistics.mean(all_recovery_times), 1)
+        agg["medianRecoveryTime_ms"] = round(statistics.median(all_recovery_times), 1)
+        agg["maxRecoveryTime_ms"] = max(all_max) if all_max else None
+    else:
+        agg["meanRecoveryTime_ms"] = None
+        agg["medianRecoveryTime_ms"] = None
+        agg["maxRecoveryTime_ms"] = None
+
+    return agg

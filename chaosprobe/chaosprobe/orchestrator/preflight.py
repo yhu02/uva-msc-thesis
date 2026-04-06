@@ -5,9 +5,11 @@ infrastructure pods, and waits for deployment health.
 """
 
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import click
+
+from chaosprobe.k8s import ensure_k8s_config
 
 # Litmus infrastructure deployments to exclude from readiness checks
 LITMUS_INFRA_DEPLOYMENTS = frozenset({
@@ -25,12 +27,8 @@ def wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
     Litmus infrastructure deployments are excluded from the check.
     """
     from kubernetes import client
-    from kubernetes import config as k8s_config
 
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
+    ensure_k8s_config()
 
     apps_api = client.AppsV1Api()
     deadline = time.time() + timeout
@@ -79,12 +77,8 @@ def extract_target_deployment(scenario: Dict[str, Any]) -> str:
 def check_pods_ready(namespace: str, label: str) -> bool:
     """Check that at least one pod matching *label* is Running and Ready."""
     from kubernetes import client
-    from kubernetes import config as k8s_config
 
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
+    ensure_k8s_config()
 
     core_api = client.CoreV1Api()
     try:
@@ -97,3 +91,15 @@ def check_pods_ready(namespace: str, label: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def extract_experiment_types(scenario: dict) -> List[str]:
+    """Extract experiment type names from a loaded scenario."""
+    types: List[str] = []
+    for exp in scenario.get("experiments", []):
+        spec = exp.get("spec", {})
+        for experiment in spec.get("spec", {}).get("experiments", []):
+            name = experiment.get("name", "")
+            if name:
+                types.append(name)
+    return types

@@ -1,8 +1,6 @@
 """ChaosProbe CLI - Main entry point for the chaos testing framework."""
 
-import copy
 import json
-import statistics
 import sys
 import time
 from datetime import datetime, timezone
@@ -11,25 +9,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
-from chaosprobe.chaos.runner import ChaosRunner
-from chaosprobe.collector.result_collector import ResultCollector
 from chaosprobe.config.loader import load_scenario
 from chaosprobe.config.topology import parse_topology_from_scenario
 from chaosprobe.config.validator import validate_scenario
-from chaosprobe.loadgen.runner import LoadProfile, LocustRunner
 from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS as _LITMUS_INFRA_DEPLOYMENTS,
+    extract_experiment_types as _extract_experiment_types,
     extract_target_deployment as _extract_target_deployment,
     wait_for_healthy_deployments as _wait_for_healthy_deployments,
 )
 from chaosprobe.orchestrator.run_phases import (
-    create_and_start_probers,
+    init_graph_store,
     run_preflight_checks,
-    stop_and_collect_probers,
     write_run_results,
 )
+from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
 from chaosprobe.output.comparison import compare_runs
 from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.placement.mutator import PlacementMutator
@@ -228,18 +224,6 @@ def ensure_litmus_setup(
             err=True,
         )
     return ok
-
-
-def _extract_experiment_types(scenario: dict) -> list:
-    """Extract experiment type names from a loaded scenario."""
-    types = []
-    for exp in scenario.get("experiments", []):
-        spec = exp.get("spec", {})
-        for experiment in spec.get("spec", {}).get("experiments", []):
-            name = experiment.get("name", "")
-            if name:
-                types.append(name)
-    return types
 
 
 @click.group()
@@ -1206,47 +1190,10 @@ def run(
     graph_store = None
     if neo4j_uri:
         try:
-            from chaosprobe.storage.neo4j_store import Neo4jStore
-
-            # Retry connection — Neo4j may still be starting after install
-            max_neo4j_retries = 24  # 24 x 5s = 120s total budget
-            for _attempt in range(max_neo4j_retries):
-                try:
-                    graph_store = Neo4jStore(neo4j_uri, neo4j_user, neo4j_password)
-                    break
-                except Exception:
-                    if _attempt == max_neo4j_retries - 1:
-                        raise
-                    click.echo(
-                        f"  Neo4j:      waiting for bolt to become ready"
-                        f" ({_attempt + 1}/{max_neo4j_retries})..."
-                    )
-                    time.sleep(5)
-            graph_store.ensure_schema()
-            # Sync current cluster topology into the graph
-            try:
-                topo_mutator = PlacementMutator(namespace)
-                nodes_raw = topo_mutator.get_nodes()
-                deployments_raw = topo_mutator.get_deployments()
-                graph_store.sync_topology(
-                    [
-                        {
-                            "name": n.name,
-                            "cpu": n.allocatable_cpu_millicores,
-                            "memory": n.allocatable_memory_bytes,
-                            "control_plane": n.is_control_plane,
-                        }
-                        for n in nodes_raw
-                    ],
-                    [
-                        {"name": d.name, "namespace": d.namespace, "replicas": d.replicas}
-                        for d in deployments_raw
-                    ],
-                )
-            except Exception as e:
-                click.echo(f"  Neo4j: topology sync skipped ({e})", err=True)
-            graph_store.sync_service_dependencies(routes=service_routes)
-            click.echo(f"  Neo4j:      connected ({neo4j_uri})")
+            graph_store = init_graph_store(
+                neo4j_uri, neo4j_user, neo4j_password,
+                namespace, service_routes=service_routes,
+            )
         except ImportError:
             click.echo(
                 "Error: Neo4j driver not installed (install with: uv pip install chaosprobe[graph])",
@@ -1296,344 +1243,50 @@ def run(
     except Exception as e:
         click.echo(f"    WARNING: rollout restart failed ({e})", err=True)
 
+    # Build shared context for strategy execution
+    run_ctx = RunContext(
+        namespace=namespace,
+        timeout=timeout,
+        seed=seed,
+        settle_time=settle_time,
+        iterations=iterations,
+        baseline_duration=baseline_duration,
+        measure_latency=measure_latency,
+        measure_redis=measure_redis,
+        measure_disk=measure_disk,
+        measure_resources=measure_resources,
+        measure_prometheus=measure_prometheus,
+        prometheus_url=prometheus_url,
+        collect_logs=collect_logs,
+        load_profile=load_profile,
+        locustfile=locustfile,
+        target_url=target_url,
+        neo4j_uri=neo4j_uri,
+        neo4j_user=neo4j_user,
+        neo4j_password=neo4j_password,
+        shared_scenario=shared_scenario,
+        service_routes=service_routes,
+        target_deployment=target_deployment,
+        core_api=core_api,
+        chaoscenter_config=chaoscenter_config,
+        frontend_pf_port=frontend_pf_port,
+        metrics_collector=metrics_collector,
+        mutator=mutator,
+        graph_store=graph_store,
+        ts=ts,
+    )
+
     for idx, strategy_name in enumerate(strategy_list, 1):
-        click.echo(f"\n{'─' * 60}")
-        click.echo(f"[{idx}/{total}] Strategy: {strategy_name}")
-        click.echo(f"{'─' * 60}")
-
-        strategy_result: Dict[str, Any] = {
-            "strategy": strategy_name,
-            "status": "pending",
-            "placement": None,
-            "experiment": None,
-            "metrics": None,
-            "error": None,
-        }
-
-        try:
-            # ── Step 1: Clear any existing placement ──
-            click.echo("\n  Step 1: Clearing existing placement...")
-            mutator.clear_placement(wait=True)
-            click.echo("    Placement cleared.")
-
-            # ── Step 2: Apply placement (skip for baseline) ──
-            if strategy_name == "baseline":
-                click.echo("\n  Step 2: Baseline — using default scheduling")
-                strategy_result["placement"] = {
-                    "strategy": "baseline",
-                    "description": "Default Kubernetes scheduling",
-                }
-            else:
-                click.echo(f"\n  Step 2: Applying {strategy_name} placement...")
-                strat = PlacementStrategy(strategy_name)
-                # Exclude Litmus/ChaosCenter infrastructure deployments from
-                # placement — they must remain on their current nodes to keep
-                # the chaos infrastructure healthy.
-                _infra_prefixes = (
-                    "chaos-exporter", "chaos-operator", "event-tracker",
-                    "subscriber", "workflow-controller",
-                )
-                all_deps = mutator.get_deployments()
-                app_deps = [
-                    d.name for d in all_deps
-                    if not d.name.startswith(_infra_prefixes)
-                ]
-                assignment = mutator.apply_strategy(
-                    strategy=strat,
-                    seed=seed if strategy_name == "random" else None,
-                    deployments=app_deps if app_deps else None,
-                    wait=True,
-                    timeout=timeout,
-                )
-                strategy_result["placement"] = assignment.to_dict()
-
-                # Show summary
-                nodes_used = set(assignment.assignments.values())
-                click.echo(
-                    f"    Placed {len(assignment.assignments)} deployments across {len(nodes_used)} node(s)"
-                )
-                for node in sorted(nodes_used):
-                    count = sum(1 for n in assignment.assignments.values() if n == node)
-                    click.echo(f"      {node}: {count} deployment(s)")
-
-            # ── Run iterations ──
-            iteration_results: List[Dict[str, Any]] = []
-
-            for iter_num in range(1, iterations + 1):
-                if iterations > 1:
-                    click.echo(f"\n  ── Iteration {iter_num}/{iterations} ──")
-
-                # Settle
-                step_label = "  Step 3" if iterations == 1 else "    Step A"
-                if settle_time > 0:
-                    click.echo(f"\n{step_label}: Waiting {settle_time}s for workloads to settle...")
-                    time.sleep(settle_time)
-
-                # Verify all deployments are ready before proceeding
-                click.echo("    Verifying deployment readiness...")
-                _wait_for_healthy_deployments(namespace, timeout=60)
-
-                # Re-check infrastructure health between iterations
-                # (monitor thread auto-restarts dead port-forwards, but
-                #  explicit checks verify connectivity before each iteration)
-                if neo4j_uri:
-                    _pf_ensure(
-                        "neo4j", "neo4j", ["7687:7687", "7474:7474"], "localhost", 7687
-                    )
-                if measure_prometheus:
-                    # Re-check Prometheus port-forward if it was in use
-                    for _pns in ("monitoring", "prometheus"):
-                        proc = pf._procs.get(("prometheus-server", _pns))
-                        if proc:
-                            _pf_ensure(
-                                "prometheus-server", _pns,
-                                ["9090:9090"], "localhost", 9090,
-                            )
-                            break
-                if load_profile and target_url and target_url.startswith("http://localhost:"):
-                    # Re-check frontend port-forward
-                    try:
-                        svc_list = core_api.list_namespaced_service(namespace)
-                        for svc in svc_list.items:
-                            if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
-                                _pf_ensure(
-                                    svc.metadata.name, namespace,
-                                    [f"{frontend_pf_port}:80"],
-                                    "localhost", frontend_pf_port,
-                                )
-                                break
-                    except Exception:
-                        pass
-
-                click.echo("    Ready.")
-
-                # Run chaos experiment
-                step_label = "  Step 4" if iterations == 1 else "    Step B"
-                click.echo(f"\n{step_label}: Running experiment...")
-
-                scenario = copy.deepcopy(shared_scenario)
-                for exp in scenario.get("experiments", []):
-                    orig_name = exp["spec"].get("metadata", {}).get("name", "placement-pod-delete")
-                    if iterations > 1:
-                        exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}-i{iter_num}"
-                    else:
-                        exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}"
-
-                # Start real-time recovery watcher + all probers
-                probers = create_and_start_probers(
-                    namespace,
-                    target_deployment,
-                    measure_latency=measure_latency,
-                    measure_redis=measure_redis,
-                    measure_disk=measure_disk,
-                    measure_resources=measure_resources,
-                    measure_prometheus=measure_prometheus,
-                    prometheus_url=prometheus_url,
-                )
-
-                # Start Locust load generation if requested
-                iter_locust_runner = None
-                if load_profile:
-                    profile = LoadProfile.from_name(load_profile)
-                    url = target_url
-                    click.echo(f"    Starting Locust ({load_profile}: {profile.users} users)")
-                    iter_locust_runner = LocustRunner(target_url=url, locustfile=locustfile)
-                    iter_locust_runner.start(profile)
-
-                try:
-                    # Collect pre-chaos baseline samples
-                    pre_chaos_window = (
-                        baseline_duration if baseline_duration > 0 else min(settle_time, 15)
-                    )
-                    has_probers = any(
-                        probers.get(k) for k in ("latency", "redis", "disk", "resource", "prometheus")
-                    )
-                    if has_probers and pre_chaos_window > 0:
-                        click.echo(f"    Collecting pre-chaos baseline ({pre_chaos_window}s)...")
-                        time.sleep(pre_chaos_window)
-
-                    experiment_start = time.time()
-                    for p in probers.values():
-                        if p and hasattr(p, "mark_chaos_start"):
-                            p.mark_chaos_start()
-                    runner = ChaosRunner(namespace, timeout=timeout, chaoscenter=chaoscenter_config)
-                    runner.run_experiments(scenario.get("experiments", []))
-                    experiment_end = time.time()
-                    for p in probers.values():
-                        if p and hasattr(p, "mark_chaos_end"):
-                            p.mark_chaos_end()
-
-                    # Collect post-chaos recovery samples
-                    post_chaos_window = min(settle_time, 15)
-                    if has_probers and post_chaos_window > 0:
-                        click.echo(f"    Collecting post-chaos samples ({post_chaos_window}s)...")
-                        time.sleep(post_chaos_window)
-                finally:
-                    prober_results = stop_and_collect_probers(probers, iter_locust_runner)
-
-                recovery_data = prober_results.get("recovery")
-                latency_data = prober_results.get("latency")
-                redis_data = prober_results.get("redis")
-                disk_data = prober_results.get("disk")
-                resource_data = prober_results.get("resource")
-                prometheus_data = prober_results.get("prometheus")
-                iter_load_stats = prober_results.get("load_stats")
-
-                # Collect results
-                collector = ResultCollector(namespace)
-                executed = runner.get_executed_experiments()
-                results = collector.collect(executed)
-
-                # Collect metrics (pod status, node info) + merge watcher data
-                recovery = metrics_collector.collect(
-                    deployment_name=target_deployment,
-                    since_time=experiment_start,
-                    until_time=experiment_end,
-                    recovery_data=recovery_data,
-                    latency_data=latency_data,
-                    redis_data=redis_data,
-                    disk_data=disk_data,
-                    resource_data=resource_data,
-                    prometheus_data=prometheus_data,
-                    collect_logs=collect_logs,
-                )
-
-                # Generate output
-                placement_info = strategy_result.get("placement") or {
-                    "strategy": strategy_name,
-                    "seed": seed if strategy_name == "random" else None,
-                    "assignments": {},
-                }
-                generator = OutputGenerator(
-                    scenario,
-                    results,
-                    metrics=recovery,
-                    placement=placement_info,
-                    service_routes=service_routes,
-                )
-                output_data = generator.generate()
-
-                # Merge placement info so Neo4j has the strategy
-                output_data["placement"] = placement_info
-
-                # Tag with session ID for grouping runs
-                output_data["sessionId"] = ts
-
-                # Merge load stats into output
-                if iter_load_stats:
-                    output_data["loadGeneration"] = {
-                        "profile": load_profile,
-                        "stats": iter_load_stats.to_dict(),
-                    }
-
-                # Sync to Neo4j graph if connected
-                if graph_store:
-                    _neo4j_synced = False
-                    for _neo4j_retry in range(3):
-                        try:
-                            graph_store.sync_run(output_data)
-                            _neo4j_synced = True
-                            break
-                        except Exception as e:
-                            if _neo4j_retry < 2:
-                                click.echo(
-                                    f"    Neo4j sync attempt {_neo4j_retry + 1} failed, "
-                                    "reconnecting...",
-                                    err=True,
-                                )
-                                # Re-establish port-forward and connection
-                                _pf_ensure(
-                                    "neo4j", "neo4j",
-                                    ["7687:7687", "7474:7474"],
-                                    "localhost", 7687,
-                                )
-                                try:
-                                    graph_store.close()
-                                except Exception:
-                                    pass
-                                try:
-                                    graph_store = Neo4jStore(
-                                        neo4j_uri, neo4j_user, neo4j_password
-                                    )
-                                except Exception:
-                                    time.sleep(5)
-                                    continue
-                            else:
-                                import traceback
-                                click.echo(
-                                    f"    Warning: Neo4j sync failed after 3 attempts: {e}",
-                                    err=True,
-                                )
-                                click.echo(traceback.format_exc(), err=True)
-
-                verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
-                score = output_data.get("summary", {}).get("resilienceScore", 0)
-                rec_summary = recovery.get("recovery", {}).get("summary", {})
-                avg_recovery = rec_summary.get("meanRecovery_ms")
-                recovery_str = f" | Avg Recovery: {avg_recovery:.0f}ms" if avg_recovery else ""
-
-                click.echo(f"\n    Results synced to Neo4j (run: {output_data.get('runId', '')})")
-                click.echo(f"    Verdict: {verdict} | Resilience Score: {score:.1f}{recovery_str}")
-
-                iteration_results.append(
-                    {
-                        "iteration": iter_num,
-                        "verdict": verdict,
-                        "resilienceScore": score,
-                        "metrics": recovery,
-                        "runId": output_data.get("runId", ""),
-                    }
-                )
-
-            # Aggregate results across iterations
-            if iterations > 1:
-                strategy_result["iterations"] = iteration_results
-                strategy_result["aggregated"] = _aggregate_iterations(iteration_results)
-                strategy_result["experiment"] = strategy_result["aggregated"]
-                strategy_result["status"] = "completed"
-
-                agg = strategy_result["aggregated"]
-                iter_passed = sum(1 for ir in iteration_results if ir["verdict"] == "PASS")
-                click.echo(
-                    f"\n    Aggregated: {iter_passed}/{iterations} passed | "
-                    f"Mean Score: {agg['meanResilienceScore']:.1f}"
-                )
-                if agg.get("meanRecoveryTime_ms") is not None:
-                    click.echo(
-                        f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
-                        f"Max: {agg['maxRecoveryTime_ms']:.0f}ms"
-                    )
-
-                if agg["passRate"] == 1.0:
-                    passed += 1
-                else:
-                    failed += 1
-            else:
-                # Single iteration — keep backward-compatible structure
-                ir = iteration_results[0]
-                strategy_result["experiment"] = {
-                    "overallVerdict": ir["verdict"],
-                    "resilienceScore": ir["resilienceScore"],
-                    "passed": 1 if ir["verdict"] == "PASS" else 0,
-                    "failed": 0 if ir["verdict"] == "PASS" else 1,
-                    "totalExperiments": 1,
-                }
-                strategy_result["metrics"] = ir["metrics"]
-                strategy_result["status"] = "completed"
-                strategy_result["runId"] = ir["runId"]
-
-                if ir["verdict"] == "PASS":
-                    passed += 1
-                else:
-                    failed += 1
-
-        except Exception as e:
-            click.echo(f"\n    ERROR: {e}", err=True)
-            strategy_result["status"] = "error"
-            strategy_result["error"] = str(e)
-            failed += 1
-
+        strategy_result, strategy_passed = execute_strategy(
+            run_ctx, strategy_name, idx, total,
+        )
         overall_results["strategies"][strategy_name] = strategy_result
+        if strategy_result["status"] == "error":
+            failed += 1
+        elif strategy_passed:
+            passed += 1
+        else:
+            failed += 1
 
     # ── Final cleanup: clear placement ──
     click.echo(f"\n{'─' * 60}")
@@ -1663,55 +1316,6 @@ def run(
         do_visualize=do_visualize,
         graph_store=graph_store,
     )
-
-
-def _aggregate_iterations(
-    iteration_results: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Compute aggregated statistics across multiple iterations."""
-    scores = [ir["resilienceScore"] for ir in iteration_results]
-    verdicts = [ir["verdict"] for ir in iteration_results]
-    pass_count = sum(1 for v in verdicts if v == "PASS")
-
-    agg: Dict[str, Any] = {
-        "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
-        "passRate": round(pass_count / len(verdicts), 2),
-        "meanResilienceScore": round(statistics.mean(scores), 1),
-        "totalExperiments": len(iteration_results),
-        "passed": pass_count,
-        "failed": len(verdicts) - pass_count,
-    }
-
-    # Aggregate recovery metrics from metrics.recovery.summary
-    all_recovery_times: List[float] = []
-    for ir in iteration_results:
-        rm = ir.get("metrics", {})
-        if rm:
-            summary = rm.get("recovery", {}).get("summary", {})
-            mean_r = summary.get("meanRecovery_ms")
-            if mean_r is not None:
-                all_recovery_times.append(mean_r)
-
-    if all_recovery_times:
-        all_max = []
-        for ir in iteration_results:
-            rm = ir.get("metrics", {})
-            if rm:
-                max_r = rm.get("recovery", {}).get("summary", {}).get("maxRecovery_ms")
-                if max_r is not None:
-                    all_max.append(max_r)
-
-        agg["meanRecoveryTime_ms"] = round(statistics.mean(all_recovery_times), 1)
-        agg["medianRecoveryTime_ms"] = round(statistics.median(all_recovery_times), 1)
-        agg["maxRecoveryTime_ms"] = max(all_max) if all_max else None
-    else:
-        agg["meanRecoveryTime_ms"] = None
-        agg["medianRecoveryTime_ms"] = None
-        agg["maxRecoveryTime_ms"] = None
-
-    return agg
-
-
 
 
 # ─────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ from chaosprobe.metrics.collector import MetricsCollector
 
 def _make_collector():
     """Create a MetricsCollector without hitting the real K8s API."""
-    with patch("chaosprobe.metrics.collector.config"), \
+    with patch("chaosprobe.metrics.collector.ensure_k8s_config"), \
          patch("chaosprobe.metrics.collector.client") as mock_client:
         mock_core = MagicMock()
         mock_apps = MagicMock()

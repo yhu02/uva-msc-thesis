@@ -21,9 +21,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
+
+from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.base import ContinuousProberBase
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +121,7 @@ class LatencyProber:
         self.namespace = namespace
         self.timeout_seconds = timeout_seconds
 
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
+        ensure_k8s_config()
 
         self.core_api = client.CoreV1Api()
 
@@ -551,11 +551,11 @@ class LatencyProber:
             )
 
 
-class ContinuousLatencyProber:
+class ContinuousLatencyProber(ContinuousProberBase):
     """Runs latency probing in a background thread during chaos experiments.
 
-    Similar to RecoveryWatcher but for latency. Takes periodic measurements
-    and provides before/during/after comparison data.
+    Takes periodic measurements and provides before/during/after comparison
+    data with per-route latency statistics.
 
     Usage::
 
@@ -573,46 +573,19 @@ class ContinuousLatencyProber:
         timeout_seconds: int = 5,
         http_routes: Optional[List[Tuple[str, str, str, str]]] = None,
     ):
-        self.namespace = namespace
-        self.interval = interval
+        super().__init__(namespace, interval, name="latency-prober")
         self._http_routes = http_routes
         self._prober = LatencyProber(namespace, timeout_seconds)
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._lock = threading.Lock()
-        self._time_series: List[Dict[str, Any]] = []
-        self._start_time: Optional[float] = None
-        self._chaos_start_time: Optional[float] = None
-        self._chaos_end_time: Optional[float] = None
-        self._probe_errors: int = 0
         self._cached_probe_pod: Optional[str] = None
 
     def start(self) -> None:
         """Start continuous latency probing in background."""
-        self._start_time = time.time()
         # Resolve the probe pod once at start to avoid repeated K8s API
         # lookups on every measurement cycle.
         self._cached_probe_pod = self._prober._find_probe_pod()
         if not self._cached_probe_pod:
             logger.warning("No probe pod found at start — will retry during probing")
-        self._thread = threading.Thread(target=self._probe_loop, daemon=True, name="latency-prober")
-        self._thread.start()
-
-    def mark_chaos_start(self) -> None:
-        """Mark the start of the chaos injection phase."""
-        with self._lock:
-            self._chaos_start_time = time.time()
-
-    def mark_chaos_end(self) -> None:
-        """Mark the end of the chaos injection phase."""
-        with self._lock:
-            self._chaos_end_time = time.time()
-
-    def stop(self) -> None:
-        """Stop the probing thread."""
-        self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=10)
+        super().start()
 
     def result(self) -> Dict[str, Any]:
         """Return structured latency time series and phase summaries."""
@@ -646,14 +619,8 @@ class ContinuousLatencyProber:
                     http_routes=self._http_routes,
                 )
                 now = time.time()
-                timestamp = datetime.fromtimestamp(now, tz=timezone.utc).isoformat()
-
-                entry = {
-                    "timestamp": timestamp,
-                    "elapsed_s": round(now - (self._start_time or now), 1),
-                    "phase": self._current_phase(now),
-                    "routes": {},
-                }
+                entry = self._make_entry(now, self._current_phase(now))
+                entry["routes"] = {}
 
                 for r in http_results:
                     if r.samples:
@@ -691,19 +658,8 @@ class ContinuousLatencyProber:
 
             self._stop_event.wait(timeout=self.interval)
 
-    def _current_phase(self, now: float) -> str:
-        """Determine the current experiment phase."""
-        with self._lock:
-            chaos_start = self._chaos_start_time
-            chaos_end = self._chaos_end_time
-        if chaos_start is None or now < chaos_start:
-            return "pre-chaos"
-        if chaos_end is None or now < chaos_end:
-            return "during-chaos"
-        return "post-chaos"
-
     def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Split time series into phases and compute per-phase summaries."""
+        """Split time series into phases with per-route latency statistics."""
         phases: Dict[str, List[Dict[str, Any]]] = {
             "pre-chaos": [],
             "during-chaos": [],

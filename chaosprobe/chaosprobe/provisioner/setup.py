@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException

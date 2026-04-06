@@ -10,9 +10,10 @@ import time
 from typing import Any, Dict, List, Optional
 
 import click
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.placement.strategy import (
     DeploymentInfo,
     NodeAssignment,
@@ -40,10 +41,7 @@ class PlacementMutator:
         """
         self.namespace = namespace
 
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
+        ensure_k8s_config()
 
         self.core_api = client.CoreV1Api()
         self.apps_api = client.AppsV1Api()

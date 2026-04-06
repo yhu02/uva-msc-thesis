@@ -3,12 +3,12 @@
 import threading
 
 
+from chaosprobe.metrics.base import ContinuousProberBase
 from chaosprobe.metrics.throughput import (
     ContinuousRedisProber,
     ContinuousDiskProber,
     ThroughputResult,
     ThroughputSample,
-    _ContinuousProberBase,
 )
 
 
@@ -250,7 +250,7 @@ class TestContinuousProberBase:
             {"redis": {"write": {"ops_per_second": None, "latency_ms": None, "status": "error"}}},
         ]
 
-        result = _ContinuousProberBase._aggregate_operations(entries, "redis")
+        result = ContinuousProberBase._aggregate_operations(entries, "redis")
         assert "write" in result
         assert result["write"]["meanOpsPerSecond"] == 150.0
         assert result["write"]["sampleCount"] == 2
