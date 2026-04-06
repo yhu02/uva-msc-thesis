@@ -928,6 +928,40 @@ class _ChaosCenterMixin:
         )
         return (resp.get("data") or {}).get("addProbe", {})
 
+    def chaoscenter_update_probe(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        probe_request: dict[str, Any],
+    ) -> str:
+        """Update an existing resilience probe in ChaosCenter.
+
+        Args:
+            gql_url: GraphQL endpoint URL.
+            project_id: ChaosCenter project ID.
+            token: Bearer token.
+            probe_request: ``ProbeRequest`` input matching the GraphQL schema.
+
+        Returns:
+            Confirmation string from the server.
+        """
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "mutation($req: ProbeRequest!, $pid: ID!) "
+                    "{ updateProbe(request: $req, projectID: $pid) }"
+                ),
+                "variables": {
+                    "req": probe_request,
+                    "pid": project_id,
+                },
+            },
+            token=token,
+        )
+        return (resp.get("data") or {}).get("updateProbe", "")
+
     def chaoscenter_list_probes(
         self,
         gql_url: str,

@@ -293,12 +293,21 @@ class ChaosRunner:
                     probe_ref.append({"probeID": name, "mode": mode})
                     print(f"    Registered probe: {name} ({probe_type}/{mode})")
                 except Exception as exc:
-                    # Probe may already exist from a previous run
+                    # Probe may already exist from a previous run — update it
                     err_msg = str(exc).lower()
                     if "already" in err_msg or "duplicate" in err_msg or "exists" in err_msg:
+                        try:
+                            self._setup.chaoscenter_update_probe(
+                                gql_url=self._cc["gql_url"],
+                                project_id=self._cc["project_id"],
+                                token=self._cc["token"],
+                                probe_request=api_request,
+                            )
+                            print(f"    Updated probe: {name} ({probe_type}/{mode})")
+                        except Exception as update_exc:
+                            print(f"    Probe exists, update failed: {update_exc}")
                         self._registered_probes.add(name)
                         probe_ref.append({"probeID": name, "mode": mode})
-                        print(f"    Probe already registered: {name}")
                     else:
                         print(f"    WARNING: Failed to register probe '{name}': {exc}")
                         # Fall back: keep inline probes, skip probeRef
@@ -321,17 +330,13 @@ class ChaosRunner:
         base_props: Dict[str, Any] = {
             "probeTimeout": run_props.get("probeTimeout", "5s"),
             "interval": run_props.get("interval", "2s"),
+            "retry": int(run_props.get("retry", 1)),
+            "attempt": int(run_props.get("attempt", 1)),
+            "probePollingInterval": run_props.get("probePollingInterval", "2s"),
+            "initialDelay": run_props.get("initialDelay", "0s"),
+            "evaluationTimeout": run_props.get("evaluationTimeout", "0s"),
+            "stopOnFailure": bool(run_props.get("stopOnFailure", False)),
         }
-        if "retry" in run_props:
-            base_props["retry"] = int(run_props["retry"])
-        if "attempt" in run_props:
-            base_props["attempt"] = int(run_props["attempt"])
-        if "probePollingInterval" in run_props:
-            base_props["probePollingInterval"] = run_props["probePollingInterval"]
-        if "evaluationTimeout" in run_props:
-            base_props["evaluationTimeout"] = run_props["evaluationTimeout"]
-        if "initialDelay" in run_props:
-            base_props["initialDelay"] = run_props["initialDelay"]
 
         request: Dict[str, Any] = {
             "name": name,
@@ -363,9 +368,8 @@ class ChaosRunner:
                 **base_props,
                 "url": http_inputs.get("url", ""),
                 "method": method_req,
+                "insecureSkipVerify": bool(http_inputs.get("insecureSkipVerify", False)),
             }
-            if http_inputs.get("insecureSkipVerify"):
-                request["kubernetesHTTPProperties"]["insecureSkipVerify"] = True
 
         elif probe_type == "cmdProbe":
             cmd_inputs = probe_def.get("cmdProbe/inputs", {})
