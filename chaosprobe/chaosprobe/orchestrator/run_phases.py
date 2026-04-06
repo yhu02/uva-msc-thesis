@@ -96,7 +96,50 @@ def run_preflight_checks(
     except Exception as e:
         click.echo(f"  ChaosEngines: check skipped ({e})", err=True)
 
-    # 2b. Clean up stale Argo workflow pods
+    # 2b. Clean up stale ChaosResults
+    try:
+        custom_api = k8s_client_mod.CustomObjectsApi()
+        results = custom_api.list_namespaced_custom_object(
+            group="litmuschaos.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="chaosresults",
+        )
+        result_items = results.get("items", [])
+        if result_items:
+            click.echo(f"  Cleaning up {len(result_items)} stale ChaosResult(s)...")
+            for res in result_items:
+                name = res["metadata"]["name"]
+                custom_api.delete_namespaced_custom_object(
+                    group="litmuschaos.io",
+                    version="v1alpha1",
+                    namespace=namespace,
+                    plural="chaosresults",
+                    name=name,
+                )
+            click.echo("  ChaosResults: cleaned")
+    except Exception:
+        pass
+
+    # 2c. Clean up stale experiment job pods
+    try:
+        batch_api = k8s_client_mod.BatchV1Api()
+        jobs = batch_api.list_namespaced_job(
+            namespace,
+            label_selector="app.kubernetes.io/part-of=litmus",
+        )
+        stale_jobs = [j for j in jobs.items if j.status.succeeded or j.status.failed]
+        if stale_jobs:
+            for job in stale_jobs:
+                batch_api.delete_namespaced_job(
+                    name=job.metadata.name,
+                    namespace=namespace,
+                    propagation_policy="Background",
+                )
+    except Exception:
+        pass
+
+    # 2d. Clean up stale Argo workflow pods
     try:
         wf_pods = core_api.list_namespaced_pod(
             namespace,
@@ -113,6 +156,78 @@ def run_preflight_checks(
             click.echo("  Workflow pods: none stale")
     except Exception as e:
         click.echo(f"  Workflow pods: check skipped ({e})", err=True)
+
+    # 2e. Restart unhealthy Litmus infra deployments in the target namespace
+    try:
+        apps_api = k8s_client_mod.AppsV1Api()
+        for dep_name in LITMUS_INFRA_DEPLOYMENTS:
+            try:
+                dep = apps_api.read_namespaced_deployment(dep_name, namespace)
+            except k8s_client_mod.rest.ApiException:
+                continue  # deployment doesn't exist in this namespace
+            # Check if any pod is in CrashLoopBackOff
+            pods = core_api.list_namespaced_pod(
+                namespace,
+                label_selector=",".join(
+                    f"{k}={v}"
+                    for k, v in (dep.spec.selector.match_labels or {}).items()
+                ),
+            )
+            needs_restart = False
+            for pod in pods.items:
+                for cs in pod.status.container_statuses or []:
+                    if (
+                        cs.state
+                        and cs.state.waiting
+                        and cs.state.waiting.reason
+                        in ("CrashLoopBackOff", "Error", "CreateContainerError")
+                    ):
+                        needs_restart = True
+                        break
+                if needs_restart:
+                    break
+            if needs_restart:
+                click.echo(f"  Restarting unhealthy {dep_name}...")
+                apps_api.patch_namespaced_deployment(
+                    dep_name,
+                    namespace,
+                    {
+                        "spec": {
+                            "template": {
+                                "metadata": {
+                                    "annotations": {
+                                        "chaosprobe.io/restartedAt": (
+                                            __import__("datetime")
+                                            .datetime.now(__import__("datetime").timezone.utc)
+                                            .isoformat()
+                                        ),
+                                    }
+                                }
+                            }
+                        }
+                    },
+                )
+                # Wait briefly for the new pod to come up
+                import time as _time
+                for _ in range(24):
+                    _time.sleep(5)
+                    try:
+                        dep = apps_api.read_namespaced_deployment(dep_name, namespace)
+                        if (
+                            dep.status.ready_replicas is not None
+                            and dep.status.ready_replicas >= dep.spec.replicas
+                        ):
+                            click.echo(f"  {dep_name}: recovered")
+                            break
+                    except Exception:
+                        pass
+                else:
+                    click.echo(
+                        f"  WARNING: {dep_name} did not recover after restart",
+                        err=True,
+                    )
+    except Exception:
+        pass
 
     # 3. Verify infrastructure pods and set up port-forwards
     _preflight_setup = None

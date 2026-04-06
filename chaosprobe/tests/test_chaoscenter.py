@@ -756,7 +756,11 @@ class TestEnsureChaoscenterConfigured:
         ) as mock_reg, patch.object(
             setup,
             "_apply_manifest",
-        ) as mock_apply:
+        ) as mock_apply, patch.object(
+            setup,
+            "_wait_for_infra_active",
+            return_value=True,
+        ):
             result = setup.ensure_chaoscenter_configured(
                 namespace="myns", base_host="http://localhost",
             )
@@ -839,7 +843,11 @@ class TestEnsureChaoscenterConfigured:
         ), patch.object(
             setup,
             "_chaoscenter_register_infra",
-        ) as mock_reg, patch("time.sleep"):
+        ) as mock_reg, patch.object(
+            setup,
+            "_wait_for_infra_active",
+            return_value=True,
+        ), patch("time.sleep"):
             result = setup.ensure_chaoscenter_configured(
                 namespace="ns", base_host="http://localhost",
             )

@@ -6,6 +6,9 @@ This codebase has grown organically and needs a comprehensive architectural revi
 ## Codebase to analyze
 [paste root directory path here]
 
+## Loop Instruction
+**Repeat this entire prompt (all 5 cycles below) 5 times.** After completing Cycle 5, go back to Cycle 1 and run through all cycles again, building on the improvements from the previous pass. Each full pass should find and fix issues that prior passes missed or introduced. Continue until you have completed **5 full passes** (25 total cycles).
+
 ---
 
 ## Cycle 1: Codebase-Wide Analysis & Discovery
@@ -138,3 +141,4 @@ Final quality pass over the entire refactored codebase:
 - The codebase must remain functional after every cycle — no big-bang rewrites
 - Run tests after every significant change, not just at the end of a cycle
 - Commit after each cycle so changes can be reviewed and reverted independently
+- After completing all 5 cycles, **loop back to Cycle 1** and repeat. Do this until you have completed **5 full passes** through all cycles. Each pass should catch issues the previous pass missed or introduced. Label each pass clearly (Pass 1/5, Pass 2/5, etc.).

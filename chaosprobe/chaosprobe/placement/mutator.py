@@ -14,6 +14,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.orchestrator.preflight import LITMUS_INFRA_DEPLOYMENTS
 from chaosprobe.placement.strategy import (
     DeploymentInfo,
     NodeAssignment,
@@ -103,7 +104,11 @@ class PlacementMutator:
         return result
 
     def get_deployments(self) -> List[DeploymentInfo]:
-        """Get all deployments in the namespace with resource info.
+        """Get all application deployments in the namespace with resource info.
+
+        Litmus chaos infrastructure deployments (chaos-operator,
+        subscriber, etc.) are excluded so placement strategies never
+        move them.
 
         Returns:
             List of DeploymentInfo for placement decisions.
@@ -113,6 +118,11 @@ class PlacementMutator:
 
         for dep in deps.items:
             name = dep.metadata.name
+
+            # Never touch chaos infrastructure components
+            if name in LITMUS_INFRA_DEPLOYMENTS:
+                continue
+
             replicas = dep.spec.replicas or 1
 
             # Aggregate resource requests from all containers
@@ -197,6 +207,10 @@ class PlacementMutator:
     ) -> List[str]:
         """Remove all ChaosProbe placement constraints.
 
+        Clears any deployment that has the managed annotation OR a stale
+        ``kubernetes.io/hostname`` nodeSelector (defensive — handles the
+        case where a previous run was interrupted before cleanup).
+
         Args:
             deployments: Optional list of deployment names to clear.
                          If None, clears all managed deployments in the namespace.
@@ -215,34 +229,41 @@ class PlacementMutator:
             if deployments and name not in deployments:
                 continue
 
+            # Skip Litmus infrastructure deployments
+            if name in LITMUS_INFRA_DEPLOYMENTS:
+                continue
+
             annotations = dep.metadata.annotations or {}
-            if MANAGED_ANNOTATION not in annotations:
+            node_selector = dep.spec.template.spec.node_selector or {}
+            has_annotation = MANAGED_ANNOTATION in annotations
+            has_node_pin = PLACEMENT_LABEL_KEY in node_selector
+
+            if not has_annotation and not has_node_pin:
                 continue
 
             # Remove kubernetes.io/hostname from nodeSelector
-            node_selector = dep.spec.template.spec.node_selector or {}
-            if PLACEMENT_LABEL_KEY in node_selector:
+            if has_node_pin:
                 del node_selector[PLACEMENT_LABEL_KEY]
 
-                patch = {
-                    "metadata": {
-                        "annotations": {MANAGED_ANNOTATION: None},
+            patch = {
+                "metadata": {
+                    "annotations": {MANAGED_ANNOTATION: None} if has_annotation else {},
+                },
+                "spec": {
+                    "strategy": {
+                        "type": "RollingUpdate",
+                        "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"},
                     },
-                    "spec": {
-                        "strategy": {
-                            "type": "RollingUpdate",
-                            "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"},
-                        },
-                        "template": {
-                            "spec": {
-                                "nodeSelector": node_selector if node_selector else None,
-                            }
-                        },
+                    "template": {
+                        "spec": {
+                            "nodeSelector": node_selector if node_selector else None,
+                        }
                     },
-                }
-                self.apps_api.patch_namespaced_deployment(name, self.namespace, patch)
-                cleared.append(name)
-                click.echo(f"  Cleared placement for: {name}")
+                },
+            }
+            self.apps_api.patch_namespaced_deployment(name, self.namespace, patch)
+            cleared.append(name)
+            click.echo(f"  Cleared placement for: {name}")
 
         # Clean up legacy labels from previous ChaosProbe versions
         self._cleanup_legacy_labels()

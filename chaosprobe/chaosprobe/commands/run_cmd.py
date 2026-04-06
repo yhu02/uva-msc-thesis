@@ -113,8 +113,8 @@ def _ensure_litmus_setup(
 
 @click.command()
 @click.option(
-    "--namespace", "-n", default="chaosprobe-test",
-    help="Namespace containing the application",
+    "--namespace", "-n", default=None,
+    help="Namespace containing the application (default: read from experiment YAML)",
 )
 @click.option(
     "--output-dir", "-o", default="results",
@@ -158,7 +158,7 @@ def _ensure_litmus_setup(
 @click.option("--neo4j-user", default="neo4j", envvar="NEO4J_USER", help="Neo4j username (default: neo4j)")
 @click.option("--neo4j-password", default="chaosprobe", envvar="NEO4J_PASSWORD", help="Neo4j password (default: chaosprobe)")
 def run(
-    namespace: str,
+    namespace: Optional[str],
     output_dir: Optional[str],
     strategies: str,
     timeout: int,
@@ -225,7 +225,10 @@ def run(
     try:
         shared_scenario = load_scenario(str(experiment_file))
         validate_scenario(shared_scenario)
-        shared_scenario["namespace"] = namespace
+        # Use YAML-detected namespace unless the user explicitly passed --namespace
+        if namespace is not None:
+            shared_scenario["namespace"] = namespace
+        namespace = shared_scenario["namespace"]
     except Exception as e:
         click.echo(f"Error loading experiment: {e}", err=True)
         sys.exit(1)
@@ -238,6 +241,11 @@ def run(
         yamls = sorted(deploy_dir.glob("*.yaml")) + sorted(deploy_dir.glob("*.yml"))
         if yamls:
             click.echo(f"  Deploying {len(yamls)} manifest(s) from {deploy_dir.name}/...")
+            # Ensure the target namespace exists before applying manifests
+            _sp.run(
+                ["kubectl", "create", "namespace", namespace],
+                capture_output=True, text=True,
+            )
             result = _sp.run(
                 ["kubectl", "apply", "-f", str(deploy_dir), "-n", namespace],
                 capture_output=True, text=True, timeout=60,
@@ -329,70 +337,25 @@ def run(
         click.echo(f"  Baseline:   {baseline_duration}s steady-state collection before chaos")
     click.echo("")
 
-    # ── Pre-flight checks ──────────────────────────────────────
-    click.echo("Pre-flight checks...")
-    preflight = run_preflight_checks(
-        namespace,
-        measure_prometheus=measure_prometheus,
-        prometheus_url=prometheus_url,
-        neo4j_uri=neo4j_uri,
-        load_profile=load_profile,
-        target_url=target_url,
-        timeout=timeout,
-    )
-    core_api = preflight["core_api"]
-    chaoscenter_config = preflight["chaoscenter_config"]
-    target_url = preflight["target_url"]
-    frontend_pf_port = preflight["frontend_pf_port"]
-
+    # ── Fresh-start: clear stale placement before pre-flight ──
+    # Previous runs may have left nodeSelector constraints that prevent
+    # pods from scheduling.  Clear them first so the preflight deployment
+    # readiness check finds schedulable pods.
     from kubernetes import client as k8s_client_mod
 
-    click.echo("")
-
-    # Start background monitor that auto-restarts dead port-forwards
-    pf.monitor_start()
-
-    # Extract target deployment from experiment spec for recovery metrics
-    target_deployment = extract_target_deployment(shared_scenario)
-
-    overall_results: Dict[str, Any] = {
-        "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "namespace": namespace,
-        "iterations": iterations,
-        "strategies": {},
-    }
-
-    total = len(strategy_list)
-    passed = 0
-    failed = 0
-
-    # Neo4j graph store — primary data store
-    graph_store = None
-    if neo4j_uri:
+    click.echo("Clearing stale placement constraints...")
+    for _attempt in range(3):
         try:
-            graph_store = init_graph_store(
-                neo4j_uri, neo4j_user, neo4j_password,
-                namespace, service_routes=service_routes,
-            )
-        except ImportError:
-            click.echo(
-                "Error: Neo4j driver not installed (install with: uv pip install chaosprobe[graph])",
-                err=True,
-            )
-            sys.exit(1)
-        except Exception as e:
-            click.echo(f"Error: Neo4j connection failed ({e})", err=True)
-            click.echo(
-                "Neo4j is required as the primary data store. Check connection and retry.", err=True
-            )
-            sys.exit(1)
-
-    # Fresh-start: clear any stale placement constraints, then rollout
-    # restart all app deployments so every run begins with clean pods.
-    click.echo("  Clearing stale placement constraints...")
-    mutator.clear_placement(wait=False)
-    click.echo("  Restarting app deployments for a clean baseline...")
+            mutator.clear_placement(wait=False)
+            break
+        except Exception as _e:
+            if _attempt < 2:
+                click.echo(f"  Retry clearing placement ({_e})...", err=True)
+                import time as _time
+                _time.sleep(5)
+            else:
+                click.echo(f"  WARNING: could not clear placement ({_e})", err=True)
+    click.echo("Restarting app deployments for a clean baseline...")
     try:
         _apps_api = k8s_client_mod.AppsV1Api()
         _all_deps = _apps_api.list_namespaced_deployment(namespace)
@@ -418,11 +381,68 @@ def run(
                     }
                 },
             )
-        click.echo(f"    Triggered rollout restart for {len(_restart_names)} deployment(s)")
-        wait_for_healthy_deployments(namespace, timeout=180)
-        click.echo("    All deployments ready (fresh pods)")
+        click.echo(f"  Triggered rollout restart for {len(_restart_names)} deployment(s)")
     except Exception as e:
-        click.echo(f"    WARNING: rollout restart failed ({e})", err=True)
+        click.echo(f"  WARNING: rollout restart failed ({e})", err=True)
+
+    # ── Pre-flight checks ──────────────────────────────────────
+    click.echo("\nPre-flight checks...")
+    preflight = run_preflight_checks(
+        namespace,
+        measure_prometheus=measure_prometheus,
+        prometheus_url=prometheus_url,
+        neo4j_uri=neo4j_uri,
+        load_profile=load_profile,
+        target_url=target_url,
+        timeout=timeout,
+    )
+    core_api = preflight["core_api"]
+    chaoscenter_config = preflight["chaoscenter_config"]
+    target_url = preflight["target_url"]
+    frontend_pf_port = preflight["frontend_pf_port"]
+
+    click.echo("")
+
+    # Start background monitor that auto-restarts dead port-forwards
+    pf.monitor_start()
+
+    # Extract target deployment from experiment spec for recovery metrics
+    target_deployment = extract_target_deployment(shared_scenario)
+
+    overall_results: Dict[str, Any] = {
+        "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "namespace": namespace,
+        "iterations": iterations,
+        "strategies": {},
+    }
+
+    total = len(strategy_list)
+    passed = 0
+    failed = 0
+
+    # Neo4j graph store — primary data store
+    graph_store = None
+    if neo4j_uri:
+        click.echo("Connecting to Neo4j graph store...")
+        try:
+            graph_store = init_graph_store(
+                neo4j_uri, neo4j_user, neo4j_password,
+                namespace, service_routes=service_routes,
+            )
+            click.echo("  Neo4j: connected and schema ready")
+        except ImportError:
+            click.echo(
+                "Error: Neo4j driver not installed (install with: uv pip install chaosprobe[graph])",
+                err=True,
+            )
+            sys.exit(1)
+        except Exception as e:
+            click.echo(f"Error: Neo4j connection failed ({e})", err=True)
+            click.echo(
+                "Neo4j is required as the primary data store. Check connection and retry.", err=True
+            )
+            sys.exit(1)
 
     # Build shared context for strategy execution
     run_ctx = RunContext(

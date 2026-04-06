@@ -547,6 +547,72 @@ class _ChaosCenterMixin:
             finally:
                 os.unlink(f.name)
 
+    def _wait_for_infra_active(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        infra_id: str,
+        timeout: int = 60,
+    ) -> bool:
+        """Poll ``listInfras`` until *infra_id* has ``isActive=True``.
+
+        The subscriber pod can be Running+Ready before its WebSocket
+        connection to ChaosCenter is established.  This helper bridges
+        that gap so experiments are not submitted against inactive infra.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                infras = self._chaoscenter_list_infras(gql_url, project_id, token)
+                for i in infras:
+                    if i.get("infraID") == infra_id and i.get("isActive"):
+                        return True
+            except Exception:
+                pass
+            time.sleep(5)
+        return False
+
+    def _subscriber_diagnostics(self, namespace: str) -> str:
+        """Return a short diagnostic string about subscriber pod state."""
+        lines = []
+        try:
+            pods = self.core_api.list_namespaced_pod(
+                namespace, label_selector="app=subscriber",
+            )
+            if not pods.items:
+                lines.append("  No subscriber pods found in namespace "
+                             f"'{namespace}'.")
+                # Check if the deployment exists
+                try:
+                    dep = self.apps_api.read_namespaced_deployment(
+                        "subscriber", namespace,
+                    )
+                    lines.append(f"  Deployment exists: replicas="
+                                 f"{dep.spec.replicas}, "
+                                 f"ready={dep.status.ready_replicas}")
+                except Exception:
+                    lines.append("  Subscriber deployment not found.")
+            else:
+                for pod in pods.items:
+                    phase = pod.status.phase or "Unknown"
+                    cs = pod.status.container_statuses or []
+                    waiting_reasons = []
+                    for c in cs:
+                        if c.state and c.state.waiting:
+                            waiting_reasons.append(
+                                f"{c.name}: {c.state.waiting.reason}"
+                                f" ({c.state.waiting.message or 'no message'})"
+                            )
+                    line = f"  Pod {pod.metadata.name}: phase={phase}"
+                    if waiting_reasons:
+                        line += f", waiting=[{'; '.join(waiting_reasons)}]"
+                    lines.append(line)
+        except Exception as e:
+            lines.append(f"  Could not query pods: {e}")
+        lines.append(f"  Check: kubectl logs -n {namespace} -l app=subscriber")
+        return "\n".join(lines)
+
     def ensure_chaoscenter_configured(
         self,
         namespace: str,
@@ -645,49 +711,60 @@ class _ChaosCenterMixin:
             # re-register (which would create a duplicate).  Just ensure
             # the subscriber deployment exists and wait for it.
             infra_id = existing[0]["infraID"]
-            confirmed = existing[0].get("isInfraConfirmed", False)
             print(
                 f"  ChaosCenter: infrastructure registered, "
                 f"awaiting subscriber connection ({infra_id})"
             )
-            if not confirmed:
-                # Subscriber may have been evicted — check if deployment exists
+            # Ensure subscriber deployment exists — it may have been
+            # evicted, deleted, or never applied (e.g. namespace was
+            # recreated).  Always check regardless of isInfraConfirmed.
+            subscriber_exists = False
+            try:
+                self.apps_api.read_namespaced_deployment(
+                    "subscriber", namespace,
+                )
+                subscriber_exists = True
+            except ApiException as exc:
+                if exc.status == 404:
+                    subscriber_exists = False
+                else:
+                    # Transient API error — assume missing to be safe
+                    subscriber_exists = False
+            except Exception:
+                subscriber_exists = False
+
+            if not subscriber_exists:
+                print("  ChaosCenter: subscriber deployment missing — re-applying")
                 try:
-                    self.apps_api.read_namespaced_deployment(
-                        "subscriber", namespace,
+                    manifest_resp = self._chaoscenter_api_request(
+                        gql_url,
+                        data={
+                            "query": (
+                                "query($pid: ID!, $iid: ID!, $upgrade: Boolean!) "
+                                "{ getInfraManifest(projectID: $pid, "
+                                "infraID: $iid, upgrade: $upgrade) }"
+                            ),
+                            "variables": {
+                                "pid": project_id,
+                                "iid": infra_id,
+                                "upgrade": False,
+                            },
+                        },
+                        token=token,
+                        headers={
+                            "Referer": self._chaoscenter_server_internal_url(),
+                        },
                     )
-                except ApiException as exc:
-                    if exc.status == 404:
-                        # Deployment gone — re-apply the manifest by
-                        # fetching it from the server
-                        print("  ChaosCenter: subscriber deployment missing — re-applying")
-                        try:
-                            manifest_resp = self._chaoscenter_api_request(
-                                gql_url,
-                                data={
-                                    "query": (
-                                        "query($pid: ID!, $iid: String!) "
-                                        "{ getInfraManifest(projectID: $pid, "
-                                        "infraID: $iid) }"
-                                    ),
-                                    "variables": {
-                                        "pid": project_id,
-                                        "iid": infra_id,
-                                    },
-                                },
-                                token=token,
-                                headers={
-                                    "Referer": self._chaoscenter_server_internal_url(),
-                                },
-                            )
-                            manifest = (
-                                manifest_resp.get("data", {})
-                                .get("getInfraManifest", "")
-                            )
-                            if manifest:
-                                self._apply_manifest(manifest, namespace)
-                        except Exception as e:
-                            print(f"  ChaosCenter: WARNING - could not re-apply manifest: {e}")
+                    manifest = (
+                        manifest_resp.get("data", {})
+                        .get("getInfraManifest", "")
+                    )
+                    if manifest:
+                        self._apply_manifest(manifest, namespace)
+                    else:
+                        print("  ChaosCenter: WARNING - empty manifest returned")
+                except Exception as e:
+                    print(f"  ChaosCenter: WARNING - could not re-apply manifest: {e}")
 
             # Wait for subscriber pod readiness
             start = time.time()
@@ -708,9 +785,10 @@ class _ChaosCenterMixin:
                     pass
                 time.sleep(5)
             else:
-                print(
-                    "  ChaosCenter: WARNING - subscriber pod not ready "
-                    f"after {timeout}s (check cluster resources)",
+                # Collect diagnostic info
+                diag = self._subscriber_diagnostics(namespace)
+                raise RuntimeError(
+                    f"Subscriber pod not ready after {timeout}s.\n{diag}"
                 )
         else:
             # No infra exists — register a new one
@@ -742,9 +820,27 @@ class _ChaosCenterMixin:
                     pass
                 time.sleep(5)
             else:
-                print(
-                    "  ChaosCenter: WARNING - subscriber pod not ready "
-                    f"after {timeout}s",
+                diag = self._subscriber_diagnostics(namespace)
+                raise RuntimeError(
+                    f"Subscriber pod not ready after {timeout}s.\n{diag}"
+                )
+
+        # --- wait for infrastructure to become active --------------------
+        # The subscriber pod can be Running+Ready before its WebSocket
+        # to ChaosCenter is established.  Poll until isActive flips.
+        if not (existing and existing[0].get("isActive")):
+            print("  ChaosCenter: waiting for infrastructure to become active...")
+            active_timeout = min(timeout, 120)
+            if self._wait_for_infra_active(
+                gql_url, project_id, token, infra_id, timeout=active_timeout,
+            ):
+                print(f"  ChaosCenter: infrastructure active ({infra_id})")
+            else:
+                raise RuntimeError(
+                    f"Infrastructure {infra_id} did not become active "
+                    f"after {active_timeout}s. The subscriber may have "
+                    "failed to connect — check its logs:\n"
+                    f"  kubectl logs -n {namespace} -l app=subscriber"
                 )
 
         return {

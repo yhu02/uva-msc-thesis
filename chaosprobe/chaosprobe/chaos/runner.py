@@ -66,7 +66,6 @@ class ChaosRunner:
 
         self.namespace = namespace
         self.timeout = timeout
-        self._run_suffix = uuid.uuid4().hex[:6]
         self._cc = chaoscenter
         self._setup = LitmusSetup(skip_k8s_init=True)
         self._executed_experiments: List[Dict[str, Any]] = []
@@ -109,8 +108,8 @@ class ChaosRunner:
         metadata = engine_spec.setdefault("metadata", {})
         original_name = metadata.get("name", "unnamed")
 
-        # Unique name per run to avoid collisions
-        engine_name = f"{original_name}-{self._run_suffix}"
+        # Stable name per experiment — reuses the same ChaosCenter entry
+        engine_name = original_name
         metadata["name"] = engine_name
         metadata["namespace"] = self.namespace
 
@@ -130,7 +129,12 @@ class ChaosRunner:
         exp_names = [e.get("name", "unknown") for e in spec.get("experiments", [])]
 
         # -- save -------------------------------------------------------
-        experiment_id = str(uuid.uuid4())
+        # Deterministic experiment_id so the same experiment name always
+        # maps to the same ChaosCenter entry (update, not duplicate).
+        # instance_id must be unique per run so revert-chaos cleanup
+        # from one workflow never deletes ChaosEngines from another.
+        _ns = uuid.UUID("d7e1f2a0-1234-5678-9abc-def012345678")
+        experiment_id = str(uuid.uuid5(_ns, engine_name))
         instance_id = str(uuid.uuid4())
         manifest, wf_name = self._build_workflow_manifest(
             engine_spec, engine_name, instance_id, probe_ref=probe_ref,
@@ -206,6 +210,7 @@ class ChaosRunner:
     ) -> Dict[str, Any]:
         """Poll ``getExperimentRun`` until a terminal phase or timeout."""
         last_phase = None
+        last_heartbeat = start_time
         while time.time() - start_time < self.timeout:
             elapsed = int(time.time() - start_time)
             try:
@@ -224,12 +229,15 @@ class ChaosRunner:
             if phase and phase != last_phase:
                 print(f"    [{elapsed}s] Phase: {phase}")
                 last_phase = phase
+                last_heartbeat = time.time()
 
             if phase in _TERMINAL_PHASES:
                 return run
 
-            if elapsed > 0 and elapsed % 30 == 0:
-                print(f"    [{elapsed}s] Still waiting...")
+            now = time.time()
+            if now - last_heartbeat >= 30:
+                print(f"    [{elapsed}s] Still running...")
+                last_heartbeat = now
 
             time.sleep(5)
 
