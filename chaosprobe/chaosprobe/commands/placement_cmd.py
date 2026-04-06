@@ -48,7 +48,7 @@ def placement():
 @click.option(
     "--namespace",
     "-n",
-    default="online-boutique",
+    default="chaosprobe-test",
     help="Namespace containing deployments",
 )
 @click.option(
@@ -177,7 +177,7 @@ def placement_apply(
 @click.option(
     "--namespace",
     "-n",
-    default="online-boutique",
+    default="chaosprobe-test",
     help="Namespace containing deployments",
 )
 @click.option(
@@ -228,7 +228,7 @@ def placement_clear(
 @click.option(
     "--namespace",
     "-n",
-    default="online-boutique",
+    default="chaosprobe-test",
     help="Namespace containing deployments",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")

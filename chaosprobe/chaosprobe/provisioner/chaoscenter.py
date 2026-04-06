@@ -596,6 +596,41 @@ class _ChaosCenterMixin:
 
         # --- infrastructure ----------------------------------------------
         infras = self._chaoscenter_list_infras(gql_url, project_id, token)
+
+        # Clean up infra components from OTHER namespaces to avoid
+        # duplicate chaos-operator / subscriber / etc. hogging resources.
+        other_infras = [
+            i for i in infras
+            if i.get("infraNamespace") != namespace
+            and i.get("infraNamespace")  # skip entries without a namespace
+        ]
+        for other in other_infras:
+            other_ns = other["infraNamespace"]
+            infra_deployments = [
+                "chaos-exporter", "chaos-operator-ce", "event-tracker",
+                "subscriber", "workflow-controller",
+            ]
+            has_infra = False
+            for dep_name in infra_deployments:
+                try:
+                    self.apps_api.read_namespaced_deployment(dep_name, other_ns)
+                    has_infra = True
+                    break
+                except ApiException:
+                    pass
+            if has_infra:
+                print(
+                    f"  ChaosCenter: removing stale infra from '{other_ns}' "
+                    f"(freeing resources for '{namespace}')"
+                )
+                for dep_name in infra_deployments:
+                    try:
+                        self.apps_api.delete_namespaced_deployment(
+                            dep_name, other_ns,
+                        )
+                    except ApiException:
+                        pass
+
         existing = [
             i for i in infras
             if i.get("infraNamespace") == namespace

@@ -12,7 +12,7 @@ from chaosprobe.provisioner.setup import LitmusSetup
 @click.option(
     "--namespace",
     "-n",
-    default="online-boutique",
+    default="chaosprobe-test",
     help="Target namespace to clean chaos resources from",
 )
 @click.option(

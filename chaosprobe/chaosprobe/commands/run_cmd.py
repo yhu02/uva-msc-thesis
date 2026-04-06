@@ -113,7 +113,7 @@ def _ensure_litmus_setup(
 
 @click.command()
 @click.option(
-    "--namespace", "-n", default="online-boutique",
+    "--namespace", "-n", default="chaosprobe-test",
     help="Namespace containing the application",
 )
 @click.option(
