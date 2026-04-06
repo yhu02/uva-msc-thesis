@@ -311,6 +311,71 @@ class _VagrantMixin:
         self.vagrant_up(vagrant_dir, provider=config_provider)
         return vagrant_dir
 
+    def _recover_shutoff_libvirt_vms(self, vagrant_dir: Path) -> list[str]:
+        """Detect and start shutoff libvirt VMs via virsh.
+
+        Works around a vagrant-libvirt bug where `vagrant up` fails with
+        'virDomainSetMemory: domain is not running' for shutoff VMs.
+
+        Returns:
+            List of VM names that were recovered.
+        """
+        env = self._get_vagrant_env()
+        try:
+            result = subprocess.run(
+                ["vagrant", "status", "--machine-readable"],
+                capture_output=True,
+                text=True,
+                cwd=str(vagrant_dir),
+                env=env,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return []
+
+        shutoff_vms = []
+        for line in result.stdout.strip().split("\n"):
+            parts = line.split(",")
+            if len(parts) >= 4 and parts[2] == "state" and parts[3] == "shutoff":
+                shutoff_vms.append(parts[1])
+
+        if not shutoff_vms:
+            return []
+
+        # vagrant-libvirt names domains as <project_dir>_<vm>
+        project_name = vagrant_dir.name
+        recovered = []
+        for vm_name in shutoff_vms:
+            # vagrant-libvirt names domains as <project>_<vm>
+            domain_name = f"{project_name}_{vm_name}"
+            try:
+                subprocess.run(
+                    ["virsh", "start", domain_name],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                recovered.append(vm_name)
+                print(f"  Recovered shutoff VM: {vm_name} (virsh start {domain_name})")
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                # Domain name might differ; try without project prefix
+                try:
+                    subprocess.run(
+                        ["virsh", "start", vm_name],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    recovered.append(vm_name)
+                    print(f"  Recovered shutoff VM: {vm_name}")
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    pass
+
+        if recovered:
+            print(f"  Waiting for {len(recovered)} recovered VM(s) to boot...")
+            time.sleep(30)
+
+        return recovered
+
     def vagrant_up(
         self,
         vagrant_dir: Path,
@@ -321,6 +386,11 @@ class _VagrantMixin:
 
         if not (vagrant_dir / "Vagrantfile").exists():
             raise RuntimeError(f"No Vagrantfile found in {vagrant_dir}")
+
+        # Recover shutoff libvirt VMs before vagrant up to avoid
+        # the virDomainSetMemory bug in vagrant-libvirt
+        if provider == "libvirt":
+            self._recover_shutoff_libvirt_vms(vagrant_dir)
 
         print(f"Starting Vagrant VMs with provider: {provider}...")
 
