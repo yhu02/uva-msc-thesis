@@ -70,6 +70,7 @@ class ChaosRunner:
         self._cc = chaoscenter
         self._setup = LitmusSetup(skip_k8s_init=True)
         self._executed_experiments: List[Dict[str, Any]] = []
+        self._registered_probes: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -123,12 +124,17 @@ class ChaosRunner:
         spec.setdefault("annotationCheck", "false")
         spec.setdefault("jobCleanUpPolicy", "delete")
 
+        # Register inline probes with ChaosCenter and build probeRef list
+        probe_ref = self._register_and_extract_probes(engine_spec)
+
         exp_names = [e.get("name", "unknown") for e in spec.get("experiments", [])]
 
         # -- save -------------------------------------------------------
         experiment_id = str(uuid.uuid4())
         instance_id = str(uuid.uuid4())
-        manifest, wf_name = self._build_workflow_manifest(engine_spec, engine_name, instance_id)
+        manifest, wf_name = self._build_workflow_manifest(
+            engine_spec, engine_name, instance_id, probe_ref=probe_ref,
+        )
 
         try:
             self._setup.chaoscenter_save_experiment(
@@ -231,6 +237,184 @@ class ChaosRunner:
         return {"phase": "timeout", "error": f"Timeout after {self.timeout}s"}
 
     # ------------------------------------------------------------------
+    # Internal -- register probes with ChaosCenter API
+    # ------------------------------------------------------------------
+
+    def _register_and_extract_probes(
+        self, engine_spec: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        """Register inline probes with ChaosCenter and return probeRef list.
+
+        Extracts probe definitions from the ChaosEngine experiments,
+        registers each as a ChaosCenter Resilience Probe via the
+        ``addProbe`` mutation, then removes the inline definitions so
+        the subscriber injects them from the API at runtime.
+
+        Returns:
+            List of ``{"probeID": name, "mode": mode}`` dicts for the
+            ``probeRef`` annotation, or an empty list if registration
+            fails or no probes are defined.
+        """
+        experiments = (
+            engine_spec.get("spec", {}).get("experiments", [])
+        )
+        if not experiments:
+            return []
+
+        probe_ref: List[Dict[str, str]] = []
+
+        for exp in experiments:
+            inline_probes = exp.get("spec", {}).get("probe", [])
+            if not inline_probes:
+                continue
+
+            for probe_def in inline_probes:
+                name = probe_def.get("name", "")
+                probe_type = probe_def.get("type", "")
+                mode = probe_def.get("mode", "Continuous")
+
+                if not name or not probe_type:
+                    continue
+
+                # Only register once per runner session
+                if name in self._registered_probes:
+                    probe_ref.append({"probeID": name, "mode": mode})
+                    continue
+
+                try:
+                    api_request = self._probe_to_api_request(probe_def)
+                    self._setup.chaoscenter_add_probe(
+                        gql_url=self._cc["gql_url"],
+                        project_id=self._cc["project_id"],
+                        token=self._cc["token"],
+                        probe_request=api_request,
+                    )
+                    self._registered_probes.add(name)
+                    probe_ref.append({"probeID": name, "mode": mode})
+                    print(f"    Registered probe: {name} ({probe_type}/{mode})")
+                except Exception as exc:
+                    # Probe may already exist from a previous run
+                    err_msg = str(exc).lower()
+                    if "already" in err_msg or "duplicate" in err_msg or "exists" in err_msg:
+                        self._registered_probes.add(name)
+                        probe_ref.append({"probeID": name, "mode": mode})
+                        print(f"    Probe already registered: {name}")
+                    else:
+                        print(f"    WARNING: Failed to register probe '{name}': {exc}")
+                        # Fall back: keep inline probes, skip probeRef
+                        return []
+
+            # Remove inline probe definitions; subscriber will inject
+            # them from the API based on probeRef.
+            if probe_ref:
+                exp.get("spec", {}).pop("probe", None)
+
+        return probe_ref
+
+    @staticmethod
+    def _probe_to_api_request(probe_def: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert an inline ChaosEngine probe to a ChaosCenter API ProbeRequest."""
+        name = probe_def["name"]
+        probe_type = probe_def["type"]
+        run_props = probe_def.get("runProperties", {})
+
+        base_props: Dict[str, Any] = {
+            "probeTimeout": run_props.get("probeTimeout", "5s"),
+            "interval": run_props.get("interval", "2s"),
+        }
+        if "retry" in run_props:
+            base_props["retry"] = int(run_props["retry"])
+        if "attempt" in run_props:
+            base_props["attempt"] = int(run_props["attempt"])
+        if "probePollingInterval" in run_props:
+            base_props["probePollingInterval"] = run_props["probePollingInterval"]
+        if "evaluationTimeout" in run_props:
+            base_props["evaluationTimeout"] = run_props["evaluationTimeout"]
+        if "initialDelay" in run_props:
+            base_props["initialDelay"] = run_props["initialDelay"]
+
+        request: Dict[str, Any] = {
+            "name": name,
+            "type": probe_type,
+            "infrastructureType": "Kubernetes",
+        }
+
+        if probe_type == "httpProbe":
+            http_inputs = probe_def.get("httpProbe/inputs", {})
+            method_def = http_inputs.get("method", {})
+            method_req: Dict[str, Any] = {}
+            if "get" in method_def:
+                method_req["get"] = {
+                    "criteria": method_def["get"].get("criteria", "=="),
+                    "responseCode": str(method_def["get"].get("responseCode", "200")),
+                }
+            elif "post" in method_def:
+                post = method_def["post"]
+                method_req["post"] = {
+                    "criteria": post.get("criteria", "=="),
+                    "responseCode": str(post.get("responseCode", "200")),
+                }
+                if "contentType" in post:
+                    method_req["post"]["contentType"] = post["contentType"]
+                if "body" in post:
+                    method_req["post"]["body"] = post["body"]
+
+            request["kubernetesHTTPProperties"] = {
+                **base_props,
+                "url": http_inputs.get("url", ""),
+                "method": method_req,
+            }
+            if http_inputs.get("insecureSkipVerify"):
+                request["kubernetesHTTPProperties"]["insecureSkipVerify"] = True
+
+        elif probe_type == "cmdProbe":
+            cmd_inputs = probe_def.get("cmdProbe/inputs", {})
+            comparator = cmd_inputs.get("comparator", {})
+            request["kubernetesCMDProperties"] = {
+                **base_props,
+                "command": cmd_inputs.get("command", ""),
+                "comparator": {
+                    "type": comparator.get("type", "string"),
+                    "value": str(comparator.get("value", "")),
+                    "criteria": comparator.get("criteria", "=="),
+                },
+            }
+            if "source" in cmd_inputs:
+                request["kubernetesCMDProperties"]["source"] = cmd_inputs["source"]
+
+        elif probe_type == "promProbe":
+            prom_inputs = probe_def.get("promProbe/inputs", {})
+            comparator = prom_inputs.get("comparator", {})
+            request["promProperties"] = {
+                **base_props,
+                "endpoint": prom_inputs.get("endpoint", ""),
+                "comparator": {
+                    "type": comparator.get("type", "float"),
+                    "value": str(comparator.get("value", "")),
+                    "criteria": comparator.get("criteria", ">="),
+                },
+            }
+            if "query" in prom_inputs:
+                request["promProperties"]["query"] = prom_inputs["query"]
+            if "queryPath" in prom_inputs:
+                request["promProperties"]["queryPath"] = prom_inputs["queryPath"]
+
+        elif probe_type == "k8sProbe":
+            k8s_inputs = probe_def.get("k8sProbe/inputs", {})
+            request["k8sProperties"] = {
+                **base_props,
+                "version": k8s_inputs.get("version", "v1"),
+                "resource": k8s_inputs.get("resource", ""),
+                "operation": k8s_inputs.get("operation", "present"),
+            }
+            for key in ("group", "namespace", "resourceNames",
+                        "fieldSelector", "labelSelector"):
+                if key in k8s_inputs:
+                    request["k8sProperties"][key] = k8s_inputs[key]
+
+        return request
+
+    # ------------------------------------------------------------------
     # Internal -- Argo Workflow manifest builder
     # ------------------------------------------------------------------
 
@@ -239,6 +423,7 @@ class ChaosRunner:
         engine_spec: Dict[str, Any],
         engine_name: str,
         instance_id: str,
+        probe_ref: List[Dict[str, str]] | None = None,
     ) -> tuple[str, str]:
         """Build an Argo Workflow JSON manifest wrapping a ChaosEngine spec.
 
@@ -268,9 +453,11 @@ class ChaosRunner:
         # Use generateName so ChaosCenter can extract the fault name
         if "name" in engine_meta and "generateName" not in engine_meta:
             engine_meta["generateName"] = engine_meta.pop("name") + "-"
-        # ChaosCenter requires a probeRef annotation; an empty list
-        # signals "no probes" and avoids validation errors.
-        engine_meta.setdefault("annotations", {}).setdefault("probeRef", "[]")
+        # ChaosCenter requires a probeRef annotation; when probes are
+        # registered via the API, reference them so the subscriber injects
+        # them into the ChaosEngine at runtime.
+        probe_ref_json = _json.dumps(probe_ref) if probe_ref else "[]"
+        engine_meta.setdefault("annotations", {})["probeRef"] = probe_ref_json
         engine_yaml = yaml.dump(engine_copy, default_flow_style=False)
 
         sa = spec.get("chaosServiceAccount", "litmus-admin")

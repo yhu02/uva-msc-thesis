@@ -886,3 +886,68 @@ class _ChaosCenterMixin:
             token=token,
         )
         return (resp.get("data") or {}).get("getExperimentRun", {})
+
+    # ------------------------------------------------------------------
+    # Resilience Probes — register / query via ChaosCenter API
+    # ------------------------------------------------------------------
+
+    def chaoscenter_add_probe(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        probe_request: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Register a resilience probe with ChaosCenter.
+
+        Args:
+            gql_url: GraphQL endpoint URL.
+            project_id: ChaosCenter project ID.
+            token: Bearer token.
+            probe_request: ``ProbeRequest`` input matching the GraphQL schema.
+                Must include ``name``, ``type``, ``infrastructureType``, and
+                the relevant properties key (e.g. ``kubernetesHTTPProperties``).
+
+        Returns:
+            The created Probe object dict (``name``, ``type``).
+        """
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "mutation($req: ProbeRequest!, $pid: ID!) "
+                    "{ addProbe(request: $req, projectID: $pid) "
+                    "{ name type } }"
+                ),
+                "variables": {
+                    "req": probe_request,
+                    "pid": project_id,
+                },
+            },
+            token=token,
+        )
+        return (resp.get("data") or {}).get("addProbe", {})
+
+    def chaoscenter_list_probes(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+    ) -> list[dict[str, Any]]:
+        """List all registered resilience probes.
+
+        Returns:
+            List of probe dicts with ``name`` and ``type`` keys.
+        """
+        resp = self._chaoscenter_api_request(
+            gql_url,
+            data={
+                "query": (
+                    "query($pid: ID!) "
+                    "{ listProbes(projectID: $pid) { name type } }"
+                ),
+                "variables": {"pid": project_id},
+            },
+            token=token,
+        )
+        return (resp.get("data") or {}).get("listProbes", [])
