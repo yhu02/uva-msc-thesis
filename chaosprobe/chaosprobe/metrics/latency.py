@@ -26,7 +26,13 @@ from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
 from chaosprobe.k8s import ensure_k8s_config
-from chaosprobe.metrics.base import ContinuousProberBase
+from chaosprobe.metrics.base import (
+    ContinuousProberBase,
+    exec_in_pod,
+    find_probe_pod,
+    find_ready_pod,
+    pod_has_shell,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -315,77 +321,15 @@ class LatencyProber:
 
     def _find_ready_pod(self, service_name: str) -> Optional[str]:
         """Find a ready pod for a given service."""
-        try:
-            pods = self.core_api.list_namespaced_pod(
-                self.namespace,
-                label_selector=f"app={service_name}",
-                field_selector="status.phase=Running",
-            )
-        except ApiException:
-            return None
-
-        for pod in pods.items:
-            if pod.status.conditions:
-                for cond in pod.status.conditions:
-                    if cond.type == "Ready" and cond.status == "True":
-                        return pod.metadata.name
-        return None
+        return find_ready_pod(self.core_api, self.namespace, service_name)
 
     def _find_probe_pod(self) -> Optional[str]:
-        """Find a pod suitable for running probe commands.
-
-        Discovers running pods in the namespace and tests whether they have
-        a usable shell.  Pods labelled ``app=loadgenerator`` are preferred
-        because they typically bundle Python and HTTP tools.
-        """
-        try:
-            pods = self.core_api.list_namespaced_pod(
-                self.namespace,
-                field_selector="status.phase=Running",
-            )
-        except ApiException:
-            return None
-
-        ready_pods: List[str] = []
-        load_gen_pods: List[str] = []
-        for pod in pods.items:
-            if not pod.status.conditions:
-                continue
-            is_ready = any(
-                c.type == "Ready" and c.status == "True"
-                for c in pod.status.conditions
-            )
-            if not is_ready:
-                continue
-            name = pod.metadata.name
-            labels = pod.metadata.labels or {}
-            if labels.get("app") == "loadgenerator":
-                load_gen_pods.append(name)
-            else:
-                ready_pods.append(name)
-
-        # Prefer loadgenerator pods, then fall back to any ready pod
-        for name in load_gen_pods + ready_pods:
-            if self._pod_has_shell(name):
-                return name
-        return None
+        """Find a pod suitable for running probe commands."""
+        return find_probe_pod(self.core_api, self.namespace)
 
     def _pod_has_shell(self, pod_name: str) -> bool:
         """Quick check whether *pod_name* has a usable shell."""
-        try:
-            out = stream(
-                self.core_api.connect_get_namespaced_pod_exec,
-                pod_name,
-                self.namespace,
-                command=["sh", "-c", "echo ok"],
-                stderr=True,
-                stdout=True,
-                stdin=False,
-                tty=False,
-            )
-            return "ok" in out
-        except Exception:
-            return False
+        return pod_has_shell(self.core_api, self.namespace, pod_name)
 
     def _measure_http_from_pod(
         self,

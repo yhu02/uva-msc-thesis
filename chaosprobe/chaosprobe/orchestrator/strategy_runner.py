@@ -32,7 +32,57 @@ from chaosprobe.placement.strategy import PlacementStrategy
 
 
 # ---------------------------------------------------------------------------
-# Context bundle — avoids threading 25+ parameters through every call
+# Timeout helpers
+# ---------------------------------------------------------------------------
+
+def _parse_probe_timeout(s: str) -> int:
+    """Parse a Go-style duration string (e.g. ``'15s'``) to integer seconds."""
+    s = s.strip()
+    if s.endswith("ms"):
+        return max(1, int(s[:-2]) // 1000)
+    if s.endswith("s"):
+        return int(s[:-1])
+    if s.endswith("m"):
+        return int(s[:-1]) * 60
+    try:
+        return int(s)
+    except ValueError:
+        return 5
+
+
+def _compute_effective_timeout(scenario: Dict[str, Any], user_timeout: int) -> int:
+    """Compute a polling timeout that accounts for chaos duration + probe overhead.
+
+    The go-runner evaluates probes **before** and **after** the chaos
+    window.  When probes can't reach their targets (e.g. frontend down
+    due to resource exhaustion), each probe exhausts its full
+    ``retry × probeTimeout`` budget.  Probes run in goroutines so the
+    per-phase overhead is roughly ``max(probe_budget)`` across all
+    probes times two phases.
+
+    Returns the larger of *user_timeout* and the computed minimum.
+    """
+    chaos_duration = 60  # fallback
+    max_probe_budget = 0
+
+    for exp_entry in scenario.get("experiments", []):
+        spec = exp_entry.get("spec", {})
+        for exp in spec.get("spec", {}).get("experiments", []):
+            for env in exp.get("spec", {}).get("components", {}).get("env", []):
+                if env.get("name") == "TOTAL_CHAOS_DURATION":
+                    try:
+                        chaos_duration = max(chaos_duration, int(env["value"]))
+                    except (ValueError, KeyError):
+                        pass
+            for probe in exp.get("spec", {}).get("probe", []):
+                run_props = probe.get("runProperties", {})
+                t = _parse_probe_timeout(run_props.get("probeTimeout", "5s"))
+                r = int(run_props.get("retry", 1))
+                max_probe_budget = max(max_probe_budget, t * r)
+
+    # pre-chaos probes + chaos + post-chaos probes + workflow overhead
+    min_timeout = chaos_duration + 2 * max_probe_budget + 120
+    return max(user_timeout, min_timeout)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -124,7 +174,7 @@ def _apply_placement(
     ctx: RunContext, strategy_name: str, strategy_result: Dict[str, Any],
 ) -> None:
     click.echo("\n  Step 1: Clearing existing placement...")
-    ctx.mutator.clear_placement(wait=True)
+    ctx.mutator.clear_placement(wait=True, timeout=120)
     click.echo("    Placement cleared.")
 
     if strategy_name == "baseline":
@@ -149,7 +199,7 @@ def _apply_placement(
             seed=ctx.seed if strategy_name == "random" else None,
             deployments=app_deps if app_deps else None,
             wait=True,
-            timeout=ctx.timeout,
+            timeout=min(ctx.timeout, 120),
         )
         strategy_result["placement"] = assignment.to_dict()
 
@@ -216,7 +266,7 @@ def _run_single_iteration(
         time.sleep(ctx.settle_time)
 
     click.echo("    Verifying deployment readiness...")
-    wait_for_healthy_deployments(ctx.namespace, timeout=60)
+    wait_for_healthy_deployments(ctx.namespace, timeout=15)
     _ensure_port_forwards(ctx)
     click.echo("    Ready.")
 
@@ -267,8 +317,9 @@ def _run_single_iteration(
         for p in probers.values():
             if p and hasattr(p, "mark_chaos_start"):
                 p.mark_chaos_start()
+        effective_timeout = _compute_effective_timeout(scenario, ctx.timeout)
         runner = ChaosRunner(
-            ctx.namespace, timeout=ctx.timeout, chaoscenter=ctx.chaoscenter_config,
+            ctx.namespace, timeout=effective_timeout, chaoscenter=ctx.chaoscenter_config,
         )
         runner.run_experiments(scenario.get("experiments", []))
         experiment_end = time.time()

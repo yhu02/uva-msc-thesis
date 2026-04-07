@@ -3,13 +3,121 @@
 Provides a reusable ``ContinuousProberBase`` that handles thread
 lifecycle (start/stop), chaos phase boundaries, and time-series
 collection.  Subclasses only need to implement ``_probe_loop``.
+
+Also provides shared Kubernetes pod helper functions used by multiple
+metric probers (latency, throughput, resources).
 """
 
+import logging
 import statistics
 import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared pod helper functions
+# ---------------------------------------------------------------------------
+
+def find_ready_pod(core_api: Any, namespace: str, service_name: str) -> Optional[str]:
+    """Find a ready pod for a given service by label ``app=<service_name>``."""
+    try:
+        pods = core_api.list_namespaced_pod(
+            namespace,
+            label_selector=f"app={service_name}",
+            field_selector="status.phase=Running",
+        )
+    except Exception:
+        return None
+
+    for pod in pods.items:
+        if pod.status.conditions:
+            for cond in pod.status.conditions:
+                if cond.type == "Ready" and cond.status == "True":
+                    return pod.metadata.name
+    return None
+
+
+def pod_has_shell(core_api: Any, namespace: str, pod_name: str) -> bool:
+    """Quick check whether *pod_name* has a usable shell."""
+    try:
+        from kubernetes.stream import stream
+
+        out = stream(
+            core_api.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            command=["sh", "-c", "echo ok"],
+            stderr=True,
+            stdout=True,
+            stdin=False,
+            tty=False,
+        )
+        return "ok" in out
+    except Exception:
+        return False
+
+
+def find_probe_pod(core_api: Any, namespace: str) -> Optional[str]:
+    """Find a pod suitable for running probe commands.
+
+    Discovers running pods in the namespace and tests whether they have
+    a usable shell.  Pods labelled ``app=loadgenerator`` are preferred
+    because they typically bundle Python and HTTP tools.
+    """
+    try:
+        pods = core_api.list_namespaced_pod(
+            namespace,
+            field_selector="status.phase=Running",
+        )
+    except Exception:
+        return None
+
+    ready_pods: List[str] = []
+    load_gen_pods: List[str] = []
+    for pod in pods.items:
+        if not pod.status.conditions:
+            continue
+        is_ready = any(
+            c.type == "Ready" and c.status == "True"
+            for c in pod.status.conditions
+        )
+        if not is_ready:
+            continue
+        name = pod.metadata.name
+        labels = pod.metadata.labels or {}
+        if labels.get("app") == "loadgenerator":
+            load_gen_pods.append(name)
+        else:
+            ready_pods.append(name)
+
+    for name in load_gen_pods + ready_pods:
+        if pod_has_shell(core_api, namespace, name):
+            return name
+    return None
+
+
+def exec_in_pod(core_api: Any, namespace: str, pod_name: str, command: List[str]) -> str:
+    """Execute a command inside a pod and return stdout."""
+    try:
+        from kubernetes.stream import stream
+
+        return stream(
+            core_api.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            command=command,
+            stderr=True,
+            stdin=False,
+            stdout=True,
+            tty=False,
+            _preload_content=True,
+        )
+    except Exception as e:
+        return f"ERROR:{e}"
 
 
 class ContinuousProberBase:

@@ -14,6 +14,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
 from chaosprobe.orchestrator.preflight import LITMUS_INFRA_DEPLOYMENTS
 from chaosprobe.placement.strategy import (
     DeploymentInfo,
@@ -69,8 +70,8 @@ class PlacementMutator:
             cpu_str = alloc.get("cpu", "0")
             mem_str = alloc.get("memory", "0")
 
-            cpu_m = self._parse_cpu(cpu_str)
-            mem_b = self._parse_memory(mem_str)
+            cpu_m = int(parse_cpu_quantity(cpu_str))
+            mem_b = parse_memory_quantity(mem_str)
 
             # Check Ready condition
             ready = False
@@ -132,8 +133,8 @@ class PlacementMutator:
                 if container.resources and container.resources.requests:
                     cpu_str = container.resources.requests.get("cpu", "0")
                     mem_str = container.resources.requests.get("memory", "0")
-                    total_cpu += self._parse_cpu(cpu_str)
-                    total_mem += self._parse_memory(mem_str)
+                    total_cpu += int(parse_cpu_quantity(cpu_str))
+                    total_mem += parse_memory_quantity(mem_str)
 
             # Find current node (from first running pod)
             current_node = self._get_pod_node(name)
@@ -464,43 +465,3 @@ class PlacementMutator:
             elapsed = int(time.time() - start)
             for name in pending:
                 click.echo(f"    WARNING: {name}: not ready after {elapsed}s")
-
-    @staticmethod
-    def _parse_cpu(cpu_str: str) -> int:
-        """Parse a Kubernetes CPU string to millicores."""
-        if not cpu_str:
-            return 0
-        cpu_str = str(cpu_str)
-        if cpu_str.endswith("m"):
-            return int(cpu_str[:-1])
-        try:
-            return int(float(cpu_str) * 1000)
-        except ValueError:
-            return 0
-
-    @staticmethod
-    def _parse_memory(mem_str: str) -> int:
-        """Parse a Kubernetes memory string to bytes."""
-        if not mem_str:
-            return 0
-        mem_str = str(mem_str)
-        suffixes = {
-            "Ki": 1024,
-            "Mi": 1024**2,
-            "Gi": 1024**3,
-            "Ti": 1024**4,
-            "K": 1000,
-            "M": 1000**2,
-            "G": 1000**3,
-            "T": 1000**4,
-        }
-        for suffix, multiplier in sorted(suffixes.items(), key=lambda x: -len(x[0])):
-            if mem_str.endswith(suffix):
-                try:
-                    return int(float(mem_str[: -len(suffix)]) * multiplier)
-                except ValueError:
-                    return 0
-        try:
-            return int(mem_str)
-        except ValueError:
-            return 0

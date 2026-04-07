@@ -505,36 +505,50 @@ class TestEdgeCases:
 
 
 class TestResourceParsing:
-    """Tests for CPU and memory string parsing in PlacementMutator."""
+    """Tests for CPU and memory string parsing (now delegated to metrics.resources)."""
 
     def test_parse_cpu_millicores(self):
-        assert PlacementMutator._parse_cpu("200m") == 200
-        assert PlacementMutator._parse_cpu("1000m") == 1000
+        from chaosprobe.metrics.resources import parse_cpu_quantity
+
+        assert int(parse_cpu_quantity("200m")) == 200
+        assert int(parse_cpu_quantity("1000m")) == 1000
 
     def test_parse_cpu_cores(self):
-        assert PlacementMutator._parse_cpu("1") == 1000
-        assert PlacementMutator._parse_cpu("2") == 2000
-        assert PlacementMutator._parse_cpu("0.5") == 500
+        from chaosprobe.metrics.resources import parse_cpu_quantity
+
+        assert int(parse_cpu_quantity("1")) == 1000
+        assert int(parse_cpu_quantity("2")) == 2000
+        assert int(parse_cpu_quantity("0.5")) == 500
 
     def test_parse_cpu_empty(self):
-        assert PlacementMutator._parse_cpu("") == 0
-        assert PlacementMutator._parse_cpu("0") == 0
+        from chaosprobe.metrics.resources import parse_cpu_quantity
+
+        assert int(parse_cpu_quantity("0")) == 0
 
     def test_parse_memory_mi(self):
-        assert PlacementMutator._parse_memory("128Mi") == 128 * 1024 ** 2
+        from chaosprobe.metrics.resources import parse_memory_quantity
+
+        assert parse_memory_quantity("128Mi") == 128 * 1024 ** 2
 
     def test_parse_memory_gi(self):
-        assert PlacementMutator._parse_memory("2Gi") == 2 * 1024 ** 3
+        from chaosprobe.metrics.resources import parse_memory_quantity
+
+        assert parse_memory_quantity("2Gi") == 2 * 1024 ** 3
 
     def test_parse_memory_ki(self):
-        assert PlacementMutator._parse_memory("1024Ki") == 1024 * 1024
+        from chaosprobe.metrics.resources import parse_memory_quantity
+
+        assert parse_memory_quantity("1024Ki") == 1024 * 1024
 
     def test_parse_memory_bytes(self):
-        assert PlacementMutator._parse_memory("1048576") == 1048576
+        from chaosprobe.metrics.resources import parse_memory_quantity
+
+        assert parse_memory_quantity("1048576") == 1048576
 
     def test_parse_memory_empty(self):
-        assert PlacementMutator._parse_memory("") == 0
-        assert PlacementMutator._parse_memory("0") == 0
+        from chaosprobe.metrics.resources import parse_memory_quantity
+
+        assert parse_memory_quantity("0") == 0
 
 
 # ── Strategy description tests ────────────────────────────────

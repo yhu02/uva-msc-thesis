@@ -45,6 +45,9 @@ class ResultCollector:
 
         Args:
             executed_experiments: List from ChaosRunner.get_executed_experiments().
+                Each dict may contain ``resiliencyScore`` from the
+                ChaosCenter API, used as a fallback when the ChaosResult
+                CRD lacks probe-level data.
 
         Returns:
             List of experiment result dictionaries.
@@ -54,14 +57,22 @@ class ResultCollector:
         for exp_info in executed_experiments:
             engine_name = exp_info.get("engineName", "")
             exp_names = exp_info.get("experimentNames", [])
+            api_score = exp_info.get("resiliencyScore")
 
             for exp_name in exp_names:
-                result = self._collect_experiment_result(engine_name, exp_name)
+                result = self._collect_experiment_result(
+                    engine_name, exp_name, api_resiliency_score=api_score,
+                )
                 results.append(result)
 
         return results
 
-    def _collect_experiment_result(self, engine_name: str, experiment_name: str) -> Dict[str, Any]:
+    def _collect_experiment_result(
+        self,
+        engine_name: str,
+        experiment_name: str,
+        api_resiliency_score: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """Collect result for a single experiment."""
         result: Dict[str, Any] = {
             "name": experiment_name,
@@ -81,6 +92,16 @@ class ResultCollector:
         # Calculate verdict and metrics
         result["verdict"] = self._determine_verdict(result)
         result["probeSuccessPercentage"] = self._calculate_probe_success(result)
+
+        # When the CRD has no probe-level data (probeStatuses empty) but
+        # the ChaosCenter API reported a resiliency score, prefer the API
+        # score.  This covers e.g. timeout scenarios or API-only probes.
+        if api_resiliency_score is not None:
+            crd_probes = (
+                result.get("chaosResult", {}).get("probes") or []
+            )
+            if not crd_probes:
+                result["probeSuccessPercentage"] = float(api_resiliency_score)
 
         return result
 
@@ -103,8 +124,14 @@ class ResultCollector:
     def _get_chaos_result(self, engine_name: str, experiment_name: str) -> Optional[Dict[str, Any]]:
         """Get the ChaosResult for an experiment.
 
-        ChaosResult name follows the pattern: <engine-name>-<experiment-type>.
-        Falls back to searching by spec.engine field.
+        ChaosResult name follows the pattern:
+        ``<generated-engine-name>-<experiment-type>`` where the engine
+        name may include a random suffix from ``generateName``.
+
+        Lookup order:
+        1. Exact name ``<engine>-<experiment>`` (direct ChaosEngine).
+        2. List all ChaosResults and match by ``spec.engine`` prefix
+           (handles ``generateName`` suffixes from ChaosCenter workflows).
         """
         # Try exact name match: <engine-name>-<experiment-name>
         result_name = f"{engine_name}-{experiment_name}"
@@ -121,21 +148,12 @@ class ResultCollector:
             if e.status != 404:
                 raise
 
-        # Try engine name directly
-        try:
-            result = self.custom_api.get_namespaced_custom_object(
-                group="litmuschaos.io",
-                version="v1alpha1",
-                namespace=self.namespace,
-                plural="chaosresults",
-                name=engine_name,
-            )
-            return result
-        except ApiException as e:
-            if e.status != 404:
-                raise
-
-        # Fallback: search by spec.engine field
+        # Fallback: search all ChaosResults by spec.engine prefix.
+        # When experiments run through ChaosCenter, the ChaosEngine uses
+        # generateName (e.g. "placement-pod-delete-baseline-") which
+        # produces names like "placement-pod-delete-baseline-kkr7b".
+        # Match any ChaosResult whose spec.engine starts with our
+        # engine_name, picking the most recent one.
         try:
             results = self.custom_api.list_namespaced_custom_object(
                 group="litmuschaos.io",
@@ -143,10 +161,18 @@ class ResultCollector:
                 namespace=self.namespace,
                 plural="chaosresults",
             )
+            prefix = engine_name + "-"
+            best = None
+            best_ts = ""
             for item in results.get("items", []):
-                if item.get("spec", {}).get("engine") == engine_name:
-                    return item
-            return None
+                spec_engine = item.get("spec", {}).get("engine", "")
+                # Exact match or prefix match (generateName suffix)
+                if spec_engine == engine_name or spec_engine.startswith(prefix):
+                    ts = item.get("metadata", {}).get("creationTimestamp", "")
+                    if ts > best_ts:
+                        best = item
+                        best_ts = ts
+            return best
         except ApiException:
             return None
 

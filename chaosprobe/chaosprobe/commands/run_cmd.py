@@ -1,10 +1,9 @@
 """CLI command: chaosprobe run — automated full experiment matrix."""
 
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
@@ -109,6 +108,178 @@ def _ensure_litmus_setup(
             err=True,
         )
     return ok
+
+
+# ------------------------------------------------------------------
+# Helpers extracted from run() to keep the main command manageable
+# ------------------------------------------------------------------
+
+def _load_and_prepare_scenario(
+    experiment: str,
+    namespace: Optional[str],
+) -> Tuple[dict, str, Path, Optional[List[dict]]]:
+    """Load, validate, deploy manifests, and discover topology.
+
+    Returns ``(shared_scenario, namespace, experiment_file, service_routes)``.
+    """
+    experiment_file = Path(experiment)
+    if not experiment_file.exists():
+        pkg_path = Path(__file__).resolve().parent.parent.parent / experiment
+        if pkg_path.exists():
+            experiment_file = pkg_path
+    try:
+        shared_scenario = load_scenario(str(experiment_file))
+        validate_scenario(shared_scenario)
+        if namespace is not None:
+            shared_scenario["namespace"] = namespace
+        namespace = shared_scenario["namespace"]
+    except Exception as e:
+        click.echo(f"Error loading experiment: {e}", err=True)
+        sys.exit(1)
+
+    # Auto-deploy application manifests from scenario's deploy/ directory
+    deploy_dir = Path(shared_scenario["path"]) / "deploy"
+    if deploy_dir.is_dir():
+        import subprocess as _sp
+
+        yamls = sorted(deploy_dir.glob("*.yaml")) + sorted(deploy_dir.glob("*.yml"))
+        if yamls:
+            click.echo(f"  Deploying {len(yamls)} manifest(s) from {deploy_dir.name}/...")
+            _sp.run(
+                ["kubectl", "create", "namespace", namespace],
+                capture_output=True, text=True,
+            )
+            result = _sp.run(
+                ["kubectl", "apply", "-f", str(deploy_dir), "-n", namespace],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                click.echo(f"  Warning: kubectl apply failed: {result.stderr.strip()}", err=True)
+            else:
+                applied = sum(1 for line in result.stdout.strip().split("\n") if line.strip())
+                click.echo(f"  Applied {applied} resource(s) to {namespace}")
+
+    # Discover service topology
+    service_routes = parse_topology_from_scenario(shared_scenario) or None
+    if service_routes:
+        click.echo(
+            f"  Topology:   {len(service_routes)} service dependencies"
+            " discovered from manifests"
+        )
+    else:
+        click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
+
+    # Auto-build Rust cmdProbes if probes/ directory exists
+    if shared_scenario.get("probes"):
+        click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
+        try:
+            from chaosprobe.probes.builder import RustProbeBuilder, patch_probe_images
+
+            builder = RustProbeBuilder(registry="chaosprobe", load_kind=True)
+            built_images = builder.build_all(shared_scenario["path"])
+            if built_images:
+                n = patch_probe_images(shared_scenario["experiments"], built_images)
+                click.echo(f"  Built and patched {n} cmdProbe image(s)")
+        except Exception as e:
+            click.echo(f"Warning: Rust probe build failed: {e}", err=True)
+            click.echo("  Continuing without auto-built probes...", err=True)
+
+    return shared_scenario, namespace, experiment_file, service_routes
+
+
+def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
+    """Clear leftover nodeSelector constraints and rollout-restart app deployments."""
+    from kubernetes import client as k8s_client_mod
+
+    click.echo("Clearing stale placement constraints...")
+    for _attempt in range(3):
+        try:
+            mutator.clear_placement(wait=False)
+            break
+        except Exception as _e:
+            if _attempt < 2:
+                click.echo(f"  Retry clearing placement ({_e})...", err=True)
+                import time as _time
+                _time.sleep(5)
+            else:
+                click.echo(f"  WARNING: could not clear placement ({_e})", err=True)
+
+    click.echo("Restarting app deployments for a clean baseline...")
+    try:
+        _apps_api = k8s_client_mod.AppsV1Api()
+        _all_deps = _apps_api.list_namespaced_deployment(namespace)
+        _restart_names = [
+            d.metadata.name
+            for d in _all_deps.items
+            if d.metadata.name not in LITMUS_INFRA_DEPLOYMENTS
+        ]
+        _now = datetime.now(timezone.utc).isoformat()
+        for _dep_name in _restart_names:
+            _apps_api.patch_namespaced_deployment(
+                name=_dep_name,
+                namespace=namespace,
+                body={
+                    "spec": {
+                        "template": {
+                            "metadata": {
+                                "annotations": {
+                                    "chaosprobe.io/restartedAt": _now,
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        click.echo(f"  Triggered rollout restart for {len(_restart_names)} deployment(s)")
+    except Exception as e:
+        click.echo(f"  WARNING: rollout restart failed ({e})", err=True)
+
+
+def _print_run_banner(
+    namespace: str,
+    experiment_file: Path,
+    strategy_list: List[str],
+    iterations: int,
+    results_dir: Path,
+    timeout: int,
+    settle_time: int,
+    *,
+    measure_latency: bool,
+    measure_redis: bool,
+    measure_disk: bool,
+    measure_resources: bool,
+    measure_prometheus: bool,
+    prometheus_url: Tuple[str, ...],
+    collect_logs: bool,
+    baseline_duration: int,
+) -> None:
+    """Print the experiment run banner."""
+    click.echo("=" * 60)
+    click.echo("ChaosProbe — Automated Placement Experiment Runner")
+    click.echo("=" * 60)
+    click.echo(f"  Namespace:  {namespace}")
+    click.echo(f"  Experiment: {experiment_file}")
+    click.echo(f"  Strategies: {', '.join(strategy_list)}")
+    click.echo(f"  Iterations: {iterations}")
+    click.echo(f"  Output:     {results_dir}")
+    click.echo(f"  Timeout:    {timeout}s per experiment")
+    click.echo(f"  Settle:     {settle_time}s between placement and experiment")
+    if measure_latency:
+        click.echo("  Latency:    Measuring inter-service latency during experiments")
+    if measure_redis:
+        click.echo("  Redis:      Measuring Redis throughput during experiments")
+    if measure_disk:
+        click.echo("  Disk:       Measuring disk I/O throughput during experiments")
+    if measure_resources:
+        click.echo("  Resources:  Measuring node/pod resource utilization during experiments")
+    if measure_prometheus:
+        prom_display = ", ".join(prometheus_url) if prometheus_url else "(auto-discover)"
+        click.echo(f"  Prometheus: Querying cluster Prometheus at {prom_display}")
+    if collect_logs:
+        click.echo("  Logs:       Collecting container logs from target deployment")
+    if baseline_duration > 0:
+        click.echo(f"  Baseline:   {baseline_duration}s steady-state collection before chaos")
+    click.echo("")
 
 
 @click.command()
@@ -216,70 +387,10 @@ def run(
     results_dir = Path(output_dir) / ts
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load the shared experiment file once
-    experiment_file = Path(experiment)
-    if not experiment_file.exists():
-        pkg_path = Path(__file__).resolve().parent.parent.parent / experiment
-        if pkg_path.exists():
-            experiment_file = pkg_path
-    try:
-        shared_scenario = load_scenario(str(experiment_file))
-        validate_scenario(shared_scenario)
-        # Use YAML-detected namespace unless the user explicitly passed --namespace
-        if namespace is not None:
-            shared_scenario["namespace"] = namespace
-        namespace = shared_scenario["namespace"]
-    except Exception as e:
-        click.echo(f"Error loading experiment: {e}", err=True)
-        sys.exit(1)
-
-    # Auto-deploy application manifests from scenario's deploy/ directory
-    deploy_dir = Path(shared_scenario["path"]) / "deploy"
-    if deploy_dir.is_dir():
-        import subprocess as _sp
-
-        yamls = sorted(deploy_dir.glob("*.yaml")) + sorted(deploy_dir.glob("*.yml"))
-        if yamls:
-            click.echo(f"  Deploying {len(yamls)} manifest(s) from {deploy_dir.name}/...")
-            # Ensure the target namespace exists before applying manifests
-            _sp.run(
-                ["kubectl", "create", "namespace", namespace],
-                capture_output=True, text=True,
-            )
-            result = _sp.run(
-                ["kubectl", "apply", "-f", str(deploy_dir), "-n", namespace],
-                capture_output=True, text=True, timeout=60,
-            )
-            if result.returncode != 0:
-                click.echo(f"  Warning: kubectl apply failed: {result.stderr.strip()}", err=True)
-            else:
-                applied = sum(1 for line in result.stdout.strip().split("\n") if line.strip())
-                click.echo(f"  Applied {applied} resource(s) to {namespace}")
-
-    # Discover service topology from deployment manifests
-    service_routes = parse_topology_from_scenario(shared_scenario) or None
-    if service_routes:
-        click.echo(
-            f"  Topology:   {len(service_routes)} service dependencies"
-            " discovered from manifests"
-        )
-    else:
-        click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
-
-    # Auto-build Rust cmdProbes if probes/ directory exists
-    if shared_scenario.get("probes"):
-        click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
-        try:
-            from chaosprobe.probes.builder import RustProbeBuilder, patch_probe_images
-
-            builder = RustProbeBuilder(registry="chaosprobe", load_kind=True)
-            built_images = builder.build_all(shared_scenario["path"])
-            if built_images:
-                n = patch_probe_images(shared_scenario["experiments"], built_images)
-                click.echo(f"  Built and patched {n} cmdProbe image(s)")
-        except Exception as e:
-            click.echo(f"Warning: Rust probe build failed: {e}", err=True)
-            click.echo("  Continuing without auto-built probes...", err=True)
+    # Load scenario, deploy manifests, discover topology, build probes
+    shared_scenario, namespace, experiment_file, service_routes = (
+        _load_and_prepare_scenario(experiment, namespace)
+    )
 
     # Optionally provision cluster from scenario's cluster config
     if provision:
@@ -310,80 +421,17 @@ def run(
     mutator = PlacementMutator(namespace)
     metrics_collector = MetricsCollector(namespace)
 
-    click.echo("=" * 60)
-    click.echo("ChaosProbe — Automated Placement Experiment Runner")
-    click.echo("=" * 60)
-    click.echo(f"  Namespace:  {namespace}")
-    click.echo(f"  Experiment: {experiment_file}")
-    click.echo(f"  Strategies: {', '.join(strategy_list)}")
-    click.echo(f"  Iterations: {iterations}")
-    click.echo(f"  Output:     {results_dir}")
-    click.echo(f"  Timeout:    {timeout}s per experiment")
-    click.echo(f"  Settle:     {settle_time}s between placement and experiment")
-    if measure_latency:
-        click.echo("  Latency:    Measuring inter-service latency during experiments")
-    if measure_redis:
-        click.echo("  Redis:      Measuring Redis throughput during experiments")
-    if measure_disk:
-        click.echo("  Disk:       Measuring disk I/O throughput during experiments")
-    if measure_resources:
-        click.echo("  Resources:  Measuring node/pod resource utilization during experiments")
-    if measure_prometheus:
-        prom_display = ", ".join(prometheus_url) if prometheus_url else "(auto-discover)"
-        click.echo(f"  Prometheus: Querying cluster Prometheus at {prom_display}")
-    if collect_logs:
-        click.echo("  Logs:       Collecting container logs from target deployment")
-    if baseline_duration > 0:
-        click.echo(f"  Baseline:   {baseline_duration}s steady-state collection before chaos")
-    click.echo("")
+    _print_run_banner(
+        namespace, experiment_file, strategy_list, iterations,
+        results_dir, timeout, settle_time,
+        measure_latency=measure_latency, measure_redis=measure_redis,
+        measure_disk=measure_disk, measure_resources=measure_resources,
+        measure_prometheus=measure_prometheus, prometheus_url=prometheus_url,
+        collect_logs=collect_logs, baseline_duration=baseline_duration,
+    )
 
     # ── Fresh-start: clear stale placement before pre-flight ──
-    # Previous runs may have left nodeSelector constraints that prevent
-    # pods from scheduling.  Clear them first so the preflight deployment
-    # readiness check finds schedulable pods.
-    from kubernetes import client as k8s_client_mod
-
-    click.echo("Clearing stale placement constraints...")
-    for _attempt in range(3):
-        try:
-            mutator.clear_placement(wait=False)
-            break
-        except Exception as _e:
-            if _attempt < 2:
-                click.echo(f"  Retry clearing placement ({_e})...", err=True)
-                import time as _time
-                _time.sleep(5)
-            else:
-                click.echo(f"  WARNING: could not clear placement ({_e})", err=True)
-    click.echo("Restarting app deployments for a clean baseline...")
-    try:
-        _apps_api = k8s_client_mod.AppsV1Api()
-        _all_deps = _apps_api.list_namespaced_deployment(namespace)
-        _restart_names = [
-            d.metadata.name
-            for d in _all_deps.items
-            if d.metadata.name not in LITMUS_INFRA_DEPLOYMENTS
-        ]
-        _now = datetime.now(timezone.utc).isoformat()
-        for _dep_name in _restart_names:
-            _apps_api.patch_namespaced_deployment(
-                name=_dep_name,
-                namespace=namespace,
-                body={
-                    "spec": {
-                        "template": {
-                            "metadata": {
-                                "annotations": {
-                                    "chaosprobe.io/restartedAt": _now,
-                                }
-                            }
-                        }
-                    }
-                },
-            )
-        click.echo(f"  Triggered rollout restart for {len(_restart_names)} deployment(s)")
-    except Exception as e:
-        click.echo(f"  WARNING: rollout restart failed ({e})", err=True)
+    _clear_stale_placement(mutator, namespace)
 
     # ── Pre-flight checks ──────────────────────────────────────
     click.echo("\nPre-flight checks...")

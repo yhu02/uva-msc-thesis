@@ -1,6 +1,6 @@
 """Matplotlib chart generators for ChaosProbe experiment results.
 
-All ``_chart_*`` and ``_extract_*`` helpers live here so that
+All ``chart_*`` and ``extract_*`` helpers live here so that
 ``visualize.py`` stays focused on orchestration and HTML generation.
 """
 
@@ -44,8 +44,46 @@ def strategy_colors(names: List[str]) -> List[str]:
     return colors
 
 
-# Keep the old private name as an alias for backwards-compatible imports.
 _strategy_colors = strategy_colors
+
+
+def _extract_metric(
+    raw_strategies: Dict[str, Any],
+    key: str,
+    require_available: bool = False,
+) -> Dict[str, Dict[str, Any]]:
+    """Generic metric extractor shared by latency, resource, and prometheus.
+
+    Looks for ``metrics.<key>`` first in the top-level strategy data,
+    then falls back to the first iteration that has it.
+
+    Args:
+        raw_strategies: ``{"baseline": {...}, "colocate": {...}, ...}``
+        key: Metric key to look for (e.g. ``"latency"``, ``"resources"``).
+        require_available: If True, only include data that has
+            ``data.get("available", False)`` set.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    for name, sdata in raw_strategies.items():
+        metrics = sdata.get("metrics") or {}
+        if metrics and key in metrics:
+            data = metrics[key]
+            if require_available and not data.get("available", False):
+                pass
+            else:
+                result[name] = data
+                continue
+
+        for it in sdata.get("iterations", []):
+            m = it.get("metrics", {})
+            data = m.get(key, {})
+            if data:
+                if require_available and not data.get("available", False):
+                    continue
+                result[name] = data
+                break
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -213,22 +251,7 @@ def extract_latency_data(
     raw_strategies: Dict[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
     """Extract latency phase data from raw strategy results."""
-    result = {}
-    for name, sdata in raw_strategies.items():
-        metrics = sdata.get("metrics") or {}
-        if metrics and "latency" in metrics:
-            result[name] = metrics["latency"]
-            continue
-
-        iters = sdata.get("iterations", [])
-        if iters:
-            for it in iters:
-                lat = it.get("metrics", {}).get("latency")
-                if lat:
-                    result[name] = lat
-                    break
-
-    return result
+    return _extract_metric(raw_strategies, "latency")
 
 
 _extract_latency_data = extract_latency_data
@@ -611,23 +634,7 @@ def extract_resource_data(
     raw_strategies: Dict[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
     """Extract resource utilization data from raw strategy results."""
-    result = {}
-    for name, sdata in raw_strategies.items():
-        metrics = sdata.get("metrics") or {}
-        if metrics and "resources" in metrics:
-            res = metrics["resources"]
-            if res.get("available", False):
-                result[name] = res
-                continue
-
-        for it in sdata.get("iterations", []):
-            m = it.get("metrics", {})
-            res = m.get("resources", {})
-            if res.get("available", False):
-                result[name] = res
-                break
-
-    return result
+    return _extract_metric(raw_strategies, "resources", require_available=True)
 
 
 _extract_resource_data = extract_resource_data
@@ -770,23 +777,7 @@ def extract_prometheus_data(
     raw_strategies: Dict[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
     """Extract Prometheus metrics data from raw strategy results."""
-    result = {}
-    for name, sdata in raw_strategies.items():
-        metrics = sdata.get("metrics") or {}
-        if metrics and "prometheus" in metrics:
-            prom = metrics["prometheus"]
-            if prom.get("available", False):
-                result[name] = prom
-                continue
-
-        for it in sdata.get("iterations", []):
-            m = it.get("metrics", {})
-            prom = m.get("prometheus", {})
-            if prom.get("available", False):
-                result[name] = prom
-                break
-
-    return result
+    return _extract_metric(raw_strategies, "prometheus", require_available=True)
 
 
 _extract_prometheus_data = extract_prometheus_data

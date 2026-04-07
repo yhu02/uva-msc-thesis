@@ -22,7 +22,11 @@ from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
 from chaosprobe.k8s import ensure_k8s_config
-from chaosprobe.metrics.base import ContinuousProberBase
+from chaosprobe.metrics.base import (
+    ContinuousProberBase,
+    exec_in_pod as _base_exec_in_pod,
+    find_ready_pod,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,21 +288,7 @@ class ThroughputProber:
 
     def _find_ready_pod(self, service_name: str) -> Optional[str]:
         """Find a ready pod for a service."""
-        try:
-            pods = self.core_api.list_namespaced_pod(
-                self.namespace,
-                label_selector=f"app={service_name}",
-                field_selector="status.phase=Running",
-            )
-        except ApiException:
-            return None
-
-        for pod in pods.items:
-            if pod.status.conditions:
-                for cond in pod.status.conditions:
-                    if cond.type == "Ready" and cond.status == "True":
-                        return pod.metadata.name
-        return None
+        return find_ready_pod(self.core_api, self.namespace, service_name)
 
     def _find_exec_pod(self, target_service: str) -> Optional[str]:
         """Find a pod that supports shell exec for benchmarks.
@@ -333,20 +323,7 @@ class ThroughputProber:
 
     def _exec_in_pod(self, pod_name: str, command: List[str]) -> str:
         """Execute a command inside a pod and return stdout."""
-        try:
-            return stream(
-                self.core_api.connect_get_namespaced_pod_exec,
-                pod_name,
-                self.namespace,
-                command=command,
-                stderr=True,
-                stdin=False,
-                stdout=True,
-                tty=False,
-                _preload_content=True,
-            )
-        except Exception as e:
-            return f"ERROR:{e}"
+        return _base_exec_in_pod(self.core_api, self.namespace, pod_name, command)
 
     def _redis_benchmark(
         self,

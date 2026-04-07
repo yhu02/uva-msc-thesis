@@ -12,11 +12,12 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.provisioner.chaoscenter import _ChaosCenterMixin
+from chaosprobe.provisioner.chaoscenter_api import _ChaosCenterAPIMixin
 from chaosprobe.provisioner.components import _ComponentsMixin
 from chaosprobe.provisioner.vagrant import _VagrantMixin
 
 
-class LitmusSetup(_VagrantMixin, _ComponentsMixin, _ChaosCenterMixin):
+class LitmusSetup(_VagrantMixin, _ComponentsMixin, _ChaosCenterAPIMixin, _ChaosCenterMixin):
     """Handles automatic installation and verification of LitmusChaos."""
 
     LITMUS_NAMESPACE = "litmus"
