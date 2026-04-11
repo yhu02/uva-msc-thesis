@@ -5,6 +5,7 @@ import sys
 import click
 
 from chaosprobe.orchestrator import portforward as pf
+from chaosprobe.orchestrator.preflight import check_pods_ready
 from chaosprobe.provisioner.setup import LitmusSetup
 
 
@@ -223,8 +224,6 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
                         click.echo("  Infrastructure registered successfully!")
                     except Exception as e:
                         click.echo(f"  Warning: Could not register infrastructure: {e}")
-                    finally:
-                        pf.cleanup()
                 else:
                     click.echo("  ChaosCenter installation timed out.", err=True)
             except Exception as e:
@@ -235,5 +234,59 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
             if url:
                 click.echo(f"  Dashboard URL: {url}")
 
-    click.echo("\nYou can now run scenarios with:")
+    # ── Establish persistent port-forwards for infrastructure ──
+    click.echo("\nSetting up port-forwards for infrastructure services...")
+
+    # Prometheus
+    prom_forwarded = False
+    for ns in ("monitoring", "prometheus", "kube-prometheus"):
+        for label in ("app=prometheus,component=server", "app.kubernetes.io/name=prometheus"):
+            if check_pods_ready(ns, label):
+                if not pf.check_port("localhost", 9090):
+                    pf.start("prometheus-server", ns, ["9090:9090"])
+                if pf.check_port("localhost", 9090):
+                    click.echo("  Prometheus:    localhost:9090")
+                else:
+                    click.echo("  Prometheus:    WARNING - port-forward failed", err=True)
+                prom_forwarded = True
+                break
+        if prom_forwarded:
+            break
+    if not prom_forwarded:
+        click.echo("  Prometheus:    WARNING - no ready pods found", err=True)
+
+    # Neo4j
+    if check_pods_ready("neo4j", "app=neo4j"):
+        if not pf.check_port("localhost", 7687):
+            pf.ensure("neo4j", "neo4j", ["7687:7687", "7474:7474"], "localhost", 7687)
+        if pf.check_port("localhost", 7687):
+            click.echo("  Neo4j:         localhost:7687")
+        else:
+            click.echo("  Neo4j:         WARNING - port-forward failed", err=True)
+    else:
+        click.echo("  Neo4j:         WARNING - no ready pods found", err=True)
+
+    # ChaosCenter
+    if not skip_dashboard:
+        _cc_f_svc = LitmusSetup.CHAOSCENTER_FRONTEND_SVC
+        _cc_f_port = LitmusSetup.CHAOSCENTER_FRONTEND_PORT
+        _cc_a_svc = LitmusSetup.CHAOSCENTER_AUTH_SVC
+        _cc_a_port = LitmusSetup.CHAOSCENTER_AUTH_PORT
+        _cc_s_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
+        _cc_s_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
+
+        if not pf.check_port("localhost", _cc_f_port):
+            pf.start(_cc_f_svc, "litmus", [f"{_cc_f_port}:{_cc_f_port}"])
+        if not pf.check_port("localhost", _cc_a_port):
+            pf.start(_cc_a_svc, "litmus", [f"{_cc_a_port}:{_cc_a_port}"])
+        if not pf.check_port("localhost", _cc_s_port):
+            pf.start(_cc_s_svc, "litmus", [f"{_cc_s_port}:{_cc_s_port}"])
+
+        if pf.check_port("localhost", _cc_f_port):
+            click.echo(f"  ChaosCenter:   http://localhost:{_cc_f_port}")
+        else:
+            click.echo(f"  ChaosCenter:   WARNING - frontend port-forward failed", err=True)
+
+    click.echo("\nPort-forwards are running in the background.")
+    click.echo("You can now run scenarios with:")
     click.echo("  chaosprobe run <scenario-dir> --output-dir results/")

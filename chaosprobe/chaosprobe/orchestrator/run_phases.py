@@ -170,8 +170,11 @@ def _restart_unhealthy_infra(namespace: str) -> None:
 
 
 def _setup_prometheus_pf(measure_prometheus: bool) -> None:
-    """Wait for Prometheus pod and verify readiness."""
+    """Verify Prometheus readiness; port-forward if not already forwarded by init."""
     if not measure_prometheus:
+        return
+    if pf.check_port("localhost", 9090):
+        click.echo("  Prometheus:  localhost:9090 (already reachable)")
         return
     prom_ready = False
     for attempt in range(12):
@@ -188,13 +191,18 @@ def _setup_prometheus_pf(measure_prometheus: bool) -> None:
             click.echo("  Prometheus:  waiting for pod to become ready...")
         time.sleep(5)
     if prom_ready:
-        click.echo("  Prometheus:  pod ready")
+        click.echo("  Prometheus:  pod ready — starting port-forward (run 'chaosprobe init' to set up ahead of time)")
+        for ns in ("monitoring", "prometheus", "kube-prometheus"):
+            if not pf.check_port("localhost", 9090):
+                pf.start("prometheus-server", ns, ["9090:9090"])
+                if pf.check_port("localhost", 9090):
+                    break
     else:
         click.echo("  Prometheus:  WARNING - no ready pod found after 60s", err=True)
 
 
 def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
-    """Verify Neo4j pod readiness and establish port-forward."""
+    """Verify Neo4j readiness; port-forward if not already forwarded by init."""
     if not neo4j_uri:
         return
     if check_pods_ready("neo4j", "app=neo4j"):
@@ -208,9 +216,9 @@ def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
         except Exception:
             pass
         if pf.check_port(host, port):
-            click.echo(f"  Neo4j bolt:  {host}:{port} reachable")
+            click.echo(f"  Neo4j bolt:  {host}:{port} reachable (already forwarded)")
         else:
-            click.echo(f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward...")
+            click.echo(f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward (run 'chaosprobe init' to set up ahead of time)...")
             if pf.ensure("neo4j", "neo4j", ["7687:7687", "7474:7474"], host, port):
                 click.echo(f"  Neo4j bolt:  {host}:{port} reachable (port-forward started)")
             else:
@@ -220,7 +228,7 @@ def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
 
 
 def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
-    """Port-forward ChaosCenter services and auto-configure."""
+    """Ensure ChaosCenter port-forwards are active (fallback if not set up by init) and auto-configure."""
     cc_frontend_svc = LitmusSetup.CHAOSCENTER_FRONTEND_SVC
     cc_frontend_port = LitmusSetup.CHAOSCENTER_FRONTEND_PORT
     cc_auth_svc = LitmusSetup.CHAOSCENTER_AUTH_SVC
@@ -235,8 +243,9 @@ def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
             "  Run 'chaosprobe init' first."
         )
 
-    # Port-forward frontend (dashboard UI)
+    # Port-forward frontend (dashboard UI) — skip if already forwarded by init
     if not pf.check_port("localhost", cc_frontend_port):
+        click.echo("  ChaosCenter: frontend not reachable — starting port-forward (run 'chaosprobe init' to set up ahead of time)...")
         pf.start(cc_frontend_svc, "litmus", [f"{cc_frontend_port}:{cc_frontend_port}"])
         if pf.check_port("localhost", cc_frontend_port):
             click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port} (port-forward started)")
@@ -245,7 +254,7 @@ def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
     else:
         click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port}")
 
-    # Port-forward auth + GraphQL
+    # Port-forward auth + GraphQL — skip if already forwarded by init
     if not pf.check_port("localhost", cc_auth_port):
         pf.start(cc_auth_svc, "litmus", [f"{cc_auth_port}:{cc_auth_port}"])
     if not pf.check_port("localhost", cc_server_port):
