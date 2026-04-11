@@ -11,7 +11,6 @@ from chaosprobe.config.loader import load_scenario
 from chaosprobe.config.topology import parse_topology_from_scenario
 from chaosprobe.config.validator import validate_scenario
 from chaosprobe.metrics.collector import MetricsCollector
-from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
     extract_experiment_types,
@@ -450,9 +449,6 @@ def run(
     frontend_pf_port = preflight["frontend_pf_port"]
 
     click.echo("")
-
-    # Start background monitor that auto-restarts dead port-forwards
-    pf.monitor_start()
 
     # Extract target deployment from experiment spec for recovery metrics
     target_deployment = extract_target_deployment(shared_scenario)

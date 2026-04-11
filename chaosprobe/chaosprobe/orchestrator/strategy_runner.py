@@ -16,7 +16,6 @@ from chaosprobe.chaos.runner import ChaosRunner
 from chaosprobe.collector.result_collector import ResultCollector
 from chaosprobe.loadgen.runner import LoadProfile, LocustRunner
 from chaosprobe.metrics.collector import MetricsCollector
-from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
     wait_for_healthy_deployments,
@@ -213,43 +212,6 @@ def _apply_placement(
             click.echo(f"      {node}: {count} deployment(s)")
 
 
-def _ensure_port_forwards(ctx: RunContext) -> None:
-    """Re-check infrastructure port-forwards between iterations."""
-    if ctx.neo4j_uri:
-        pf.ensure("neo4j", "neo4j", ["7687:7687", "7474:7474"], "localhost", 7687)
-
-    if ctx.measure_prometheus:
-        for _pns in ("monitoring", "prometheus"):
-            proc = pf._procs.get(("prometheus-server", _pns))
-            if proc:
-                pf.ensure(
-                    "prometheus-server", _pns,
-                    ["9090:9090"], "localhost", 9090,
-                )
-                break
-
-    if (
-        ctx.load_profile
-        and ctx.target_url
-        and ctx.target_url.startswith("http://localhost:")
-    ):
-        try:
-            svc_list = ctx.core_api.list_namespaced_service(ctx.namespace)
-            for svc in svc_list.items:
-                if (
-                    "frontend" in svc.metadata.name
-                    and "external" not in svc.metadata.name
-                ):
-                    pf.ensure(
-                        svc.metadata.name, ctx.namespace,
-                        [f"{ctx.frontend_pf_port}:80"],
-                        "localhost", ctx.frontend_pf_port,
-                    )
-                    break
-        except Exception:
-            pass
-
-
 def _run_single_iteration(
     ctx: RunContext,
     strategy_name: str,
@@ -267,7 +229,6 @@ def _run_single_iteration(
 
     click.echo("    Verifying deployment readiness...")
     wait_for_healthy_deployments(ctx.namespace, timeout=15)
-    _ensure_port_forwards(ctx)
     click.echo("    Ready.")
 
     # Prepare experiment scenario
@@ -458,10 +419,6 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> None:
                 click.echo(
                     f"    Neo4j sync attempt {attempt + 1} failed, reconnecting...",
                     err=True,
-                )
-                pf.ensure(
-                    "neo4j", "neo4j",
-                    ["7687:7687", "7474:7474"], "localhost", 7687,
                 )
                 try:
                     ctx.graph_store.close()

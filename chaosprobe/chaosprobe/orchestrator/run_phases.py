@@ -17,7 +17,6 @@ import click
 from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
-    check_pods_ready,
     wait_for_healthy_deployments,
 )
 from chaosprobe.provisioner.setup import LitmusSetup
@@ -170,95 +169,64 @@ def _restart_unhealthy_infra(namespace: str) -> None:
 
 
 def _setup_prometheus_pf(measure_prometheus: bool) -> None:
-    """Verify Prometheus readiness; port-forward if not already forwarded by init."""
+    """Verify Prometheus is reachable (port-forwarded by init)."""
     if not measure_prometheus:
         return
     if pf.check_port("localhost", 9090):
-        click.echo("  Prometheus:  localhost:9090 (already reachable)")
-        return
-    prom_ready = False
-    for attempt in range(12):
-        for ns in ("monitoring", "prometheus", "kube-prometheus"):
-            for label in ("app=prometheus,component=server", "app.kubernetes.io/name=prometheus"):
-                if check_pods_ready(ns, label):
-                    prom_ready = True
-                    break
-            if prom_ready:
-                break
-        if prom_ready:
-            break
-        if attempt == 0:
-            click.echo("  Prometheus:  waiting for pod to become ready...")
-        time.sleep(5)
-    if prom_ready:
-        click.echo("  Prometheus:  pod ready — starting port-forward (run 'chaosprobe init' to set up ahead of time)")
-        for ns in ("monitoring", "prometheus", "kube-prometheus"):
-            if not pf.check_port("localhost", 9090):
-                pf.start("prometheus-server", ns, ["9090:9090"])
-                if pf.check_port("localhost", 9090):
-                    break
+        click.echo("  Prometheus:  localhost:9090 reachable")
     else:
-        click.echo("  Prometheus:  WARNING - no ready pod found after 60s", err=True)
+        click.echo(
+            "  Prometheus:  WARNING - localhost:9090 not reachable. "
+            "Run 'chaosprobe init' to set up port-forwards.",
+            err=True,
+        )
 
 
 def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
-    """Verify Neo4j readiness; port-forward if not already forwarded by init."""
+    """Verify Neo4j is reachable (port-forwarded by init)."""
     if not neo4j_uri:
         return
-    if check_pods_ready("neo4j", "app=neo4j"):
-        click.echo("  Neo4j:       pod ready")
-        host, port = "localhost", 7687
-        try:
-            parsed = neo4j_uri.replace("bolt://", "").replace("neo4j://", "")
-            if ":" in parsed:
-                host, port_str = parsed.rsplit(":", 1)
-                port = int(port_str)
-        except Exception:
-            pass
-        if pf.check_port(host, port):
-            click.echo(f"  Neo4j bolt:  {host}:{port} reachable (already forwarded)")
-        else:
-            click.echo(f"  Neo4j bolt:  {host}:{port} not reachable — starting port-forward (run 'chaosprobe init' to set up ahead of time)...")
-            if pf.ensure("neo4j", "neo4j", ["7687:7687", "7474:7474"], host, port):
-                click.echo(f"  Neo4j bolt:  {host}:{port} reachable (port-forward started)")
-            else:
-                click.echo(f"  Neo4j bolt:  WARNING - still not reachable at {host}:{port}", err=True)
+    host, port = "localhost", 7687
+    try:
+        parsed = neo4j_uri.replace("bolt://", "").replace("neo4j://", "")
+        if ":" in parsed:
+            host, port_str = parsed.rsplit(":", 1)
+            port = int(port_str)
+    except Exception:
+        pass
+    if pf.check_port(host, port):
+        click.echo(f"  Neo4j bolt:  {host}:{port} reachable")
     else:
-        click.echo("  Neo4j:       WARNING - no ready pod. Run 'chaosprobe init'.", err=True)
+        click.echo(
+            f"  Neo4j bolt:  WARNING - {host}:{port} not reachable. "
+            "Run 'chaosprobe init' to set up port-forwards.",
+            err=True,
+        )
 
 
 def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
-    """Ensure ChaosCenter port-forwards are active (fallback if not set up by init) and auto-configure."""
-    cc_frontend_svc = LitmusSetup.CHAOSCENTER_FRONTEND_SVC
+    """Verify ChaosCenter port-forwards are active (set up by init) and auto-configure."""
     cc_frontend_port = LitmusSetup.CHAOSCENTER_FRONTEND_PORT
-    cc_auth_svc = LitmusSetup.CHAOSCENTER_AUTH_SVC
     cc_auth_port = LitmusSetup.CHAOSCENTER_AUTH_PORT
-    cc_server_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
     cc_server_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
 
-    if not check_pods_ready("litmus", "app.kubernetes.io/component=litmus-frontend"):
-        raise click.ClickException(
-            "ChaosCenter frontend pods are not ready in the 'litmus' namespace.\n"
-            "  All experiments run through the ChaosCenter API.\n"
-            "  Run 'chaosprobe init' first."
-        )
-
-    # Port-forward frontend (dashboard UI) — skip if already forwarded by init
     if not pf.check_port("localhost", cc_frontend_port):
-        click.echo("  ChaosCenter: frontend not reachable — starting port-forward (run 'chaosprobe init' to set up ahead of time)...")
-        pf.start(cc_frontend_svc, "litmus", [f"{cc_frontend_port}:{cc_frontend_port}"])
-        if pf.check_port("localhost", cc_frontend_port):
-            click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port} (port-forward started)")
-        else:
-            click.echo(f"  ChaosCenter: WARNING - port-forward to localhost:{cc_frontend_port} failed", err=True)
-    else:
-        click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port}")
+        raise click.ClickException(
+            f"ChaosCenter frontend not reachable at localhost:{cc_frontend_port}.\n"
+            "  Run 'chaosprobe init' to install infrastructure and set up port-forwards."
+        )
+    click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port}")
 
-    # Port-forward auth + GraphQL — skip if already forwarded by init
     if not pf.check_port("localhost", cc_auth_port):
-        pf.start(cc_auth_svc, "litmus", [f"{cc_auth_port}:{cc_auth_port}"])
+        raise click.ClickException(
+            f"ChaosCenter auth server not reachable at localhost:{cc_auth_port}.\n"
+            "  Run 'chaosprobe init' to set up port-forwards."
+        )
     if not pf.check_port("localhost", cc_server_port):
-        pf.start(cc_server_svc, "litmus", [f"{cc_server_port}:{cc_server_port}"])
+        raise click.ClickException(
+            f"ChaosCenter GraphQL server not reachable at localhost:{cc_server_port}.\n"
+            "  Run 'chaosprobe init' to set up port-forwards."
+        )
 
     # Auto-configure
     try:
@@ -298,29 +266,18 @@ def _check_metrics_server() -> None:
 def _setup_load_target(
     core_api: Any, namespace: str, load_profile: Optional[str], target_url: Optional[str],
 ) -> Tuple[Optional[str], int]:
-    """Auto port-forward to frontend service for Locust load generation."""
+    """Verify load target is reachable; auto-detect frontend service URL."""
     frontend_pf_port = 8089
     if target_url is None and load_profile:
-        try:
-            svc_list = core_api.list_namespaced_service(namespace)
-            frontend_svc = None
-            for svc in svc_list.items:
-                if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
-                    frontend_svc = svc.metadata.name
-                    break
-            if frontend_svc:
-                pf_mapping = f"{frontend_pf_port}:80"
-                if pf.ensure(frontend_svc, namespace, [pf_mapping], "localhost", frontend_pf_port):
-                    target_url = f"http://localhost:{frontend_pf_port}"
-                    click.echo(f"  Load target: {target_url} (port-forward to {frontend_svc})")
-                else:
-                    click.echo(f"  Load target: WARNING - port-forward to {frontend_svc} failed", err=True)
-                    target_url = f"http://localhost:{frontend_pf_port}"
-            else:
-                click.echo("  Load target: WARNING - no frontend service found", err=True)
-                target_url = f"http://localhost:{frontend_pf_port}"
-        except Exception as e:
-            click.echo(f"  Load target: WARNING - failed to setup port-forward ({e})", err=True)
+        if pf.check_port("localhost", frontend_pf_port):
+            target_url = f"http://localhost:{frontend_pf_port}"
+            click.echo(f"  Load target: {target_url}")
+        else:
+            click.echo(
+                f"  Load target: WARNING - localhost:{frontend_pf_port} not reachable. "
+                "Run 'chaosprobe init' to set up port-forwards or pass --target-url.",
+                err=True,
+            )
             target_url = f"http://localhost:{frontend_pf_port}"
     elif target_url is None:
         target_url = f"http://localhost:{frontend_pf_port}"
@@ -557,9 +514,6 @@ def write_run_results(
     # Close graph database connection
     if graph_store:
         graph_store.close()
-
-    # Terminate port-forward processes and monitor
-    pf.cleanup()
 
     # Show ChaosCenter dashboard link if available
     try:

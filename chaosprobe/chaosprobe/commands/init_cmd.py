@@ -287,6 +287,29 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
         else:
             click.echo(f"  ChaosCenter:   WARNING - frontend port-forward failed", err=True)
 
+    # Load target (frontend application service)
+    try:
+        from kubernetes import client as k8s_client_mod
+
+        svc_list = k8s_client_mod.CoreV1Api().list_namespaced_service(namespace)
+        frontend_svc = None
+        for svc in svc_list.items:
+            if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
+                frontend_svc = svc.metadata.name
+                break
+        if frontend_svc:
+            _load_port = 8089
+            if not pf.check_port("localhost", _load_port):
+                pf.ensure(frontend_svc, namespace, [f"{_load_port}:80"], "localhost", _load_port)
+            if pf.check_port("localhost", _load_port):
+                click.echo(f"  Load target:   http://localhost:{_load_port} ({frontend_svc})")
+            else:
+                click.echo(f"  Load target:   WARNING - port-forward to {frontend_svc} failed", err=True)
+        else:
+            click.echo("  Load target:   no frontend service found in namespace (will need --target-url)")
+    except Exception:
+        click.echo("  Load target:   skipped (namespace services not available yet)")
+
     click.echo("\nPort-forwards are running in the background.")
     click.echo("You can now run scenarios with:")
     click.echo("  chaosprobe run <scenario-dir> --output-dir results/")
