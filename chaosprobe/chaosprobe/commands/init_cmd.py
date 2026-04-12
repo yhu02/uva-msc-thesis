@@ -50,7 +50,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     click.echo(f"  helm: {'OK' if prereqs['helm'] else 'MISSING'}")
     click.echo(f"  git: {'OK' if prereqs['git'] else 'MISSING'}")
     click.echo(f"  ssh: {'OK' if prereqs['ssh'] else 'MISSING'}")
-    click.echo(f"  ansible: {'OK' if prereqs['ansible'] else 'Not installed (optional)'}")
+    click.echo(f"  ansible: {'OK' if prereqs['ansible'] else 'Not found (bundled with Kubespray on first cluster create)'}")
 
     if not prereqs["kubectl"]:
         click.echo("\nError: kubectl is required. Please install it first.", err=True)

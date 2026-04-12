@@ -241,10 +241,13 @@ end
     # -------------------------------------------------------------------------
 
     def _check_ansible(self) -> bool:
-        """Check if ansible is available."""
+        """Check if ansible is available in the Kubespray venv."""
+        venv_ansible = self.KUBESPRAY_DIR / "venv" / "bin" / "ansible"
+        if not venv_ansible.is_file():
+            return False
         try:
             subprocess.run(
-                ["ansible", "--version"],
+                [str(venv_ansible), "--version"],
                 check=True,
                 capture_output=True,
             )
