@@ -38,7 +38,7 @@ uv sync          # creates .venv, installs all dependencies
 ### For Local Development (Vagrant)
 
 - [Vagrant](https://www.vagrantup.com/downloads)
-- VirtualBox or libvirt provider
+- libvirt/KVM provider
 - `git`, Python 3 with `venv` module
 
 ### For Production Deployment (Kubespray)
@@ -135,8 +135,7 @@ uv run chaosprobe cluster vagrant init --control-planes 1 --workers 2
 uv run chaosprobe cluster vagrant setup
 
 # 3. Start the VMs
-uv run chaosprobe cluster vagrant up                      # VirtualBox (default)
-uv run chaosprobe cluster vagrant up --provider libvirt   # WSL2/Linux
+uv run chaosprobe cluster vagrant up
 
 # 4. Deploy Kubernetes (takes 15-30 minutes)
 uv run chaosprobe cluster vagrant deploy

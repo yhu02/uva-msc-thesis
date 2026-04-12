@@ -283,13 +283,11 @@ class _VagrantMixin:
         self,
         cluster_config: dict,
         cluster_name: str = "chaosprobe",
-        provider: str = "libvirt",
     ) -> Path:
         """Provision a cluster from a scenario's cluster configuration."""
         cp = cluster_config.get("control_plane", {})
         workers = cluster_config.get("workers", {})
         num_workers = workers.get("count", 2)
-        config_provider = cluster_config.get("provider", provider)
 
         vagrant_dir = self.create_vagrantfile(
             cluster_name=cluster_name,
@@ -308,7 +306,7 @@ class _VagrantMixin:
             f"{workers.get('memory', 4096)}MB"
         )
 
-        self.vagrant_up(vagrant_dir, provider=config_provider)
+        self.vagrant_up(vagrant_dir, provider="libvirt")
         return vagrant_dir
 
     def _recover_shutoff_libvirt_vms(self, vagrant_dir: Path) -> list[str]:
@@ -379,7 +377,7 @@ class _VagrantMixin:
     def vagrant_up(
         self,
         vagrant_dir: Path,
-        provider: str = "virtualbox",
+        provider: str = "libvirt",
     ) -> bool:
         """Start Vagrant VMs."""
         vagrant_dir = Path(vagrant_dir)
@@ -389,8 +387,7 @@ class _VagrantMixin:
 
         # Recover shutoff libvirt VMs before vagrant up to avoid
         # the virDomainSetMemory bug in vagrant-libvirt
-        if provider == "libvirt":
-            self._recover_shutoff_libvirt_vms(vagrant_dir)
+        self._recover_shutoff_libvirt_vms(vagrant_dir)
 
         print(f"Starting Vagrant VMs with provider: {provider}...")
 

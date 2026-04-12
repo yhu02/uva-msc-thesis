@@ -503,7 +503,7 @@ Options: `--format csv|parquet`, `--strategy <name>`. Parquet requires `pyarrow`
 |---|---|
 | `chaosprobe cluster vagrant init` | Generate Vagrantfile for multi-node cluster |
 | `chaosprobe cluster vagrant setup` | Setup libvirt provider (WSL2/Linux) |
-| `chaosprobe cluster vagrant up [--provider]` | Start VMs (virtualbox or libvirt) |
+| `chaosprobe cluster vagrant up` | Start VMs with libvirt |
 | `chaosprobe cluster vagrant deploy` | Deploy K8s via Kubespray on VMs |
 | `chaosprobe cluster vagrant kubeconfig` | Fetch kubeconfig from control plane |
 | `chaosprobe cluster vagrant status` | Check VM and cluster health |
@@ -794,4 +794,4 @@ chaosprobe/
 - LitmusChaos + ChaosCenter (auto-installed via `chaosprobe init`)
 - Neo4j (auto-installed via `chaosprobe init`)
 - Prometheus (auto-installed via `chaosprobe init`)
-- Vagrant + libvirt/VirtualBox (local dev only)
+- Vagrant + libvirt/KVM (local dev only)

@@ -299,21 +299,14 @@ def vagrant_setup(check_only: bool):
 @cluster_vagrant.command("up")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
 @click.option(
-    "--provider",
-    "-p",
-    default="virtualbox",
-    type=click.Choice(["virtualbox", "libvirt"]),
-    help="Vagrant provider",
-)
-@click.option(
     "--dir",
     "-d",
     "vagrant_dir",
     type=click.Path(exists=True),
     help="Vagrant directory",
 )
-def vagrant_up(name: str, provider: str, vagrant_dir: Optional[str]):
-    """Start Vagrant VMs."""
+def vagrant_up(name: str, vagrant_dir: Optional[str]):
+    """Start Vagrant VMs using libvirt."""
     setup = LitmusSetup(skip_k8s_init=True)
 
     if vagrant_dir:
@@ -325,20 +318,18 @@ def vagrant_up(name: str, provider: str, vagrant_dir: Optional[str]):
         click.echo(f"Error: No Vagrantfile found at {vdir}", err=True)
         sys.exit(1)
 
-    if provider == "libvirt":
-        click.echo("Checking libvirt configuration...")
-        libvirt_status = setup._check_libvirt()
-        if not libvirt_status["all_ready"]:
-            click.echo(click.style("\nLibvirt is not fully configured.", fg="yellow"))
-            click.echo("\nRun 'chaosprobe cluster vagrant setup' to install libvirt.")
-            sys.exit(1)
-        click.echo("  Libvirt: OK")
+    click.echo("Checking libvirt configuration...")
+    libvirt_status = setup._check_libvirt()
+    if not libvirt_status["all_ready"]:
+        click.echo(click.style("\nLibvirt is not fully configured.", fg="yellow"))
+        click.echo("\nRun 'chaosprobe cluster vagrant setup' to install libvirt.")
+        sys.exit(1)
+    click.echo("  Libvirt: OK")
 
     click.echo(f"\nStarting Vagrant VMs from {vdir}...")
-    click.echo(f"  Provider: {provider}")
 
     try:
-        setup.vagrant_up(vdir, provider=provider)
+        setup.vagrant_up(vdir, provider="libvirt")
         click.echo("\nVMs are running. Next steps:")
         click.echo(f"  Deploy K8s: chaosprobe cluster vagrant deploy --name {name}")
     except Exception as e:

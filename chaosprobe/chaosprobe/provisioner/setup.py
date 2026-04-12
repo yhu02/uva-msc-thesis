@@ -64,13 +64,6 @@ Vagrant.configure("2") do |config|
       node.vm.hostname = "cp#{{i}}"
       node.vm.network "private_network", ip: "#{{NETWORK_PREFIX}}.#{{10 + i}}"
 
-      node.vm.provider "virtualbox" do |vb|
-        vb.name = "#{{CLUSTER_NAME}}-cp#{{i}}"
-        vb.memory = CP_MEMORY
-        vb.cpus = CP_CPUS
-        vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
-      end
-
       node.vm.provider "libvirt" do |lv|
         lv.memory = CP_MEMORY
         lv.cpus = CP_CPUS
@@ -89,13 +82,6 @@ Vagrant.configure("2") do |config|
     config.vm.define "worker#{{i}}" do |node|
       node.vm.hostname = "worker#{{i}}"
       node.vm.network "private_network", ip: "#{{NETWORK_PREFIX}}.#{{20 + i}}"
-
-      node.vm.provider "virtualbox" do |vb|
-        vb.name = "#{{CLUSTER_NAME}}-worker#{{i}}"
-        vb.memory = WORKER_MEMORY
-        vb.cpus = WORKER_CPUS
-        vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
-      end
 
       node.vm.provider "libvirt" do |lv|
         lv.memory = WORKER_MEMORY
