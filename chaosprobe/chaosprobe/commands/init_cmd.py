@@ -244,7 +244,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
         for label in ("app=prometheus,component=server", "app.kubernetes.io/name=prometheus"):
             if check_pods_ready(ns, label):
                 if not pf.check_port("localhost", 9090):
-                    pf.start("prometheus-server", ns, ["9090:9090"])
+                    pf.start("prometheus-server", ns, ["9090:80"])
                 if pf.check_port("localhost", 9090):
                     click.echo("  Prometheus:    localhost:9090")
                 else:
