@@ -1,16 +1,16 @@
 # ChaosProbe
 
-A framework for running native LitmusChaos experiments against Kubernetes deployments, collecting structured experiment data into Neo4j for AI-driven anomaly classification and remediation.
+A framework for running LitmusChaos experiments against Kubernetes deployments, collecting structured experiment data into Neo4j for AI-driven anomaly classification and remediation.
 
 ## Overview
 
 ChaosProbe enables automated chaos testing with an AI feedback loop:
 
 1. **Cluster Deployment**: Deploy Kubernetes clusters via Vagrant (local) or Kubespray (production)
-2. **Auto-Setup**: Installs Helm, LitmusChaos, and Neo4j automatically
+2. **Auto-Setup**: Installs Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, and Neo4j
 3. **Deploy Manifests**: Applies standard K8s manifests to the cluster
-4. **Run Experiments**: Executes native ChaosEngine experiments across placement strategies
-5. **Collect to Neo4j**: Stores all results, metrics, anomaly labels, and time-series in a Neo4j graph database
+4. **Run Experiments**: Executes ChaosEngine experiments via the ChaosCenter GraphQL API across placement strategies
+5. **Collect to Neo4j**: Stores results, metrics, anomaly labels, and time-series in a Neo4j graph database
 6. **ML Export**: Exports aligned, labeled datasets for anomaly classification and remediation models
 7. **Compare Runs**: Diffs before/after results to evaluate fix effectiveness
 
@@ -20,15 +20,11 @@ ChaosProbe enables automated chaos testing with an AI feedback loop:
 AI reads output → edits K8s manifests → re-runs ChaosProbe → compares results → repeats
 ```
 
-The output contains experiment results and resilience scores so an AI agent can diagnose issues, edit manifests, re-run, and verify improvements.
-
 ## Installation
 
 ```bash
 cd chaosprobe
-
-# Sync dependencies and install (creates .venv automatically)
-uv sync
+uv sync          # creates .venv, installs all dependencies
 ```
 
 ## Prerequisites
@@ -37,7 +33,7 @@ uv sync
 - Python 3.9+
 - [uv](https://docs.astral.sh/uv/) package manager
 
-> **Note:** Helm and LitmusChaos are automatically installed if not present.
+> Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, and Neo4j are automatically installed by `chaosprobe init`.
 
 ### For Local Development (Vagrant)
 
@@ -51,42 +47,16 @@ uv sync
 
 ## Scenario Format
 
-Scenarios are **directories** containing standard Kubernetes manifests and native ChaosEngine YAML files. ChaosProbe auto-classifies files by their `kind` field.
+Scenarios are **directories** containing standard Kubernetes manifests and ChaosEngine YAML files. ChaosProbe auto-classifies files by their `kind` field.
 
 ```
 scenarios/nginx-pod-delete/
   deployment.yaml     # Standard K8s Deployment
   service.yaml        # Standard K8s Service
-  experiment.yaml     # Native LitmusChaos ChaosEngine
+  experiment.yaml     # ChaosEngine experiment
 ```
 
-### Example: deployment.yaml
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx
-  labels:
-    app: nginx
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: nginx
-  template:
-    metadata:
-      labels:
-        app: nginx
-    spec:
-      containers:
-        - name: nginx
-          image: nginx:1.21
-          ports:
-            - containerPort: 80
-```
-
-### Example: experiment.yaml (Native ChaosEngine)
+### Example: experiment.yaml (ChaosEngine)
 
 ```yaml
 apiVersion: litmuschaos.io/v1alpha1
@@ -125,7 +95,7 @@ spec:
               retry: 3
 ```
 
-### Example: cluster.yaml (Optional Cluster Config)
+### Optional: cluster.yaml
 
 Scenarios can include a `cluster.yaml` to couple cluster provisioning with the experiment:
 
@@ -138,17 +108,17 @@ workers:
   disk: "20GB"
 ```
 
-When `--provision` is passed to `run`, this config is used to automatically provision the cluster before running experiments.
+When `--provision` is passed to `run`, this config provisions the cluster automatically.
 
 ## Quick Start
 
 ### With Existing Cluster
 
 ```bash
-# Initialize ChaosProbe (installs LitmusChaos)
+# Initialize (installs LitmusChaos, ChaosCenter, Prometheus, Neo4j, metrics-server)
 uv run chaosprobe init
 
-# Run the full placement experiment matrix (all defaults: steady load, db, visualization)
+# Run the full placement experiment matrix
 uv run chaosprobe run -n online-boutique
 
 # Compare before and after (using Neo4j run IDs)
@@ -161,7 +131,7 @@ uv run chaosprobe compare run-baseline-001 run-afterfix-001 --neo4j-uri bolt://l
 # 1. Initialize Vagrantfile (1 control plane + 2 workers)
 uv run chaosprobe cluster vagrant init --control-planes 1 --workers 2
 
-# 2. (WSL2/Linux) Setup libvirt provider - run once
+# 2. (WSL2/Linux) Setup libvirt provider — run once
 uv run chaosprobe cluster vagrant setup
 
 # 3. Start the VMs
@@ -217,139 +187,89 @@ uv run chaosprobe run -n online-boutique
 
 ## Commands
 
-### Core Commands
+### Core
 
 ```bash
-# Check status of all dependencies
-uv run chaosprobe status
-
-# Initialize (install LitmusChaos)
-uv run chaosprobe init
-
-# Run the full placement experiment matrix
-uv run chaosprobe run -n online-boutique
-
-# Deploy manifests only (no experiments)
-uv run chaosprobe provision <scenario-dir>
-
-# Compare before/after results (Neo4j run IDs or legacy JSON files)
-uv run chaosprobe compare run-baseline-001 run-afterfix-001 --neo4j-uri bolt://localhost:7687
-
-# Cleanup resources
-uv run chaosprobe cleanup <namespace> --all
+uv run chaosprobe status                    # Check prerequisites and cluster connectivity
+uv run chaosprobe init                      # Install all infrastructure
+uv run chaosprobe run -n online-boutique    # Run placement experiment matrix
+uv run chaosprobe provision <scenario-dir>  # Deploy manifests only (no experiments)
+uv run chaosprobe compare <base> <fix> --neo4j-uri bolt://localhost:7687  # Compare runs
+uv run chaosprobe cleanup <namespace> --all # Cleanup provisioned resources
+uv run chaosprobe delete -n <namespace>     # Delete ALL ChaosProbe infrastructure
 ```
 
-### Placement Commands
+### Run
+
+The `run` command runs the full placement experiment matrix. Default strategies: `baseline,colocate,spread,antagonistic,random`.
 
 ```bash
-# Apply a placement strategy to deployments
+uv run chaosprobe run -n online-boutique                          # All defaults
+uv run chaosprobe run -n online-boutique -s colocate,spread       # Specific strategies
+uv run chaosprobe run -n online-boutique -i 3                     # Multiple iterations
+uv run chaosprobe run -n online-boutique --load-profile ramp      # Ramp load profile
+uv run chaosprobe run -n online-boutique --provision              # Auto-provision cluster
+uv run chaosprobe run -n online-boutique --no-visualize           # Skip chart generation
+```
+
+### Placement
+
+```bash
 uv run chaosprobe placement apply colocate -n online-boutique
 uv run chaosprobe placement apply spread -n online-boutique
 uv run chaosprobe placement apply random -n online-boutique --seed 42
 uv run chaosprobe placement apply antagonistic -n online-boutique
-
-# Show current pod placement
 uv run chaosprobe placement show -n online-boutique
-
-# Show cluster node information
 uv run chaosprobe placement nodes
-
-# Clear all ChaosProbe placement constraints
 uv run chaosprobe placement clear -n online-boutique
 ```
 
-### Run Command
-
-The `run` command is the primary entry point. By default it runs the full placement experiment matrix with load generation, database persistence, and visualization enabled.
+### Graph (Neo4j)
 
 ```bash
-# Run with all defaults (all strategies, steady load, results.db, charts)
-uv run chaosprobe run -n online-boutique
-
-# Run specific strategies only
-uv run chaosprobe run -n online-boutique -s colocate,spread
-
-# Run multiple iterations per strategy for statistical significance
-uv run chaosprobe run -n online-boutique -i 3
-
-# Use a custom experiment file
-uv run chaosprobe run -n online-boutique -e scenarios/online-boutique/placement-experiment.yaml
-
-# Custom output directory and settings
-uv run chaosprobe run -n online-boutique -o results/my-run --timeout 300 --seed 42
-
-# Use ramp load profile instead of steady
-uv run chaosprobe run -n online-boutique --load-profile ramp
-
-# Auto-provision cluster from scenario cluster.yaml
-uv run chaosprobe run -n online-boutique --provision
-
-# Disable visualization
-uv run chaosprobe run -n online-boutique --no-visualize
+uv run chaosprobe graph status --neo4j-uri bolt://localhost:7687
+uv run chaosprobe graph sessions --neo4j-uri bolt://localhost:7687
+uv run chaosprobe graph blast-radius frontend --neo4j-uri bolt://localhost:7687
+uv run chaosprobe graph topology --run-id <run-id> --neo4j-uri bolt://localhost:7687
+uv run chaosprobe graph details <run-id> --neo4j-uri bolt://localhost:7687
+uv run chaosprobe graph compare --run-ids <id1,id2,...> --neo4j-uri bolt://localhost:7687
 ```
 
-Iterates through placement strategies (baseline, colocate, spread, antagonistic, random), applies each, runs the corresponding chaos experiment, collects recovery and pod metrics, and saves results to a timestamped directory.
-
-### Load Generation
-
-Load generation runs by default (`--load-profile steady`). Override with a different profile or custom locustfile:
+### Dashboard (ChaosCenter)
 
 ```bash
-# Use ramp profile (100 users)
-uv run chaosprobe run -n online-boutique --load-profile ramp
-
-# Use spike profile (200 users)
-uv run chaosprobe run -n online-boutique --load-profile spike
-
-# Use a custom locustfile
-uv run chaosprobe run -n online-boutique --locustfile my_locustfile.py
-
-# Override target URL
-uv run chaosprobe run -n online-boutique --target-url http://frontend:8080
-```
-
-### Query & Database Commands
-
-Results are persisted to a SQLite database by default (`results.db`):
-
-```bash
-# List stored runs (uses default results.db)
-uv run chaosprobe query runs
-
-# Use a specific database
-uv run chaosprobe query runs --db custom.db
-
-# Compare strategies across runs
-uv run chaosprobe query compare
-
-# Show details of a specific run
-uv run chaosprobe query show <run-id>
-
-# Export all runs to CSV
-uv run chaosprobe query export -o export.csv
+uv run chaosprobe dashboard install
+uv run chaosprobe dashboard status
+uv run chaosprobe dashboard open
+uv run chaosprobe dashboard connect -n <namespace>
+uv run chaosprobe dashboard credentials
 ```
 
 ### Visualization
 
-Visualization is enabled by default after `run`. You can also generate charts independently:
-
 ```bash
-# Generate charts from Neo4j (uses most recent session)
 uv run chaosprobe visualize --neo4j-uri bolt://localhost:7687 -o charts/
-
-# Generate charts from a specific session
-uv run chaosprobe visualize --neo4j-uri bolt://localhost:7687 --session 20260402-013423 -o charts/
-
-# Generate charts from database
-uv run chaosprobe visualize --db results.db -o charts/
-
-# Disable auto-visualization during run
-uv run chaosprobe run -n online-boutique --no-visualize
+uv run chaosprobe visualize --neo4j-uri bolt://localhost:7687 --session <id> -o charts/
+uv run chaosprobe visualize --summary summary.json -o charts/    # Legacy
 ```
 
-Generates resilience score bar charts, recovery time comparisons, load metric overlays, pod-node heatmaps, and an HTML summary report.
+### ML Export
 
-### Cluster Commands
+```bash
+uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.csv
+uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.parquet --format parquet
+uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 --strategy colocate -o dataset.csv
+```
+
+### Probe (Rust cmdProbes)
+
+```bash
+uv run chaosprobe probe init --scenario <path>
+uv run chaosprobe probe build --scenario <path>
+uv run chaosprobe probe list --scenario <path>
+```
+
+### Cluster
 
 ```bash
 # Vagrant
@@ -368,206 +288,24 @@ uv run chaosprobe cluster kubeconfig --host <ip> --user <user>
 uv run chaosprobe cluster destroy --inventory <path>
 ```
 
-### Graph Commands (Neo4j)
-
-```bash
-# Check Neo4j connectivity
-uv run chaosprobe graph status --neo4j-uri bolt://localhost:7687
-
-# List experiment sessions stored in Neo4j
-uv run chaosprobe graph sessions --neo4j-uri bolt://localhost:7687
-
-# Show service blast radius (upstream dependency analysis)
-uv run chaosprobe graph blast-radius frontend --neo4j-uri bolt://localhost:7687
-
-# Show placement topology for a run
-uv run chaosprobe graph topology --run-id <run-id> --neo4j-uri bolt://localhost:7687
-
-# Show full details of a run
-uv run chaosprobe graph details <run-id> --neo4j-uri bolt://localhost:7687
-
-# Compare strategies across runs
-uv run chaosprobe graph compare --neo4j-uri bolt://localhost:7687
-```
-
-### ML Export
-
-Export aligned, labeled datasets for training anomaly classification and remediation models:
-
-```bash
-# Export from Neo4j
-uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.csv
-
-# Export from SQLite
-uv run chaosprobe ml-export --db results.db -o dataset.csv
-
-# Export as Parquet (requires pyarrow: uv pip install pyarrow)
-uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.parquet --format parquet
-
-# Filter by strategy
-uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 --strategy colocate -o dataset.csv
-```
-
 ## Supported Chaos Experiments
 
-Any LitmusChaos experiment can be used via native ChaosEngine YAML. Common ones:
+Any LitmusChaos experiment can be used via ChaosEngine YAML. Common ones:
 
-### Pod Chaos
-- `pod-delete` — Delete application pods
-- `container-kill` — Kill containers
-- `pod-cpu-hog` — CPU stress
-- `pod-memory-hog` — Memory stress
-- `pod-io-stress` — I/O stress
-
-### Network Chaos
-- `pod-network-loss` — Packet loss
-- `pod-network-latency` — Latency injection
-- `pod-network-corruption` — Packet corruption
-
-### Node Chaos
-- `node-cpu-hog` — Node CPU stress
-- `node-memory-hog` — Node memory stress
-- `node-drain` — Node drain
-
-## Output Format
-
-ChaosProbe stores structured data (schema v2.0.0) in Neo4j. The internal data format for each run:
-
-```json
-{
-  "schemaVersion": "2.0.0",
-  "runId": "run-2025-01-18-143052-abc123",
-  "timestamp": "2025-01-18T14:30:52+00:00",
-  "scenario": {
-    "directory": "scenarios/nginx-pod-delete",
-    "manifests": [
-      {
-        "file": "deployment.yaml",
-        "content": { "kind": "Deployment", "metadata": { "name": "nginx" }, "..." : "..." }
-      },
-      {
-        "file": "service.yaml",
-        "content": { "kind": "Service", "metadata": { "name": "nginx-service" }, "...": "..." }
-      }
-    ],
-    "experiments": [
-      {
-        "file": "experiment.yaml",
-        "content": { "kind": "ChaosEngine", "metadata": { "name": "nginx-pod-delete" }, "...": "..." }
-      }
-    ]
-  },
-  "infrastructure": {
-    "namespace": "chaosprobe-test"
-  },
-  "experiments": [
-    {
-      "name": "pod-delete",
-      "engineName": "nginx-pod-delete-a02e6e",
-      "result": {
-        "phase": "Completed_With_Probe_Failure",
-        "verdict": "Fail",
-        "probeSuccessPercentage": 0,
-        "failStep": ""
-      },
-      "probes": [
-        {
-          "name": "http-probe",
-          "type": "httpProbe",
-          "mode": "Continuous",
-          "status": {
-            "verdict": "Failed",
-            "description": "connection refused"
-          }
-        }
-      ]
-    }
-  ],
-  "summary": {
-    "totalExperiments": 1,
-    "passed": 0,
-    "failed": 1,
-    "resilienceScore": 0.0,
-    "overallVerdict": "FAIL"
-  },
-  "metrics": {
-    "deploymentName": "nginx",
-    "timeWindow": { "start": "...", "end": "...", "duration_s": 30.0 },
-    "recovery": {
-      "recoveryEvents": [
-        {
-          "deletionTime": "...", "scheduledTime": "...", "readyTime": "...",
-          "deletionToScheduled_ms": 120, "scheduledToReady_ms": 880, "totalRecovery_ms": 1000
-        }
-      ],
-      "summary": {
-        "count": 3, "completedCycles": 3,
-        "meanRecovery_ms": 1050.0, "medianRecovery_ms": 1000.0,
-        "minRecovery_ms": 950, "maxRecovery_ms": 1200, "p95Recovery_ms": 1200.0
-      }
-    },
-    "podStatus": { "pods": ["..."], "totalRestarts": 0 },
-    "eventTimeline": ["..."],
-    "nodeInfo": { "nodeName": "worker1", "allocatable": { "cpu": "2", "memory": "1908500Ki" }, "capacity": { "cpu": "2", "memory": "2010900Ki" } }
-  }
-}
-```
-
-### Comparison Output
-
-```json
-{
-  "schemaVersion": "2.0.0",
-  "comparisonId": "compare-2025-01-18-150000-abc123",
-  "timestamp": "2025-01-18T15:00:00+00:00",
-  "scenario": { "..." : "..." },
-  "baseline": {
-    "runId": "run-2025-01-18-143052-abc123",
-    "timestamp": "2025-01-18T14:30:52+00:00",
-    "results": {
-      "resilienceScore": 0.0,
-      "overallVerdict": "FAIL",
-      "experiments": [{ "name": "pod-delete", "verdict": "Fail", "probeSuccessPercentage": 0 }]
-    }
-  },
-  "afterFix": {
-    "runId": "run-2025-01-18-145000-def456",
-    "timestamp": "2025-01-18T14:50:00+00:00",
-    "results": {
-      "resilienceScore": 95.0,
-      "overallVerdict": "PASS",
-      "experiments": [{ "name": "pod-delete", "verdict": "Pass", "probeSuccessPercentage": 100 }]
-    }
-  },
-  "comparison": {
-    "resilienceScoreChange": 95.0,
-    "verdictChanged": true,
-    "previousVerdict": "FAIL",
-    "newVerdict": "PASS",
-    "experimentImprovements": [...],
-    "improvementCriteriaMet": {
-      "resilienceScoreIncrease": { "required": 10, "actual": 95.0, "met": true },
-      "probeSuccessIncrease": { "required": 15, "actual": 100.0, "met": true }
-    }
-  },
-  "conclusion": {
-    "fixEffective": true,
-    "confidence": 0.90,
-    "summary": "The applied fix successfully improved resilience. Score: 0.0% → 95.0%, verdict: FAIL → PASS."
-  }
-}
-```
+- **Pod**: `pod-delete`, `container-kill`, `pod-cpu-hog`, `pod-memory-hog`, `pod-io-stress`
+- **Network**: `pod-network-loss`, `pod-network-latency`, `pod-network-corruption`
+- **Node**: `node-cpu-hog`, `node-memory-hog`, `node-drain`
 
 ## Architecture
 
 ```
-ChaosProbe CLI
+ChaosProbe CLI (cli.py + commands/)
       │
       ├── Cluster Manager
       │   ├── Vagrant (local development)
       │   └── Kubespray (production)
       │
-      ├── Setup Manager (installs LitmusChaos, metrics-server, Neo4j)
+      ├── Setup Manager (Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, Neo4j)
       │
       ├── Config Loader (directory-based, auto-classifies by kind)
       │   └── Validator (ChaosEngine + K8s manifest validation)
@@ -578,7 +316,7 @@ ChaosProbe CLI
       │   ├── Strategy (colocate, spread, random, antagonistic)
       │   └── Mutator (nodeSelector injection, rollout management)
       │
-      ├── Chaos Runner (applies native ChaosEngine CRDs)
+      ├── Chaos Runner (ChaosCenter GraphQL API — save, trigger, poll experiments)
       │
       ├── Result Collector (ChaosResult CRDs)
       │
@@ -589,9 +327,7 @@ ChaosProbe CLI
       │   ├── Cascade Timeline (fault propagation tracking)
       │   └── MetricsCollector (pod status, node info, unified output)
       │
-      ├── Storage
-      │   ├── Neo4j Graph Store (primary — topology, runs, metrics, time-series)
-      │   └── SQLite Store (secondary — tabular queries, CSV export)
+      ├── Storage — Neo4j Graph Store (topology, runs, metrics, time-series)
       │
       ├── Graph Analysis (blast radius, topology comparison, colocation impact)
       │
@@ -604,18 +340,11 @@ ChaosProbe CLI
 ## Development
 
 ```bash
-# Sync all dependencies (including dev)
-uv sync
-
-# Run tests
-uv run pytest
-
-# Run linting
-uv run ruff check .
-uv run black --check .
-
-# Format code
-uv run black .
+uv sync                     # Sync all dependencies (including dev)
+uv run pytest               # Run tests
+uv run ruff check .         # Lint
+uv run black --check .      # Check formatting
+uv run black .              # Format code
 ```
 
 ## License
