@@ -51,7 +51,6 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     click.echo(f"  git: {'OK' if prereqs['git'] else 'MISSING'}")
     click.echo(f"  ssh: {'OK' if prereqs['ssh'] else 'MISSING'}")
     click.echo(f"  ansible: {'OK' if prereqs['ansible'] else 'Not installed (optional)'}")
-    click.echo(f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}")
 
     if not prereqs["kubectl"]:
         click.echo("\nError: kubectl is required. Please install it first.", err=True)
@@ -73,6 +72,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     setup._init_k8s_client()
     prereqs = setup.check_prerequisites()
 
+    click.echo(f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}")
     click.echo(f"  LitmusChaos: {'Installed' if prereqs['litmus_installed'] else 'Not installed'}")
 
     # Ensure local-path-provisioner is running (needed for PVCs)
