@@ -12,12 +12,13 @@ ChaosProbe runs locally on your machine and interacts with the cluster via `kube
 
 Create at least 1 VM (combined control plane + worker) or ideally 3+ VMs on your Proxmox server.
 
-| Resource | Minimum | Recommended |
-|----------|---------|-------------|
-| CPU | 2 cores | 4 cores |
-| RAM | 4 GB | 8 GB |
-| Disk | 20 GB | 40 GB |
-| OS | Ubuntu 22.04 Server | Ubuntu 22.04 Server |
+| Role | CPU | RAM | Disk | OS |
+|------|-----|-----|------|----|
+| Control plane only | 2 cores | 2 GB | 20 GB | Ubuntu 22.04 Server |
+| Worker | 2-4 cores | 4-8 GB | 20-40 GB | Ubuntu 22.04 Server |
+| Combined (control plane + worker) | 2-4 cores | 6-8 GB | 20-40 GB | Ubuntu 22.04 Server |
+
+Workers need more resources because they run the infrastructure stack (ChaosCenter ~1-2 GB, Prometheus, Neo4j) plus application workloads. A combined node needs at least 6 GB to fit both the control plane components (etcd, API server, scheduler) and the infrastructure stack.
 
 Ensure SSH is running on each VM.
 
