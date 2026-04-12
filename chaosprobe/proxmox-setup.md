@@ -18,7 +18,7 @@ Create at least 1 VM (combined control plane + worker) or ideally 3+ VMs on your
 | Worker | 2-4 cores | 4-8 GB | 20-40 GB | Ubuntu 22.04 Server |
 | Combined (control plane + worker) | 2-4 cores | 6-8 GB | 20-40 GB | Ubuntu 22.04 Server |
 
-Workers need more resources because they run the infrastructure stack (ChaosCenter ~1-2 GB, Prometheus, Neo4j) plus application workloads. A combined node needs at least 6 GB to fit both the control plane components (etcd, API server, scheduler) and the infrastructure stack.
+All infrastructure (metrics-server, Prometheus, ChaosCenter, Neo4j) is pinned to the control plane to isolate it from chaos experiments on workers. Workers only run application workloads. In a single-VM setup (`roles: [control_plane, worker]`), everything shares one node — at least 6 GB is needed to fit K8s components, the infrastructure stack, and application workloads together.
 
 Ensure SSH is running on each VM.
 

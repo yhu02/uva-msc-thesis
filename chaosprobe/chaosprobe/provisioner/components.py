@@ -310,6 +310,16 @@ class _ComponentsMixin:
                 "template": {
                     "metadata": {"labels": {"app": "neo4j"}},
                     "spec": {
+                        "tolerations": [
+                            {
+                                "key": "node-role.kubernetes.io/control-plane",
+                                "operator": "Exists",
+                                "effect": "NoSchedule",
+                            }
+                        ],
+                        "nodeSelector": {
+                            "node-role.kubernetes.io/control-plane": "",
+                        },
                         "containers": [
                             {
                                 "name": "neo4j",
