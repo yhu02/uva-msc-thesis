@@ -6,8 +6,7 @@ and **all collected metrics** (recovery, latency, throughput, resources,
 Prometheus) in a Neo4j graph database.
 
 This is a standalone store (not inheriting ``ResultStore``) because
-the graph query model is fundamentally different from the tabular
-SQLite store.
+the graph query model is fundamentally different from a tabular store.
 
 The ``neo4j`` driver is imported lazily so the rest of ChaosProbe
 works without it installed.
