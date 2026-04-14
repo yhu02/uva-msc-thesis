@@ -26,7 +26,8 @@ except ImportError:
 def strategy_colors(names: List[str]) -> List[str]:
     """Return consistent colors for strategy names."""
     color_map = {
-        "baseline": "#2196F3",
+        "baseline": "#607D8B",
+        "default": "#2196F3",
         "colocate": "#F44336",
         "spread": "#4CAF50",
         "random": "#FF9800",

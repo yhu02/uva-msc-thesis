@@ -119,7 +119,7 @@ class Neo4jWriterMixin:
         score = summary.get("resilienceScore", 0)
 
         # Infer strategy from scenario or explicit placement data
-        strategy_name = "baseline"
+        strategy_name = "default"
         seed: Optional[int] = None
         placement = run_data.get("placement") or {}
         if placement:

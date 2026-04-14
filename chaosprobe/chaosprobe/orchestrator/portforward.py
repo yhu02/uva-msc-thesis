@@ -33,11 +33,16 @@ def check_port(host: str, port: int) -> bool:
 
 
 def start(svc: str, ns: str, ports: list[str]):
-    """Start a kubectl port-forward in the background and track it."""
+    """Start a kubectl port-forward in the background and track it.
+
+    Uses ``start_new_session=True`` so the process survives after the
+    parent Python process exits (no SIGHUP on parent termination).
+    """
     proc = subprocess.Popen(
         ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
     _procs[(svc, ns)] = proc
     _specs[(svc, ns)] = ports
@@ -75,6 +80,7 @@ def _monitor_loop(stop_event: threading.Event):
                         ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
+                        start_new_session=True,
                     )
                     _procs[key] = new_proc
         stop_event.wait(10)  # check every 10 seconds

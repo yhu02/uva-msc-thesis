@@ -14,34 +14,35 @@ def generate_remediation_log(
 ) -> List[Dict[str, Any]]:
     """Generate remediation action logs from a multi-strategy experiment run.
 
-    Uses the ``baseline`` strategy as the anomaly reference state and
-    treats each non-baseline strategy as a remediation action.
+    Uses the ``default`` strategy (default scheduling + chaos) as the
+    anomaly reference state and treats each placement strategy as a
+    remediation action.
 
     Parameters
     ----------
     summary_data:
         The full summary.json dict produced by ``chaosprobe run``.
-        Must contain ``strategies`` with at least ``baseline`` + one other.
+        Must contain ``strategies`` with at least ``default`` + one other.
 
     Returns
     -------
-    List of remediation log entries, one per non-baseline strategy.
-    Each entry pairs the baseline anomaly state with the action's outcome.
+    List of remediation log entries, one per non-reference strategy.
+    Each entry pairs the default anomaly state with the action's outcome.
     """
     strategies = summary_data.get("strategies", {})
     if not strategies:
         return []
 
-    # Find baseline reference
-    baseline = strategies.get("baseline")
-    if not baseline or baseline.get("status") != "completed":
+    # Find default (chaos + default scheduling) as the reference
+    reference = strategies.get("default")
+    if not reference or reference.get("status") != "completed":
         return []
 
-    baseline_metrics = _extract_state(baseline)
+    reference_metrics = _extract_state(reference)
 
     log: List[Dict[str, Any]] = []
     for strategy_name, strategy_data in strategies.items():
-        if strategy_name == "baseline":
+        if strategy_name in ("default", "baseline"):
             continue
         if strategy_data.get("status") != "completed":
             continue
@@ -49,10 +50,10 @@ def generate_remediation_log(
         action_metrics = _extract_state(strategy_data)
 
         # Determine outcome
-        outcome = _determine_outcome(baseline_metrics, action_metrics)
+        outcome = _determine_outcome(reference_metrics, action_metrics)
 
         entry: Dict[str, Any] = {
-            "baselineState": baseline_metrics,
+            "baselineState": reference_metrics,
             "actionTaken": {
                 "type": "placement",
                 "strategy": strategy_name,

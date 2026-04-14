@@ -174,13 +174,15 @@ def build_workflow_manifest(
                 {
                     "name": "revert-chaos",
                     "inputs": {},
+                    "activeDeadlineSeconds": 60,
                     "container": {
                         "image": "litmuschaos/k8s:latest",
                         "command": ["sh", "-c"],
                         "args": [
                             f"kubectl delete chaosengine -l 'instance_id in"
                             f" ({instance_id}, )' -n"
-                            " {{workflow.parameters.adminModeNamespace}}",
+                            " {{workflow.parameters.adminModeNamespace}}"
+                            " --timeout=30s || true",
                         ],
                     },
                 },

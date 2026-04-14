@@ -27,9 +27,9 @@ pytest.importorskip("matplotlib")
 
 class TestStrategyColors:
     def test_known_strategies(self):
-        colors = _strategy_colors(["baseline", "colocate", "spread"])
+        colors = _strategy_colors(["default", "colocate", "spread"])
         assert len(colors) == 3
-        assert colors[0] == "#2196F3"  # baseline
+        assert colors[0] == "#2196F3"  # default
         assert colors[1] == "#F44336"  # colocate
         assert colors[2] == "#4CAF50"  # spread
 

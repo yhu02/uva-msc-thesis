@@ -256,25 +256,25 @@ class ChaosRunner:
 
         Extracts probe definitions from the ChaosEngine experiments,
         registers each as a ChaosCenter Resilience Probe via the
-        ``addProbe`` mutation for ChaosCenter catalog visibility.
+        ``addProbe`` mutation, then builds a ``probeRef`` list so
+        ChaosCenter can map probe verdicts back to the experiment.
 
-        Inline probes are **kept** in the ChaosEngine spec so the
-        chaos-operator (go-runner) evaluates them directly.  Per-probe
-        verdicts are then written to the ChaosResult CRD, which the
-        ``ResultCollector`` reads for resilience scoring.
-
-        The returned ``probeRef`` list is intentionally empty so the
-        ChaosCenter subscriber does **not** attempt to inject API-managed
-        probes (which would overwrite the inline definitions).
+        Inline probes are **kept** in the engine spec so the go-runner
+        evaluates them directly and writes verdicts to the ChaosResult
+        CR.  The ``probeRef`` annotation tells ChaosCenter which
+        registered probes to expect results for.
 
         Returns:
-            Empty list — probeRef annotation will be ``"[]"``.
+            List of ``{"probeID": name, "mode": mode}`` dicts for the
+            ``probeRef`` annotation.
         """
         experiments = (
             engine_spec.get("spec", {}).get("experiments", [])
         )
         if not experiments:
             return []
+
+        probe_refs: List[Dict[str, str]] = []
 
         for exp in experiments:
             inline_probes = exp.get("spec", {}).get("probe", [])
@@ -290,40 +290,44 @@ class ChaosRunner:
                     continue
 
                 # Only register once per runner session
-                if name in self._registered_probes:
-                    continue
-
-                try:
-                    api_request = self._probe_to_api_request(probe_def)
-                    self._setup.chaoscenter_add_probe(
-                        gql_url=self._cc["gql_url"],
-                        project_id=self._cc["project_id"],
-                        token=self._cc["token"],
-                        probe_request=api_request,
-                    )
-                    self._registered_probes.add(name)
-                    print(f"    Registered probe: {name} ({probe_type}/{mode})")
-                except Exception as exc:
-                    # Probe may already exist from a previous run — update it
-                    err_msg = str(exc).lower()
-                    if "already" in err_msg or "duplicate" in err_msg or "exists" in err_msg:
-                        try:
-                            self._setup.chaoscenter_update_probe(
-                                gql_url=self._cc["gql_url"],
-                                project_id=self._cc["project_id"],
-                                token=self._cc["token"],
-                                probe_request=api_request,
-                            )
-                            print(f"    Updated probe: {name} ({probe_type}/{mode})")
-                        except Exception as update_exc:
-                            print(f"    Probe exists, update failed: {update_exc}")
+                registered = name in self._registered_probes
+                if not registered:
+                    try:
+                        api_request = self._probe_to_api_request(probe_def)
+                        self._setup.chaoscenter_add_probe(
+                            gql_url=self._cc["gql_url"],
+                            project_id=self._cc["project_id"],
+                            token=self._cc["token"],
+                            probe_request=api_request,
+                        )
                         self._registered_probes.add(name)
-                    else:
-                        print(f"    WARNING: Failed to register probe '{name}': {exc}")
+                        registered = True
+                        print(f"    Registered probe: {name} ({probe_type}/{mode})")
+                    except Exception as exc:
+                        # Probe may already exist from a previous run — update it
+                        err_msg = str(exc).lower()
+                        if "already" in err_msg or "duplicate" in err_msg or "exists" in err_msg:
+                            try:
+                                self._setup.chaoscenter_update_probe(
+                                    gql_url=self._cc["gql_url"],
+                                    project_id=self._cc["project_id"],
+                                    token=self._cc["token"],
+                                    probe_request=api_request,
+                                )
+                                print(f"    Updated probe: {name} ({probe_type}/{mode})")
+                            except Exception as update_exc:
+                                print(f"    Probe exists, update failed: {update_exc}")
+                            self._registered_probes.add(name)
+                            registered = True
+                        else:
+                            print(f"    WARNING: Failed to register probe '{name}': {exc}")
 
-        # Inline probes stay in the engine spec for CRD-level evaluation;
-        # return empty probeRef so subscriber does not overwrite them.
-        return []
+                if registered:
+                    probe_refs.append({"probeID": name, "mode": mode})
+
+        # Inline probes stay in the engine spec for go-runner evaluation;
+        # probeRef tells ChaosCenter which registered probes to track.
+        return probe_refs
 
     @staticmethod
     def _probe_to_api_request(probe_def: Dict[str, Any]) -> Dict[str, Any]:

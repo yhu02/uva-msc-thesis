@@ -1,6 +1,7 @@
 """Tests for ChaosCenter dashboard integration."""
 
 import json
+from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1166,3 +1167,101 @@ class TestChaosRunnerRunExperiments:
         }
         runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
         assert len(runner.get_executed_experiments()) == 1
+
+
+_ENGINE_SPEC_WITH_PROBES = {
+    "apiVersion": "litmuschaos.io/v1alpha1",
+    "kind": "ChaosEngine",
+    "metadata": {"name": "test-engine-probes", "namespace": "online-boutique"},
+    "spec": {
+        "chaosServiceAccount": "litmus-admin",
+        "experiments": [
+            {
+                "name": "pod-delete",
+                "spec": {
+                    "probe": [
+                        {
+                            "name": "http-probe-1",
+                            "type": "httpProbe",
+                            "mode": "Continuous",
+                            "httpProbe/inputs": {
+                                "url": "http://frontend:80",
+                                "method": {"get": {"criteria": "==", "responseCode": "200"}},
+                            },
+                            "runProperties": {
+                                "probeTimeout": "5s",
+                                "interval": "2s",
+                                "retry": 2,
+                            },
+                        },
+                        {
+                            "name": "http-probe-2",
+                            "type": "httpProbe",
+                            "mode": "Edge",
+                            "httpProbe/inputs": {
+                                "url": "http://frontend:80/health",
+                                "method": {"get": {"criteria": "==", "responseCode": "200"}},
+                            },
+                            "runProperties": {
+                                "probeTimeout": "10s",
+                                "interval": "5s",
+                                "retry": 3,
+                            },
+                        },
+                    ],
+                },
+            },
+        ],
+    },
+}
+
+
+class TestChaosRunnerProbeRegistration:
+    def test_register_probes_returns_probe_refs(self):
+        """Registered probes should produce probeRef entries."""
+        runner = _make_runner()
+        runner._setup.chaoscenter_add_probe.return_value = {"name": "http-probe-1", "type": "httpProbe"}
+        spec = deepcopy(_ENGINE_SPEC_WITH_PROBES)
+
+        refs = runner._register_and_extract_probes(spec)
+
+        assert len(refs) == 2
+        assert refs[0] == {"probeID": "http-probe-1", "mode": "Continuous"}
+        assert refs[1] == {"probeID": "http-probe-2", "mode": "Edge"}
+
+    def test_inline_probes_kept_after_registration(self):
+        """Inline probes must remain so the go-runner evaluates them."""
+        runner = _make_runner()
+        runner._setup.chaoscenter_add_probe.return_value = {"name": "x", "type": "httpProbe"}
+        spec = deepcopy(_ENGINE_SPEC_WITH_PROBES)
+
+        runner._register_and_extract_probes(spec)
+
+        assert len(spec["spec"]["experiments"][0]["spec"]["probe"]) == 2
+
+    def test_manifest_has_probe_ref_entries(self):
+        """When probes are registered, the engine probeRef annotation should list them."""
+        import json as _json
+        import yaml as _yaml
+
+        runner = _make_runner()
+        runner._setup.chaoscenter_add_probe.return_value = {"name": "x", "type": "httpProbe"}
+        spec = deepcopy(_ENGINE_SPEC_WITH_PROBES)
+        probe_ref = runner._register_and_extract_probes(spec)
+
+        manifest, _ = runner._build_workflow_manifest(spec, "test-probes", "inst-1", probe_ref=probe_ref)
+        parsed = _json.loads(manifest)
+        run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
+        engine_yaml = run_template["inputs"]["artifacts"][0]["raw"]["data"]
+        engine = _yaml.safe_load(engine_yaml)
+
+        ref_list = _json.loads(engine["metadata"]["annotations"]["probeRef"])
+        assert len(ref_list) == 2
+        assert ref_list[0]["probeID"] == "http-probe-1"
+        assert ref_list[1]["probeID"] == "http-probe-2"
+
+    def test_no_probes_returns_empty_ref(self):
+        """Engine spec without probes should return empty probeRef."""
+        runner = _make_runner()
+        refs = runner._register_and_extract_probes(deepcopy(_ENGINE_SPEC))
+        assert refs == []

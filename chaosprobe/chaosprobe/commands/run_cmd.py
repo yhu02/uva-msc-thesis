@@ -291,7 +291,7 @@ def _print_run_banner(
     help="Base directory for results (a timestamped subdirectory is created)",
 )
 @click.option(
-    "--strategies", "-s", default="baseline,colocate,spread,antagonistic,random",
+    "--strategies", "-s", default="baseline,default,colocate,spread,antagonistic,random",
     help="Comma-separated strategies to test (default: all)",
 )
 @click.option("--timeout", "-t", default=300, type=int, help="Timeout per experiment in seconds")
@@ -371,7 +371,7 @@ def run(
       chaosprobe run -n online-boutique -i 3  # 3 iterations per strategy
     """
     strategy_list = [s.strip() for s in strategies.split(",")]
-    valid_strategies = {"baseline"} | {s.value for s in PlacementStrategy}
+    valid_strategies = {"baseline", "default"} | {s.value for s in PlacementStrategy}
     for s in strategy_list:
         if s not in valid_strategies:
             click.echo(

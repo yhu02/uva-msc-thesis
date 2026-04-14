@@ -49,6 +49,21 @@ def _parse_probe_timeout(s: str) -> int:
         return 5
 
 
+def _extract_chaos_duration(scenario: Dict[str, Any]) -> int:
+    """Extract the total chaos duration (seconds) from the scenario."""
+    chaos_duration = 60  # fallback
+    for exp_entry in scenario.get("experiments", []):
+        spec = exp_entry.get("spec", {})
+        for exp in spec.get("spec", {}).get("experiments", []):
+            for env in exp.get("spec", {}).get("components", {}).get("env", []):
+                if env.get("name") == "TOTAL_CHAOS_DURATION":
+                    try:
+                        chaos_duration = max(chaos_duration, int(env["value"]))
+                    except (ValueError, KeyError):
+                        pass
+    return chaos_duration
+
+
 def _compute_effective_timeout(scenario: Dict[str, Any], user_timeout: int) -> int:
     """Compute a polling timeout that accounts for chaos duration + probe overhead.
 
@@ -61,18 +76,12 @@ def _compute_effective_timeout(scenario: Dict[str, Any], user_timeout: int) -> i
 
     Returns the larger of *user_timeout* and the computed minimum.
     """
-    chaos_duration = 60  # fallback
+    chaos_duration = _extract_chaos_duration(scenario)
     max_probe_budget = 0
 
     for exp_entry in scenario.get("experiments", []):
         spec = exp_entry.get("spec", {})
         for exp in spec.get("spec", {}).get("experiments", []):
-            for env in exp.get("spec", {}).get("components", {}).get("env", []):
-                if env.get("name") == "TOTAL_CHAOS_DURATION":
-                    try:
-                        chaos_duration = max(chaos_duration, int(env["value"]))
-                    except (ValueError, KeyError):
-                        pass
             for probe in exp.get("spec", {}).get("probe", []):
                 run_props = probe.get("runProperties", {})
                 t = _parse_probe_timeout(run_props.get("probeTimeout", "5s"))
@@ -82,6 +91,26 @@ def _compute_effective_timeout(scenario: Dict[str, Any], user_timeout: int) -> i
     # pre-chaos probes + chaos + post-chaos probes + workflow overhead
     min_timeout = chaos_duration + 2 * max_probe_budget + 120
     return max(user_timeout, min_timeout)
+
+
+def _disable_fault_injection(scenario: Dict[str, Any]) -> None:
+    """Zero out chaos duration so the experiment runs without injecting faults.
+
+    The ChaosEngine is still submitted to ChaosCenter (visible in the
+    dashboard) and probes still execute, but ``TOTAL_CHAOS_DURATION=0``
+    means the fault loop never fires — no pods are killed.
+    """
+    for exp_entry in scenario.get("experiments", []):
+        spec = exp_entry.get("spec", {})
+        for exp in spec.get("spec", {}).get("experiments", []):
+            env_list = exp.get("spec", {}).get("components", {}).get("env", [])
+            for env in env_list:
+                if env.get("name") == "TOTAL_CHAOS_DURATION":
+                    env["value"] = "0"
+                elif env.get("name") == "CHAOS_INTERVAL":
+                    env["value"] = "0"
+
+
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -176,11 +205,11 @@ def _apply_placement(
     ctx.mutator.clear_placement(wait=True, timeout=120)
     click.echo("    Placement cleared.")
 
-    if strategy_name == "baseline":
-        click.echo("\n  Step 2: Baseline — using default scheduling")
+    if strategy_name in ("baseline", "default"):
+        click.echo(f"\n  Step 2: {strategy_name.capitalize()} — using default scheduling")
         strategy_result["placement"] = {
-            "strategy": "baseline",
-            "description": "Default Kubernetes scheduling",
+            "strategy": strategy_name,
+            "description": "No-fault control — no chaos injected" if strategy_name == "baseline" else "Default Kubernetes scheduling",
         }
     else:
         click.echo(f"\n  Step 2: Applying {strategy_name} placement...")
@@ -278,11 +307,17 @@ def _run_single_iteration(
         for p in probers.values():
             if p and hasattr(p, "mark_chaos_start"):
                 p.mark_chaos_start()
+
+        # Baseline: submit to ChaosCenter with zero chaos duration (no fault)
+        if strategy_name == "baseline":
+            _disable_fault_injection(scenario)
+
         effective_timeout = _compute_effective_timeout(scenario, ctx.timeout)
         runner = ChaosRunner(
             ctx.namespace, timeout=effective_timeout, chaoscenter=ctx.chaoscenter_config,
         )
         runner.run_experiments(scenario.get("experiments", []))
+
         experiment_end = time.time()
         for p in probers.values():
             if p and hasattr(p, "mark_chaos_end"):
@@ -327,6 +362,7 @@ def _run_single_iteration(
     output_data = generator.generate()
     output_data["placement"] = placement_info
     output_data["sessionId"] = ctx.ts
+
 
     if prober_results.get("load_stats"):
         output_data["loadGeneration"] = {

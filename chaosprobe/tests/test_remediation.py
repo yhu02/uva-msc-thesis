@@ -33,21 +33,21 @@ class TestGenerateRemediationLog:
     def test_empty_strategies(self):
         assert generate_remediation_log({"strategies": {}}) == []
 
-    def test_no_baseline(self):
+    def test_no_default(self):
         summary = _make_summary({
             "colocate": _make_strategy(score=50),
         })
         assert generate_remediation_log(summary) == []
 
-    def test_baseline_only(self):
+    def test_default_only(self):
         summary = _make_summary({
-            "baseline": _make_strategy(score=100),
+            "default": _make_strategy(score=100),
         })
         assert generate_remediation_log(summary) == []
 
     def test_single_strategy_vs_baseline(self):
         summary = _make_summary({
-            "baseline": _make_strategy(score=100, mean_recovery=1200),
+            "default": _make_strategy(score=100, mean_recovery=1200),
             "colocate": _make_strategy(score=50, mean_recovery=2000),
         })
         log = generate_remediation_log(summary)
@@ -63,7 +63,7 @@ class TestGenerateRemediationLog:
 
     def test_improved_strategy(self):
         summary = _make_summary({
-            "baseline": _make_strategy(score=50, mean_recovery=2000),
+            "default": _make_strategy(score=50, mean_recovery=2000),
             "spread": _make_strategy(score=83, mean_recovery=1000),
         })
         log = generate_remediation_log(summary)
@@ -77,7 +77,7 @@ class TestGenerateRemediationLog:
 
     def test_neutral_strategy(self):
         summary = _make_summary({
-            "baseline": _make_strategy(score=83, mean_recovery=1200),
+            "default": _make_strategy(score=83, mean_recovery=1200),
             "random": _make_strategy(score=83, mean_recovery=1300),
         })
         log = generate_remediation_log(summary)
@@ -85,7 +85,7 @@ class TestGenerateRemediationLog:
 
     def test_multiple_strategies(self):
         summary = _make_summary({
-            "baseline": _make_strategy(score=100, mean_recovery=1200),
+            "default": _make_strategy(score=100, mean_recovery=1200),
             "colocate": _make_strategy(score=50, mean_recovery=2000),
             "spread": _make_strategy(score=100, mean_recovery=900),
             "antagonistic": _make_strategy(score=33, mean_recovery=3000),
@@ -97,7 +97,7 @@ class TestGenerateRemediationLog:
 
     def test_skips_errored_strategy(self):
         summary = _make_summary({
-            "baseline": _make_strategy(score=100),
+            "default": _make_strategy(score=100),
             "colocate": _make_strategy(score=50, status="error"),
         })
         log = generate_remediation_log(summary)
@@ -109,7 +109,7 @@ class TestGenerateRemediationLog:
             "assignments": {"productcatalogservice": "worker1"},
         }
         summary = _make_summary({
-            "baseline": _make_strategy(score=100),
+            "default": _make_strategy(score=100),
             "colocate": _make_strategy(score=50, placement=placement),
         })
         log = generate_remediation_log(summary)

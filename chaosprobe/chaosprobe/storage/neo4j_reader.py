@@ -464,7 +464,7 @@ class Neo4jReaderMixin:
         cascade_timeline = self._get_cascade_timeline(run_id)
 
         # Placement
-        placement = {"strategy": exp.get("strategy", "baseline")}
+        placement = {"strategy": exp.get("strategy", "default")}
 
         # Load generation
         load_gen: Dict[str, Any] = {}
@@ -720,7 +720,7 @@ class Neo4jReaderMixin:
         # Group runs by strategy
         by_strategy: Dict[str, List[Dict[str, Any]]] = {}
         for r in runs:
-            strat = r.get("strategy", "baseline")
+            strat = r.get("strategy", "default")
             by_strategy.setdefault(strat, []).append(r)
 
         strategies: Dict[str, Any] = {}
