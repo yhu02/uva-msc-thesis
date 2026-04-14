@@ -314,7 +314,10 @@ def _print_run_banner(
     help="Locust load profile during each experiment (default: steady)",
 )
 @click.option("--locustfile", type=click.Path(exists=True), default=None, help="Custom Locust file for load generation")
-@click.option("--target-url", default=None, help="Target URL for load generation (default: auto port-forward to frontend service)")
+@click.option(
+    "--target-url", default=None,
+    help="Target URL for load generation (default: auto port-forward)",
+)
 @click.option("--visualize/--no-visualize", "do_visualize", default=True, show_default=True, help="Generate visualization charts after experiments complete")
 @click.option("--measure-latency/--no-measure-latency", "measure_latency", default=True, show_default=True, help="Measure inter-service latency during each experiment")
 @click.option("--measure-redis/--no-measure-redis", "measure_redis", default=True, show_default=True, help="Measure Redis throughput during each experiment")

@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 
 from chaosprobe.orchestrator import portforward as pf
+
+LOAD_TARGET_LOCAL_PORT = 8089
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
     wait_for_healthy_deployments,
@@ -264,40 +266,32 @@ def _check_metrics_server() -> None:
 
 
 def _setup_load_target(
-    core_api: Any, namespace: str, load_profile: Optional[str], target_url: Optional[str],
+    namespace: str,
+    load_profile: Optional[str],
+    target_url: Optional[str],
 ) -> Tuple[Optional[str], int]:
-    """Verify load target is reachable; auto-detect frontend service URL."""
-    frontend_pf_port = 8089
-    if target_url is None and load_profile:
-        if not pf.check_port("localhost", frontend_pf_port):
-            # Try to discover and port-forward the frontend service
-            frontend_svc = None
-            try:
-                svc_list = core_api.list_namespaced_service(namespace)
-                for svc in svc_list.items:
-                    if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
-                        frontend_svc = svc.metadata.name
-                        break
-            except Exception:
-                pass
-            if frontend_svc:
-                pf.ensure(
-                    frontend_svc, namespace,
-                    [f"{frontend_pf_port}:80"], "localhost", frontend_pf_port,
-                )
-        if pf.check_port("localhost", frontend_pf_port):
-            target_url = f"http://localhost:{frontend_pf_port}"
+    """Ensure load target is reachable, setting up a port-forward if needed."""
+    local_port = LOAD_TARGET_LOCAL_PORT
+    if target_url is not None:
+        click.echo(f"  Load target: {target_url}")
+        return target_url, local_port
+    if load_profile:
+        if not pf.check_port("localhost", local_port):
+            pf.ensure(
+                "frontend", namespace,
+                [f"{local_port}:80"], "localhost", local_port,
+            )
+        target_url = f"http://localhost:{local_port}"
+        if pf.check_port("localhost", local_port):
             click.echo(f"  Load target: {target_url}")
         else:
             click.echo(
-                f"  Load target: WARNING - localhost:{frontend_pf_port} not reachable. "
-                "Pass --target-url or check that a 'frontend' service exists.",
+                f"  Load target: WARNING - localhost:{local_port} "
+                "not reachable. Pass --target-url.",
                 err=True,
             )
-            target_url = f"http://localhost:{frontend_pf_port}"
-    elif target_url is None:
-        target_url = f"http://localhost:{frontend_pf_port}"
-    return target_url, frontend_pf_port
+        return target_url, local_port
+    return None, local_port
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +335,7 @@ def run_preflight_checks(
     click.echo("  Deployments: all ready")
 
     target_url, frontend_pf_port = _setup_load_target(
-        core_api, namespace, load_profile, target_url,
+        namespace, load_profile, target_url,
     )
 
     return {
