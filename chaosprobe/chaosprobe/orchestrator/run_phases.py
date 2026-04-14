@@ -269,13 +269,29 @@ def _setup_load_target(
     """Verify load target is reachable; auto-detect frontend service URL."""
     frontend_pf_port = 8089
     if target_url is None and load_profile:
+        if not pf.check_port("localhost", frontend_pf_port):
+            # Try to discover and port-forward the frontend service
+            frontend_svc = None
+            try:
+                svc_list = core_api.list_namespaced_service(namespace)
+                for svc in svc_list.items:
+                    if "frontend" in svc.metadata.name and "external" not in svc.metadata.name:
+                        frontend_svc = svc.metadata.name
+                        break
+            except Exception:
+                pass
+            if frontend_svc:
+                pf.ensure(
+                    frontend_svc, namespace,
+                    [f"{frontend_pf_port}:80"], "localhost", frontend_pf_port,
+                )
         if pf.check_port("localhost", frontend_pf_port):
             target_url = f"http://localhost:{frontend_pf_port}"
             click.echo(f"  Load target: {target_url}")
         else:
             click.echo(
                 f"  Load target: WARNING - localhost:{frontend_pf_port} not reachable. "
-                "Run 'chaosprobe init' to set up port-forwards or pass --target-url.",
+                "Pass --target-url or check that a 'frontend' service exists.",
                 err=True,
             )
             target_url = f"http://localhost:{frontend_pf_port}"
