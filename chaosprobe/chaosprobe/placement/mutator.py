@@ -407,8 +407,10 @@ class PlacementMutator:
         """Wait for deployments to finish rolling out.
 
         Checks that the deployment controller has observed the latest
-        generation AND that all replicas are updated and ready.
-        This prevents false positives from stale pod status.
+        generation AND that all replicas are updated, ready, and that
+        at least one pod is actually Running.  The pod-level check
+        guards against the Recreate-strategy race where deployment
+        status looks healthy before the new pod is scheduled.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -416,7 +418,7 @@ class PlacementMutator:
         start = time.time()
 
         # Brief pause to let the controller start processing the patch
-        time.sleep(2)
+        time.sleep(5)
 
         pending = set(deployment_names)
         while pending and (time.time() - start) < timeout:
@@ -425,36 +427,20 @@ class PlacementMutator:
             with ThreadPoolExecutor(max_workers=min(len(pending), 8)) as executor:
                 futures = {
                     executor.submit(
-                        self.apps_api.read_namespaced_deployment, name, self.namespace
+                        self._check_deployment_ready, name
                     ): name
                     for name in pending
                 }
                 for future in as_completed(futures):
                     name = futures[future]
                     try:
-                        dep = future.result()
-                        desired = dep.spec.replicas or 1
-                        generation = dep.metadata.generation or 0
-                        observed = (
-                            dep.status.observed_generation
-                            if dep.status and dep.status.observed_generation
-                            else 0
-                        )
-                        ready = (dep.status.ready_replicas or 0) if dep.status else 0
-                        updated = (dep.status.updated_replicas or 0) if dep.status else 0
-                        available = (dep.status.available_replicas or 0) if dep.status else 0
-
-                        if (
-                            observed >= generation
-                            and updated >= desired
-                            and ready >= desired
-                            and available >= desired
-                        ):
+                        is_ready = future.result()
+                        if is_ready:
                             elapsed = int(time.time() - start)
                             click.echo(f"    {name}: ready ({elapsed}s)")
                         else:
                             still_pending.add(name)
-                    except ApiException:
+                    except Exception:
                         still_pending.add(name)
 
             pending = still_pending
@@ -465,3 +451,51 @@ class PlacementMutator:
             elapsed = int(time.time() - start)
             for name in pending:
                 click.echo(f"    WARNING: {name}: not ready after {elapsed}s")
+
+    def _check_deployment_ready(self, name: str) -> bool:
+        """Check if a deployment is fully rolled out with running pods."""
+        dep = self.apps_api.read_namespaced_deployment(name, self.namespace)
+        desired = dep.spec.replicas or 1
+        generation = dep.metadata.generation or 0
+        observed = (
+            dep.status.observed_generation
+            if dep.status and dep.status.observed_generation
+            else 0
+        )
+        ready = (dep.status.ready_replicas or 0) if dep.status else 0
+        updated = (dep.status.updated_replicas or 0) if dep.status else 0
+        available = (dep.status.available_replicas or 0) if dep.status else 0
+
+        if not (
+            observed >= generation
+            and updated >= desired
+            and ready >= desired
+            and available >= desired
+        ):
+            return False
+
+        # Verify at least one pod is actually Running and Ready.
+        # Deployment status can briefly report stale values during
+        # Recreate-strategy rollouts.
+        # Use the deployment's own matchLabels instead of assuming app={name}.
+        try:
+            match_labels = dep.spec.selector.match_labels or {}
+            if not match_labels:
+                return True  # can't verify pods, trust deployment status
+            label_selector = ",".join(f"{k}={v}" for k, v in match_labels.items())
+            pods = self.core_api.list_namespaced_pod(
+                self.namespace,
+                label_selector=label_selector,
+            )
+            running_ready = 0
+            for pod in pods.items:
+                if pod.status.phase != "Running":
+                    continue
+                for cond in pod.status.conditions or []:
+                    if cond.type == "Ready" and cond.status == "True":
+                        running_ready += 1
+                        break
+            return running_ready >= desired
+        except ApiException:
+            # If we can't list pods, trust the deployment status
+            return True

@@ -540,7 +540,7 @@ def run(
     click.echo(f"\n{'─' * 60}")
     click.echo("Cleanup: Clearing placement constraints...")
     try:
-        mutator.clear_placement(wait=True)
+        mutator.clear_placement(wait=False)
         click.echo("  Placement cleared.")
     except Exception as e:
         click.echo(f"  Warning: cleanup failed: {e}")
