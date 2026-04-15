@@ -415,6 +415,77 @@ class _ChaosCenterAPIMixin:
     # Experiment CRUD
     # ------------------------------------------------------------------
 
+    def _chaoscenter_find_experiment_id(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        experiment_name: str,
+    ) -> str | None:
+        """Find an experiment's ID by name via ``listExperiment``.
+
+        Returns the experiment ID if found, else ``None``.
+        """
+        try:
+            resp = self._chaoscenter_api_request(
+                gql_url,
+                data={
+                    "query": (
+                        "query($pid: ID!, $req: ListExperimentRequest!) "
+                        "{ listExperiment(projectID: $pid, request: $req) "
+                        "{ totalNoOfExperiments experiments { experimentID name } } }"
+                    ),
+                    "variables": {
+                        "pid": project_id,
+                        "req": {
+                            "filter": {"experimentName": experiment_name},
+                            "pagination": {"page": 0, "limit": 5},
+                        },
+                    },
+                },
+                token=token,
+            )
+            experiments = (
+                (resp.get("data") or {})
+                .get("listExperiment", {})
+                .get("experiments", [])
+            )
+            for exp in experiments:
+                if exp.get("name") == experiment_name:
+                    return exp.get("experimentID")
+        except Exception as exc:
+            print(f"    ChaosCenter: could not look up experiment '{experiment_name}': {exc}")
+        return None
+
+    def chaoscenter_delete_experiment(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+        experiment_id: str,
+    ) -> bool:
+        """Delete a chaos experiment from ChaosCenter.
+
+        Returns True if deleted, False if not found or already gone.
+        """
+        try:
+            self._chaoscenter_api_request(
+                gql_url,
+                data={
+                    "query": (
+                        "mutation($pid: ID!, $eid: String!) "
+                        "{ deleteChaosExperiment(projectID: $pid, "
+                        "experimentID: $eid) }"
+                    ),
+                    "variables": {"pid": project_id, "eid": experiment_id},
+                },
+                token=token,
+            )
+            return True
+        except Exception as exc:
+            print(f"    ChaosCenter: delete failed: {exc}")
+            return False
+
     def chaoscenter_save_experiment(
         self,
         gql_url: str,
@@ -426,14 +497,20 @@ class _ChaosCenterAPIMixin:
         manifest: str,
         description: str = "",
     ) -> str:
-        """Save a chaos experiment in ChaosCenter.
+        """Save (create or update) a chaos experiment in ChaosCenter.
+
+        Looks up the experiment by name first.  If one already exists,
+        its ID is reused so ``saveChaosExperiment`` acts as an update
+        (upsert) rather than a conflicting insert.  This avoids errors
+        from soft-deleted documents that still occupy MongoDB's unique
+        indices.
 
         Args:
             gql_url: GraphQL endpoint URL.
             project_id: ChaosCenter project ID.
             token: Bearer token.
             infra_id: Registered infrastructure ID.
-            experiment_id: Unique experiment ID.
+            experiment_id: Default experiment ID (used for new experiments).
             name: Human-readable experiment name.
             manifest: Argo Workflow manifest YAML string.
             description: Optional description.
@@ -441,29 +518,72 @@ class _ChaosCenterAPIMixin:
         Returns:
             The experiment ID as confirmed by the server.
         """
-        resp = self._chaoscenter_api_request(
-            gql_url,
-            data={
-                "query": (
-                    "mutation($pid: ID!, $req: SaveChaosExperimentRequest!) "
-                    "{ saveChaosExperiment(projectID: $pid, request: $req) }"
-                ),
-                "variables": {
-                    "pid": project_id,
-                    "req": {
-                        "id": experiment_id,
-                        "type": "Experiment",
-                        "name": name,
-                        "description": description or f"ChaosProbe experiment: {name}",
-                        "manifest": manifest,
-                        "infraID": infra_id,
-                        "tags": ["chaosprobe"],
-                    },
+        # Check if an experiment with this name already exists and reuse
+        # its ID so the save mutation updates instead of inserting.
+        existing_id = self._chaoscenter_find_experiment_id(
+            gql_url, project_id, token, name,
+        )
+        if existing_id:
+            experiment_id = existing_id
+
+        save_data = {
+            "query": (
+                "mutation($pid: ID!, $req: SaveChaosExperimentRequest!) "
+                "{ saveChaosExperiment(projectID: $pid, request: $req) }"
+            ),
+            "variables": {
+                "pid": project_id,
+                "req": {
+                    "id": experiment_id,
+                    "type": "Experiment",
+                    "name": name,
+                    "description": description or f"ChaosProbe experiment: {name}",
+                    "manifest": manifest,
+                    "infraID": infra_id,
+                    "tags": ["chaosprobe"],
                 },
             },
-            token=token,
-        )
-        return (resp.get("data") or {}).get("saveChaosExperiment", experiment_id)
+        }
+
+        try:
+            self._chaoscenter_api_request(gql_url, data=save_data, token=token)
+            return experiment_id
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            is_dup = (
+                "duplicate key" in err_msg
+                or "experiment name should be unique" in err_msg
+                or "duplicate experiment" in err_msg
+            )
+            if not is_dup:
+                raise
+
+            # The experiment (or a soft-deleted ghost) blocks the save.
+            # Try deleting it — ignore "already deleted" — then retry.
+            print(f"    ChaosCenter: stale experiment '{name}' blocks save, cleaning up...")
+            self.chaoscenter_delete_experiment(
+                gql_url, project_id, token, experiment_id,
+            )
+
+            # Retry with a fresh ID to sidestep soft-deleted ghosts
+            # that still occupy MongoDB's unique index on experiment_id.
+            import uuid as _uuid
+            fresh_id = str(_uuid.uuid4())
+            save_data["variables"]["req"]["id"] = fresh_id
+            try:
+                self._chaoscenter_api_request(gql_url, data=save_data, token=token)
+                return fresh_id
+            except Exception:
+                pass
+
+            # Last resort: the name itself is blocked by a soft-deleted
+            # ghost.  Nothing in the API can fix this — raise clearly.
+            raise RuntimeError(
+                f"Cannot save experiment '{name}': a soft-deleted experiment "
+                f"with this name exists in ChaosCenter's database and blocks "
+                f"new experiments.  Delete it from the MongoDB shell:\n"
+                f"  db.chaosExperiments.deleteOne({{name: \"{name}\", is_removed: true}})"
+            ) from exc
 
     def chaoscenter_run_experiment(
         self,

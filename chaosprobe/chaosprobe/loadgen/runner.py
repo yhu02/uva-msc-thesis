@@ -214,9 +214,25 @@ class LocustRunner:
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            cwd=self._stats_dir,
         )
         self._start_time = time.time()
+
+        # Give Locust a moment to start up and catch immediate failures
+        time.sleep(2)
+        if self._process.poll() is not None:
+            stderr_output = ""
+            if self._process.stderr:
+                stderr_output = self._process.stderr.read().decode(errors="replace").strip()
+            raise RuntimeError(
+                f"Locust exited immediately (code={self._process.returncode}). "
+                f"stderr: {stderr_output[:500]}"
+            )
+
+    def is_running(self) -> bool:
+        """Check if the Locust process is still running."""
+        return self._process is not None and self._process.poll() is None
 
     def stop(self) -> None:
         """Stop the running Locust process."""
@@ -227,6 +243,13 @@ class LocustRunner:
             except subprocess.TimeoutExpired:
                 self._process.kill()
                 self._process.wait()
+        # Drain stderr to avoid broken-pipe issues
+        if self._process and self._process.stderr:
+            try:
+                self._process.stderr.read()
+                self._process.stderr.close()
+            except Exception:
+                pass
         self._end_time = time.time()
 
     def wait(self) -> None:

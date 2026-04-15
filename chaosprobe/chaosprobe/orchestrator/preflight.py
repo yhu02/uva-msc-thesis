@@ -39,7 +39,9 @@ def wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
         for dep in deps.items:
             if dep.metadata.name in LITMUS_INFRA_DEPLOYMENTS:
                 continue
-            desired = dep.spec.replicas or 1
+            desired = dep.spec.replicas if dep.spec.replicas is not None else 1
+            if desired == 0:
+                continue
             ready = (dep.status.ready_replicas or 0) if dep.status else 0
             available = (dep.status.available_replicas or 0) if dep.status else 0
             if ready < desired or available < desired:
@@ -54,7 +56,9 @@ def wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
     for dep in deps.items:
         if dep.metadata.name in LITMUS_INFRA_DEPLOYMENTS:
             continue
-        desired = dep.spec.replicas or 1
+        desired = dep.spec.replicas if dep.spec.replicas is not None else 1
+        if desired == 0:
+            continue
         ready = (dep.status.ready_replicas or 0) if dep.status else 0
         if ready < desired:
             click.echo(

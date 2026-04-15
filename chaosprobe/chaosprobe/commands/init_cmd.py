@@ -146,7 +146,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
 
     def _install_prometheus():
         if setup.is_prometheus_installed():
-            if not _deployment_has_pvc("prometheus-server", "monitoring"):
+            if not _deployment_has_pvc("prometheus-server", "prometheus"):
                 setup.install_prometheus(wait=True)
                 return "Prometheus", "repaired (added persistent storage)"
             return "Prometheus", "already installed"
@@ -240,18 +240,15 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
 
     # Prometheus
     prom_forwarded = False
-    for ns in ("monitoring", "prometheus", "kube-prometheus"):
-        for label in ("app=prometheus,component=server", "app.kubernetes.io/name=prometheus"):
-            if check_pods_ready(ns, label):
-                if not pf.check_port("localhost", 9090):
-                    pf.start("prometheus-server", ns, ["9090:80"])
-                if pf.check_port("localhost", 9090):
-                    click.echo("  Prometheus:    localhost:9090")
-                else:
-                    click.echo("  Prometheus:    WARNING - port-forward failed", err=True)
-                prom_forwarded = True
-                break
-        if prom_forwarded:
+    for label in ("app=prometheus,component=server", "app.kubernetes.io/name=prometheus"):
+        if check_pods_ready("prometheus", label):
+            if not pf.check_port("localhost", 9090):
+                pf.start("prometheus-server", "prometheus", ["9090:80"])
+            if pf.check_port("localhost", 9090):
+                click.echo("  Prometheus:    localhost:9090")
+            else:
+                click.echo("  Prometheus:    WARNING - port-forward failed", err=True)
+            prom_forwarded = True
             break
     if not prom_forwarded:
         click.echo("  Prometheus:    WARNING - no ready pods found", err=True)

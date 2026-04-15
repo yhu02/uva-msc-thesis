@@ -894,7 +894,12 @@ class TestChaoscenterUrlHelpers:
 class TestChaoscenterSaveExperiment:
     @patch.object(LitmusSetup, "_chaoscenter_api_request")
     def test_save_experiment_calls_graphql(self, mock_req):
-        mock_req.return_value = {"data": {"saveChaosExperiment": "exp-123"}}
+        # First call: _chaoscenter_find_experiment_id (listExperiment)
+        # Second call: saveChaosExperiment
+        mock_req.side_effect = [
+            {"data": {"listExperiment": {"totalNoOfExperiments": 0, "experiments": []}}},
+            {"data": {"saveChaosExperiment": "exp-123"}},
+        ]
         setup = _make_setup()
         result = setup.chaoscenter_save_experiment(
             gql_url="http://localhost:9002/query",
@@ -906,10 +911,7 @@ class TestChaoscenterSaveExperiment:
             manifest="apiVersion: argoproj.io/v1alpha1\nkind: Workflow",
         )
         assert result == "exp-123"
-        call_args = mock_req.call_args
-        variables = call_args[1]["data"]["variables"] if "data" in call_args[1] else call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("data", {}).get("variables", {})
-        # Just verify the request was made with correct URL and token
-        mock_req.assert_called_once()
+        assert mock_req.call_count == 2
 
     @patch.object(LitmusSetup, "_chaoscenter_api_request")
     def test_run_experiment_returns_notify_id(self, mock_req):
@@ -1143,11 +1145,14 @@ class TestChaosRunnerRunExperiments:
         ]
 
         with patch("chaosprobe.chaos.runner.time") as mock_time:
+            # _run_and_poll calls time.time() for startTime, then
+            # _poll_experiment_run uses it for while check, elapsed,
+            # heartbeat, etc.  Supply enough values.
             mock_time.time.side_effect = [
-                0,                  # start_time
+                0,                  # _run_and_poll: start_time
                 0, 0,               # poll loop iter 1: while check, elapsed
                 5, 5,               # poll loop iter 2: while check, elapsed
-                10, 10, 10,         # final elapsed + endTime + extra
+                10, 10, 10, 10,     # final elapsed + endTime + extra
             ]
             mock_time.sleep = MagicMock()
             results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])

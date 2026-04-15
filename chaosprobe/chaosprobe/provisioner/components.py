@@ -100,21 +100,18 @@ class _ComponentsMixin:
         """Check if Prometheus is running in the cluster."""
         if not self._k8s_initialized:
             return False
-        search_namespaces = ["monitoring", "prometheus", "kube-prometheus", "default"]
-        search_names = ["prometheus-server", "prometheus", "prometheus-k8s"]
-        for ns in search_namespaces:
-            try:
-                services = self.core_api.list_namespaced_service(ns)
-                for svc in services.items:
-                    if svc.metadata.name in search_names:
-                        return True
-            except ApiException:
-                continue
+        try:
+            services = self.core_api.list_namespaced_service("prometheus")
+            for svc in services.items:
+                if svc.metadata.name == "prometheus-server":
+                    return True
+        except ApiException:
+            pass
         return False
 
     def install_prometheus(self, wait: bool = True, timeout: int = 180) -> bool:
         """Install Prometheus using the prometheus-community Helm chart."""
-        self._ensure_namespace("monitoring")
+        self._ensure_namespace("prometheus")
 
         print("Adding prometheus-community Helm repository...")
         try:
@@ -143,7 +140,7 @@ class _ComponentsMixin:
                     "prometheus",
                     "prometheus-community/prometheus",
                     "--namespace",
-                    "monitoring",
+                    "prometheus",
                     "--set",
                     "alertmanager.enabled=false",
                     "--set",
@@ -184,7 +181,7 @@ class _ComponentsMixin:
         while time.time() - start < timeout:
             try:
                 pods = self.core_api.list_namespaced_pod(
-                    "monitoring",
+                    "prometheus",
                     label_selector="app.kubernetes.io/name=prometheus",
                 )
                 for pod in pods.items:
@@ -203,14 +200,13 @@ class _ComponentsMixin:
         """Check if Neo4j is running in the cluster."""
         if not self._k8s_initialized:
             return False
-        for ns in ("neo4j", "default", "monitoring"):
-            try:
-                services = self.core_api.list_namespaced_service(ns)
-                for svc in services.items:
-                    if svc.metadata.name in ("neo4j", "neo4j-lb"):
-                        return True
-            except ApiException:
-                continue
+        try:
+            services = self.core_api.list_namespaced_service("neo4j")
+            for svc in services.items:
+                if svc.metadata.name in ("neo4j", "neo4j-lb"):
+                    return True
+        except ApiException:
+            pass
         return False
 
     def _ensure_storage_class(self) -> None:

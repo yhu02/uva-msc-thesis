@@ -171,14 +171,20 @@ def _restart_unhealthy_infra(namespace: str) -> None:
 
 
 def _setup_prometheus_pf(measure_prometheus: bool) -> None:
-    """Verify Prometheus is reachable (port-forwarded by init)."""
+    """Verify Prometheus is reachable; auto-establish port-forward if needed."""
     if not measure_prometheus:
         return
     if pf.check_port("localhost", 9090):
         click.echo("  Prometheus:  localhost:9090 reachable")
+        return
+
+    click.echo("  Prometheus:  localhost:9090 not reachable, establishing port-forward...")
+    pf.ensure("prometheus-server", "prometheus", ["9090:80"], "localhost", 9090)
+    if pf.check_port("localhost", 9090):
+        click.echo("  Prometheus:  localhost:9090 reachable")
     else:
         click.echo(
-            "  Prometheus:  WARNING - localhost:9090 not reachable. "
+            "  Prometheus:  WARNING - localhost:9090 still not reachable. "
             "Run 'chaosprobe init' to set up port-forwards.",
             err=True,
         )
@@ -337,6 +343,9 @@ def run_preflight_checks(
     target_url, frontend_pf_port = _setup_load_target(
         namespace, load_profile, target_url,
     )
+
+    # Start background monitor to auto-restart dead port-forward processes
+    pf.monitor_start()
 
     return {
         "core_api": core_api,

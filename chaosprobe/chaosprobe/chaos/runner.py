@@ -28,6 +28,9 @@ _TERMINAL_PHASES = frozenset({
     "Skipped",
 })
 
+# How many times to re-trigger an experiment after TARGET_SELECTION_ERROR
+_MAX_TARGET_RETRIES = 2
+
 
 class ChaosRunner:
     """Runs chaos experiments exclusively through the ChaosCenter GraphQL API.
@@ -105,7 +108,13 @@ class ChaosRunner:
     # ------------------------------------------------------------------
 
     def _run_single_experiment(self, engine_spec: Dict[str, Any]) -> None:
-        """Save, trigger, and poll a single experiment via ChaosCenter."""
+        """Save, trigger, and poll a single experiment via ChaosCenter.
+
+        If the experiment fails with a ``TARGET_SELECTION_ERROR`` (pod
+        temporarily unavailable), it is re-triggered up to
+        ``_MAX_TARGET_RETRIES`` times after waiting for the target pod
+        to recover.
+        """
         metadata = engine_spec.setdefault("metadata", {})
         original_name = metadata.get("name", "unnamed")
 
@@ -142,7 +151,7 @@ class ChaosRunner:
         )
 
         try:
-            self._setup.chaoscenter_save_experiment(
+            experiment_id = self._setup.chaoscenter_save_experiment(
                 gql_url=self._cc["gql_url"],
                 project_id=self._cc["project_id"],
                 token=self._cc["token"],
@@ -162,45 +171,113 @@ class ChaosRunner:
             })
             return
 
-        # -- run --------------------------------------------------------
-        try:
-            notify_id = self._setup.chaoscenter_run_experiment(
-                gql_url=self._cc["gql_url"],
-                project_id=self._cc["project_id"],
-                token=self._cc["token"],
-                experiment_id=experiment_id,
-            )
-            print(f"    ChaosCenter: run triggered (notify={notify_id[:8]}...)")
-        except Exception as exc:
-            print(f"    ERROR: Failed to trigger run: {exc}")
-            self._executed_experiments.append({
-                "engineName": engine_name,
-                "experimentNames": exp_names,
-                "status": "error",
-                "error": str(exc),
-            })
-            return
-
-        # -- poll -------------------------------------------------------
-        print(f"    Waiting for experiment to complete (timeout: {self.timeout}s)...")
-        start_time = time.time()
-        result = self._poll_experiment_run(notify_id, start_time)
+        # -- run + poll (with retry on TARGET_SELECTION_ERROR) -----------
+        result = self._run_and_poll(experiment_id, exp_names, engine_name, engine_spec)
 
         phase = result.get("phase", "unknown")
-        elapsed = int(time.time() - start_time)
-        print(f"    Result: {phase} ({elapsed}s elapsed)")
-
-        self._executed_experiments.append({
+        entry = {
             "engineName": engine_name,
             "experimentNames": exp_names,
             "status": phase,
-            "startTime": start_time,
+            "startTime": result.get("startTime", time.time()),
             "endTime": time.time(),
             "resiliencyScore": result.get("resiliencyScore"),
             "faultsPassed": result.get("faultsPassed"),
             "faultsFailed": result.get("faultsFailed"),
             "totalFaults": result.get("totalFaults"),
-        })
+        }
+        if "error" in result:
+            entry["error"] = result["error"]
+        self._executed_experiments.append(entry)
+
+    # ------------------------------------------------------------------
+    # Internal -- run + poll with retry on TARGET_SELECTION_ERROR
+    # ------------------------------------------------------------------
+
+    def _run_and_poll(
+        self,
+        experiment_id: str,
+        exp_names: List[str],
+        engine_name: str,
+        engine_spec: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Trigger, poll, and retry on TARGET_SELECTION_ERROR.
+
+        The go-runner selects target pods at ChaosInject time, which may
+        be minutes after our readiness check.  If the target pod
+        restarted in between, the go-runner fails with
+        ``TARGET_SELECTION_ERROR``.  We wait for the pod to recover and
+        re-trigger the same (already saved) experiment.
+        """
+        appinfo = engine_spec.get("spec", {}).get("appinfo", {})
+        target_label = appinfo.get("applabel", "")
+        # Extract deployment name from label like "app=productcatalogservice"
+        target_deployment = target_label.split("=", 1)[1] if "=" in target_label else ""
+
+        for attempt in range(_MAX_TARGET_RETRIES + 1):
+            try:
+                notify_id = self._setup.chaoscenter_run_experiment(
+                    gql_url=self._cc["gql_url"],
+                    project_id=self._cc["project_id"],
+                    token=self._cc["token"],
+                    experiment_id=experiment_id,
+                )
+                suffix = f" (attempt {attempt + 1})" if attempt > 0 else ""
+                print(f"    ChaosCenter: run triggered (notify={notify_id[:8]}...){suffix}")
+            except Exception as exc:
+                print(f"    ERROR: Failed to trigger run: {exc}")
+                return {"phase": "error", "error": str(exc)}
+
+            start_time = time.time()
+            print(f"    Waiting for experiment to complete (timeout: {self.timeout}s)...")
+            result = self._poll_experiment_run(notify_id, start_time)
+
+            phase = result.get("phase", "unknown")
+            elapsed = int(time.time() - start_time)
+            print(f"    Result: {phase} ({elapsed}s elapsed)")
+
+            # Check for TARGET_SELECTION_ERROR — retryable
+            is_target_error = phase in ("Error", "Completed_With_Error")
+            if is_target_error and attempt < _MAX_TARGET_RETRIES and target_deployment:
+                print(f"    TARGET_SELECTION_ERROR detected, waiting for target pod to recover...")
+                if self._wait_for_target_recovery(target_deployment, timeout=90):
+                    print(f"    Target pod recovered, re-triggering experiment...")
+                    continue
+                else:
+                    print(f"    Target pod did not recover, giving up.")
+
+            result["startTime"] = start_time
+            return result
+
+        return result  # type: ignore[possibly-undefined]
+
+    def _wait_for_target_recovery(
+        self, deployment_name: str, timeout: int = 90,
+    ) -> bool:
+        """Wait until the target deployment has a Running pod."""
+        from kubernetes import client as k8s_client
+
+        core = k8s_client.CoreV1Api()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                pods = core.list_namespaced_pod(
+                    self.namespace,
+                    label_selector=f"app={deployment_name}",
+                )
+                running = [
+                    p for p in pods.items
+                    if p.status and p.status.phase == "Running"
+                    and all(
+                        cs.ready for cs in (p.status.container_statuses or [])
+                    )
+                ]
+                if running:
+                    return True
+            except Exception:
+                pass
+            time.sleep(5)
+        return False
 
     # ------------------------------------------------------------------
     # Internal -- poll ChaosCenter for run completion

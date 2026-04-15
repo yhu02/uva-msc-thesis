@@ -178,46 +178,32 @@ class TestFindPrometheusService:
 
         mock_core = MagicMock()
         mock_client.CoreV1Api.return_value = mock_core
-        # Only the "monitoring" namespace has the service
+        # Only the "prometheus" namespace has the service
         mock_core.list_namespaced_service.side_effect = [
-            MagicMock(items=[svc]),  # monitoring
-            MagicMock(items=[]),     # prometheus
-            MagicMock(items=[]),     # kube-prometheus
-            MagicMock(items=[]),     # default
+            MagicMock(items=[svc]),  # prometheus
         ]
 
         result = _find_prometheus_service()
-        assert result == [("prometheus-server", "monitoring", 9090)]
+        assert result == [("prometheus-server", "prometheus", 9090)]
 
     @patch("kubernetes.config")
     @patch("kubernetes.client")
-    def test_finds_multiple_prometheus_services(self, mock_client, mock_config):
-        svc1 = MagicMock()
-        svc1.metadata.name = "prometheus-server"
+    def test_finds_prometheus_service_in_namespace(self, mock_client, mock_config):
+        svc = MagicMock()
+        svc.metadata.name = "prometheus-server"
         p1 = MagicMock()
         p1.port = 9090
-        svc1.spec.ports = [p1]
-
-        svc2 = MagicMock()
-        svc2.metadata.name = "prometheus-k8s"
-        p2 = MagicMock()
-        p2.port = 9090
-        svc2.spec.ports = [p2]
+        svc.spec.ports = [p1]
 
         mock_core = MagicMock()
         mock_client.CoreV1Api.return_value = mock_core
-        # First namespace returns svc1, second returns svc2
         mock_core.list_namespaced_service.side_effect = [
-            MagicMock(items=[svc1]),  # monitoring
-            MagicMock(items=[svc2]),  # prometheus
-            MagicMock(items=[]),      # kube-prometheus
-            MagicMock(items=[]),      # default
+            MagicMock(items=[svc]),  # prometheus
         ]
 
         result = _find_prometheus_service()
-        assert len(result) == 2
-        assert ("prometheus-server", "monitoring", 9090) in result
-        assert ("prometheus-k8s", "prometheus", 9090) in result
+        assert len(result) == 1
+        assert ("prometheus-server", "prometheus", 9090) in result
 
 
 class TestDiscoverPrometheusUrls:
@@ -229,25 +215,22 @@ class TestDiscoverPrometheusUrls:
     @patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True)
     @patch("chaosprobe.metrics.prometheus._find_prometheus_service",
            return_value=[
-               ("prometheus-server", "monitoring", 9090),
-               ("prometheus-k8s", "prometheus", 9090),
+               ("prometheus-server", "prometheus", 9090),
            ])
     def test_returns_all_reachable_urls(self, _mock_find, _mock_check):
         result = discover_prometheus_urls()
-        assert len(result) == 2
-        assert "http://prometheus-server.monitoring:9090" in result
-        assert "http://prometheus-k8s.prometheus:9090" in result
+        assert len(result) == 1
+        assert "http://prometheus-server.prometheus:9090" in result
 
     @patch("chaosprobe.metrics.prometheus._check_prometheus_url",
-           side_effect=[True, False])
+           side_effect=[False])
     @patch("chaosprobe.metrics.prometheus._find_prometheus_service",
            return_value=[
-               ("prometheus-server", "monitoring", 9090),
-               ("prometheus-k8s", "prometheus", 9090),
+               ("prometheus-server", "prometheus", 9090),
            ])
     def test_filters_unreachable(self, _mock_find, _mock_check):
         result = discover_prometheus_urls()
-        assert result == ["http://prometheus-server.monitoring:9090"]
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -418,13 +401,13 @@ class TestPrometheusProberLifecycle:
 
         with patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]), \
              patch("chaosprobe.metrics.prometheus._find_prometheus_service",
-                   return_value=[("prometheus-server", "monitoring", 80)]), \
+                   return_value=[("prometheus-server", "prometheus", 80)]), \
              patch.object(prober, "_start_port_forward",
                          return_value="http://localhost:19090") as mock_pf, \
              patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True):
             prober.start()
 
-        mock_pf.assert_called_once_with("prometheus-server", "monitoring", 80)
+        mock_pf.assert_called_once_with("prometheus-server", "prometheus", 80)
         assert prober._prometheus_urls == ["http://localhost:19090"]
         assert prober._available is True
 
@@ -435,16 +418,15 @@ class TestPrometheusProberLifecycle:
         with patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]), \
              patch("chaosprobe.metrics.prometheus._find_prometheus_service",
                    return_value=[
-                       ("prometheus-server", "monitoring", 80),
-                       ("prometheus-k8s", "prometheus", 9090),
+                       ("prometheus-server", "prometheus", 80),
                    ]), \
              patch.object(prober, "_start_port_forward",
-                         side_effect=["http://localhost:19090", "http://localhost:19091"]) as mock_pf, \
+                         return_value="http://localhost:19090") as mock_pf, \
              patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True):
             prober.start()
 
-        assert mock_pf.call_count == 2
-        assert len(prober._prometheus_urls) == 2
+        assert mock_pf.call_count == 1
+        assert len(prober._prometheus_urls) == 1
         assert prober._available is True
 
     def test_stop_cleans_up_port_forwards(self):

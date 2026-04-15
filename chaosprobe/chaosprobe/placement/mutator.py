@@ -124,7 +124,7 @@ class PlacementMutator:
             if name in LITMUS_INFRA_DEPLOYMENTS:
                 continue
 
-            replicas = dep.spec.replicas or 1
+            replicas = dep.spec.replicas if dep.spec.replicas is not None else 1
 
             # Aggregate resource requests from all containers
             total_cpu = 0

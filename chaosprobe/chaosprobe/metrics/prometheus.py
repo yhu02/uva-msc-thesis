@@ -56,8 +56,8 @@ DEFAULT_QUERIES: Dict[str, str] = {
 # Common service names / namespaces where Prometheus is typically deployed.
 # Names must match exactly (not substring) to avoid false positives like
 # prometheus-node-exporter or prometheus-pushgateway.
-_PROMETHEUS_SERVICE_NAMES = ("prometheus-server", "prometheus", "prometheus-k8s")
-_PROMETHEUS_NAMESPACES = ("monitoring", "prometheus", "kube-prometheus", "default")
+_PROMETHEUS_SERVICE_NAMES = ("prometheus-server",)
+_PROMETHEUS_NAMESPACES = ("prometheus",)
 _PROMETHEUS_PORT = 9090
 
 
@@ -142,7 +142,7 @@ def _check_prometheus_url(url: str, timeout: float = 5.0) -> bool:
         return False
 
 
-def discover_prometheus_urls(namespace: str = "monitoring") -> List[str]:
+def discover_prometheus_urls(namespace: str = "prometheus") -> List[str]:
     """Try to find all reachable Prometheus URLs.
 
     1. Locate Prometheus services via the K8s API.

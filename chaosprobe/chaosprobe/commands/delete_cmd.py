@@ -30,7 +30,7 @@ def delete(namespace: str, keep_app: bool):
 
     Removes everything installed by 'chaosprobe init' and 'chaosprobe run':
     - ChaosCenter (litmus namespace)
-    - Prometheus (monitoring namespace)
+    - Prometheus (prometheus namespace)
     - Neo4j (neo4j namespace)
     - metrics-server
     - local-path-provisioner (local-path-storage namespace)
@@ -136,7 +136,7 @@ def delete(namespace: str, keep_app: bool):
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {
             executor.submit(_delete_namespace, "litmus", "ChaosCenter (litmus)"): "litmus",
-            executor.submit(_delete_namespace, "monitoring", "Prometheus (monitoring)"): "monitoring",
+            executor.submit(_delete_namespace, "prometheus", "Prometheus (prometheus)"): "prometheus",
             executor.submit(_delete_namespace, "neo4j", "Neo4j (neo4j)"): "neo4j",
             executor.submit(_delete_namespace, "local-path-storage", "local-path-provisioner (local-path-storage)"): "local-path-storage",
             executor.submit(_delete_metrics_server): "metrics-server",

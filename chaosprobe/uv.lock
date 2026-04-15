@@ -303,17 +303,11 @@ dependencies = [
     { name = "locust", version = "2.43.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "matplotlib", version = "3.9.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "matplotlib", version = "3.10.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
-    { name = "pyyaml" },
-]
-
-[package.optional-dependencies]
-graph = [
     { name = "neo4j", version = "5.28.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "neo4j", version = "6.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
-]
-parquet = [
     { name = "pyarrow", version = "21.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pyarrow", version = "23.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -333,11 +327,10 @@ requires-dist = [
     { name = "kubernetes", specifier = ">=28.0.0" },
     { name = "locust", specifier = ">=2.20.0" },
     { name = "matplotlib", specifier = ">=3.7.0" },
-    { name = "neo4j", marker = "extra == 'graph'", specifier = ">=5.0.0" },
-    { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=12.0.0" },
+    { name = "neo4j", specifier = ">=5.0.0" },
+    { name = "pyarrow", specifier = ">=12.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
-provides-extras = ["graph", "parquet"]
 
 [package.metadata.requires-dev]
 dev = [
