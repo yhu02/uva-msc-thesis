@@ -193,7 +193,7 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
     click.echo("Clearing stale placement constraints...")
     for _attempt in range(3):
         try:
-            mutator.clear_placement(wait=False)
+            mutator.clear_placement(wait=True, timeout=120)
             break
         except Exception as _e:
             if _attempt < 2:
@@ -202,6 +202,37 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
                 _time.sleep(5)
             else:
                 click.echo(f"  WARNING: could not clear placement ({_e})", err=True)
+
+    # Ensure ALL app deployments use RollingUpdate before the restart
+    # patch.  Previous runs leave deployments with Recreate strategy,
+    # which kills all pods during a rollout restart.
+    click.echo("Ensuring safe rollout strategy for all deployments...")
+    try:
+        _apps_api = k8s_client_mod.AppsV1Api()
+        _all_deps = _apps_api.list_namespaced_deployment(namespace)
+        for _dep in _all_deps.items:
+            _name = _dep.metadata.name
+            if _name in LITMUS_INFRA_DEPLOYMENTS:
+                continue
+            _strat = _dep.spec.strategy
+            if _strat and _strat.type == "Recreate":
+                _apps_api.patch_namespaced_deployment(
+                    name=_name,
+                    namespace=namespace,
+                    body={
+                        "spec": {
+                            "strategy": {
+                                "type": "RollingUpdate",
+                                "rollingUpdate": {
+                                    "maxSurge": 1,
+                                    "maxUnavailable": 0,
+                                },
+                            },
+                        },
+                    },
+                )
+    except Exception as e:
+        click.echo(f"  WARNING: strategy patch failed ({e})", err=True)
 
     click.echo("Restarting app deployments for a clean baseline...")
     try:

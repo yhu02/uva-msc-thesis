@@ -111,6 +111,38 @@ def _disable_fault_injection(scenario: Dict[str, Any]) -> None:
                     env["value"] = "0"
 
 
+def _wait_for_target_pod(namespace: str, deployment_name: str, timeout: int = 60) -> None:
+    """Wait until the target deployment has at least one Running pod.
+
+    Raises ``click.ClickException`` if no pod is found within *timeout*
+    seconds — this prevents ``TARGET_SELECTION_ERROR`` from the go-runner.
+    """
+    from kubernetes import client as k8s_client
+
+    core = k8s_client.CoreV1Api()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        pods = core.list_namespaced_pod(
+            namespace, label_selector=f"app={deployment_name}",
+        )
+        running = [
+            p for p in pods.items
+            if p.status and p.status.phase == "Running"
+            and all(
+                cs.ready
+                for cs in (p.status.container_statuses or [])
+            )
+        ]
+        if running:
+            return
+        time.sleep(3)
+    raise click.ClickException(
+        f"Target deployment '{deployment_name}' has no ready pods in "
+        f"'{namespace}' after {timeout}s. The placement strategy may "
+        f"have moved pods to a node that cannot schedule them."
+    )
+
+
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -257,7 +289,11 @@ def _run_single_iteration(
         time.sleep(ctx.settle_time)
 
     click.echo("    Verifying deployment readiness...")
-    wait_for_healthy_deployments(ctx.namespace, timeout=15)
+    wait_for_healthy_deployments(ctx.namespace, timeout=120)
+
+    # Ensure the chaos target deployment has at least one ready pod
+    _wait_for_target_pod(ctx.namespace, ctx.target_deployment, timeout=60)
+
     click.echo("    Ready.")
 
     # Prepare experiment scenario

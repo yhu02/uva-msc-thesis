@@ -253,7 +253,7 @@ class PlacementMutator:
                 "spec": {
                     "strategy": {
                         "type": "RollingUpdate",
-                        "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"},
+                        "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0},
                     },
                     "template": {
                         "spec": {
