@@ -82,6 +82,7 @@ class RecoveryWatcher:
                             "deletionTime": self._pending_deletion,
                             "scheduledTime": None,
                             "readyTime": None,
+                            "failure_reason": "experiment_ended_before_recovery",
                         }
                     )
                 )
@@ -172,12 +173,16 @@ class RecoveryWatcher:
                             # Trigger on not-ready → ready transition
                             if is_ready and not was_ready and self._pending_deletion is not None:
                                 scheduled_time = self._get_scheduled_time(pod)
+                                # Use the Ready condition's lastTransitionTime
+                                # for millisecond precision instead of the
+                                # watch event reception time.
+                                ready_time = self._get_ready_time(pod) or now
                                 self._cycles.append(
                                     self._finalize_cycle(
                                         {
                                             "deletionTime": self._pending_deletion,
                                             "scheduledTime": scheduled_time,
-                                            "readyTime": now,
+                                            "readyTime": ready_time,
                                         }
                                     )
                                 )
@@ -223,6 +228,19 @@ class RecoveryWatcher:
         return None
 
     @staticmethod
+    def _get_ready_time(pod) -> Optional[datetime]:
+        """Extract Ready condition lastTransitionTime."""
+        if not pod.status.conditions:
+            return None
+        for cond in pod.status.conditions:
+            if cond.type == "Ready" and cond.last_transition_time:
+                ts = cond.last_transition_time
+                if hasattr(ts, "tzinfo") and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                return ts
+        return None
+
+    @staticmethod
     def _finalize_cycle(cycle: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a raw cycle into the output format with durations."""
         deletion = cycle["deletionTime"]
@@ -242,7 +260,7 @@ class RecoveryWatcher:
         if deletion and ready:
             total_recovery = int((ready - deletion).total_seconds() * 1000)
 
-        return {
+        result = {
             "deletionTime": deletion.isoformat() if deletion else None,
             "scheduledTime": scheduled.isoformat() if scheduled else None,
             "readyTime": ready.isoformat() if ready else None,
@@ -250,6 +268,9 @@ class RecoveryWatcher:
             "scheduledToReady_ms": scheduled_to_ready,
             "totalRecovery_ms": total_recovery,
         }
+        if cycle.get("failure_reason"):
+            result["failure_reason"] = cycle["failure_reason"]
+        return result
 
     @staticmethod
     def _compute_summary(cycles: List[Dict[str, Any]]) -> Dict[str, Any]:

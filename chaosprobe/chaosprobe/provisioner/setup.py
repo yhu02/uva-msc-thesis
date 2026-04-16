@@ -214,7 +214,7 @@ end
                 "  1. Check if VMs are running:  virsh list --all\n"
                 "  2. Start stopped VMs:         virsh start <vm-name>\n"
                 "  3. Wait ~30s, then verify:    kubectl cluster-info\n"
-                "  4. If using Vagrant:           chaosprobe cluster vagrant up --provider=libvirt"
+                "  4. If using Vagrant:           chaosprobe cluster vagrant up"
             )
         except (subprocess.CalledProcessError, FileNotFoundError):
             # kubectl missing or returned error — fall back to client checks below
@@ -474,12 +474,16 @@ end
         try:
             # Use ssh + sudo cat instead of scp, because admin.conf is
             # owned by root and the SSH user may not have read access.
-            ssh_cmd = ["ssh"]
+            ssh_cmd = [
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ConnectTimeout=10",
+            ]
             if ssh_key:
-                ssh_cmd.extend(["-i", str(ssh_key), "-o", "StrictHostKeyChecking=no"])
+                ssh_cmd.extend(["-i", str(ssh_key)])
             ssh_cmd.append(f"{ansible_user}@{control_plane_host}")
             ssh_cmd.append("sudo cat /etc/kubernetes/admin.conf")
-            result = subprocess.run(ssh_cmd, check=True, capture_output=True, text=True)
+            result = subprocess.run(ssh_cmd, check=True, capture_output=True, text=True, timeout=30)
             output_path.write_text(result.stdout)
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to fetch kubeconfig: {e}") from e
@@ -496,8 +500,6 @@ end
         with open(output_path, "w") as f:
             f.write(kubeconfig_content)
 
-        print(f"Kubeconfig saved to: {output_path}")
-        print(f"Use: export KUBECONFIG={output_path}")
         return output_path
 
     def destroy_cluster(

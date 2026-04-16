@@ -24,6 +24,7 @@ def create_and_start_probers(
     measure_resources: bool,
     measure_prometheus: bool,
     prometheus_url: Tuple[str, ...],
+    http_routes: Any = None,
 ) -> Dict[str, Any]:
     """Create continuous probers and start them in parallel.
 
@@ -37,7 +38,11 @@ def create_and_start_probers(
     from chaosprobe.metrics.throughput import ContinuousDiskProber, ContinuousRedisProber
 
     watcher = RecoveryWatcher(namespace, target_deployment)
-    latency_prober = ContinuousLatencyProber(namespace) if measure_latency else None
+    latency_prober = (
+        ContinuousLatencyProber(namespace, http_routes=http_routes)
+        if measure_latency
+        else None
+    )
     redis_prober = ContinuousRedisProber(namespace) if measure_redis else None
     disk_prober = (
         ContinuousDiskProber(namespace, disk_target=target_deployment)

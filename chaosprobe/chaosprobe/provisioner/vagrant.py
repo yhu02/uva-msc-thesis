@@ -279,36 +279,6 @@ class _VagrantMixin:
         print(f"Created Vagrantfile at: {output_dir}")
         return output_dir
 
-    def provision_from_cluster_config(
-        self,
-        cluster_config: dict,
-        cluster_name: str = "chaosprobe",
-    ) -> Path:
-        """Provision a cluster from a scenario's cluster configuration."""
-        cp = cluster_config.get("control_plane", {})
-        workers = cluster_config.get("workers", {})
-        num_workers = workers.get("count", 2)
-
-        vagrant_dir = self.create_vagrantfile(
-            cluster_name=cluster_name,
-            num_control_planes=1,
-            num_workers=num_workers,
-            cp_memory=cp.get("memory", 4096),
-            cp_cpus=cp.get("cpu", 2),
-            worker_memory=workers.get("memory", 4096),
-            worker_cpus=workers.get("cpu", 2),
-        )
-
-        print(
-            f"Provisioning cluster from scenario config: "
-            f"CP {cp.get('cpu', 2)} CPU / {cp.get('memory', 4096)}MB, "
-            f"{num_workers} workers {workers.get('cpu', 2)} CPU / "
-            f"{workers.get('memory', 4096)}MB"
-        )
-
-        self.vagrant_up(vagrant_dir, provider="libvirt")
-        return vagrant_dir
-
     def _recover_shutoff_libvirt_vms(self, vagrant_dir: Path) -> list[str]:
         """Detect and start shutoff libvirt VMs via virsh.
 
@@ -416,7 +386,7 @@ class _VagrantMixin:
             cmd.append("-f")
 
         try:
-            subprocess.run(cmd, check=True, cwd=str(vagrant_dir))
+            subprocess.run(cmd, check=True, cwd=str(vagrant_dir), env=self._get_vagrant_env())
             print("Vagrant VMs destroyed successfully!")
             return True
         except subprocess.CalledProcessError as e:
@@ -445,6 +415,7 @@ class _VagrantMixin:
                 check=True,
                 cwd=str(vagrant_dir),
                 env=self._get_vagrant_env(),
+                timeout=30,
             )
 
             vms = {}
@@ -485,6 +456,7 @@ class _VagrantMixin:
                     check=True,
                     cwd=str(vagrant_dir),
                     env=env,
+                    timeout=60,
                 )
 
                 ssh_config = {}
@@ -502,6 +474,7 @@ class _VagrantMixin:
                     check=True,
                     cwd=str(vagrant_dir),
                     env=env,
+                    timeout=60,
                 )
                 private_ip = ip_result.stdout.strip()
 
@@ -521,6 +494,9 @@ class _VagrantMixin:
                 }
                 hosts.append(host)
 
+            except subprocess.TimeoutExpired:
+                print(f"Warning: Timed out getting SSH config for {vm_name} (60s)")
+                continue
             except subprocess.CalledProcessError as e:
                 print(f"Warning: Failed to get SSH config for {vm_name}: {e}")
                 continue

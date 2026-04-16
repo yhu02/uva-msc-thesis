@@ -160,7 +160,8 @@ def cluster_kubeconfig(host: str, user: str, output: Optional[str], ssh_key: Opt
             output_path=output_path,
             ssh_key=key_path,
         )
-        click.echo("\nTo use this cluster:")
+        click.echo(f"Kubeconfig saved to: {kubeconfig_path}")
+        click.echo(f"\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)
@@ -434,14 +435,10 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
         inventory_dir = setup.vagrant_deploy_cluster(vdir, cluster_name=name)
         click.echo("\nCluster deployed successfully!")
         click.echo(f"Inventory: {inventory_dir}")
-
-        hosts = setup.get_vagrant_ssh_config(vdir)
-        cp_hosts = [h for h in hosts if "control_plane" in h.get("roles", [])]
-        if cp_hosts:
-            cp_ip = cp_hosts[0]["ip"]
-            cp_user = cp_hosts[0]["ansible_user"]
-            click.echo("\nTo get kubeconfig:")
-            click.echo(f"  chaosprobe cluster kubeconfig --host {cp_ip} --user {cp_user}")
+        click.echo("\nNext steps:")
+        click.echo("  chaosprobe cluster vagrant kubeconfig")
+        click.echo("  export KUBECONFIG=~/.kube/config-chaosprobe")
+        click.echo("  chaosprobe init")
     except Exception as e:
         click.echo(f"\nError deploying cluster: {e}", err=True)
         sys.exit(1)
@@ -521,7 +518,8 @@ def vagrant_kubeconfig(name: str, vagrant_dir: Optional[str], output: Optional[s
 
     try:
         kubeconfig_path = setup.vagrant_fetch_kubeconfig(vdir, output_path=output_path)
-        click.echo("\nTo use this cluster:")
+        click.echo(f"Kubeconfig saved to: {kubeconfig_path}")
+        click.echo(f"\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)

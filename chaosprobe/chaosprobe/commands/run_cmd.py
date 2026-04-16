@@ -339,7 +339,6 @@ def _print_run_banner(
     "--iterations", "-i", default=1, type=int,
     help="Number of iterations per strategy (default: 1)",
 )
-@click.option("--provision", is_flag=True, help="Provision a fresh cluster from scenario cluster config before running")
 @click.option(
     "--load-profile", type=click.Choice(["steady", "ramp", "spike"]), default="steady",
     help="Locust load profile during each experiment (default: steady)",
@@ -370,7 +369,6 @@ def run(
     settle_time: int,
     experiment: str,
     iterations: int,
-    provision: bool,
     load_profile: Optional[str],
     locustfile: Optional[str],
     target_url: Optional[str],
@@ -424,25 +422,6 @@ def run(
     shared_scenario, namespace, experiment_file, service_routes = (
         _load_and_prepare_scenario(experiment, namespace)
     )
-
-    # Optionally provision cluster from scenario's cluster config
-    if provision:
-        cluster_config = shared_scenario.get("cluster")
-        if cluster_config:
-            click.echo("\nProvisioning cluster from scenario config...")
-            setup = LitmusSetup(skip_k8s_init=True)
-            try:
-                vagrant_dir = setup.provision_from_cluster_config(cluster_config)
-                click.echo(f"  Cluster provisioned at {vagrant_dir}")
-                click.echo("  Deploying Kubernetes on Vagrant VMs...")
-                setup.vagrant_deploy_cluster(vagrant_dir)
-                setup.vagrant_fetch_kubeconfig(vagrant_dir)
-                click.echo("  Cluster ready.")
-            except Exception as e:
-                click.echo(f"Error provisioning cluster: {e}", err=True)
-                sys.exit(1)
-        else:
-            click.echo("Warning: --provision specified but no cluster config in scenario", err=True)
 
     # Ensure LitmusChaos is ready once
     experiment_types = extract_experiment_types(shared_scenario)

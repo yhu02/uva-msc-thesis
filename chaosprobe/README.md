@@ -95,21 +95,6 @@ spec:
               retry: 3
 ```
 
-### Optional: cluster.yaml
-
-Scenarios can include a `cluster.yaml` to couple cluster provisioning with the experiment:
-
-```yaml
-provider: vagrant
-workers:
-  count: 3
-  cpu: 2
-  memory: 2048
-  disk: "20GB"
-```
-
-When `--provision` is passed to `run`, this config provisions the cluster automatically.
-
 ## Quick Start
 
 ### With Existing Cluster
@@ -128,8 +113,8 @@ uv run chaosprobe compare run-baseline-001 run-afterfix-001 --neo4j-uri bolt://l
 ### Local Development with Vagrant
 
 ```bash
-# 1. Initialize Vagrantfile (1 control plane + 2 workers)
-uv run chaosprobe cluster vagrant init --control-planes 1 --workers 2
+# 1. Initialize Vagrantfile (1 control plane + 4 workers)
+uv run chaosprobe cluster vagrant init --control-planes 1 --workers 4
 
 # 2. (WSL2/Linux) Setup libvirt provider — run once
 uv run chaosprobe cluster vagrant setup
@@ -207,7 +192,6 @@ uv run chaosprobe run -n online-boutique                          # All defaults
 uv run chaosprobe run -n online-boutique -s colocate,spread       # Specific strategies
 uv run chaosprobe run -n online-boutique -i 3                     # Multiple iterations
 uv run chaosprobe run -n online-boutique --load-profile ramp      # Ramp load profile
-uv run chaosprobe run -n online-boutique --provision              # Auto-provision cluster
 uv run chaosprobe run -n online-boutique --no-visualize           # Skip chart generation
 ```
 

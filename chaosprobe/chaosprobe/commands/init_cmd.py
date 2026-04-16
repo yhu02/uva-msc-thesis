@@ -61,11 +61,18 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     if not is_valid:
         click.echo(f"  Error: {message}", err=True)
         click.echo("\nNo cluster configured. Options:")
-        click.echo(
-            "  1. Use 'chaosprobe cluster vagrant up' to start a local libvirt/Vagrant cluster"
-        )
-        click.echo("  2. Use 'chaosprobe cluster create' to deploy with Kubespray")
-        click.echo("  3. Configure kubectl to connect to an existing cluster")
+        click.echo("  Option A — Local libvirt/Vagrant cluster:")
+        click.echo("    1. chaosprobe cluster vagrant init        (first time only — generates Vagrantfile)")
+        click.echo("    2. chaosprobe cluster vagrant up          (start VMs)")
+        click.echo("    3. chaosprobe cluster vagrant deploy      (install Kubernetes via Kubespray)")
+        click.echo("    4. chaosprobe cluster vagrant kubeconfig  (fetch kubeconfig)")
+        click.echo("    5. chaosprobe init                        (install ChaosProbe infrastructure)")
+        click.echo("  Option B — Bare metal/cloud VMs with Kubespray:")
+        click.echo("    1. chaosprobe cluster create")
+        click.echo("    2. chaosprobe init")
+        click.echo("  Option C — Existing cluster:")
+        click.echo("    1. Configure kubectl to connect to your cluster")
+        click.echo("    2. chaosprobe init")
         sys.exit(1)
     click.echo(f"  {message}")
 

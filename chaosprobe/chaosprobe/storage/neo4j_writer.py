@@ -362,7 +362,7 @@ class Neo4jWriterMixin:
                 "  run_id: $rid, seq: $seq, "
                 "  deletion_time: $del_t, scheduled_time: $sched_t, ready_time: $ready_t, "
                 "  deletion_to_scheduled_ms: $d2s, scheduled_to_ready_ms: $s2r, "
-                "  total_recovery_ms: $total"
+                "  total_recovery_ms: $total, failure_reason: $fail_reason"
                 "}) "
                 "CREATE (e)-[:HAS_RECOVERY_CYCLE]->(c)",
                 rid=run_id,
@@ -373,6 +373,7 @@ class Neo4jWriterMixin:
                 d2s=cycle.get("deletionToScheduled_ms"),
                 s2r=cycle.get("scheduledToReady_ms"),
                 total=cycle.get("totalRecovery_ms"),
+                fail_reason=cycle.get("failure_reason"),
             )
 
     def _sync_experiment_results(
@@ -689,6 +690,14 @@ class Neo4jWriterMixin:
         if not samples:
             return
 
+        # Correlate samples with recovery cycles: mark each sample with
+        # recovery_in_progress and the cycle index if the sample's
+        # timestamp falls within a deletion-to-ready window.
+        recovery = metrics.get("recovery", {})
+        recovery_cycles = recovery.get("recoveryEvents", [])
+        if recovery_cycles:
+            self._annotate_recovery_windows(samples, recovery_cycles)
+
         # Batch-create sample nodes (use UNWIND for efficiency)
         sample_list = sorted(samples.values(), key=lambda s: s["timestamp"])
         for idx, sample in enumerate(sample_list):
@@ -703,12 +712,92 @@ class Neo4jWriterMixin:
             "  timestamp: s.timestamp, "
             "  phase: s.phase, "
             "  strategy: s.strategy, "
+            "  recovery_in_progress: s.recovery_in_progress, "
+            "  recovery_cycle_id: s.recovery_cycle_id, "
             "  data: s.data_json"
             "}) "
             "CREATE (e)-[:HAS_SAMPLE]->(m)",
             rid=run_id,
             samples=sample_list,
         )
+
+    @staticmethod
+    def _annotate_recovery_windows(
+        samples: Dict[str, Dict[str, Any]],
+        recovery_cycles: List[Dict[str, Any]],
+    ) -> None:
+        """Mark each sample with recovery_in_progress and cycle index.
+
+        Compares each sample timestamp against recovery cycle windows
+        (deletionTime → readyTime).  Sets ``recovery_in_progress`` to
+        True and ``recovery_cycle_id`` to the cycle index for samples
+        that fall within an active recovery window.
+        """
+        from datetime import datetime, timezone
+
+        # Parse cycle windows once
+        windows: List[tuple] = []
+        for idx, cycle in enumerate(recovery_cycles):
+            raw_del = cycle.get("deletionTime")
+            raw_rdy = cycle.get("readyTime")
+            if not raw_del:
+                continue
+            try:
+                t_del = datetime.fromisoformat(raw_del)
+                if t_del.tzinfo is None:
+                    t_del = t_del.replace(tzinfo=timezone.utc)
+                t_del_epoch = t_del.timestamp()
+            except (ValueError, TypeError):
+                continue
+
+            if raw_rdy:
+                try:
+                    t_rdy = datetime.fromisoformat(raw_rdy)
+                    if t_rdy.tzinfo is None:
+                        t_rdy = t_rdy.replace(tzinfo=timezone.utc)
+                    t_rdy_epoch = t_rdy.timestamp()
+                except (ValueError, TypeError):
+                    t_rdy_epoch = None
+            else:
+                t_rdy_epoch = None  # Incomplete cycle — still in progress
+
+            windows.append((idx, t_del_epoch, t_rdy_epoch))
+
+        if not windows:
+            for s in samples.values():
+                s.setdefault("recovery_in_progress", False)
+                s.setdefault("recovery_cycle_id", None)
+            return
+
+        for s in samples.values():
+            ts_str = s.get("timestamp", "")
+            try:
+                ts_dt = datetime.fromisoformat(ts_str)
+                if ts_dt.tzinfo is None:
+                    ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+                ts_epoch = ts_dt.timestamp()
+            except (ValueError, TypeError):
+                s["recovery_in_progress"] = False
+                s["recovery_cycle_id"] = None
+                continue
+
+            in_recovery = False
+            cycle_id = None
+            for idx, t_del, t_rdy in windows:
+                if t_rdy is not None:
+                    if t_del <= ts_epoch <= t_rdy:
+                        in_recovery = True
+                        cycle_id = idx
+                        break
+                else:
+                    # Incomplete cycle — mark everything after deletion
+                    if ts_epoch >= t_del:
+                        in_recovery = True
+                        cycle_id = idx
+                        break
+
+            s["recovery_in_progress"] = in_recovery
+            s["recovery_cycle_id"] = cycle_id
 
     def _sync_anomaly_labels(
         self,
@@ -730,7 +819,11 @@ class Neo4jWriterMixin:
                 "  target_service: $target, "
                 "  target_node: $node, "
                 "  start_time: $start, "
-                "  end_time: $end"
+                "  end_time: $end, "
+                "  observed_cycle_count: $obs_count, "
+                "  observed_completed_cycles: $obs_completed, "
+                "  observed_incomplete_cycles: $obs_incomplete, "
+                "  observed_windows_json: $obs_windows"
                 "}) "
                 "CREATE (e)-[:HAS_ANOMALY_LABEL]->(a)",
                 rid=run_id,
@@ -742,6 +835,10 @@ class Neo4jWriterMixin:
                 node=lbl.get("targetNode"),
                 start=lbl.get("startTime"),
                 end=lbl.get("endTime"),
+                obs_count=lbl.get("observedCycleCount", 0),
+                obs_completed=lbl.get("observedCompletedCycles", 0),
+                obs_incomplete=lbl.get("observedIncompleteCycles", 0),
+                obs_windows=json.dumps(lbl.get("observedWindows", [])),
             )
             # Link to targeted service (primary)
             target_svc = lbl.get("targetService")

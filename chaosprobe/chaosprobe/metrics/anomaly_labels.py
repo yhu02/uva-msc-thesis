@@ -172,4 +172,44 @@ def generate_anomaly_labels(
 
             labels.append(label)
 
+    # Enrich with observed micro-anomalies from recovery cycles
+    if metrics:
+        recovery = metrics.get("recovery", {})
+        cycles = recovery.get("recoveryEvents", [])
+        if cycles:
+            for label in labels:
+                observed = _build_observed_windows(cycles)
+                label["observedWindows"] = observed
+                label["observedCycleCount"] = len(cycles)
+                completed = sum(
+                    1 for c in cycles if c.get("totalRecovery_ms") is not None
+                )
+                label["observedCompletedCycles"] = completed
+                label["observedIncompleteCycles"] = len(cycles) - completed
+
     return labels
+
+
+def _build_observed_windows(
+    cycles: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build micro-anomaly windows from recovery cycle data.
+
+    Each deletion-to-ready cycle is a discrete fault event with
+    precise timestamps from the Kubernetes watch API.
+    """
+    windows: List[Dict[str, Any]] = []
+    for idx, cycle in enumerate(cycles):
+        deletion = cycle.get("deletionTime")
+        ready = cycle.get("readyTime")
+        if not deletion:
+            continue
+        window: Dict[str, Any] = {
+            "cycleIndex": idx,
+            "deletionTime": deletion,
+            "readyTime": ready,
+            "totalRecovery_ms": cycle.get("totalRecovery_ms"),
+            "recovered": ready is not None,
+        }
+        windows.append(window)
+    return windows

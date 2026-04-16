@@ -425,7 +425,6 @@ High-level Neo4j graph queries:
 | `-t, --timeout` | 300 | Timeout per experiment (seconds) |
 | `--seed` | 42 | Random strategy seed |
 | `--settle-time` | 30 | Wait after placement before experiment |
-| `--provision` | off | Auto-provision cluster from scenario config |
 | `--load-profile` | `steady` | Locust profile: steady/ramp/spike |
 | `--locustfile` | built-in | Custom locustfile path |
 | `--target-url` | auto port-forward | URL for Locust load generation |

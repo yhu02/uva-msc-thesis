@@ -78,9 +78,19 @@ def status(json_output: bool):
         click.echo("\nAll systems ready!")
     else:
         if not prereqs["cluster_access"]:
-            click.echo(
-                "\nNo cluster configured. Use 'chaosprobe cluster create' or configure kubectl."
-            )
+            click.echo("\nNo cluster configured. Options:")
+            click.echo("  Option A — Local libvirt/Vagrant cluster:")
+            click.echo("    1. chaosprobe cluster vagrant init        (first time only — generates Vagrantfile)")
+            click.echo("    2. chaosprobe cluster vagrant up          (start VMs)")
+            click.echo("    3. chaosprobe cluster vagrant deploy      (install Kubernetes via Kubespray)")
+            click.echo("    4. chaosprobe cluster vagrant kubeconfig  (fetch kubeconfig)")
+            click.echo("    5. chaosprobe init                        (install ChaosProbe infrastructure)")
+            click.echo("  Option B — Bare metal/cloud VMs with Kubespray:")
+            click.echo("    1. chaosprobe cluster create")
+            click.echo("    2. chaosprobe init")
+            click.echo("  Option C — Existing cluster:")
+            click.echo("    1. Configure kubectl to connect to your cluster")
+            click.echo("    2. chaosprobe init")
         else:
             click.echo("\nRun 'chaosprobe init' to complete setup.")
 

@@ -133,6 +133,49 @@ def _disable_fault_injection(scenario: Dict[str, Any]) -> None:
                     run_props["retry"] = 3
 
 
+def _extract_http_routes(
+    scenario: Dict[str, Any], namespace: str,
+) -> List[tuple]:
+    """Extract HTTP routes from scenario httpProbes for latency measurement.
+
+    Parses the experiment's httpProbe definitions and returns a list of
+    ``(service, path, description, method)`` tuples suitable for
+    ``ContinuousLatencyProber``.
+    """
+    from urllib.parse import urlparse
+
+    routes: List[tuple] = []
+    seen: set = set()
+
+    for exp_entry in scenario.get("experiments", []):
+        spec = exp_entry.get("spec", {})
+        for exp in spec.get("spec", {}).get("experiments", []):
+            for probe in exp.get("spec", {}).get("probe", []):
+                if probe.get("type") != "httpProbe":
+                    continue
+                inputs = probe.get("httpProbe/inputs", {})
+                url = inputs.get("url", "")
+                if not url:
+                    continue
+                parsed = urlparse(url)
+                path = parsed.path or "/"
+                if path in seen:
+                    continue
+                seen.add(path)
+
+                # Extract service name from hostname (e.g. frontend.online-boutique.svc...)
+                host = parsed.hostname or ""
+                service = host.split(".")[0] if host else "frontend"
+
+                method_def = inputs.get("method", {})
+                method = "GET" if "get" in method_def else "POST"
+                name = probe.get("name", path)
+
+                routes.append((service, path, name, method))
+
+    return routes
+
+
 def _wait_for_target_pod(
     namespace: str, deployment_name: str, timeout: int = 60, stable_secs: int = 10,
 ) -> None:
@@ -344,6 +387,9 @@ def _run_single_iteration(
         suffix = f"-{strategy_name}-i{iter_num}" if ctx.iterations > 1 else f"-{strategy_name}"
         exp["spec"]["metadata"]["name"] = f"{orig_name}{suffix}"
 
+    # Extract HTTP routes from scenario probes for latency measurement
+    http_routes = _extract_http_routes(scenario, ctx.namespace)
+
     # Start probers + optional load generation
     probers = create_and_start_probers(
         ctx.namespace,
@@ -354,6 +400,7 @@ def _run_single_iteration(
         measure_resources=ctx.measure_resources,
         measure_prometheus=ctx.measure_prometheus,
         prometheus_url=ctx.prometheus_url,
+        http_routes=http_routes or None,
     )
 
     # Compute windows before starting Locust so its duration covers the

@@ -124,6 +124,53 @@ class TestGetScheduledTime:
         assert RecoveryWatcher._get_scheduled_time(pod) is None
 
 
+class TestGetReadyTime:
+    def test_with_ready_condition(self):
+        ts = datetime(2024, 1, 1, 12, 0, 5, tzinfo=timezone.utc)
+        cond = SimpleNamespace(type="Ready", last_transition_time=ts)
+        pod = SimpleNamespace(status=SimpleNamespace(conditions=[cond]))
+        assert RecoveryWatcher._get_ready_time(pod) == ts
+
+    def test_naive_timestamp_gets_utc(self):
+        ts = datetime(2024, 1, 1, 12, 0, 5)  # naive
+        cond = SimpleNamespace(type="Ready", last_transition_time=ts)
+        pod = SimpleNamespace(status=SimpleNamespace(conditions=[cond]))
+        result = RecoveryWatcher._get_ready_time(pod)
+        assert result.tzinfo == timezone.utc
+
+    def test_no_conditions(self):
+        pod = SimpleNamespace(status=SimpleNamespace(conditions=None))
+        assert RecoveryWatcher._get_ready_time(pod) is None
+
+    def test_no_ready_condition(self):
+        cond = SimpleNamespace(type="PodScheduled", last_transition_time=None)
+        pod = SimpleNamespace(status=SimpleNamespace(conditions=[cond]))
+        assert RecoveryWatcher._get_ready_time(pod) is None
+
+
+class TestFailureReason:
+    def test_incomplete_cycle_has_failure_reason(self):
+        deletion = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        result = RecoveryWatcher._finalize_cycle({
+            "deletionTime": deletion,
+            "scheduledTime": None,
+            "readyTime": None,
+            "failure_reason": "experiment_ended_before_recovery",
+        })
+        assert result["failure_reason"] == "experiment_ended_before_recovery"
+
+    def test_complete_cycle_no_failure_reason(self):
+        deletion = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        scheduled = datetime(2024, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
+        ready = datetime(2024, 1, 1, 12, 0, 3, tzinfo=timezone.utc)
+        result = RecoveryWatcher._finalize_cycle({
+            "deletionTime": deletion,
+            "scheduledTime": scheduled,
+            "readyTime": ready,
+        })
+        assert "failure_reason" not in result
+
+
 class TestResult:
     def test_empty_result(self):
         watcher = _make_watcher()
