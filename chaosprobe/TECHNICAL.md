@@ -609,7 +609,13 @@ confidence = 0.50 (base)
 
 ### Hypothesis
 
-Pod scheduling recovery time varies with placement strategy due to differences in resource contention on the target node.
+Microservice resilience under chaos varies with pod placement strategy due to differences in resource contention on co-located nodes. Specifically, placement affects:
+
+1. **Pod recovery time** — deletion-to-ready latency under scheduling pressure
+2. **Inter-service latency** — HTTP response times across dependent services during and after faults
+3. **I/O throughput** — Redis read/write operations and disk throughput on contended nodes
+4. **Resource utilisation** — CPU and memory pressure on nodes hosting co-located workloads
+5. **Cascade propagation** — how faults in one service degrade upstream consumers
 
 ### Experiment: pod-delete on productcatalogservice
 
@@ -781,17 +787,17 @@ chaosprobe/
 | `K8sNode` | `name`, `cpu`, `memory`, `control_plane` | Kubernetes cluster nodes |
 | `Deployment` | `name`, `namespace`, `replicas` | Kubernetes deployments |
 | `Service` | `name` | Microservices in the dependency graph |
-| `ChaosRun` | `run_id`, `session_id`, `strategy`, `timestamp`, `verdict`, `resilience_score`, `duration_s`, `mean_recovery_ms`, `median_recovery_ms`, `min_recovery_ms`, `max_recovery_ms`, `p95_recovery_ms`, `recovery_count`, `completed_cycles`, `incomplete_cycles`, `total_restarts`, `total_experiments`, `passed_experiments`, `failed_experiments`, `load_profile`, `load_total_requests`, `load_avg_response_ms`, `load_p95_response_ms`, `load_error_rate`, `load_rps`, `node_name`, `node_capacity_cpu`, `node_capacity_memory`, `scenario_json`, `event_timeline` | Experiment run with all summary data |
+| `ChaosRun` | `run_id`, `name` (display: `strategy (verdict)`), `session_id`, `strategy`, `timestamp`, `verdict`, `resilience_score`, `duration_s`, `mean_recovery_ms`, `median_recovery_ms`, `min_recovery_ms`, `max_recovery_ms`, `p95_recovery_ms`, `recovery_count`, `completed_cycles`, `incomplete_cycles`, `total_restarts`, `total_experiments`, `passed_experiments`, `failed_experiments`, `load_profile`, `load_total_requests`, `load_avg_response_ms`, `load_p95_response_ms`, `load_error_rate`, `load_rps`, `node_name`, `node_capacity_cpu`, `node_capacity_memory`, `scenario_json`, `event_timeline` | Experiment run with all summary data |
 | `PlacementStrategy` | `name` | Placement strategy (colocate/spread/random/antagonistic) |
-| `RecoveryCycle` | `run_id`, `seq`, `deletion_time`, `scheduled_time`, `ready_time`, `deletion_to_scheduled_ms`, `scheduled_to_ready_ms`, `total_recovery_ms` | Per-pod deletion→scheduled→ready timing |
-| `ExperimentResult` | `run_id`, `name`, `engine_name`, `phase`, `verdict`, `probe_success_pct`, `fail_step` | LitmusChaos experiment outcome |
-| `ProbeResult` | `run_id`, `name`, `type`, `mode`, `verdict`, `description` | Individual probe pass/fail |
-| `MetricsPhase` | `run_id`, `metric_type`, `phase`, `sample_count`, `mean_cpu_millicores`, `max_cpu_millicores`, `mean_memory_bytes`, `max_memory_bytes`, `routes` (JSON), `metrics_json` | Aggregated metrics per phase (baseline/during/after) |
+| `RecoveryCycle` | `run_id`, `name` (display: `cycle #N (Xms)`), `seq`, `deletion_time`, `scheduled_time`, `ready_time`, `deletion_to_scheduled_ms`, `scheduled_to_ready_ms`, `total_recovery_ms` | Per-pod deletion→scheduled→ready timing |
+| `ExperimentResult` | `run_id`, `name` (display: `experiment (verdict)`), `experiment_name`, `engine_name`, `phase`, `verdict`, `probe_success_pct`, `fail_step` | LitmusChaos experiment outcome |
+| `ProbeResult` | `run_id`, `name` (display: `probe (verdict)`), `probe_name`, `type`, `mode`, `verdict`, `description` | Individual probe pass/fail |
+| `MetricsPhase` | `run_id`, `name` (display: `type: phase`), `metric_type`, `phase`, `sample_count`, `mean_cpu_millicores`, `max_cpu_millicores`, `mean_memory_bytes`, `max_memory_bytes`, `routes` (JSON), `metrics_json` | Aggregated metrics per phase (baseline/during/after) |
 | `PodSnapshot` | `run_id`, `name`, `phase`, `node`, `restart_count`, `conditions` (JSON) | Pod state at collection time |
-| `MetricsSample` | `run_id`, `timestamp`, `phase`, `strategy`, `seq`, `recovery_in_progress`, `recovery_cycle_id`, `data` (JSON) | Individual time-series data point |
-| `AnomalyLabel` | `run_id`, `fault_type`, `category`, `resource`, `severity`, `target_service`, `target_node`, `target_namespace`, `start_time`, `end_time`, `duration_s`, `parameters` (JSON), `observed_cycle_count`, `observed_completed_cycles`, `observed_incomplete_cycles` | Ground-truth fault label for ML |
-| `CascadeEvent` | `run_id`, `seq`, `data_json` | Failure propagation event |
-| `ContainerLog` | `run_id`, `pod_name`, `container_name`, `restart_count`, `current_log`, `previous_log` | Container log snapshot |
+| `MetricsSample` | `run_id`, `name` (display: `#seq phase`), `timestamp`, `phase`, `strategy`, `seq`, `recovery_in_progress`, `recovery_cycle_id`, `data` (JSON) | Individual time-series data point |
+| `AnomalyLabel` | `run_id`, `name` (display: `fault (severity)`), `fault_type`, `category`, `resource`, `severity`, `target_service`, `target_node`, `target_namespace`, `start_time`, `end_time`, `duration_s`, `parameters` (JSON), `observed_cycle_count`, `observed_completed_cycles`, `observed_incomplete_cycles` | Ground-truth fault label for ML |
+| `CascadeEvent` | `run_id`, `name` (display: `cascade #N → service`), `seq`, `data_json` | Failure propagation event |
+| `ContainerLog` | `run_id`, `name` (display: `pod/container`), `pod_name`, `container_name`, `restart_count`, `current_log`, `previous_log` | Container log snapshot |
 
 ### Relationships
 
@@ -870,6 +876,162 @@ Each `MetricsSample.data` JSON blob can contain:
 | `target_node` | Node where target is scheduled | `worker-1` |
 | `start_time` / `end_time` | Fault injection time window | ISO-8601 timestamps |
 | `affected_services` | Upstream services impacted (via `AFFECTS` edges) | `[frontend, checkoutservice]` |
+
+### Manual Anomaly Investigation Workflow
+
+Step-by-step guide for investigating anomalies in Neo4j Browser. Run each query **separately** (`:param` must be its own execution).
+
+**Investigation order:**
+
+```
+ChaosRun (score/verdict)
+  → ProbeResult           (what failed and why?)
+  → AnomalyLabel          (what fault, exact time window?)
+  → RecoveryCycle          (per-kill scheduling + startup timing)
+  → MetricsSample          (recovery_in_progress moments with full telemetry)
+  → MetricsPhase           (pre vs during vs post-chaos comparison)
+  → CascadeEvent           (fault propagation across services)
+  → PodSnapshot → K8sNode  (node contention — which pods were co-located?)
+  → Cross-strategy comparison
+```
+
+#### Step 0 — Find your runs
+
+```cypher
+// Lists all runs sorted by time. Look for low scores or FAIL verdicts.
+MATCH (r:ChaosRun)
+RETURN r.run_id, r.strategy, r.resilience_score, r.verdict,
+       r.mean_recovery_ms, r.timestamp
+ORDER BY r.timestamp DESC
+```
+
+#### Step 1 — Set the run to investigate
+
+Run this **separately** before all queries below. Change the run_id to the one you're investigating.
+
+```
+:param {rid: "run-2026-04-17-130553-45e6c3"}
+```
+
+#### Step 2 — What probes passed/failed? (explains the score)
+
+```cypher
+// Each probe has a different tolerance: strict ≈6s, moderate ≈9s, edge ≈75s.
+// Failed probes tell you how long the service was degraded.
+// The description shows the actual HTTP status code received.
+MATCH (r:ChaosRun {run_id: $rid})-[:HAS_RESULT]->(e:ExperimentResult)
+      -[:HAS_PROBE]->(p:ProbeResult)
+RETURN p.probe_name, p.verdict, p.description
+ORDER BY p.probe_name
+```
+
+**Score interpretation** (6 probes → 7 possible scores):
+
+| Score | Meaning |
+|---|---|
+| 100% | All probes passed — no visible disruption |
+| 83% | 5/6 — one strict failed, recovery ~6–9s |
+| 66% | 4/6 — both strict failed, recovery ~9s+ |
+| 50% | 3/6 — moderate also failed |
+| 33% | 2/6 — only edge + healthz passed |
+| 16% | 1/6 — only healthz passed (node alive, service down) |
+| 0% | Total disruption |
+
+#### Step 3 — What fault was injected, when exactly?
+
+```cypher
+// Ground-truth anomaly label: fault type, severity, exact start/end times,
+// target service/node, and which upstream services were affected.
+MATCH (r:ChaosRun {run_id: $rid})-[:HAS_ANOMALY_LABEL]->(a:AnomalyLabel)
+OPTIONAL MATCH (a)-[:AFFECTS]->(s:Service)
+RETURN a.fault_type, a.category, a.severity,
+       a.start_time, a.end_time, a.duration_s,
+       a.target_service, a.target_node,
+       collect(s.name) AS affected_services
+```
+
+#### Step 4 — Recovery cycle timing (per pod kill → ready)
+
+```cypher
+// Each row = one pod deletion + rescheduling event.
+// deletion_to_scheduled_ms: time to find a node (scheduling pressure)
+// scheduled_to_ready_ms: time to start container (resource contention)
+// total_recovery_ms: full outage window per kill
+// Negative deletion_to_scheduled: new pod already scheduling before
+//   old one's deletion event was processed (K8s controller proactive).
+MATCH (r:ChaosRun {run_id: $rid})-[:HAS_RECOVERY_CYCLE]->(c:RecoveryCycle)
+RETURN c.seq, c.deletion_time, c.ready_time,
+       c.deletion_to_scheduled_ms, c.scheduled_to_ready_ms,
+       c.total_recovery_ms
+ORDER BY c.seq
+```
+
+#### Step 5 — Time-series samples during active recovery
+
+```cypher
+// Shows only samples where a pod was actively recovering.
+// The data JSON contains latency, CPU, memory, Redis, disk values.
+// Null values = prober couldn't reach the target pod (it was dead).
+// Phases are: "pre-chaos", "during-chaos", "post-chaos" (lowercase, hyphenated).
+MATCH (r:ChaosRun {run_id: $rid})-[:HAS_SAMPLE]->(s:MetricsSample)
+WHERE s.phase = "during-chaos" AND s.recovery_in_progress = true
+RETURN s.timestamp, s.recovery_cycle_id, s.data
+ORDER BY s.timestamp
+```
+
+#### Step 6 — Phase comparison (pre vs during vs post)
+
+```cypher
+// Aggregated metrics per phase. Compare pre-chaos baselines against
+// during-chaos values: CPU spikes, latency increases, memory pressure.
+// metric_type: latency | resources | redis | disk | prometheus
+MATCH (r:ChaosRun {run_id: $rid})-[:HAS_METRICS_PHASE]->(m:MetricsPhase)
+RETURN m.metric_type, m.phase, m.sample_count,
+       m.mean_cpu_millicores, m.max_cpu_millicores,
+       m.mean_memory_bytes, m.routes
+ORDER BY m.metric_type, m.phase
+```
+
+#### Step 7 — Cascade propagation
+
+```cypher
+// Per-route degradation timing: when each route first degraded,
+// peak latency, and when it recovered. Reveals fault propagation
+// across the service dependency chain.
+MATCH (r:ChaosRun {run_id: $rid})-[:HAS_CASCADE_EVENT]->(c:CascadeEvent)
+RETURN c.seq, c.data_json
+ORDER BY c.seq
+```
+
+#### Step 8 — Pod placement and node contention
+
+```cypher
+// Shows which node each pod was on and node resource capacity.
+// For colocate: all pods on one node. For spread: distributed.
+MATCH (r:ChaosRun {run_id: $rid})-[:HAS_POD_SNAPSHOT]->(p:PodSnapshot)
+      -[:RUNNING_ON]->(n:K8sNode)
+RETURN n.name, collect(p.name) AS pods, n.cpu, n.memory
+```
+
+#### Step 9 — Cross-strategy comparison
+
+```cypher
+// Compares all strategies. Shows which placement had the best/worst
+// resilience and recovery. Run AFTER investigating individual runs.
+MATCH (r:ChaosRun)-[:USED_STRATEGY]->(s:PlacementStrategy)
+RETURN s.name AS strategy,
+       count(r) AS runs,
+       avg(r.resilience_score) AS avg_score,
+       avg(r.mean_recovery_ms) AS avg_recovery_ms,
+       collect(r.verdict) AS verdicts
+ORDER BY avg_score DESC
+```
+
+#### Repeat
+
+Change `:param {rid: "..."}` to a different strategy's run ID (e.g. colocate, default, antagonistic) and re-run Steps 2–8 to compare how placement affected each dimension.
+
+---
 
 ### Cypher Query Cookbook
 

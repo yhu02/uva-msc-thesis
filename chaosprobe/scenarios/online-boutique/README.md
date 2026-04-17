@@ -82,7 +82,7 @@ chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-memory
 **Target:** checkoutservice (orchestrator calling 5+ services)
 **Experiment:** `pod-delete` — force-kill 100% of pods every 15s for 60s
 
-Tests pod scheduling recovery time on the critical checkout path. With 1 replica and force-delete, the entire checkout flow breaks until rescheduling completes.
+Tests how pod deletion on the critical checkout path affects recovery time, inter-service latency across the 5+ downstream dependencies, and resource contention on the hosting node. With 1 replica and force-delete, the entire checkout flow breaks until rescheduling completes.
 
 ```bash
 chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-scheduling/experiment.yaml
@@ -225,7 +225,7 @@ chaosprobe cleanup online-boutique --all
 
 ## Placement Scenarios
 
-Placement experiments control pod scheduling to study how co-location affects performance under chaos. All strategies use a single shared experiment file (`placement-experiment.yaml` — pod-delete on productcatalogservice with 6 frontend HTTP probes at varying sensitivity levels).
+Placement experiments control pod scheduling to study how co-location affects multiple resilience dimensions under chaos: pod recovery time, inter-service latency, Redis/disk I/O throughput, node resource utilisation, and fault cascade propagation. All strategies use a single shared experiment file (`placement-experiment.yaml` — pod-delete on productcatalogservice with 6 frontend HTTP probes at varying sensitivity levels) while 6 continuous probers collect multi-signal telemetry throughout each run.
 
 **Strategies:**
 

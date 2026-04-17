@@ -10,8 +10,10 @@
 #   chaosprobe run scenarios/online-boutique/placement-experiment.yaml -o colocate.json
 #   chaosprobe placement clear -n online-boutique
 #
-# Hypothesis: Pod scheduling recovery time varies with placement strategy due
-# to differences in resource contention on the target node.
+# Hypothesis: Microservice resilience under chaos varies with pod placement
+# strategy due to differences in resource contention on co-located nodes.
+# Measured via: pod recovery time, inter-service latency, Redis/disk I/O
+# throughput, node resource utilisation, and cascade propagation depth.
 #
 # Target: productcatalogservice — a central dependency for homepage, product
 # pages, recommendations, and search. Killing it causes visible degradation

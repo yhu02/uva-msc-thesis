@@ -193,9 +193,9 @@ class Neo4jReaderMixin:
                 "MATCH (e:ChaosRun {run_id: $rid})"
                 "-[:HAS_RESULT]->(r:ExperimentResult)"
                 "-[:HAS_PROBE]->(p:ProbeResult) "
-                "RETURN r.name AS experiment_name, "
+                "RETURN r.experiment_name AS experiment_name, "
                 "       properties(p) AS props "
-                "ORDER BY r.name, p.name",
+                "ORDER BY r.experiment_name, p.probe_name",
                 rid=run_id,
             )
             probe_results = [
@@ -427,7 +427,7 @@ class Neo4jReaderMixin:
             # Reconstruct probes from ProbeResult nodes
             probes = [
                 {
-                    "name": pr.get("name", ""),
+                    "name": pr.get("probe_name", pr.get("name", "")),
                     "type": pr.get("type", ""),
                     "mode": pr.get("mode", ""),
                     "status": {
@@ -436,11 +436,11 @@ class Neo4jReaderMixin:
                     },
                 }
                 for pr in details.get("probeResults", [])
-                if pr.get("experiment") == er.get("name", "")
+                if pr.get("experiment") == er.get("experiment_name", er.get("name", ""))
             ]
             experiments.append(
                 {
-                    "name": er.get("name", ""),
+                    "name": er.get("experiment_name", er.get("name", "")),
                     "engineName": er.get("engine_name", ""),
                     "result": {
                         "phase": er.get("phase", ""),

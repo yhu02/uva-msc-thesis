@@ -25,7 +25,11 @@ from chaosprobe.orchestrator.probers import (
     stop_and_collect_probers,
 )
 from chaosprobe.orchestrator import portforward as pf
-from chaosprobe.orchestrator.run_phases import LOAD_TARGET_LOCAL_PORT, aggregate_iterations
+from chaosprobe.orchestrator.run_phases import (
+    LOAD_TARGET_LOCAL_PORT,
+    _clean_stale_resources,
+    aggregate_iterations,
+)
 from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
@@ -348,6 +352,13 @@ def _run_single_iteration(
     """Execute one chaos iteration and return its result dict."""
     if ctx.iterations > 1:
         click.echo(f"\n  ── Iteration {iter_num}/{ctx.iterations} ──")
+
+    # Clean stale ChaosEngines, ChaosResults, Jobs, and Argo workflow
+    # pods from the previous iteration.  Without this, residual
+    # resources accumulate and consume cluster memory, causing
+    # transient HTTP 500s on memory-constrained clusters.
+    click.echo("    Cleaning stale resources from previous iteration...")
+    _clean_stale_resources(ctx.namespace)
 
     step_label = "  Step 3" if ctx.iterations == 1 else "    Step A"
     if ctx.settle_time > 0:

@@ -152,7 +152,8 @@ class Neo4jWriterMixin:
                 # ── Experiment node (enriched) ──────────────────────
                 tx.run(
                     "MERGE (e:ChaosRun {run_id: $rid}) "
-                    "SET e.timestamp = $ts, e.verdict = $verdict, "
+                    "SET e.name = $strat + ' (' + $verdict + ')', "
+                    "    e.timestamp = $ts, e.verdict = $verdict, "
                     "    e.resilience_score = $score, "
                     "    e.strategy = $strat, "
                     "    e.session_id = $session_id, "
@@ -359,6 +360,7 @@ class Neo4jWriterMixin:
             tx.run(
                 "MATCH (e:ChaosRun {run_id: $rid}) "
                 "CREATE (c:RecoveryCycle {"
+                "  name: 'cycle #' + toString($seq) + ' (' + toString($total) + 'ms)', "
                 "  run_id: $rid, seq: $seq, "
                 "  deletion_time: $del_t, scheduled_time: $sched_t, ready_time: $ready_t, "
                 "  deletion_to_scheduled_ms: $d2s, scheduled_to_ready_ms: $s2r, "
@@ -397,8 +399,9 @@ class Neo4jWriterMixin:
             tx.run(
                 "MATCH (e:ChaosRun {run_id: $rid}) "
                 "CREATE (r:ExperimentResult {"
-                "  run_id: $rid, name: $name, engine_name: $engine, "
-                "  verdict: $verdict, "
+                "  run_id: $rid, name: $name + ' (' + $verdict + ')', "
+                "  engine_name: $engine, "
+                "  experiment_name: $name, verdict: $verdict, "
                 "  probe_success_pct: $probe_pct, "
                 "  phase: $phase, fail_step: $fail_step"
                 "}) "
@@ -429,11 +432,12 @@ class Neo4jWriterMixin:
                     p_description = ""
                 tx.run(
                     "MATCH (r:ExperimentResult {"
-                    "  run_id: $rid, name: $exp_name, engine_name: $engine"
+                    "  run_id: $rid, experiment_name: $exp_name, engine_name: $engine"
                     "}) "
                     "CREATE (p:ProbeResult {"
                     "  run_id: $rid, "
-                    "  name: $name, "
+                    "  name: $name + ' (' + $verdict + ')', "
+                    "  probe_name: $name, "
                     "  type: $type, "
                     "  mode: $mode, "
                     "  verdict: $verdict, "
@@ -481,6 +485,7 @@ class Neo4jWriterMixin:
                 tx.run(
                     "MATCH (e:ChaosRun {run_id: $rid}) "
                     "CREATE (m:MetricsPhase {"
+                    f"  name: '{mtype}: ' + $phase, "
                     f"  run_id: $rid, metric_type: '{mtype}', phase: $phase, "
                     f"  sample_count: $samples, "
                     f"  {prop_name}: $json_data"
@@ -504,6 +509,7 @@ class Neo4jWriterMixin:
                 tx.run(
                     "MATCH (e:ChaosRun {run_id: $rid}) "
                     "CREATE (m:MetricsPhase {"
+                    "  name: 'resources: ' + $phase, "
                     "  run_id: $rid, metric_type: 'resources', phase: $phase, "
                     "  sample_count: $samples, "
                     "  node_name: $node_name, "
@@ -540,7 +546,8 @@ class Neo4jWriterMixin:
             tx.run(
                 "MATCH (e:ChaosRun {run_id: $rid}) "
                 "CREATE (p:PodSnapshot {"
-                "  run_id: $rid, name: $name, phase: $phase, "
+                "  run_id: $rid, name: $name, "
+                "  phase: $phase, "
                 "  node: $node, restart_count: $restarts, "
                 "  conditions: $conditions"
                 "}) "
@@ -708,6 +715,7 @@ class Neo4jWriterMixin:
             "UNWIND $samples AS s "
             "MATCH (e:ChaosRun {run_id: $rid}) "
             "CREATE (m:MetricsSample {"
+            "  name: '#' + toString(s.seq) + ' ' + s.phase, "
             "  run_id: $rid, seq: s.seq, "
             "  timestamp: s.timestamp, "
             "  phase: s.phase, "
@@ -811,6 +819,7 @@ class Neo4jWriterMixin:
             tx.run(
                 "MATCH (e:ChaosRun {run_id: $rid}) "
                 "CREATE (a:AnomalyLabel {"
+                "  name: $fault + ' (' + $severity + ')', "
                 "  run_id: $rid, "
                 "  fault_type: $fault, "
                 "  category: $cat, "
@@ -888,6 +897,7 @@ class Neo4jWriterMixin:
             tx.run(
                 "MATCH (e:ChaosRun {run_id: $rid}) "
                 "CREATE (c:CascadeEvent {"
+                "  name: 'cascade #' + toString($seq) + ' → ' + $target, "
                 "  run_id: $rid, seq: $seq, "
                 "  target_service: $target, "
                 "  data_json: $data"
@@ -948,6 +958,7 @@ class Neo4jWriterMixin:
                     "WITH p "
                     "MATCH (e:ChaosRun {run_id: $rid}) "
                     "CREATE (l:ContainerLog {"
+                    "  name: $pod + '/' + $container, "
                     "  run_id: $rid, pod_name: $pod, "
                     "  container_name: $container, "
                     "  restart_count: $restarts, "
