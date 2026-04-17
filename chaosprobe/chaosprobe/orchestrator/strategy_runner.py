@@ -107,11 +107,9 @@ def _disable_fault_injection(scenario: Dict[str, Any]) -> None:
     go-runner enters the inject function normally so PreChaos and
     PostChaos probes evaluate.
 
-    Probe timeouts are also relaxed: baseline is a no-fault control
-    that should score 100%.  Strict probes (e.g. 1s timeout, 0 retries)
-    can fail under normal Locust load because multi-service pages
-    (product, homepage) occasionally exceed 1s.  Boosting timeouts and
-    adding retries ensures baseline probes pass under healthy conditions.
+    Probe timeouts and retries are NOT modified — the baseline must be
+    evaluated with identical probe settings as other strategies so that
+    resilience scores are directly comparable across placements.
     """
     for exp_entry in scenario.get("experiments", []):
         spec = exp_entry.get("spec", {})
@@ -120,17 +118,6 @@ def _disable_fault_injection(scenario: Dict[str, Any]) -> None:
             for env in env_list:
                 if env.get("name") == "TOTAL_CHAOS_DURATION":
                     env["value"] = "1"
-
-            # Relax probe timeouts so baseline always passes under
-            # normal conditions (no chaos, but Locust load is active).
-            for probe in exp.get("spec", {}).get("probe", []):
-                run_props = probe.get("runProperties", {})
-                t = _parse_probe_timeout(run_props.get("probeTimeout", "5s"))
-                if t < 10:
-                    run_props["probeTimeout"] = "10s"
-                r = int(run_props.get("retry", 0))
-                if r < 3:
-                    run_props["retry"] = 3
 
 
 def _extract_http_routes(
@@ -384,8 +371,7 @@ def _run_single_iteration(
     scenario = copy.deepcopy(ctx.shared_scenario)
     for exp in scenario.get("experiments", []):
         orig_name = exp["spec"].get("metadata", {}).get("name", "placement-pod-delete")
-        suffix = f"-{strategy_name}-i{iter_num}" if ctx.iterations > 1 else f"-{strategy_name}"
-        exp["spec"]["metadata"]["name"] = f"{orig_name}{suffix}"
+        exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}"
 
     # Extract HTTP routes from scenario probes for latency measurement
     http_routes = _extract_http_routes(scenario, ctx.namespace)

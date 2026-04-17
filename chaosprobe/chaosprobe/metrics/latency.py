@@ -126,6 +126,7 @@ class LatencyProber:
     def __init__(self, namespace: str, timeout_seconds: int = 5):
         self.namespace = namespace
         self.timeout_seconds = timeout_seconds
+        self._use_wget: bool = False  # fallback when python3 unavailable
 
         ensure_k8s_config()
 
@@ -324,8 +325,12 @@ class LatencyProber:
         return find_ready_pod(self.core_api, self.namespace, service_name)
 
     def _find_probe_pod(self) -> Optional[str]:
-        """Find a pod suitable for running probe commands."""
-        return find_probe_pod(self.core_api, self.namespace)
+        """Find a pod suitable for running probe commands.
+
+        Prefers pods with python3 for nanosecond-precision timing.
+        Falls back to any pod with a shell (will use wget instead).
+        """
+        return find_probe_pod(self.core_api, self.namespace, require_python3=True)
 
     def _pod_has_shell(self, pod_name: str) -> bool:
         """Quick check whether *pod_name* has a usable shell."""
@@ -341,18 +346,29 @@ class LatencyProber:
         """Measure HTTP latency by executing a request inside a pod.
 
         Tries Python urllib first (nanosecond timing, no external deps),
-        then falls back to wget + shell timing.
+        then falls back to wget + shell timing if python3 is unavailable.
         """
         now = datetime.now(timezone.utc).isoformat()
+
+        if self._use_wget:
+            return self._measure_http_wget(pod_name, url, route, now)
+
         # Python one-liner: precise timing + HTTP request in one shot.
         # Outputs: "<status_code> <start_ns> <end_ns>" or "ERR <msg>"
+        # Wrapped in try/except so errors always print to stdout
+        # (without this, exceptions go to stderr and stdout is empty,
+        # causing "Unexpected output: " errors).
         py_script = (
-            "import time,urllib.request as u;"
+            "import time,sys\n"
+            "try:\n"
+            " import urllib.request as u;"
             f"s=int(time.time()*1e9);"
             f"r=u.urlopen('{url}',timeout={self.timeout_seconds});"
-            f"_ =r.read();"
+            f"_=r.read();"
             f"e=int(time.time()*1e9);"
-            f"print(r.status,s,e)"
+            f"print(r.status,s,e)\n"
+            "except Exception as ex:\n"
+            " print('ERR',str(ex)[:200])"
         )
         cmd = ["python3", "-c", py_script]
 
@@ -369,7 +385,34 @@ class LatencyProber:
                 _preload_content=True,
             )
 
-            parts = resp.strip().split()
+            stripped = resp.strip()
+
+            # Detect python3 not available (empty output or shell error)
+            if (
+                not stripped
+                or "not found" in stripped.lower()
+                or "no such file" in stripped.lower()
+                or "executable file not found" in stripped.lower()
+            ):
+                logger.info(
+                    "python3 not available in pod %s, switching to wget",
+                    pod_name,
+                )
+                self._use_wget = True
+                return self._measure_http_wget(pod_name, url, route, now)
+
+            parts = stripped.split()
+            if len(parts) >= 2 and parts[0] == "ERR":
+                return LatencySample(
+                    source="probe-pod",
+                    target="frontend",
+                    route=route,
+                    protocol="http",
+                    latency_ms=0,
+                    status="error",
+                    timestamp=now,
+                    error=" ".join(parts[1:])[:200],
+                )
             if len(parts) >= 3:
                 status_code = int(parts[0])
                 start_ns = int(parts[1])
@@ -378,7 +421,7 @@ class LatencyProber:
                     latency_ms = (end_ns - start_ns) / 1_000_000
                     ok = 200 <= status_code < 400
                     return LatencySample(
-                        source="loadgenerator",
+                        source="probe-pod",
                         target="frontend",
                         route=route,
                         protocol="http",
@@ -389,7 +432,7 @@ class LatencyProber:
                     )
 
             return LatencySample(
-                source="loadgenerator",
+                source="probe-pod",
                 target="frontend",
                 route=route,
                 protocol="http",
@@ -400,8 +443,17 @@ class LatencyProber:
             )
 
         except Exception as e:
+            # Exec itself may fail if python3 binary doesn't exist
+            err_str = str(e).lower()
+            if "not found" in err_str or "executable file" in err_str:
+                logger.info(
+                    "python3 exec failed in pod %s, switching to wget",
+                    pod_name,
+                )
+                self._use_wget = True
+                return self._measure_http_wget(pod_name, url, route, now)
             return LatencySample(
-                source="loadgenerator",
+                source="probe-pod",
                 target="frontend",
                 route=route,
                 protocol="http",
@@ -409,6 +461,102 @@ class LatencyProber:
                 status="error",
                 timestamp=now,
                 error=str(e)[:200],
+            )
+
+    def _measure_http_wget(
+        self,
+        pod_name: str,
+        url: str,
+        route: str,
+        now: str,
+    ) -> LatencySample:
+        """Measure HTTP latency using wget (fallback for pods without python3).
+
+        Uses shell ``date`` for timing.  GNU date gives nanosecond precision;
+        busybox (Alpine) only gives second precision — still far better than
+        zero data.
+        """
+        # Shell one-liner: timestamp → wget → timestamp → print
+        # Handles both GNU date (%s%N = nanoseconds) and busybox (%N → literal).
+        cmd = [
+            "sh", "-c",
+            f"S=$(date +%s%N 2>/dev/null); "
+            f'case "$S" in *N*|*%*) S=$(date +%s)000000000;; esac; '
+            f"wget -q -O /dev/null --timeout={self.timeout_seconds} "
+            f"'{url}' 2>/dev/null; RC=$?; "
+            f"E=$(date +%s%N 2>/dev/null); "
+            f'case "$E" in *N*|*%*) E=$(date +%s)000000000;; esac; '
+            f'if [ "$RC" -eq 0 ]; then echo "200 $S $E"; '
+            f'else echo "ERR wget_rc=$RC"; fi',
+        ]
+
+        try:
+            resp = stream(
+                self.core_api.connect_get_namespaced_pod_exec,
+                pod_name,
+                self.namespace,
+                command=cmd,
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
+                _preload_content=True,
+            )
+
+            parts = resp.strip().split()
+            if len(parts) >= 2 and parts[0] == "ERR":
+                return LatencySample(
+                    source="probe-pod",
+                    target="frontend",
+                    route=route,
+                    protocol="http",
+                    latency_ms=0,
+                    status="error",
+                    timestamp=now,
+                    error=" ".join(parts[1:])[:200],
+                )
+            if len(parts) >= 3:
+                try:
+                    status_code = int(parts[0])
+                    start_ns = int(parts[1])
+                    end_ns = int(parts[2])
+                    if start_ns > 0 and end_ns > start_ns:
+                        latency_ms = (end_ns - start_ns) / 1_000_000
+                        ok = 200 <= status_code < 400
+                        return LatencySample(
+                            source="probe-pod",
+                            target="frontend",
+                            route=route,
+                            protocol="http",
+                            latency_ms=round(latency_ms, 2),
+                            status="ok" if ok else "error",
+                            timestamp=now,
+                            error=None if ok else f"HTTP {status_code}",
+                        )
+                except (ValueError, OverflowError):
+                    pass
+
+            return LatencySample(
+                source="probe-pod",
+                target="frontend",
+                route=route,
+                protocol="http",
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=f"wget: unexpected output: {resp[:200]}",
+            )
+
+        except Exception as e:
+            return LatencySample(
+                source="probe-pod",
+                target="frontend",
+                route=route,
+                protocol="http",
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=f"wget: {str(e)[:200]}",
             )
 
     def _measure_tcp_from_pod(
@@ -529,6 +677,30 @@ class ContinuousLatencyProber(ContinuousProberBase):
         self._cached_probe_pod = self._prober._find_probe_pod()
         if not self._cached_probe_pod:
             logger.warning("No probe pod found at start — will retry during probing")
+        else:
+            # Pre-flight: verify the probe pod can reach the frontend
+            # service so we get actionable errors instead of silent 100%
+            # failures across all phases.
+            test_url = f"http://frontend.{self.namespace}.svc.cluster.local/_healthz"
+            sample = self._prober._measure_http_from_pod(
+                self._cached_probe_pod, test_url, "GET", "/_healthz",
+            )
+            if sample.status != "ok":
+                logger.warning(
+                    "Latency prober pre-flight check FAILED from pod %s "
+                    "to %s: %s — all latency samples will likely be errors. "
+                    "Check DNS resolution and network policies.",
+                    self._cached_probe_pod,
+                    test_url,
+                    sample.error,
+                )
+            else:
+                logger.info(
+                    "Latency prober pre-flight OK: pod %s → %s (%.1fms)",
+                    self._cached_probe_pod,
+                    test_url,
+                    sample.latency_ms,
+                )
         super().start()
 
     def result(self) -> Dict[str, Any]:

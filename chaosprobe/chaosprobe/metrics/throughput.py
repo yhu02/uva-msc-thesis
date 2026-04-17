@@ -194,6 +194,7 @@ class ThroughputProber:
         samples: int = 5,
         block_size_kb: int = 1024,
         count: int = 10,
+        disk_path: str = "/tmp/chaosprobe_disktest",
     ) -> List[ThroughputResult]:
         """Measure disk write/read throughput inside a pod.
 
@@ -205,6 +206,7 @@ class ThroughputProber:
             samples: Number of benchmark rounds.
             block_size_kb: Block size in KB for dd.
             count: Number of blocks per dd operation.
+            disk_path: Full path for the test file inside the pod.
 
         Returns:
             List of ThroughputResult for disk write and read.
@@ -225,15 +227,15 @@ class ThroughputProber:
         )
 
         for _i in range(samples):
-            w_sample = self._disk_benchmark(pod, "write", block_size_kb, count)
+            w_sample = self._disk_benchmark(pod, "write", block_size_kb, count, disk_path)
             write_result.samples.append(w_sample)
 
-            r_sample = self._disk_benchmark(pod, "read", block_size_kb, count)
+            r_sample = self._disk_benchmark(pod, "read", block_size_kb, count, disk_path)
             read_result.samples.append(r_sample)
 
         # Clean up test file
         self._exec_in_pod(
-            pod, ["sh", "-c", "rm -f /tmp/chaosprobe_disktest 2>/dev/null; echo done"]
+            pod, ["sh", "-c", f"rm -f {disk_path} 2>/dev/null; echo done"]
         )
 
         return [write_result, read_result]
@@ -416,6 +418,7 @@ class ThroughputProber:
         operation: str,
         block_size_kb: int,
         count: int,
+        disk_path: str = "/tmp/chaosprobe_disktest",
     ) -> ThroughputSample:
         """Run a disk write or read benchmark with dd inside a pod."""
         now = datetime.now(timezone.utc).isoformat()
@@ -423,32 +426,38 @@ class ThroughputProber:
         nano = self._nano_time_cmd()
 
         if operation == "write":
-            # Use conv=fdatasync if supported (GNU dd), fall back to sync
+            # Use conv=fdatasync if supported (GNU dd), fall back to sync.
+            # Capture dd stderr so we can diagnose failures (e.g. read-only fs).
             cmd = [
                 "sh",
                 "-c",
                 f"START=$({nano}); "
-                f"dd if=/dev/zero of=/tmp/chaosprobe_disktest "
-                f"bs={block_size_kb}k count={count} conv=fdatasync 2>/dev/null || "
-                f"{{ dd if=/dev/zero of=/tmp/chaosprobe_disktest "
-                f"bs={block_size_kb}k count={count} 2>/dev/null; sync; }}; "
+                f"ERR=$(dd if=/dev/zero of={disk_path} "
+                f"bs={block_size_kb}k count={count} conv=fdatasync 2>&1 >/dev/null) || "
+                f"ERR=$(dd if=/dev/zero of={disk_path} "
+                f"bs={block_size_kb}k count={count} 2>&1 >/dev/null; sync); "
                 f"END=$({nano}); "
-                f'echo "$START $END"',
+                f'if [ -n "$START" ] && [ -n "$END" ]; then '
+                f'echo "$START $END"; '
+                f'else echo "DIAG nano_fail start=$START end=$END err=$ERR"; fi',
             ]
         else:
-            # Write first if file doesn't exist, then read
+            # Write first if file doesn't exist, then read.
+            # Skip drop_caches (requires root) — just read through cache.
             cmd = [
                 "sh",
                 "-c",
-                f"[ -f /tmp/chaosprobe_disktest ] || "
-                f"dd if=/dev/zero of=/tmp/chaosprobe_disktest "
+                f"[ -f {disk_path} ] || "
+                f"dd if=/dev/zero of={disk_path} "
                 f"bs={block_size_kb}k count={count} 2>/dev/null; "
-                f"sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; "
+                f"sync; "
                 f"START=$({nano}); "
-                f"dd if=/tmp/chaosprobe_disktest of=/dev/null "
-                f"bs={block_size_kb}k 2>/dev/null; "
+                f"ERR=$(dd if={disk_path} of=/dev/null "
+                f"bs={block_size_kb}k 2>&1 >/dev/null); "
                 f"END=$({nano}); "
-                f'echo "$START $END"',
+                f'if [ -n "$START" ] && [ -n "$END" ]; then '
+                f'echo "$START $END"; '
+                f'else echo "DIAG nano_fail start=$START end=$END err=$ERR"; fi',
             ]
 
         resp = self._exec_in_pod(pod_name, cmd)
@@ -464,8 +473,20 @@ class ThroughputProber:
                 error=resp[:200],
             )
 
+        stripped = resp.strip()
+        if stripped.startswith("DIAG "):
+            return ThroughputSample(
+                operation=operation,
+                target="disk",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=stripped[:200],
+            )
+
         try:
-            parts = resp.strip().split()
+            parts = stripped.split()
             if len(parts) >= 2:
                 start_ns = int(parts[0])
                 end_ns = int(parts[1])
@@ -595,6 +616,79 @@ class ContinuousDiskProber(ContinuousProberBase):
         self._disk_target = disk_target
         self._block_size_kb = block_size_kb
         self._block_count = block_count
+        self._disk_path: str = "/tmp/chaosprobe_disktest"
+
+    def start(self) -> None:
+        """Start with a pre-flight disk I/O check.
+
+        Tries multiple writable directories (``/tmp``, ``/data``,
+        ``/var/tmp``) to handle pods with read-only root filesystems
+        (e.g. redis-cart on Alpine).  Falls back to different pods if
+        the primary target can't write anywhere.
+        """
+        _CANDIDATE_DIRS = ["/tmp", "/data", "/var/tmp"]
+        pod = self._prober._find_exec_pod(self._disk_target)
+        if not pod:
+            logger.warning(
+                "Disk prober: no exec-capable pod found for target %s",
+                self._disk_target,
+            )
+            super().start()
+            return
+
+        # Try multiple writable directories on the discovered pod
+        for d in _CANDIDATE_DIRS:
+            path = f"{d}/chaosprobe_disktest"
+            resp = self._prober._exec_in_pod(
+                pod,
+                ["sh", "-c",
+                 f"dd if=/dev/zero of={path} bs=1k count=1 2>&1 "
+                 f"&& echo OK || echo FAIL"],
+            )
+            if "OK" in resp:
+                self._disk_path = path
+                logger.info(
+                    "Disk prober pre-flight OK on pod %s (path: %s)",
+                    pod, path,
+                )
+                super().start()
+                return
+
+        # All dirs failed on this pod — try other candidate pods
+        for svc in ("loadgenerator", "emailservice", "currencyservice"):
+            alt_pod = self._prober._find_ready_pod(svc)
+            if not alt_pod or alt_pod == pod:
+                continue
+            resp = self._prober._exec_in_pod(
+                alt_pod, ["sh", "-c", "echo ok"],
+            )
+            if "ok" not in resp:
+                continue
+            for d in _CANDIDATE_DIRS:
+                path = f"{d}/chaosprobe_disktest"
+                resp = self._prober._exec_in_pod(
+                    alt_pod,
+                    ["sh", "-c",
+                     f"dd if=/dev/zero of={path} bs=1k count=1 2>&1 "
+                     f"&& echo OK || echo FAIL"],
+                )
+                if "OK" in resp:
+                    self._disk_path = path
+                    # Update the exec pod cache so _probe_loop uses this pod
+                    with self._prober._cache_lock:
+                        self._prober._exec_pod_cache[self._disk_target] = alt_pod
+                    logger.info(
+                        "Disk prober pre-flight OK on fallback pod %s (path: %s)",
+                        alt_pod, path,
+                    )
+                    super().start()
+                    return
+
+        logger.warning(
+            "Disk prober pre-flight FAILED: no writable directory found "
+            "on any candidate pod — disk samples will likely all be errors.",
+        )
+        super().start()
 
     def result(self) -> Dict[str, Any]:
         with self._lock:
@@ -629,6 +723,7 @@ class ContinuousDiskProber(ContinuousProberBase):
                     samples=1,
                     block_size_kb=self._block_size_kb,
                     count=self._block_count,
+                    disk_path=self._disk_path,
                 )
                 for r in results:
                     if r.samples:

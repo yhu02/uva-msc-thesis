@@ -61,12 +61,40 @@ def pod_has_shell(core_api: Any, namespace: str, pod_name: str) -> bool:
         return False
 
 
-def find_probe_pod(core_api: Any, namespace: str) -> Optional[str]:
+def _pod_has_python3(core_api: Any, namespace: str, pod_name: str) -> bool:
+    """Check whether *pod_name* has a working ``python3`` interpreter."""
+    try:
+        from kubernetes.stream import stream
+
+        out = stream(
+            core_api.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            command=["python3", "-c", "print('ok')"],
+            stderr=True,
+            stdout=True,
+            stdin=False,
+            tty=False,
+        )
+        return "ok" in out
+    except Exception:
+        return False
+
+
+def find_probe_pod(
+    core_api: Any,
+    namespace: str,
+    require_python3: bool = False,
+) -> Optional[str]:
     """Find a pod suitable for running probe commands.
 
     Discovers running pods in the namespace and tests whether they have
     a usable shell.  Pods labelled ``app=loadgenerator`` are preferred
     because they typically bundle Python and HTTP tools.
+
+    When *require_python3* is True the selected pod must also have a
+    working ``python3`` interpreter.  If no pod satisfies that
+    constraint, falls back to any pod with a shell.
     """
     try:
         pods = core_api.list_namespaced_pod(
@@ -78,6 +106,10 @@ def find_probe_pod(core_api: Any, namespace: str) -> Optional[str]:
 
     ready_pods: List[str] = []
     load_gen_pods: List[str] = []
+    # Also prefer Python-based services (emailservice, recommendationservice)
+    python_pods: List[str] = []
+    _PYTHON_APPS = {"loadgenerator", "emailservice", "recommendationservice"}
+
     for pod in pods.items:
         if not pod.status.conditions:
             continue
@@ -89,14 +121,34 @@ def find_probe_pod(core_api: Any, namespace: str) -> Optional[str]:
             continue
         name = pod.metadata.name
         labels = pod.metadata.labels or {}
-        if labels.get("app") == "loadgenerator":
+        app_label = labels.get("app", "")
+        if app_label == "loadgenerator":
             load_gen_pods.append(name)
+        elif app_label in _PYTHON_APPS:
+            python_pods.append(name)
         else:
             ready_pods.append(name)
 
-    for name in load_gen_pods + ready_pods:
+    # Priority: loadgenerator > other Python pods > everything else
+    ordered = load_gen_pods + python_pods + ready_pods
+
+    shell_pods: List[str] = []
+    for name in ordered:
         if pod_has_shell(core_api, namespace, name):
-            return name
+            if require_python3:
+                if _pod_has_python3(core_api, namespace, name):
+                    return name
+                shell_pods.append(name)  # remember for fallback
+            else:
+                return name
+
+    # Fallback: any pod with a shell (even without python3)
+    if require_python3 and shell_pods:
+        logger.warning(
+            "No pod with python3 found; falling back to %s",
+            shell_pods[0],
+        )
+        return shell_pods[0]
     return None
 
 

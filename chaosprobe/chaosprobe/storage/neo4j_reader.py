@@ -173,13 +173,16 @@ class Neo4jReaderMixin:
 
             # Container logs (via PodSnapshot or direct fallback)
             logs_result = session.run(
-                "MATCH (e:ChaosRun {run_id: $rid}) "
-                "OPTIONAL MATCH (e)-[:HAS_POD_SNAPSHOT]->(p:PodSnapshot)"
-                "-[:HAS_CONTAINER_LOG]->(l:ContainerLog) "
-                "WITH e, collect(l) AS pod_logs "
-                "OPTIONAL MATCH (e)-[:HAS_CONTAINER_LOG]->(dl:ContainerLog) "
-                "WITH pod_logs + collect(dl) AS all_logs "
-                "UNWIND all_logs AS l "
+                "CALL () { "
+                "  MATCH (e:ChaosRun {run_id: $rid})"
+                "  -[:HAS_POD_SNAPSHOT]->(p:PodSnapshot)"
+                "  -[:HAS_CONTAINER_LOG]->(l:ContainerLog) "
+                "  RETURN l "
+                "  UNION "
+                "  MATCH (e:ChaosRun {run_id: $rid})"
+                "  -[:HAS_CONTAINER_LOG]->(l:ContainerLog) "
+                "  RETURN l "
+                "} "
                 "RETURN DISTINCT properties(l) AS props",
                 rid=run_id,
             )

@@ -68,9 +68,9 @@ spec:
           # that killing productcatalogservice actually causes disruption.
 
           # Probe 1: Product page (strict) — directly depends on productcatalog.
-          # With 1s timeout and 0 retries, a single check that lands during the
-          # ~1s outage window immediately fails the probe. Over 120s with 2s
-          # interval (~60 checks), this is near-certain to catch at least one.
+          # With 3s timeout and 1 retry, tolerates normal cluster jitter but
+          # still catches pod-delete disruption (multi-second outages). Over
+          # 120s with 2s interval (~60 checks), near-certain to catch at least one.
           - name: frontend-product-strict
             type: httpProbe
             mode: Continuous
@@ -81,12 +81,12 @@ spec:
                   criteria: ==
                   responseCode: "200"
             runProperties:
-              probeTimeout: 1s
+              probeTimeout: 3s
               interval: 2s
-              retry: 0
+              retry: 1
 
           # Probe 2: Homepage (strict) — depends on productcatalog + recommendation + ad.
-          # Same tight settings as above.
+          # Same settings as above.
           - name: frontend-homepage-strict
             type: httpProbe
             mode: Continuous
@@ -97,9 +97,9 @@ spec:
                   criteria: ==
                   responseCode: "200"
             runProperties:
-              probeTimeout: 1s
+              probeTimeout: 3s
               interval: 2s
-              retry: 0
+              retry: 1
 
           # ── Tolerant probes ─────────────────────────────────────────
           # These absorb the recovery window (~1-2s). If the strategy
