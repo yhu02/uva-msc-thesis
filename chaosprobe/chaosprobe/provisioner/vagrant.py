@@ -445,38 +445,9 @@ class _VagrantMixin:
             raise RuntimeError("No running Vagrant VMs found")
 
         hosts = []
-        env = self._get_vagrant_env()
         for vm_name in running_vms:
             try:
-                # Get SSH config for this VM
-                result = subprocess.run(
-                    ["vagrant", "ssh-config", vm_name],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    cwd=str(vagrant_dir),
-                    env=env,
-                    timeout=60,
-                )
-
-                ssh_config = {}
-                for line in result.stdout.strip().split("\n"):
-                    line = line.strip()
-                    if " " in line:
-                        key, value = line.split(" ", 1)
-                        ssh_config[key.lower()] = value
-
-                # Get the private network IP from vagrant
-                ip_result = subprocess.run(
-                    ["vagrant", "ssh", vm_name, "-c", "hostname -I | awk '{print $2}'"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    cwd=str(vagrant_dir),
-                    env=env,
-                    timeout=60,
-                )
-                private_ip = ip_result.stdout.strip()
+                info = self._get_vagrant_vm_ssh_info(vagrant_dir, vm_name)
 
                 # Determine role based on VM name
                 if vm_name.startswith("cp"):
@@ -484,24 +455,65 @@ class _VagrantMixin:
                 else:
                     roles = ["worker"]
 
-                host = {
+                hosts.append({
                     "name": vm_name,
-                    "ip": private_ip,
-                    "ansible_host": private_ip,
-                    "ansible_user": ssh_config.get("user", "vagrant"),
-                    "ansible_ssh_private_key_file": ssh_config.get("identityfile", "").strip('"'),
+                    "ip": info["ip"],
+                    "ansible_host": info["ip"],
+                    "ansible_user": info["user"],
+                    "ansible_ssh_private_key_file": info["ssh_key"],
                     "roles": roles,
-                }
-                hosts.append(host)
+                })
 
             except subprocess.TimeoutExpired:
-                print(f"Warning: Timed out getting SSH config for {vm_name} (60s)")
+                print(f"Warning: Timed out getting SSH config for {vm_name} (30s)")
                 continue
             except subprocess.CalledProcessError as e:
                 print(f"Warning: Failed to get SSH config for {vm_name}: {e}")
                 continue
 
         return hosts
+
+    def _get_vagrant_vm_ssh_info(
+        self, vagrant_dir: Path, vm_name: str,
+    ) -> dict:
+        """Get SSH connection info for a single Vagrant VM.
+
+        Returns:
+            Dict with ``ip``, ``user``, and ``ssh_key`` keys.
+        """
+        env = self._get_vagrant_env()
+
+        result = subprocess.run(
+            ["vagrant", "ssh-config", vm_name],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(vagrant_dir),
+            env=env,
+            timeout=30,
+        )
+        ssh_config = {}
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if " " in line:
+                key, value = line.split(" ", 1)
+                ssh_config[key.lower()] = value
+
+        ip_result = subprocess.run(
+            ["vagrant", "ssh", vm_name, "-c", "hostname -I | awk '{print $2}'"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(vagrant_dir),
+            env=env,
+            timeout=30,
+        )
+
+        return {
+            "ip": ip_result.stdout.strip(),
+            "user": ssh_config.get("user", "vagrant"),
+            "ssh_key": ssh_config.get("identityfile", "").strip('"'),
+        }
 
     def vagrant_fetch_kubeconfig(
         self,
@@ -511,27 +523,21 @@ class _VagrantMixin:
         """Fetch kubeconfig from a Vagrant control plane VM."""
         vagrant_dir = Path(vagrant_dir)
 
-        # Get host information from Vagrant
-        hosts = self.get_vagrant_ssh_config(vagrant_dir)
-        if not hosts:
-            raise RuntimeError("No running Vagrant VMs found")
+        # Query only the first control plane VM instead of iterating
+        # all VMs — avoids slow vagrant subprocess calls per worker.
+        cp_name = "cp1"
+        try:
+            cp_info = self._get_vagrant_vm_ssh_info(vagrant_dir, cp_name)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Failed to get SSH info for control plane VM '{cp_name}': {e}"
+            ) from e
 
-        # Find control plane host
-        cp_hosts = [h for h in hosts if "control_plane" in h.get("roles", [])]
-        if not cp_hosts:
-            raise RuntimeError("No control plane VM found")
-
-        cp_host = cp_hosts[0]
-        control_plane_ip = cp_host["ip"]
-        ssh_user = cp_host["ansible_user"]
-        ssh_key = cp_host.get("ansible_ssh_private_key_file")
-
-        if ssh_key:
-            ssh_key = Path(ssh_key)
+        ssh_key = Path(cp_info["ssh_key"]) if cp_info["ssh_key"] else None
 
         return self.fetch_kubeconfig(
-            control_plane_host=control_plane_ip,
-            ansible_user=ssh_user,
+            control_plane_host=cp_info["ip"],
+            ansible_user=cp_info["user"],
             output_path=output_path,
             ssh_key=ssh_key,
         )

@@ -457,6 +457,41 @@ class _ChaosCenterAPIMixin:
             print(f"    ChaosCenter: could not look up experiment '{experiment_name}': {exc}")
         return None
 
+    def chaoscenter_list_experiments(
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
+    ) -> list[dict]:
+        """Return all experiments for the given project.
+
+        Returns:
+            List of dicts with ``experimentID`` and ``name`` keys.
+        """
+        try:
+            resp = self._chaoscenter_api_request(
+                gql_url,
+                data={
+                    "query": (
+                        "query($pid: ID!, $req: ListExperimentRequest!) "
+                        "{ listExperiment(projectID: $pid, request: $req) "
+                        "{ totalNoOfExperiments experiments { experimentID name } } }"
+                    ),
+                    "variables": {
+                        "pid": project_id,
+                        "req": {"pagination": {"page": 0, "limit": 50}},
+                    },
+                },
+                token=token,
+            )
+            return (
+                (resp.get("data") or {})
+                .get("listExperiment", {})
+                .get("experiments", [])
+            ) or []
+        except Exception:
+            return []
+
     def chaoscenter_delete_experiment(
         self,
         gql_url: str,
@@ -483,6 +518,8 @@ class _ChaosCenterAPIMixin:
             )
             return True
         except Exception as exc:
+            if "already deleted" in str(exc).lower():
+                return True
             print(f"    ChaosCenter: delete failed: {exc}")
             return False
 

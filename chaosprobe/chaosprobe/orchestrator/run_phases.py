@@ -212,6 +212,36 @@ def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
         )
 
 
+def _clean_stale_chaoscenter_experiments(
+    chaoscenter_config: Optional[Dict[str, Any]],
+) -> None:
+    """Remove leftover ChaosCenter experiments from previous runs.
+
+    Called once during pre-flight so the dashboard starts clean without
+    deleting experiments created during the current session.
+    """
+    if not chaoscenter_config:
+        return
+    setup = LitmusSetup(skip_k8s_init=True)
+    experiments = setup.chaoscenter_list_experiments(
+        gql_url=chaoscenter_config["gql_url"],
+        project_id=chaoscenter_config["project_id"],
+        token=chaoscenter_config["token"],
+    )
+    if not experiments:
+        return
+    click.echo(f"  Cleaning up {len(experiments)} stale experiment(s) from ChaosCenter...")
+    for exp in experiments:
+        exp_id = exp.get("experimentID", "")
+        if exp_id:
+            setup.chaoscenter_delete_experiment(
+                gql_url=chaoscenter_config["gql_url"],
+                project_id=chaoscenter_config["project_id"],
+                token=chaoscenter_config["token"],
+                experiment_id=exp_id,
+            )
+
+
 def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
     """Verify ChaosCenter port-forwards are active (set up by init) and auto-configure."""
     cc_frontend_port = LitmusSetup.CHAOSCENTER_FRONTEND_PORT
@@ -334,6 +364,7 @@ def run_preflight_checks(
     _setup_prometheus_pf(measure_prometheus)
     _setup_neo4j_pf(neo4j_uri)
     chaoscenter_config = _setup_chaoscenter(namespace)
+    _clean_stale_chaoscenter_experiments(chaoscenter_config)
     _check_metrics_server()
 
     click.echo("  Deployments: waiting for readiness...")

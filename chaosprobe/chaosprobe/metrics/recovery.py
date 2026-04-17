@@ -163,6 +163,10 @@ class RecoveryWatcher:
                             self._pod_ready.pop(pod_name, None)
                             # Pod deleted — start or extend a recovery cycle
                             if self._pending_deletion is None:
+                                # Use local clock for sub-ms precision.
+                                # Both deletion and ready use the same
+                                # clock (watch-event reception time) to
+                                # avoid skew between local and K8s clocks.
                                 self._pending_deletion = now
 
                         elif event_type in ("ADDED", "MODIFIED"):
@@ -173,16 +177,14 @@ class RecoveryWatcher:
                             # Trigger on not-ready → ready transition
                             if is_ready and not was_ready and self._pending_deletion is not None:
                                 scheduled_time = self._get_scheduled_time(pod)
-                                # Use the Ready condition's lastTransitionTime
-                                # for millisecond precision instead of the
-                                # watch event reception time.
-                                ready_time = self._get_ready_time(pod) or now
+                                # Use local clock (now) for sub-ms precision,
+                                # consistent with deletionTime's clock source.
                                 self._cycles.append(
                                     self._finalize_cycle(
                                         {
                                             "deletionTime": self._pending_deletion,
                                             "scheduledTime": scheduled_time,
-                                            "readyTime": ready_time,
+                                            "readyTime": now,
                                         }
                                     )
                                 )
