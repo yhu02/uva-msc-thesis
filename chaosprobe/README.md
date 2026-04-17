@@ -185,7 +185,7 @@ uv run chaosprobe delete -n <namespace>     # Delete ALL ChaosProbe infrastructu
 
 ### Run
 
-The `run` command runs the full placement experiment matrix. Default strategies: `baseline,colocate,spread,antagonistic,random`.
+The `run` command runs the full placement experiment matrix. Default strategies: `baseline,default,colocate,spread,antagonistic,random`.
 
 ```bash
 uv run chaosprobe run -n online-boutique                          # All defaults

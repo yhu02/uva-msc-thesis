@@ -27,15 +27,17 @@
 #   check (after retries) marks the entire probe as "Failed". This makes the
 #   probe mode and retry/timeout settings critical for differentiation.
 #
-#   We use a layered strategy:
-#   - 2 strict probes (short timeout, few retries) that are expected to fail
-#     when productcatalog is down — these confirm the chaos has impact.
-#   - 2 tolerant probes (long timeout, many retries) that can absorb the
-#     ~1-2s recovery window — these differentiate fast-recovery strategies.
-#   - 1 Edge probe (checks only at start + end) — validates the system
-#     recovers after chaos stops.
-#   - 1 control probe (independent endpoint) — detects node-level contention
-#     that affects co-located services unrelated to the killed dependency.
+#   We use a layered strategy with a spread of sensitivities so that
+#   different recovery speeds produce different scores:
+#   - 2 strict probes (3s timeout, 1 retry ≈ 6s window) — expected to
+#     fail under pod-delete; confirm that chaos has impact.
+#   - 2 moderate probes (3-5s timeout, 2 retries ≈ 9-15s window) — pass
+#     only when recovery is fast (<3s); this is where strategy
+#     differences become visible.
+#   - 1 Edge probe (checks only at start + end) — validates eventual
+#     recovery after chaos stops.
+#   - 1 control probe (healthz, 5s timeout, 2 retries ≈ 15s) — detects
+#     node-level contention that affects local endpoints.
 #
 #   With 6 probes, resilience scores can be: 0, 17, 33, 50, 67, 83, or 100%.
 apiVersion: litmuschaos.io/v1alpha1
@@ -57,7 +59,7 @@ spec:
             - name: TOTAL_CHAOS_DURATION
               value: "120"
             - name: CHAOS_INTERVAL
-              value: "10"
+              value: "5"
             - name: FORCE
               value: "true"
             - name: PODS_AFFECTED_PERC
@@ -101,16 +103,18 @@ spec:
               interval: 2s
               retry: 1
 
-          # ── Tolerant probes ─────────────────────────────────────────
-          # These absorb the recovery window (~1-2s). If the strategy
-          # allows fast recovery, the retries succeed before the probe
-          # gives up. This is where strategy differences become visible.
+          # ── Moderate probes ─────────────────────────────────────────
+          # These have enough tolerance to absorb a fast (<3s) recovery
+          # but NOT a slow one. With CHAOS_INTERVAL=5 the pod is deleted
+          # every 5s; a strategy that recovers in <3s will pass these,
+          # while one that takes >3s will fail — this is where placement
+          # differences become visible.
 
-          # Probe 3: Homepage (tolerant) — same endpoint but with generous
-          # retries. Each check gets up to 5 attempts × 10s = 50s to succeed.
-          # The 5s interval means fewer check windows, reducing the chance of
-          # catching a transient failure.
-          - name: frontend-homepage-tolerant
+          # Probe 3: Homepage (moderate) — same endpoint as the strict
+          # probe but with 2 retries × 3s = ~9s total window per check.
+          # The 3s interval gives ~40 check windows over 120s of chaos,
+          # making it likely to catch recoveries slower than ~3s.
+          - name: frontend-homepage-moderate
             type: httpProbe
             mode: Continuous
             httpProbe/inputs:
@@ -120,15 +124,15 @@ spec:
                   criteria: ==
                   responseCode: "200"
             runProperties:
-              probeTimeout: 10s
-              interval: 5s
-              retry: 4
+              probeTimeout: 3s
+              interval: 3s
+              retry: 2
 
-          # Probe 4: Cart page (control) — hits cartservice + redis, NOT
-          # productcatalog. This probe should pass unless node-level resource
-          # contention (from pod-delete churn on the same node) degrades the
-          # frontend's ability to serve unrelated routes.
-          # Generous timeout to avoid false negatives from transient load.
+          # Probe 4: Cart page (moderate control) — hits cartservice +
+          # redis, NOT productcatalog. Should pass under spread/default
+          # but fail under colocate/antagonistic where node-level resource
+          # contention from pod-delete churn degrades unrelated routes.
+          # Moderate tolerance: 2 retries × 5s = ~15s window.
           - name: frontend-cart
             type: httpProbe
             mode: Continuous
@@ -139,9 +143,9 @@ spec:
                   criteria: ==
                   responseCode: "200"
             runProperties:
-              probeTimeout: 10s
-              interval: 5s
-              retry: 3
+              probeTimeout: 5s
+              interval: 4s
+              retry: 2
 
           # ── Edge probe ──────────────────────────────────────────────
           # Checks only at the START and END of chaos. Validates that the
@@ -173,6 +177,8 @@ spec:
           # Probe 6: Healthcheck (control) — pure infrastructure health.
           # Failure here indicates the placement strategy causes so much
           # node-level contention that even local endpoints are degraded.
+          # Moderate tolerance (5s × 2 retries ≈ 15s) — tight enough to
+          # detect sustained node pressure from colocated pod churn.
           - name: frontend-healthz
             type: httpProbe
             mode: Continuous
@@ -183,6 +189,6 @@ spec:
                   criteria: ==
                   responseCode: "200"
             runProperties:
-              probeTimeout: 10s
-              interval: 5s
-              retry: 3
+              probeTimeout: 5s
+              interval: 4s
+              retry: 2

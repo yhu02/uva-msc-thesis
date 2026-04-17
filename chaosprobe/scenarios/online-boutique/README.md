@@ -124,6 +124,66 @@ Tests disk I/O pressure on the product catalog. Measures whether the service deg
 chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-io-stress/experiment.yaml
 ```
 
+### 8. Inter-Service Latency — Checkout Fanout
+
+**Directory:** `contention-checkout-latency/`
+**Target:** checkoutservice (Go, orchestrator calling 5+ services)
+**Experiment:** `pod-network-latency` — 200ms latency injection for 60s
+
+Injects network latency on the checkout fanout point to measure cascading latency across downstream dependencies (payment, shipping, email, cart, currency, product catalog).
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-checkout-latency/experiment.yaml --measure-latency
+```
+
+### 9. Inter-Service Latency — Product Catalog
+
+**Directory:** `contention-interservice-latency/`
+**Target:** productcatalogservice (Go, central dependency)
+**Experiment:** `pod-network-latency` — network latency injection
+
+Tests whether co-location mitigates or amplifies network latency effects. Under colocate, services communicate locally; under spread, cross-node traffic amplifies injected latency.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-interservice-latency/experiment.yaml --measure-latency
+```
+
+### 10. Inter-Service Latency — Frontend Edge
+
+**Directory:** `contention-frontend-latency/`
+**Target:** frontend (Go, user-facing edge service)
+**Experiment:** `pod-network-latency` — network latency on ingress
+
+Simulates network congestion at the ingress layer. Frontend calls all backend services, so placement determines how many calls traverse the physical network.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-frontend-latency/experiment.yaml --measure-latency
+```
+
+### 11. Database Throughput — Redis Contention
+
+**Directory:** `contention-db-throughput/`
+**Target:** redis-cart (Redis, in-memory cart session store)
+**Experiment:** `pod-cpu-hog` + `pod-memory-hog` — resource stress on Redis
+
+Tests how placement affects Redis SET/GET throughput under resource contention. Under colocate, Redis shares node resources with high-traffic services.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-db-throughput/experiment.yaml
+```
+
+### 12. Disk Throughput — I/O Saturation
+
+**Directory:** `contention-disk-throughput/`
+**Target:** productcatalogservice (Go, reads product catalog JSON)
+**Experiment:** `pod-io-stress` — aggressive disk I/O stress
+
+Saturates disk bandwidth to test whether co-located services suffer from shared I/O. Under colocate, all services share a single node's disk; under spread, I/O stress is isolated.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-disk-throughput/experiment.yaml
+```
+
 ## Workflow
 
 ### Step 1: Deploy the application
@@ -165,13 +225,14 @@ chaosprobe cleanup online-boutique --all
 
 ## Placement Scenarios
 
-Placement experiments control pod scheduling to study how co-location affects performance under chaos. All strategies use a single shared experiment file (`placement-experiment.yaml` — pod-delete on checkoutservice with frontend HTTP probe).
+Placement experiments control pod scheduling to study how co-location affects performance under chaos. All strategies use a single shared experiment file (`placement-experiment.yaml` — pod-delete on productcatalogservice with 6 frontend HTTP probes at varying sensitivity levels).
 
 **Strategies:**
 
 | Strategy | Description |
 |---|---|
-| **baseline** | Default Kubernetes scheduling (control) |
+| **baseline** | No-fault control — no chaos injected (establishes performance baseline) |
+| **default** | Default Kubernetes scheduling with full chaos injection |
 | **colocate** | All pods on a single node (max contention) |
 | **spread** | Pods distributed evenly across nodes (min contention) |
 | **antagonistic** | Resource-heavy pods co-located (worst-case contention) |
