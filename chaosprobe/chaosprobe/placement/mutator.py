@@ -7,12 +7,13 @@ Uses the Kubernetes API to:
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from chaosprobe.config.topology import _extract_dependencies_from_deployment
 from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
 from chaosprobe.orchestrator.preflight import LITMUS_INFRA_DEPLOYMENTS
@@ -152,12 +153,39 @@ class PlacementMutator:
 
         return result
 
+    def get_service_dependencies(self) -> List[Tuple[str, str]]:
+        """Discover ``(source, target)`` service dependency edges for the namespace.
+
+        Reads every Deployment spec in the namespace and extracts
+        ``*_SERVICE_ADDR`` / ``*_ADDR`` environment variables using the
+        same parser as :mod:`chaosprobe.config.topology`.  Used by the
+        dependency-aware placement strategy.
+        """
+        deps = self.apps_api.list_namespaced_deployment(self.namespace)
+        serializer = self.apps_api.api_client.sanitize_for_serialization
+        edges: List[Tuple[str, str]] = []
+        seen: set = set()
+        for dep in deps.items:
+            if dep.metadata.name in LITMUS_INFRA_DEPLOYMENTS:
+                continue
+            try:
+                dep_dict = serializer(dep)
+            except Exception:
+                continue
+            for route in _extract_dependencies_from_deployment(dep_dict):
+                key = (route[0], route[1])
+                if key not in seen:
+                    seen.add(key)
+                    edges.append(key)
+        return edges
+
     def apply_strategy(
         self,
         strategy: PlacementStrategy,
         target_node: Optional[str] = None,
         seed: Optional[int] = None,
         deployments: Optional[List[str]] = None,
+        dependencies: Optional[List[Tuple[str, str]]] = None,
         wait: bool = True,
         timeout: int = 300,
     ) -> NodeAssignment:
@@ -169,6 +197,9 @@ class PlacementMutator:
             seed: Random seed for RANDOM strategy.
             deployments: Optional list of deployment names to target.
                          If None, targets all deployments in the namespace.
+            dependencies: For DEPENDENCY_AWARE, ``(source, target)`` edges.
+                         If None and the strategy needs them, they are
+                         auto-discovered from the namespace.
             wait: Wait for rollouts to complete after applying.
             timeout: Timeout in seconds for rollout completion.
 
@@ -185,12 +216,19 @@ class PlacementMutator:
         if not all_deps:
             raise ValueError(f"No deployments found in namespace '{self.namespace}'")
 
+        if (
+            strategy == PlacementStrategy.DEPENDENCY_AWARE
+            and dependencies is None
+        ):
+            dependencies = self.get_service_dependencies()
+
         assignment = compute_assignments(
             strategy=strategy,
             deployments=all_deps,
             nodes=nodes,
             target_node=target_node,
             seed=seed,
+            dependencies=dependencies,
         )
 
         self._apply_assignment(assignment)

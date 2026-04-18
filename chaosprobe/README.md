@@ -185,7 +185,7 @@ uv run chaosprobe delete -n <namespace>     # Delete ALL ChaosProbe infrastructu
 
 ### Run
 
-The `run` command runs the full placement experiment matrix. Default strategies: `baseline,default,colocate,spread,antagonistic,random`.
+The `run` command runs the full placement experiment matrix. Default strategies: `baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware`.
 
 ```bash
 uv run chaosprobe run -n online-boutique                          # All defaults
@@ -201,7 +201,9 @@ uv run chaosprobe run -n online-boutique --no-visualize           # Skip chart g
 uv run chaosprobe placement apply colocate -n online-boutique
 uv run chaosprobe placement apply spread -n online-boutique
 uv run chaosprobe placement apply random -n online-boutique --seed 42
-uv run chaosprobe placement apply antagonistic -n online-boutique
+uv run chaosprobe placement apply adversarial -n online-boutique
+uv run chaosprobe placement apply best-fit -n online-boutique
+uv run chaosprobe placement apply dependency-aware -n online-boutique
 uv run chaosprobe placement show -n online-boutique
 uv run chaosprobe placement nodes
 uv run chaosprobe placement clear -n online-boutique
@@ -296,7 +298,7 @@ ChaosProbe CLI (cli.py + commands/)
       ├── Infrastructure Provisioner (applies raw K8s manifests)
       │
       ├── Placement Engine
-      │   ├── Strategy (colocate, spread, random, antagonistic)
+      │   ├── Strategy (colocate, spread, random, adversarial, best-fit, dependency-aware)
       │   └── Mutator (nodeSelector injection, rollout management)
       │
       ├── Chaos Runner (ChaosCenter GraphQL API — save, trigger, poll experiments)

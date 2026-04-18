@@ -1,5 +1,5 @@
 # Placement Experiment — Pod-delete on productcatalogservice
-# Used by all placement strategies (baseline, colocate, spread, antagonistic, random).
+# Used by all placement strategies (baseline, default, colocate, spread, adversarial, random, best-fit, dependency-aware).
 # The runner adds a unique suffix to metadata.name automatically.
 #
 # Usage (automated):
@@ -132,7 +132,7 @@ spec:
 
           # Probe 4: Cart page (moderate control) — hits cartservice +
           # redis, NOT productcatalog. Should pass under spread/default
-          # but fail under colocate/antagonistic where node-level resource
+          # but fail under colocate/adversarial where node-level resource
           # contention from pod-delete churn degrades unrelated routes.
           # Moderate tolerance: 2 retries × 5s = ~15s window.
           - name: frontend-cart

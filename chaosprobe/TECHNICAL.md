@@ -197,18 +197,20 @@ Output includes: `deploymentName`, `timeWindow`, `recovery`, `podStatus`, `event
 
 #### strategy.py
 
-**Enum: `PlacementStrategy`** — `colocate`, `spread`, `random`, `antagonistic`
+**Enum: `PlacementStrategy`** — `colocate`, `spread`, `random`, `adversarial`, `best-fit`, `dependency-aware`
 
 | Strategy | Behavior |
 |---|---|
 | `colocate` | All deployments pinned to a single node (max resource contention) |
 | `spread` | Round-robin across all schedulable nodes (min contention) |
 | `random` | Random assignment per deployment (reproducible with seed) |
-| `antagonistic` | Top-N resource-heavy deployments on one node, rest distributed |
+| `adversarial` | Top-N resource-heavy deployments on one node (worst-fit) |
+| `best-fit` | Best-fit decreasing bin-packing (Borg-style; concentrates load on fewest nodes) |
+| `dependency-aware` | BFS partition over the service-dependency graph (co-locates communicating services) |
 
 **Dataclasses**: `NodeInfo`, `DeploymentInfo`, `NodeAssignment`
 
-**Entry point**: `compute_assignments(strategy, deployments, nodes, target_node=None, seed=None) -> NodeAssignment`
+**Entry point**: `compute_assignments(strategy, deployments, nodes, target_node=None, seed=None, dependencies=None) -> NodeAssignment`
 
 #### mutator.py
 
@@ -414,7 +416,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 |---|---|---|
 | `-n, --namespace` | from experiment YAML | Target namespace |
 | `-o, --output-dir` | `results` | Base results directory (timestamped subdir created) |
-| `-s, --strategies` | `baseline,default,colocate,spread,antagonistic,random` | Comma-separated strategies |
+| `-s, --strategies` | `baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware` | Comma-separated strategies |
 | `-i, --iterations` | 1 | Iterations per strategy |
 | `-e, --experiment` | `scenarios/online-boutique/placement-experiment.yaml` | Experiment YAML file |
 | `-t, --timeout` | 300 | Timeout per experiment (seconds) |
@@ -440,7 +442,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 
 | Command | Purpose |
 |---|---|
-| `chaosprobe placement apply <strategy> -n <ns>` | Apply strategy (colocate/spread/random/antagonistic) |
+| `chaosprobe placement apply <strategy> -n <ns>` | Apply strategy (colocate/spread/random/adversarial/best-fit/dependency-aware) |
 | `chaosprobe placement show -n <ns>` | Display current pod placement |
 | `chaosprobe placement nodes` | List cluster nodes with resources |
 | `chaosprobe placement clear -n <ns>` | Remove all placement constraints |
@@ -641,12 +643,14 @@ Microservice resilience under chaos varies with pod placement strategy due to di
 
 | Strategy | Assignment | Expected Contention |
 |---|---|---|
-| baseline | Default scheduler (no fault injected) | None (control) |
+| baseline | Default scheduler (trivial fault) | None (control) |
 | default | Default scheduler (full chaos) | Low (scheduler distributes) |
-| colocate | All 11 services on one node | Maximum |
+| colocate | All pods on one node | Maximum |
 | spread | Round-robin across nodes | Minimum |
-| antagonistic | Heavy services + target on one node | High |
+| adversarial | Heavy services + target on one node | High |
 | random | Random per-deployment (seed=42) | Variable |
+| best-fit | Bin-packing into fewest nodes | High |
+| dependency-aware | Co-locate communicating services | Moderate |
 
 ---
 
@@ -788,7 +792,7 @@ chaosprobe/
 | `Deployment` | `name`, `namespace`, `replicas` | Kubernetes deployments |
 | `Service` | `name` | Microservices in the dependency graph |
 | `ChaosRun` | `run_id`, `name` (display: `strategy (verdict)`), `session_id`, `strategy`, `timestamp`, `verdict`, `resilience_score`, `duration_s`, `mean_recovery_ms`, `median_recovery_ms`, `min_recovery_ms`, `max_recovery_ms`, `p95_recovery_ms`, `recovery_count`, `completed_cycles`, `incomplete_cycles`, `total_restarts`, `total_experiments`, `passed_experiments`, `failed_experiments`, `load_profile`, `load_total_requests`, `load_avg_response_ms`, `load_p95_response_ms`, `load_error_rate`, `load_rps`, `node_name`, `node_capacity_cpu`, `node_capacity_memory`, `scenario_json`, `event_timeline` | Experiment run with all summary data |
-| `PlacementStrategy` | `name` | Placement strategy (colocate/spread/random/antagonistic) |
+| `PlacementStrategy` | `name` | Placement strategy (colocate/spread/random/adversarial/best-fit/dependency-aware) |
 | `RecoveryCycle` | `run_id`, `name` (display: `cycle #N (Xms)`), `seq`, `deletion_time`, `scheduled_time`, `ready_time`, `deletion_to_scheduled_ms`, `scheduled_to_ready_ms`, `total_recovery_ms` | Per-pod deletion→scheduled→ready timing |
 | `ExperimentResult` | `run_id`, `name` (display: `experiment (verdict)`), `experiment_name`, `engine_name`, `phase`, `verdict`, `probe_success_pct`, `fail_step` | LitmusChaos experiment outcome |
 | `ProbeResult` | `run_id`, `name` (display: `probe (verdict)`), `probe_name`, `type`, `mode`, `verdict`, `description` | Individual probe pass/fail |
@@ -803,7 +807,7 @@ chaosprobe/
 
 | Relationship | From | To | Properties | Description |
 |---|---|---|---|---|
-| `DEPENDS_ON` | `Service` | `Service` | `host`, `protocol`, `description` | Service dependency graph |
+| `DEPENDS_ON` | `Service` | `Service` | `port`, `protocol`, `description` | Service dependency graph |
 | `EXPOSES` | `Deployment` | `Service` | — | Deployment exposes a service |
 | `SCHEDULED_ON` | `Deployment` | `K8sNode` | `run_id` | Placement assignment per run |
 | `USED_STRATEGY` | `ChaosRun` | `PlacementStrategy` | — | Which strategy a run used |
@@ -1029,7 +1033,7 @@ ORDER BY avg_score DESC
 
 #### Repeat
 
-Change `:param {rid: "..."}` to a different strategy's run ID (e.g. colocate, default, antagonistic) and re-run Steps 2–8 to compare how placement affected each dimension.
+Change `:param {rid: "..."}` to a different strategy's run ID (e.g. colocate, default, adversarial) and re-run Steps 2–8 to compare how placement affected each dimension.
 
 ---
 
@@ -1353,7 +1357,7 @@ The analysis prompt (`ANALYSIS_PROMPT.md`) instructs the model to perform 9 anal
 │  │  5. PROBE ANALYSIS                                              │    │
 │  │     ─ Per-probe verdict table across all strategies             │    │
 │  │     ─ Score interpretation: 16% = only healthz survived         │    │
-│  │       66% = tolerant+edge+cart+healthz passed                   │    │
+│  │       66% = moderate+edge+cart+healthz passed                   │    │
 │  │     ─ What differentiates strategy scores                       │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                          │                                              │

@@ -235,13 +235,15 @@ Placement experiments control pod scheduling to study how co-location affects mu
 | **default** | Default Kubernetes scheduling with full chaos injection |
 | **colocate** | All pods on a single node (max contention) |
 | **spread** | Pods distributed evenly across nodes (min contention) |
-| **antagonistic** | Resource-heavy pods co-located (worst-case contention) |
+| **adversarial** | Resource-heavy pods co-located (worst-case contention, worst-fit) |
 | **random** | Random node per deployment (chaotic, `--seed` for reproducibility) |
+| **best-fit** | Bin-packing: pack deployments into fewest nodes (Borg-style scoring) |
+| **dependency-aware** | Co-locate communicating services via service-graph BFS partitioning |
 
 ### Automated (recommended)
 
 ```bash
-# Run all strategies (baseline, colocate, spread, antagonistic, random)
+# Run all strategies (baseline, default, colocate, spread, random, adversarial, best-fit, dependency-aware)
 chaosprobe run -n online-boutique
 
 # Run specific strategies only

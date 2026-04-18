@@ -1,16 +1,21 @@
 """Placement strategy definitions and node assignment logic.
 
-Provides four strategies for pod placement:
-- colocate:     Pin all pods to a single node (maximum resource contention)
-- spread:       Distribute pods evenly across nodes (minimum contention)
-- random:       Random node assignment per deployment (chaotic, reproducible via seed)
-- antagonistic: Group resource-heavy pods on the same node (worst-case contention)
+Provides six strategies for pod placement:
+- colocate:         Pin all pods to a single node (maximum resource contention)
+- spread:           Distribute pods evenly across nodes (minimum contention)
+- random:           Random node assignment per deployment (chaotic, reproducible via seed)
+- adversarial:     Group resource-heavy pods on the same node (worst-case, worst-fit)
+- best-fit:         Bin-packing: pack deployments into fewest nodes
+                    (cf. Borg best-fit scoring; Verma et al., EuroSys 2015)
+- dependency-aware: Co-locate communicating services based on the service
+                    dependency graph (cf. DeathStarBench, Sinan, μServe)
 """
 
 import random
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class PlacementStrategy(str, Enum):
@@ -19,7 +24,9 @@ class PlacementStrategy(str, Enum):
     COLOCATE = "colocate"
     SPREAD = "spread"
     RANDOM = "random"
-    ANTAGONISTIC = "antagonistic"
+    ADVERSARIAL = "adversarial"
+    BEST_FIT = "best-fit"
+    DEPENDENCY_AWARE = "dependency-aware"
 
     def describe(self) -> str:
         """Human-readable description of the strategy."""
@@ -36,9 +43,20 @@ class PlacementStrategy(str, Enum):
                 "Assign each deployment to a random node. Creates unpredictable "
                 "contention patterns. Use --seed for reproducibility."
             ),
-            self.ANTAGONISTIC: (
+            self.ADVERSARIAL: (
                 "Intentionally co-locate resource-heavy pods on the same node "
-                "to create worst-case contention for IO and execution."
+                "to create worst-case contention for IO and execution "
+                "(worst-fit bin-packing)."
+            ),
+            self.BEST_FIT: (
+                "Best-fit bin-packing: place each deployment on the node with "
+                "the smallest remaining capacity that still fits. Mimics "
+                "Borg/Kubernetes default scoring to concentrate load on fewer nodes."
+            ),
+            self.DEPENDENCY_AWARE: (
+                "Partition deployments by service dependency graph: "
+                "co-locate communicating services on the same node and "
+                "spread non-communicating ones, minimising cross-node hops."
             ),
         }
         return descriptions[self]
@@ -128,6 +146,7 @@ def compute_assignments(
     nodes: List[NodeInfo],
     target_node: Optional[str] = None,
     seed: Optional[int] = None,
+    dependencies: Optional[List[Tuple[str, str]]] = None,
 ) -> NodeAssignment:
     """Compute node assignments for a given strategy.
 
@@ -137,6 +156,8 @@ def compute_assignments(
         nodes: List of schedulable nodes.
         target_node: For COLOCATE, the specific node to target (optional).
         seed: Random seed for RANDOM strategy reproducibility.
+        dependencies: For DEPENDENCY_AWARE, a list of ``(source, target)``
+            service dependency edges.  Ignored by other strategies.
 
     Returns:
         A NodeAssignment with deployment→node mappings.
@@ -162,8 +183,14 @@ def compute_assignments(
         return _compute_spread(deployments, schedulable, node_names)
     elif strategy == PlacementStrategy.RANDOM:
         return _compute_random(deployments, schedulable, node_names, seed)
-    elif strategy == PlacementStrategy.ANTAGONISTIC:
-        return _compute_antagonistic(deployments, schedulable, node_names)
+    elif strategy == PlacementStrategy.ADVERSARIAL:
+        return _compute_adversarial(deployments, schedulable, node_names)
+    elif strategy == PlacementStrategy.BEST_FIT:
+        return _compute_best_fit(deployments, schedulable, node_names)
+    elif strategy == PlacementStrategy.DEPENDENCY_AWARE:
+        return _compute_dependency_aware(
+            deployments, schedulable, node_names, dependencies or []
+        )
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 
@@ -268,7 +295,7 @@ def _compute_random(
     )
 
 
-def _compute_antagonistic(
+def _compute_adversarial(
     deployments: List[DeploymentInfo],
     nodes: List[NodeInfo],
     node_names: List[str],
@@ -285,7 +312,7 @@ def _compute_antagonistic(
         # Only one node: same as colocate
         assignments = {d.name: node_names[0] for d in deployments}
         return NodeAssignment(
-            strategy=PlacementStrategy.ANTAGONISTIC,
+            strategy=PlacementStrategy.ADVERSARIAL,
             assignments=assignments,
             metadata={
                 "description": "Only 1 schedulable node; behaves like colocate",
@@ -324,7 +351,7 @@ def _compute_antagonistic(
             light_names.append(dep.name)
 
     return NodeAssignment(
-        strategy=PlacementStrategy.ANTAGONISTIC,
+        strategy=PlacementStrategy.ADVERSARIAL,
         assignments=assignments,
         metadata={
             "heavy_node": heavy_node,
@@ -333,6 +360,176 @@ def _compute_antagonistic(
             "description": (
                 f"Top {len(heavy_names)} resource-heavy deployments pinned to "
                 f"'{heavy_node}'; remaining {len(light_names)} distributed elsewhere"
+            ),
+        },
+    )
+
+
+def _deployment_weight(d: DeploymentInfo) -> float:
+    """Combined CPU + memory weight, in millicore-equivalent units.
+
+    1 MiB of memory is scored as 1 millicore so the two dimensions are
+    comparable on a single axis — good enough for the small, roughly
+    homogeneous clusters ChaosProbe targets.
+    """
+    return d.cpu_request_millicores + d.memory_request_bytes / (1024 * 1024)
+
+
+def _compute_best_fit(
+    deployments: List[DeploymentInfo],
+    nodes: List[NodeInfo],
+    node_names: List[str],
+) -> NodeAssignment:
+    """Best-fit decreasing bin-packing.
+
+    Sort deployments by weight (largest first) and place each on the node
+    with the smallest remaining capacity that still accommodates it.  This
+    concentrates load onto the fewest nodes possible — the canonical
+    "best-fit" heuristic from the bin-packing literature and the default
+    philosophy of Borg's scoring function (Verma et al., EuroSys 2015).
+    """
+    # Remaining capacity per node, tracked as the same millicore-equivalent.
+    remaining: Dict[str, float] = {
+        n.name: n.allocatable_cpu_millicores
+        + n.allocatable_memory_bytes / (1024 * 1024)
+        for n in nodes
+    }
+    per_node: Dict[str, int] = {name: 0 for name in node_names}
+    assignments: Dict[str, str] = {}
+
+    sorted_deps = sorted(deployments, key=_deployment_weight, reverse=True)
+
+    for dep in sorted_deps:
+        w = _deployment_weight(dep)
+
+        # Prefer nodes that still have room; among those, pick the one
+        # whose post-placement slack is smallest (tightest fit).
+        fits = [(remaining[name] - w, name) for name in node_names if remaining[name] >= w]
+        if fits:
+            fits.sort()
+            chosen = fits[0][1]
+        else:
+            # Nothing fits cleanly — fall back to the node with the most
+            # remaining capacity (the scheduler would have to overcommit).
+            chosen = max(node_names, key=lambda n: remaining[n])
+
+        assignments[dep.name] = chosen
+        remaining[chosen] = max(0.0, remaining[chosen] - w)
+        per_node[chosen] += 1
+
+    used_nodes = sum(1 for c in per_node.values() if c > 0)
+
+    return NodeAssignment(
+        strategy=PlacementStrategy.BEST_FIT,
+        assignments=assignments,
+        metadata={
+            "distribution": per_node,
+            "nodes_used": used_nodes,
+            "description": (
+                f"Best-fit packing: {len(deployments)} deployments into "
+                f"{used_nodes}/{len(node_names)} nodes"
+            ),
+        },
+    )
+
+
+def _compute_dependency_aware(
+    deployments: List[DeploymentInfo],
+    nodes: List[NodeInfo],
+    node_names: List[str],
+    dependencies: List[Tuple[str, str]],
+) -> NodeAssignment:
+    """Dependency-aware partitioning via BFS on the service dependency graph.
+
+    Co-locates services that communicate (direct ``DEPENDS_ON`` edges) while
+    still spreading the workload across nodes.  The approach is a light
+    version of balanced k-way graph partitioning (cf. METIS / microservice
+    placement work such as μServe, DeathStarBench, Sinan, Orca):
+
+    1. Build an undirected adjacency from the dependency edges.
+    2. Pick a root (``frontend`` if present, else the highest-degree node).
+    3. BFS from the root, producing a traversal order where dependent
+       services are adjacent.
+    4. Chunk the order into ``K`` contiguous groups (``K`` = worker nodes);
+       each chunk is assigned to one node.  Contiguous BFS chunks keep
+       most direct-dependency pairs on the same node.
+
+    Edges whose endpoints land on the same node are "preserved" — this
+    count is reported in the metadata as a quality measure.
+    """
+    if not deployments:
+        return NodeAssignment(
+            strategy=PlacementStrategy.DEPENDENCY_AWARE,
+            assignments={},
+            metadata={
+                "distribution": {},
+                "edges_total": 0,
+                "edges_preserved": 0,
+                "description": "No deployments to place",
+            },
+        )
+
+    dep_names = {d.name for d in deployments}
+    edges = [(s, t) for s, t in dependencies if s in dep_names and t in dep_names]
+
+    adj: Dict[str, set] = {name: set() for name in dep_names}
+    for s, t in edges:
+        adj[s].add(t)
+        adj[t].add(s)
+
+    # Root selection: explicit "frontend" wins; otherwise highest degree
+    # (stable sort by name for determinism).
+    if "frontend" in dep_names:
+        root = "frontend"
+    else:
+        root = sorted(dep_names, key=lambda n: (-len(adj[n]), n))[0]
+
+    # BFS order (neighbours visited in alphabetical order for determinism).
+    order: List[str] = []
+    seen = {root}
+    queue: deque = deque([root])
+    while queue:
+        cur = queue.popleft()
+        order.append(cur)
+        for nb in sorted(adj[cur]):
+            if nb not in seen:
+                seen.add(nb)
+                queue.append(nb)
+
+    # Append any disconnected components in a deterministic order.
+    for name in sorted(dep_names):
+        if name not in seen:
+            order.append(name)
+            seen.add(name)
+
+    # Partition the ordered list into K (= number of worker nodes) roughly
+    # equal contiguous chunks.
+    k = len(node_names)
+    n = len(order)
+    chunk_size = max(1, n // k)
+    assignments: Dict[str, str] = {}
+    per_node: Dict[str, int] = {name: 0 for name in node_names}
+
+    for i, name in enumerate(order):
+        node_idx = min(i // chunk_size, k - 1)
+        chosen = node_names[node_idx]
+        assignments[name] = chosen
+        per_node[chosen] += 1
+
+    preserved = sum(1 for s, t in edges if assignments[s] == assignments[t])
+
+    return NodeAssignment(
+        strategy=PlacementStrategy.DEPENDENCY_AWARE,
+        assignments=assignments,
+        metadata={
+            "distribution": per_node,
+            "root": root,
+            "edges_total": len(edges),
+            "edges_preserved": preserved,
+            "description": (
+                f"Dependency-aware partition: {len(deployments)} deployments "
+                f"across {k} nodes (root={root}, "
+                f"{preserved}/{len(edges)} edges co-located)"
             ),
         },
     )

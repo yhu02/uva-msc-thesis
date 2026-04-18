@@ -301,7 +301,7 @@ For each of the configured strategies (as specified in STRATEGIES above):
 2. **Apply placement** (skip for baseline):
    - Excludes Litmus infra deployments (`chaos-exporter`, `chaos-operator*`, `event-tracker`, `subscriber`, `workflow-controller`)
    - Only pins the 12 application deployments
-   - Colocate: all → worker4 (most RAM). Spread: round-robin across 4 workers. Random: seeded random. Antagonistic: heavy pods → worker4, light → others
+   - Colocate: all → worker4 (most RAM). Spread: round-robin across 4 workers. Random: seeded random. Adversarial: heavy pods → worker4, light → others
    - Uses two-step Recreate strategy patch for node migration, then waits for rollouts
 3. **Settle** — 30s wait + deployment readiness verification
 4. **Run experiment** (per iteration):
@@ -331,7 +331,7 @@ EXPERIMENT RESULTS
   baseline         FAIL     0.0      1889ms     2274ms     completed
   colocate         FAIL     0.0      n/a        n/a        completed
   spread           FAIL     0.0      1969ms     3134ms     completed
-  antagonistic     FAIL     0.0      1846ms     2977ms     completed
+  adversarial     FAIL     0.0      1846ms     2977ms     completed
   random           FAIL     0.0      1759ms     2906ms     completed
 
   Total: 5 | Passed: 0 | Failed: 5
@@ -382,7 +382,7 @@ Verify:
 
 Check that results are **consistent with the experiment hypothesis**:
 
-1. **Resilience scores**: `spread >= baseline >= random >= colocate >= antagonistic` (general trend, not strict ordering)
+1. **Resilience scores**: `spread >= baseline >= random >= colocate >= adversarial` (general trend, not strict ordering)
 2. **Recovery times**: `meanRecovery_ms` typically 500ms–5000ms. Values outside 200ms–30000ms are suspicious
 3. **Probe results**: Strict probes should FAIL for all strategies. Tolerant probes may PASS for fast-recovery strategies. `frontend-healthz` should almost always PASS
 4. **Metric sanity**:

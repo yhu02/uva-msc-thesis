@@ -88,12 +88,12 @@ class TestGenerateRemediationLog:
             "default": _make_strategy(score=100, mean_recovery=1200),
             "colocate": _make_strategy(score=50, mean_recovery=2000),
             "spread": _make_strategy(score=100, mean_recovery=900),
-            "antagonistic": _make_strategy(score=33, mean_recovery=3000),
+            "adversarial": _make_strategy(score=33, mean_recovery=3000),
         })
         log = generate_remediation_log(summary)
         assert len(log) == 3
         strategies = {e["actionTaken"]["strategy"] for e in log}
-        assert strategies == {"colocate", "spread", "antagonistic"}
+        assert strategies == {"colocate", "spread", "adversarial"}
 
     def test_skips_errored_strategy(self):
         summary = _make_summary({

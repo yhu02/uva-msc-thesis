@@ -21,10 +21,12 @@ def placement():
 
     \b
     Strategies:
-      colocate      Pin all pods to a single node (max contention)
-      spread        Distribute evenly across nodes (min contention)
-      random        Random node per deployment (chaotic, --seed for reproducibility)
-      antagonistic  Group resource-heavy pods on same node (worst-case)
+      colocate          Pin all pods to a single node (max contention)
+      spread            Distribute evenly across nodes (min contention)
+      random            Random node per deployment (--seed for reproducibility)
+      adversarial      Group resource-heavy pods on same node (worst-fit)
+      best-fit          Pack deployments into fewest nodes (Borg-style scoring)
+      dependency-aware  Co-locate communicating services by service graph
 
     \b
     Typical workflow:
@@ -113,8 +115,14 @@ def placement_apply(
       # Random placement with reproducible seed
       chaosprobe placement apply random -n online-boutique --seed 42
 
-      # Worst-case: heavy pods together
-      chaosprobe placement apply antagonistic -n online-boutique
+      # Worst-case: heavy pods together (worst-fit)
+      chaosprobe placement apply adversarial -n online-boutique
+
+      # Best-fit bin packing (Borg-style)
+      chaosprobe placement apply best-fit -n online-boutique
+
+      # Co-locate communicating services (auto-discovers deps)
+      chaosprobe placement apply dependency-aware -n online-boutique
     """
     strat = PlacementStrategy(strategy)
     click.echo(f"Applying placement strategy: {strat.value}")

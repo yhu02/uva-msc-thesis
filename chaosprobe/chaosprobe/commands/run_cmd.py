@@ -322,7 +322,8 @@ def _print_run_banner(
     help="Base directory for results (a timestamped subdirectory is created)",
 )
 @click.option(
-    "--strategies", "-s", default="baseline,default,colocate,spread,antagonistic,random",
+    "--strategies", "-s",
+    default="baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware",
     help="Comma-separated strategies to test (default: all)",
 )
 @click.option("--timeout", "-t", default=300, type=int, help="Timeout per experiment in seconds")
@@ -387,10 +388,11 @@ def run(
 ):
     """Run placement experiments automatically.
 
-    Iterates through placement strategies (baseline, colocate, spread,
-    antagonistic, random), applies each placement, runs the shared
-    experiment, collects results (including pod recovery metrics), and
-    saves everything to a timestamped results directory.
+    Iterates through placement strategies (baseline, default, colocate,
+    spread, adversarial, random, best-fit, dependency-aware), applies
+    each placement, runs the shared experiment, collects results
+    (including pod recovery metrics), and saves everything to a
+    timestamped results directory.
 
     \b
     Example:

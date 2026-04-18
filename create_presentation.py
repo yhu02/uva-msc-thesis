@@ -401,60 +401,82 @@ slide_title(slide, "Placement Strategies")
 
 strat_data = [
     ("Baseline",
-     "Default scheduler\nTrivial fault (1% CPU, 1s)\nControl group — no real disruption",
+     "Null-injection control\nDefault scheduler + trivial fault\n(1% CPU, 1s) — validates methodology",
      CLR_INFRA,
      [(0.4, 0.2), (1.1, 0.2), (0.4, 0.6), (1.1, 0.6)],
-     "None", "Expected: 100% score"),
+     "None (control)", "Expected: 100% score",
+     "Basiri et al., IEEE SW 2016"),
     ("Default",
-     "Default K8s scheduler\nFull chaos injection\nNo placement mutation",
+     "Default K8s scheduler\nFull chaos injection\nScheduler-determined placement",
      CLR_CLI,
      [(0.4, 0.2), (1.1, 0.2), (0.4, 0.6), (1.1, 0.6)],
-     "Low", "Scheduler-determined placement"),
+     "Scheduler-set", "Placement null hypothesis",
+     "Burns et al., ACM Queue 2016"),
     ("Colocate",
-     "ALL pods pinned to single node\nMax resource contention\nWorst-case scenario",
+     "All pods pinned to a single node\nvia podAffinity\nMaximal co-location",
      CLR_CHAOS,
      [(0.4, 0.2), (0.65, 0.35), (0.4, 0.5), (0.65, 0.65)],
-     "Maximum", "Expected: worst resilience"),
+     "Maximum", "Expected: worst resilience",
+     "Mars 2011; Delimitrou 2014"),
     ("Spread",
-     "Round-robin distribution\nacross all worker nodes\nMinimal per-node contention",
+     "Even distribution across workers\nvia topologySpreadConstraints\nMinimal per-node contention",
      CLR_METRICS,
      [(0.2, 0.4), (0.6, 0.4), (1.0, 0.4), (1.4, 0.4)],
-     "Minimum", "Expected: best resilience"),
+     "Minimum", "Expected: best isolation",
+     "Medea (Garefalakis 2018)"),
     ("Random",
-     "Random assignment per pod\nReproducible via seed\nUnpredictable contention",
+     "Seeded random assignment\nReproducible null baseline\nfor topology effects",
      CLR_OUTPUT,
      [(0.3, 0.2), (1.0, 0.6), (0.3, 0.6), (1.0, 0.2)],
-     "Variable", "Seed-based reproducibility"),
-    ("Antagonistic",
-     "Heavy pods → 1 node\nLight pods → remaining nodes\nIntentional CPU/mem hotspot",
+     "Variable", "Seeded; reproducible",
+     "Sparrow (Ousterhout SOSP 2013)"),
+    ("Adversarial",
+     "Heavy pods → single node (worst-fit)\nLight pods → remaining nodes\nIntentional CPU/mem hotspot",
      ACCENT_PURPLE,
      [(0.3, 0.2), (0.55, 0.35), (1.0, 0.4), (1.3, 0.6)],
-     "High", "Resource-weighted placement"),
+     "High (asymmetric)", "Resource-weighted hotspot",
+     "Worst-fit; Cortez 2017"),
+    ("Best-fit",
+     "Pack into fewest nodes\n(bin-packing decreasing)\nBorg-style resource scoring",
+     ACCENT_GREEN,
+     [(0.3, 0.2), (0.55, 0.35), (0.4, 0.55), (1.25, 0.4)],
+     "Moderate (packed)", "Minimizes nodes used",
+     "Borg (Verma 2015; Burns 2016)"),
+    ("Dependency-aware",
+     "Co-locate communicating services\nvia service-graph partitioning\n(BFS from frontend root)",
+     ACCENT_BLUE,
+     [(0.3, 0.25), (0.55, 0.4), (1.1, 0.3), (1.3, 0.55)],
+     "Moderate (grouped)", "Preserves service-graph edges",
+     "DeathStarBench (Gan ASPLOS 2019)"),
 ]
 
-for i, (name, desc, clr, dots, contention, note) in enumerate(strat_data):
-    col = i % 3
-    row = i // 3
-    bx = 0.5 + col * 4.2
+for i, (name, desc, clr, dots, contention, note, cite) in enumerate(strat_data):
+    col = i % 4
+    row = i // 4
+    cw, ch = 3.05, 2.6
+    bx = 0.25 + col * 3.25
     by = 1.5 + row * 2.9
 
-    add_rounded_box(slide, bx, by, 3.8, 2.5, VERY_DARK,
+    add_rounded_box(slide, bx, by, cw, ch, VERY_DARK,
                     border_color=clr, border_width=Pt(2))
-    add_text_box(slide, bx + 0.1, by + 0.05, 3.6, 0.35, name,
-                 font_size=16, bold=True, color=clr)
-    add_text_box(slide, bx + 0.1, by + 0.4, 2.0, 0.9, desc,
-                 font_size=11, color=LIGHT_GRAY)
+    add_text_box(slide, bx + 0.08, by + 0.05, cw - 0.16, 0.32, name,
+                 font_size=13, bold=True, color=clr)
+    add_text_box(slide, bx + 0.08, by + 0.40, 1.45, 1.20, desc,
+                 font_size=8, color=LIGHT_GRAY)
 
     for dx, dy in dots:
-        add_rounded_box(slide, bx + 2.0 + dx, by + 0.8 + dy, 0.25, 0.25, clr)
+        add_rounded_box(slide, bx + 1.55 + dx * 0.85, by + 0.55 + dy * 0.75,
+                        0.18, 0.18, clr)
 
-    cont_clr = (ACCENT_GREEN if contention in ("None", "Low", "Minimum")
-                else ACCENT_RED if contention in ("Maximum", "High")
+    cont_clr = (ACCENT_GREEN if contention in ("None (control)", "Minimum")
+                else ACCENT_RED if contention in ("Maximum", "High (asymmetric)")
                 else ACCENT_ORANGE)
-    add_text_box(slide, bx + 0.1, by + 1.85, 3.6, 0.25,
-                 f"Contention: {contention}", font_size=11, bold=True, color=cont_clr)
-    add_text_box(slide, bx + 0.1, by + 2.1, 3.6, 0.3,
-                 note, font_size=10, color=MID_GRAY)
+    add_text_box(slide, bx + 0.08, by + 1.65, cw - 0.16, 0.22,
+                 f"Contention: {contention}", font_size=9, bold=True, color=cont_clr)
+    add_text_box(slide, bx + 0.08, by + 1.90, cw - 0.16, 0.22,
+                 note, font_size=8, color=MID_GRAY)
+    add_text_box(slide, bx + 0.08, by + 2.20, cw - 0.16, 0.32,
+                 cite, font_size=7, color=ACCENT_BLUE)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -586,7 +608,7 @@ decisions = [
      "for blast-radius validation (cart, healthz).",
      ACCENT_ORANGE),
     ("Reproducible Randomness",
-     "Random and antagonistic strategies use seeded "
+     "Random and adversarial strategies use seeded "
      "PRNGs. Same seed = same placement = comparable "
      "results across experiment runs.",
      CLR_ORCH),
@@ -1083,7 +1105,7 @@ add_rounded_box(slide, 0.5, 6.7, 12.1, 0.6, VERY_DARK,
                 border_color=ACCENT_BLUE)
 add_text_box(slide, 0.7, 6.7, 11.7, 0.5,
     "Replicate:  chaosprobe init --scenario placement-experiment.yaml  →  "
-    "chaosprobe run --strategies baseline,default,colocate,spread,random,antagonistic --iterations 3  →  "
+    "chaosprobe run --strategies baseline,default,colocate,spread,random,adversarial,best-fit,dependency-aware --iterations 3  →  "
     "chaosprobe visualize",
     font_size=12, color=LIGHT_GRAY)
 
@@ -1278,7 +1300,7 @@ add_bullet_frame(slide, 8.7, 1.75, 3.9, 2.3, [
     "• Colocate: highest latency degradation\n  across all routes — worst strategy",
     "• Spread: minimal latency increase —\n  fault isolation contains impact",
     "• Default: moderate — scheduler partially\n  separates dependent services",
-    "• Antagonistic: high — heavy pods on\n  same node amplifies contention",
+    "• Adversarial: high — heavy pods on\n  same node amplifies contention",
 ], font_size=10, color=LIGHT_GRAY)
 
 # Why colocate worst
@@ -1302,7 +1324,7 @@ ranking = [
     ("Spread", ACCENT_GREEN, 0.7),
     ("Default", CLR_CLI, 3.2),
     ("Random", ACCENT_ORANGE, 5.7),
-    ("Antagonistic", ACCENT_PURPLE, 8.2),
+    ("Adversarial", ACCENT_PURPLE, 8.2),
     ("Colocate", ACCENT_RED, 10.7),
 ]
 for name, clr, x in ranking:
@@ -1353,32 +1375,32 @@ add_bullet_frame(slide, 7.0, 1.95, 5.4, 2.4, [
 ], font_size=12, color=LIGHT_GRAY)
 
 # Future work
-add_rounded_box(slide, 0.5, 4.8, 12.1, 1.3, VERY_DARK,
+add_rounded_box(slide, 0.5, 4.65, 12.1, 1.55, VERY_DARK,
                 border_color=ACCENT_ORANGE)
-add_text_box(slide, 0.7, 4.8, 11.7, 0.35, "Future Work",
-             font_size=18, bold=True, color=ACCENT_ORANGE)
-add_bullet_frame(slide, 0.7, 5.2, 5.4, 0.8, [
+add_text_box(slide, 0.7, 4.65, 11.7, 0.35, "Future Work",
+             font_size=16, bold=True, color=ACCENT_ORANGE)
+add_bullet_frame(slide, 0.7, 5.0, 5.6, 1.15, [
     "• Multi-fault injection — concurrent faults\n  for complex failure scenarios",
     "• Larger cluster scale — 20+ nodes, 100+ services",
     "• ML-based anomaly detection on collected dataset",
-], font_size=12, color=LIGHT_GRAY)
-add_bullet_frame(slide, 6.8, 5.2, 5.4, 0.8, [
+], font_size=11, color=LIGHT_GRAY)
+add_bullet_frame(slide, 6.7, 5.0, 5.7, 1.15, [
     "• Custom placement policies — RL-based scheduling",
     "• Production-like traffic patterns & workloads",
     "• Integration with GitOps for automated remediation",
-], font_size=12, color=LIGHT_GRAY)
+], font_size=11, color=LIGHT_GRAY)
 
 # Core message
-add_rounded_box(slide, 0.5, 6.3, 12.1, 1.0, VERY_DARK,
+add_rounded_box(slide, 0.5, 6.35, 12.1, 1.05, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(3))
-add_text_box(slide, 0.7, 6.3, 11.7, 0.3, "Core Message",
-             font_size=18, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 0.7, 6.65, 11.7, 0.6,
+add_text_box(slide, 0.7, 6.35, 11.7, 0.3, "Core Message",
+             font_size=14, bold=True, color=ACCENT_BLUE)
+add_text_box(slide, 0.7, 6.65, 11.7, 0.7,
     "Pod placement topology has a measurable and significant impact on microservice resilience "
     "under chaos injection. By systematically varying placement strategies and measuring "
     "recovery time, inter-service latency, and resource utilization, ChaosProbe demonstrates "
     "that topology-aware scheduling is essential for building resilient cloud-native systems.",
-    font_size=14, color=WHITE)
+    font_size=11, color=WHITE)
 
 
 # ══════════════════════════════════════════════════════════════════════

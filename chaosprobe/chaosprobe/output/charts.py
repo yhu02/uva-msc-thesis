@@ -31,7 +31,9 @@ def strategy_colors(names: List[str]) -> List[str]:
         "colocate": "#F44336",
         "spread": "#4CAF50",
         "random": "#FF9800",
-        "antagonistic": "#9C27B0",
+        "adversarial": "#9C27B0",
+        "best-fit": "#00BCD4",
+        "dependency-aware": "#8BC34A",
     }
     default_colors = ["#607D8B", "#795548", "#009688", "#CDDC39", "#FF5722"]
     colors = []

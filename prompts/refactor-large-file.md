@@ -7,14 +7,14 @@ This codebase has grown organically and needs a comprehensive architectural revi
 `/home/yhu02/uva-msc-thesis/chaosprobe/chaosprobe/` (Python package root)
 
 ## Project Context
-**ChaosProbe** is a CLI tool for running LitmusChaos experiments on Kubernetes clusters and collecting resilience metrics. It studies how different pod placement strategies (colocate, spread, random, antagonistic) affect application resilience under chaos injection.
+**ChaosProbe** is a CLI tool for running LitmusChaos experiments on Kubernetes clusters and collecting resilience metrics. It studies how different pod placement strategies (colocate, spread, random, adversarial, best-fit, dependency-aware) affect application resilience under chaos injection.
 
 ### Tech Stack & Domain Constraints
 - **CLI framework:** Click (entry point: `cli.py` → delegates to `commands/` submodules)
 - **Kubernetes:** `kubernetes` Python client — reads/writes CRD YAMLs, manages pods, deployments, namespaces
 - **Chaos engine:** LitmusChaos native ChaosEngine CRDs (YAML-based experiment definitions in `scenarios/`)
 - **Metrics:** Prometheus queries via HTTP API (`metrics/prometheus.py`), plus custom metric collectors
-- **Storage:** Neo4j graph database (optional `[graph]` extra), SQLite (`results.db`)
+- **Storage:** Neo4j graph database (`[graph]` extra)
 - **Load generation:** Locust (`loadgen/`)
 - **Visualization:** matplotlib (`output/charts.py`, `output/visualize.py`)
 - **Build system:** uv + hatchling, Python 3.9+

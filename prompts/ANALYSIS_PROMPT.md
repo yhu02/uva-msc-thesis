@@ -12,9 +12,9 @@ You will receive a JSON document (schema v2.0.0) containing the following sectio
 
 ### Experiment Metadata
 - `runId`: Unique run identifier (format: `run-YYYY-MM-DD-HHMMSS-<hash>`).
-- `sessionId`: Groups related runs. A single session typically tests multiple placement strategies against the same fault type (e.g., 5 runs: baseline, default, colocate, spread, antagonistic).
+- `sessionId`: Groups related runs. A single session typically tests multiple placement strategies against the same fault type (e.g., 8 runs: baseline, default, colocate, spread, adversarial, random, best-fit, dependency-aware).
 - `timestamp`: When the run completed.
-- `strategy`: Placement strategy used (baseline, default, colocate, spread, random, antagonistic).
+- `strategy`: Placement strategy used (baseline, default, colocate, spread, random, adversarial, best-fit, dependency-aware).
 - `scenario`: The chaos experiment manifests (LitmusChaos ChaosEngine CRDs) including:
   - `appinfo`: Target namespace, label selector (e.g., `app=productcatalogservice`), kind (deployment).
   - `experiments[].name`: Fault type (e.g., `pod-delete`, `pod-cpu-hog`, `pod-network-latency`).
@@ -201,12 +201,12 @@ Key patterns to look for:
 **Secondary signal: LitmusChaos probe verdicts**. The probe set is deliberately designed with multiple sensitivity levels:
 - `frontend-healthz` (Continuous, `/_healthz`): Passes if the frontend pod is alive, regardless of backend health. This probe passing tells you the frontend is up; it failing tells you even the frontend is unreachable.
 - `frontend-homepage-strict` (Continuous, `/`): Fails if ANY request returns non-200 during chaos. Very sensitive.
-- `frontend-homepage-tolerant` (Continuous, `/`): May tolerate brief failures. If this also fails, the outage was prolonged.
+- `frontend-homepage-moderate` (Continuous, `/`): May tolerate brief failures. If this also fails, the outage was prolonged.
 - `frontend-homepage-edge` (Edge, `/`): Only checks pre and post chaos. Failing means the service hadn't recovered by end-of-test.
 - `frontend-product-strict` (Continuous, `/product/<id>`): Tests productcatalogservice dependency specifically.
 - `frontend-cart` (Continuous, `/cart`): Tests cart functionality.
 
-Compare probe verdicts across strategies. If strategies like colocate/spread/antagonistic pass the tolerant and edge probes while baseline/default fail them, it indicates those strategies enable faster recovery perceived by the probes.
+Compare probe verdicts across strategies. If strategies like colocate/spread/adversarial pass the moderate and edge probes while baseline/default fail them, it indicates those strategies enable faster recovery perceived by the probes.
 
 **Tertiary signal: Cascade error counts**. Total errors per route per run show cumulative unavailability. Fewer errors = less total downtime.
 
@@ -254,18 +254,18 @@ Compare probe verdicts across strategies. If strategies like colocate/spread/ant
 
 - **Per-probe verdict table**:
 
-  | Probe | Type | Mode | baseline | default | colocate | spread | antagonistic |
+  | Probe | Type | Mode | baseline | default | colocate | spread | adversarial |
   |---|---|---|---|---|---|---|---|
   | frontend-healthz | httpProbe | Continuous | | | | | |
   | frontend-homepage-strict | httpProbe | Continuous | | | | | |
-  | frontend-homepage-tolerant | httpProbe | Continuous | | | | | |
+  | frontend-homepage-moderate | httpProbe | Continuous | | | | | |
   | frontend-homepage-edge | httpProbe | Edge | | | | | |
   | frontend-product-strict | httpProbe | Continuous | | | | | |
   | frontend-cart | httpProbe | Continuous | | | | | |
 
-- **Resilience score interpretation**: A score of 16% (1/6 probes pass) means only `frontend-healthz` survived — the service was functionally unavailable to users during chaos despite the pod eventually recovering. A score of 66% (4/6 probes pass) means the tolerant, edge, cart, and healthz probes passed — the service experienced brief outages per cycle but recovered fast enough that non-strict probes didn't flag it.
+- **Resilience score interpretation**: A score of 16% (1/6 probes pass) means only `frontend-healthz` survived — the service was functionally unavailable to users during chaos despite the pod eventually recovering. A score of 66% (4/6 probes pass) means the moderate, edge, cart, and healthz probes passed — the service experienced brief outages per cycle but recovered fast enough that non-strict probes didn't flag it.
 - **Why strict probes fail everywhere**: The strict probes (`frontend-homepage-strict`, `frontend-product-strict`) fail across ALL strategies because even a single failed request during any chaos cycle causes Continuous-mode probes to fail. This is by design — they detect any interruption, not sustained outage.
-- **What differentiates 16% from 66%**: The tolerant and edge probes passing (colocate/spread/antagonistic) vs. failing (baseline/default) suggests those strategies enable faster recovery or less total downtime per cycle. Investigate whether this correlates with `TOTAL_CHAOS_DURATION` differences (baseline=1s but 16% vs. colocate=120s but 66%) or actual behavioral differences.
+- **What differentiates 16% from 66%**: The moderate and edge probes passing (colocate/spread/adversarial) vs. failing (baseline/default) suggests those strategies enable faster recovery or less total downtime per cycle. Investigate whether this correlates with `TOTAL_CHAOS_DURATION` differences (baseline=1s but 16% vs. colocate=120s but 66%) or actual behavioral differences.
 
 ### 6. DIAGNOSIS & MITIGATION
 
@@ -281,8 +281,8 @@ For each identified issue, provide:
   - Readiness probe tuning: Recovery time is dominated by `scheduledToReady_ms` (typically 1.0-2.4s). Analyze whether faster readiness probes, pre-pulled images, or lower initialDelaySeconds could reduce this.
   - Resource requests: Ensure resource requests are set so the scheduler can find a suitable node quickly.
 - **Placement strategy recommendation**: Based on observed data:
-  - `colocate`, `spread`, and `antagonistic` all achieve 66% resilience vs. 16% for `baseline`/`default`. Explain why: is this a real placement effect, or is it confounded by the different `TOTAL_CHAOS_DURATION` (baseline=1s vs. others=120s)?
-  - If resilience differences are real: Colocate has the lowest p95 recovery (1740ms) but highest CPU contention (24.4%). Spread has the best load generator error rate (17.2%) but highest p95 recovery (2523ms). Antagonistic balances both.
+  - `colocate`, `spread`, and `adversarial` all achieve 66% resilience vs. 16% for `baseline`/`default`. Explain why: is this a real placement effect, or is it confounded by the different `TOTAL_CHAOS_DURATION` (baseline=1s vs. others=120s)?
+  - If resilience differences are real: Colocate has the lowest p95 recovery (1740ms) but highest CPU contention (24.4%). Spread has the best load generator error rate (17.2%) but highest p95 recovery (2523ms). Adversarial balances both.
   - For pod-delete faults: Placement strategy has limited effect with single-replica deployments. Its primary impact is on recovery time (scheduling to the same or different node) and resource contention during recovery.
 - **Observability fixes** (critical):
   1. **Fix the latency prober**: 100% errors in all phases means the prober cannot reach the frontend. Check network policies, service URLs, and pod connectivity. This blocks all latency-based analysis.
@@ -300,15 +300,15 @@ For each identified issue, provide:
   | default | | | | | | | | | | | | |
   | colocate | | | | | | | | | | | | |
   | spread | | | | | | | | | | | | |
-  | antagonistic | | | | | | | | | | | | |
+  | adversarial | | | | | | | | | | | | |
 
 - **Confounded comparisons**: The baseline run has `TOTAL_CHAOS_DURATION=1` (1 cycle, ~1.5s of fault exposure) while all other strategies have `TOTAL_CHAOS_DURATION=120` (7 cycles, ~120s of fault exposure). Despite this massive difference in fault exposure, the baseline has WORSE resilience (16% vs 66%) and similar error rates. This is counterintuitive and warrants investigation — is the baseline scenario fundamentally different, or is there a measurement artifact?
-- **Fair comparison group**: Compare only default, colocate, spread, and antagonistic (all `TOTAL_CHAOS_DURATION=120`). Among these:
+- **Fair comparison group**: Compare only default, colocate, spread, and adversarial (all `TOTAL_CHAOS_DURATION=120`). Among these:
   - Default (16% resilience, 0.79 RPS) is dramatically worse than the other three (~66% resilience, ~16 RPS). Why? Check if default uses the Kubernetes default scheduler without any placement hints, potentially scheduling the target on a more loaded node.
-  - Colocate, spread, and antagonistic perform similarly in resilience (all 66%) but differ in:
-    - CPU contention: colocate >> spread > antagonistic > default
-    - Load error rate: antagonistic (16.2%) < spread (17.2%) < colocate (19.9%)
-    - Recovery time consistency: colocate p95=1740ms, antagonistic p95=1756ms (consistent), spread p95=2523ms (one outlier cycle)
+  - Colocate, spread, and adversarial perform similarly in resilience (all 66%) but differ in:
+    - CPU contention: colocate >> spread > adversarial > default
+    - Load error rate: adversarial (16.2%) < spread (17.2%) < colocate (19.9%)
+    - Recovery time consistency: colocate p95=1740ms, adversarial p95=1756ms (consistent), spread p95=2523ms (one outlier cycle)
 - **What placement cannot fix**: All strategies still FAIL (no strategy achieves PASS). The strict continuous probes will always fail for single-replica pod-delete because any cycle creates a brief outage. Multi-replica deployment is required for PASS.
 
 ### 8. CROSS-EXPERIMENT PATTERNS (if multiple fault types in dataset)
