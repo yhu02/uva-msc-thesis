@@ -626,6 +626,19 @@ def aggregate_iterations(
     iteration_results: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Compute aggregated statistics across multiple iterations."""
+    if not iteration_results:
+        return {
+            "overallVerdict": "FAIL",
+            "passRate": 0.0,
+            "meanResilienceScore": 0.0,
+            "totalExperiments": 0,
+            "passed": 0,
+            "failed": 0,
+            "meanRecoveryTime_ms": None,
+            "medianRecoveryTime_ms": None,
+            "maxRecoveryTime_ms": None,
+        }
+
     scores = [ir["resilienceScore"] for ir in iteration_results]
     verdicts = [ir["verdict"] for ir in iteration_results]
     pass_count = sum(1 for v in verdicts if v == "PASS")

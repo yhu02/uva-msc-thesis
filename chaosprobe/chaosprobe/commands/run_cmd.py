@@ -425,6 +425,9 @@ def run(
 
     # Ensure LitmusChaos is ready once
     experiment_types = extract_experiment_types(shared_scenario)
+    # Baseline uses pod-cpu-hog (trivial fault) instead of pod-delete
+    if "baseline" in strategy_list and "pod-cpu-hog" not in experiment_types:
+        experiment_types.append("pod-cpu-hog")
     if not _ensure_litmus_setup(namespace, experiment_types):
         click.echo("Error: LitmusChaos setup failed", err=True)
         sys.exit(1)

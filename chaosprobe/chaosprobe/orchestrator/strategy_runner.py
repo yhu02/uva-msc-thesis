@@ -98,18 +98,29 @@ def _compute_effective_timeout(scenario: Dict[str, Any], user_timeout: int) -> i
     return max(user_timeout, min_timeout)
 
 
-def _disable_fault_injection(scenario: Dict[str, Any]) -> None:
-    """Minimise chaos duration so the experiment runs without meaningful fault injection.
+# Environment variables for the baseline trivial fault (pod-cpu-hog).
+# 1% CPU stress on 1 core for 1 second — imperceptible, no pods deleted.
+# CONTAINER_RUNTIME and SOCKET_PATH are required by pod-cpu-hog to
+# inject the stress-ng helper via the container runtime API.
+_BASELINE_ENV = [
+    {"name": "TOTAL_CHAOS_DURATION", "value": "1"},
+    {"name": "CPU_CORES", "value": "0"},
+    {"name": "CPU_LOAD", "value": "1"},
+    {"name": "CONTAINER_RUNTIME", "value": "containerd"},
+    {"name": "SOCKET_PATH", "value": "/run/containerd/containerd.sock"},
+]
 
-    The ChaosEngine is still submitted to ChaosCenter (visible in the
-    dashboard) and probes still execute.  ``TOTAL_CHAOS_DURATION`` is
-    set to ``"1"`` (not ``"0"``) because the go-runner computes
-    iterations as ``duration / interval``; zero values for both cause
-    a division-by-zero crash that prevents all probes from evaluating.
-    With duration=1 and the original interval (e.g. 10), integer
-    division yields 0 iterations — no pods are killed, but the
-    go-runner enters the inject function normally so PreChaos and
-    PostChaos probes evaluate.
+
+def _swap_to_trivial_fault(scenario: Dict[str, Any]) -> None:
+    """Replace the destructive fault with a trivial one for baseline.
+
+    Swaps the experiment from ``pod-delete`` (which always kills at
+    least one pod due to the go-runner's ``math.Maximum(1, ...)``
+    floor) to ``pod-cpu-hog`` with 1% CPU stress for 1 second.
+
+    The ChaosEngine is still submitted to ChaosCenter so all probes
+    (httpProbe, cmdProbe, etc.) execute normally.  The result
+    naturally reflects real system health — no score overrides needed.
 
     Probe timeouts and retries are NOT modified — the baseline must be
     evaluated with identical probe settings as other strategies so that
@@ -118,10 +129,11 @@ def _disable_fault_injection(scenario: Dict[str, Any]) -> None:
     for exp_entry in scenario.get("experiments", []):
         spec = exp_entry.get("spec", {})
         for exp in spec.get("spec", {}).get("experiments", []):
-            env_list = exp.get("spec", {}).get("components", {}).get("env", [])
-            for env in env_list:
-                if env.get("name") == "TOTAL_CHAOS_DURATION":
-                    env["value"] = "1"
+            # Swap experiment type
+            exp["name"] = "pod-cpu-hog"
+            # Replace env vars with trivial-fault settings
+            components = exp.get("spec", {}).get("components", {})
+            components["env"] = list(_BASELINE_ENV)
 
 
 def _extract_http_routes(
@@ -445,9 +457,10 @@ def _run_single_iteration(
             if p and hasattr(p, "mark_chaos_start"):
                 p.mark_chaos_start()
 
-        # Baseline: submit to ChaosCenter with minimal chaos duration (no fault)
+        # Baseline: swap destructive fault for a trivial one (pod-cpu-hog
+        # at 1% CPU for 1s) so probes execute without pod deletion.
         if strategy_name == "baseline":
-            _disable_fault_injection(scenario)
+            _swap_to_trivial_fault(scenario)
 
         effective_timeout = _compute_effective_timeout(scenario, ctx.timeout)
         runner = ChaosRunner(
@@ -470,20 +483,6 @@ def _run_single_iteration(
     # Collect results & metrics
     collector = ResultCollector(ctx.namespace)
     executed = runner.get_executed_experiments()
-
-    # Baseline is a no-fault control: if the go-runner hit a transient
-    # TARGET_SELECTION_ERROR (pod momentarily unavailable between our
-    # readiness check and Argo execution), override it to a pass — no
-    # fault was intended, so target availability is irrelevant.
-    if strategy_name == "baseline":
-        for exp in executed:
-            status = (exp.get("status") or "").lower()
-            if status in ("error", "completed_with_error"):
-                click.echo("    Baseline: overriding go-runner error (no fault was injected)")
-                exp["status"] = "Completed"
-                exp["resiliencyScore"] = 100.0
-                exp["faultsPassed"] = exp.get("totalFaults", 1)
-                exp["faultsFailed"] = 0
 
     results = collector.collect(executed)
 

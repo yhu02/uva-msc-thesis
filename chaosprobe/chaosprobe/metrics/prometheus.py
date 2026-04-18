@@ -28,28 +28,28 @@ logger = logging.getLogger(__name__)
 # LitmusChaos experiment pods (runners and helpers like pod-delete-*)
 # execute in the target namespace.  Exclude them so only real workload
 # data is collected.  The filter below is inlined into every query.
-#   pod!~".*-runner$|.*pod-delete.*"
+#   pod!~".*-runner$|.*chaos.*|.*litmus.*"
 
 DEFAULT_QUERIES: Dict[str, str] = {
     "pod_ready_count": (
         'sum(kube_pod_status_ready{{namespace="{namespace}",condition="true",'
-        'pod!~".*-runner$|.*pod-delete.*"}})'
+        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}})'
     ),
     "cpu_usage": (
         'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}",'
-        'container!="",pod!~".*-runner$|.*pod-delete.*"}}[5m])) by (pod)'
+        'container!="",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
     ),
     "cpu_throttling": (
         'sum(rate(container_cpu_cfs_throttled_seconds_total{{namespace="{namespace}",'
-        'pod!~".*-runner$|.*pod-delete.*"}}[5m])) by (pod)'
+        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
     ),
     "memory_usage": (
         'sum(container_memory_working_set_bytes{{namespace="{namespace}",'
-        'container!="",pod!~".*-runner$|.*pod-delete.*"}}) by (pod)'
+        'container!="",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}) by (pod)'
     ),
     "network_receive_bytes": (
         'sum(rate(container_network_receive_bytes_total{{namespace="{namespace}",'
-        'pod!~".*-runner$|.*pod-delete.*"}}[5m])) by (pod)'
+        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
     ),
 }
 

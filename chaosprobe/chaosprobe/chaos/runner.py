@@ -236,10 +236,16 @@ class ChaosRunner:
             elapsed = int(time.time() - start_time)
             print(f"    Result: {phase} ({elapsed}s elapsed)")
 
-            # Check for TARGET_SELECTION_ERROR — retryable
-            is_target_error = phase in ("Error", "Completed_With_Error")
-            if is_target_error and attempt < _MAX_TARGET_RETRIES and target_deployment:
-                print(f"    TARGET_SELECTION_ERROR detected, waiting for target pod to recover...")
+            # Only retry on execution-level errors (e.g. target pod
+            # unavailable), NOT on probe failures ("Completed_With_Error"
+            # with a resiliencyScore > 0 means probes ran but some failed).
+            resiliency = result.get("resiliencyScore")
+            is_execution_error = (
+                phase == "Error"
+                or (phase == "Completed_With_Error" and resiliency in (None, 0, 0.0))
+            )
+            if is_execution_error and attempt < _MAX_TARGET_RETRIES and target_deployment:
+                print(f"    Execution error detected, waiting for target pod to recover...")
                 if self._wait_for_target_recovery(target_deployment, timeout=90):
                     print(f"    Target pod recovered, re-triggering experiment...")
                     continue
