@@ -45,7 +45,7 @@ def create_and_start_probers(
     )
     redis_prober = ContinuousRedisProber(namespace) if measure_redis else None
     disk_prober = (
-        ContinuousDiskProber(namespace, disk_target=target_deployment)
+        ContinuousDiskProber(namespace, exclude_services=[target_deployment])
         if measure_disk
         else None
     )

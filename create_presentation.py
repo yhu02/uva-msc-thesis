@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Generate ChaosProbe PowerPoint presentation.
+"""Generate ChaosProbe thesis defense PowerPoint presentation.
 
-Restructured slide deck focusing on:
-- Research question (not problem statement)
-- Placement strategies moved to introduction
-- Simplified architecture (max 6 components per area)
-- Merged & simplified data flow
-- Verified Neo4j schema (14 node types, 18 relationships)
-- Expanded contention categories with literature references
-- Exact replicable experiment configurations
-- Embedded visualization charts from results
-- No AI pipeline / autonomous feedback loop (out of scope)
-- Focus on impact of placement strategy on performance
+Slide structure follows standard thesis defense format:
+  1. Title
+  2. Background & Motivation
+  3. Research Question & Hypotheses
+  4. Related Work
+  5. Placement Strategies (independent variable)
+  6. Experimental Setup
+  7. ChaosProbe Framework (architecture + lifecycle)
+  8. Measurement Design (probers + probes + scoring)
+  9. Results — Resilience Scores
+ 10. Results — Recovery Time & Latency
+ 11. Results — Resources & Throughput
+ 12. Discussion (hypothesis evaluation)
+ 13. Threats to Validity
+ 14. Conclusion & Future Work
+ 15. Questions
 """
 
 import glob
@@ -222,182 +227,234 @@ def add_image_or_placeholder(slide, left, top, width, height,
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
 
-add_text_box(slide, 1.5, 1.5, 10.3, 1.2, "ChaosProbe",
+add_text_box(slide, 1.5, 1.8, 10.3, 1.2, "ChaosProbe",
              font_size=54, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
-add_text_box(slide, 1.5, 2.7, 10.3, 1.0,
+add_text_box(slide, 1.5, 3.0, 10.3, 1.0,
              "Measuring the Impact of Chaos in Differing\n"
              "Placement Strategies within Cloud Systems",
              font_size=24, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
 
 dline = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,
-    Inches(4.5), Inches(3.9), Inches(4.3), Pt(3))
+    Inches(4.5), Inches(4.2), Inches(4.3), Pt(3))
 dline.fill.solid()
 dline.fill.fore_color.rgb = ACCENT_BLUE
 dline.line.fill.background()
 
-add_text_box(slide, 1.5, 4.3, 10.3, 0.6,
-             "MSc Thesis — University of Amsterdam",
-             font_size=18, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
-add_text_box(slide, 1.5, 4.9, 10.3, 0.5,
+add_text_box(slide, 1.5, 4.6, 10.3, 0.6,
+             "MSc Thesis Defense — University of Amsterdam",
+             font_size=20, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
+add_text_box(slide, 1.5, 5.3, 10.3, 0.5,
              "April 2026",
-             font_size=14, color=MID_GRAY, alignment=PP_ALIGN.CENTER)
-
-metrics = [
-    ("6", "Placement\nStrategies"),
-    ("2", "Fault\nTypes"),
-    ("6", "Continuous\nProbers"),
-    ("504", "Unit\nTests"),
-]
-for i, (val, label) in enumerate(metrics):
-    x = 2.5 + i * 2.3
-    add_rounded_box(slide, x, 5.6, 1.8, 1.0, VERY_DARK,
-                    border_color=ACCENT_BLUE)
-    add_text_box(slide, x, 5.6, 1.8, 0.5, val,
-                 font_size=24, bold=True, color=ACCENT_BLUE,
-                 alignment=PP_ALIGN.CENTER)
-    add_text_box(slide, x, 6.05, 1.8, 0.5, label,
-                 font_size=11, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
+             font_size=16, color=MID_GRAY, alignment=PP_ALIGN.CENTER)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 2 — RESEARCH QUESTION & MOTIVATION
+# SLIDE 2 — BACKGROUND & MOTIVATION
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Research Question & Motivation")
+slide_title(slide, "Background & Motivation")
 
-# Research question
-add_rounded_box(slide, 0.6, 1.5, 12.1, 1.2, VERY_DARK,
+# Microservices context — left
+add_rounded_box(slide, 0.6, 1.5, 5.8, 2.0, VERY_DARK,
+                border_color=CLR_CLI)
+add_text_box(slide, 0.8, 1.5, 5.4, 0.35, "Microservice Architecture",
+             font_size=16, bold=True, color=CLR_CLI)
+add_bullet_frame(slide, 0.8, 1.9, 5.4, 1.5, [
+    "• Decomposed services with independent lifecycles",
+    "• Communicate via network (HTTP / gRPC / Redis)",
+    "• Deployed as containers orchestrated by Kubernetes",
+    "• Independently scalable — but failures can cascade",
+], font_size=12, color=LIGHT_GRAY)
+
+# The problem — right
+add_rounded_box(slide, 6.8, 1.5, 5.8, 2.0, VERY_DARK,
+                border_color=ACCENT_RED)
+add_text_box(slide, 7.0, 1.5, 5.4, 0.35, "The Placement Problem",
+             font_size=16, bold=True, color=ACCENT_RED)
+add_bullet_frame(slide, 7.0, 1.9, 5.4, 1.5, [
+    "• K8s scheduler optimizes for resource fit,\n  not for resilience or fault isolation",
+    "• Pod placement determines which services share\n  node resources (CPU, memory, disk, network)",
+    "• Co-located services suffer correlated failures",
+], font_size=12, color=LIGHT_GRAY)
+
+# Chaos engineering
+add_rounded_box(slide, 0.6, 3.8, 5.8, 1.6, VERY_DARK,
+                border_color=ACCENT_ORANGE)
+add_text_box(slide, 0.8, 3.8, 5.4, 0.35, "Chaos Engineering",
+             font_size=16, bold=True, color=ACCENT_ORANGE)
+add_bullet_frame(slide, 0.8, 4.2, 5.4, 1.1, [
+    "• Discipline of experimenting on systems to build\n  confidence in resilience (Basiri et al., 2016)",
+    "• Controlled fault injection reveals weaknesses\n  before they manifest in production",
+], font_size=12, color=LIGHT_GRAY)
+
+# The gap
+add_rounded_box(slide, 6.8, 3.8, 5.8, 1.6, VERY_DARK,
+                border_color=ACCENT_GREEN)
+add_text_box(slide, 7.0, 3.8, 5.4, 0.35, "Research Gap",
+             font_size=16, bold=True, color=ACCENT_GREEN)
+add_bullet_frame(slide, 7.0, 4.2, 5.4, 1.1, [
+    "• Existing work studies placement OR resilience,\n  but rarely their interaction under fault injection",
+    "• No systematic framework to quantify how\n  placement topology affects chaos resilience",
+], font_size=12, color=LIGHT_GRAY)
+
+# Approach
+add_rounded_box(slide, 0.6, 5.7, 12.1, 1.5, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(2))
+add_text_box(slide, 0.8, 5.7, 11.7, 0.35, "Our Approach",
+             font_size=16, bold=True, color=ACCENT_BLUE)
+add_text_box(slide, 0.8, 6.1, 11.7, 0.5,
+    "ChaosProbe: an automated framework that systematically varies pod placement strategies, "
+    "injects faults via LitmusChaos, and measures recovery time, inter-service latency, "
+    "resource utilization, and I/O throughput to quantify placement's impact on resilience.",
+    font_size=13, color=LIGHT_GRAY)
+
+# Pipeline arrows
+approach_steps = [
+    ("Deploy", CLR_CLI, 0.8),
+    ("Place", CLR_ORCH, 3.3),
+    ("Inject", CLR_CHAOS, 5.8),
+    ("Measure", CLR_METRICS, 8.3),
+    ("Compare", CLR_OUTPUT, 10.8),
+]
+for name, clr, x in approach_steps:
+    add_rounded_box(slide, x, 6.7, 2.0, 0.35, clr, name, 12, WHITE, True)
+for i in range(len(approach_steps) - 1):
+    x1 = approach_steps[i][2] + 2.0
+    x2 = approach_steps[i + 1][2]
+    add_arrow(slide, x1, 6.87, x2, 6.87, LIGHT_GRAY, Pt(2))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 3 — RESEARCH QUESTION & HYPOTHESES
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Research Question & Hypotheses")
+
+# Research question — prominent
+add_rounded_box(slide, 0.6, 1.5, 12.1, 1.3, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(3))
 add_text_box(slide, 0.8, 1.55, 11.7, 0.35, "Research Question",
              font_size=14, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 0.8, 1.95, 11.7, 0.6,
+add_text_box(slide, 0.8, 2.0, 11.7, 0.6,
     "How does pod placement topology affect microservice resilience\n"
     "under fault injection in Kubernetes?",
-    font_size=20, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
-
-# Dimensions
-add_text_box(slide, 0.6, 2.9, 12, 0.3, "Measured Dimensions",
-             font_size=16, bold=True, color=ACCENT_GREEN)
-
-dimensions = [
-    ("Recovery Time", "Pod deletion → scheduled → ready\n(milliseconds per cycle)",
-     CLR_CHAOS, 0.6),
-    ("Inter-Service Latency", "HTTP route response time\nduring/after fault injection",
-     CLR_METRICS, 3.4),
-    ("Resource Utilization", "Node/pod CPU & memory\nunder contention",
-     CLR_ORCH, 6.2),
-    ("I/O Throughput", "Redis ops/s, disk sequential\nread/write bytes/s",
-     CLR_OUTPUT, 9.0),
-]
-for name, desc, clr, x in dimensions:
-    add_rounded_box(slide, x, 3.3, 2.5, 1.1, VERY_DARK,
-                    border_color=clr)
-    add_text_box(slide, x + 0.1, 3.3, 2.3, 0.3, name,
-                 font_size=13, bold=True, color=clr)
-    add_text_box(slide, x + 0.1, 3.65, 2.3, 0.7, desc,
-                 font_size=11, color=LIGHT_GRAY)
-
-# Simplified approach
-add_rounded_box(slide, 0.6, 4.7, 12.1, 0.8, VERY_DARK,
-                border_color=ACCENT_BLUE)
-add_text_box(slide, 0.8, 4.75, 11.7, 0.3, "Approach",
-             font_size=16, bold=True, color=ACCENT_BLUE)
-approach_steps = [
-    ("Deploy", CLR_CLI, 0.8),
-    ("Place", CLR_ORCH, 3.0),
-    ("Inject", CLR_CHAOS, 5.2),
-    ("Measure", CLR_METRICS, 7.4),
-    ("Compare", CLR_OUTPUT, 9.6),
-]
-for name, clr, x in approach_steps:
-    add_rounded_box(slide, x, 5.05, 1.8, 0.35, clr, name, 12, WHITE, True)
-for i in range(len(approach_steps) - 1):
-    x1 = approach_steps[i][2] + 1.8
-    x2 = approach_steps[i + 1][2]
-    add_arrow(slide, x1, 5.22, x2, 5.22, LIGHT_GRAY, Pt(2))
+    font_size=22, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
 
 # Hypotheses
-add_rounded_box(slide, 0.6, 5.8, 12.1, 1.3, VERY_DARK,
-                border_color=ACCENT_GREEN)
-add_text_box(slide, 0.8, 5.8, 11.7, 0.3, "Hypotheses",
-             font_size=16, bold=True, color=ACCENT_GREEN)
-add_bullet_frame(slide, 0.8, 6.15, 11.7, 0.9, [
-    "H1: Colocating all pods on one node causes worst resilience (maximum contention for CPU, memory, I/O, network)",
-    "H2: Spreading pods across nodes minimizes contention but may increase cross-node network latency",
-    "H3: Baseline (no real fault) should score 100% — any degradation indicates pre-existing instability",
-], font_size=12, color=LIGHT_GRAY)
+add_text_box(slide, 0.6, 3.1, 12, 0.35, "Hypotheses",
+             font_size=18, bold=True, color=ACCENT_GREEN)
+
+hypotheses = [
+    ("H1", "Maximum contention degrades resilience",
+     "Colocating all pods on a single node maximizes resource contention "
+     "(CPU, memory, disk, network) and produces the worst resilience scores.",
+     ACCENT_RED),
+    ("H2", "Spreading improves fault isolation",
+     "Distributing pods evenly across nodes minimizes per-node contention "
+     "and limits fault blast radius, yielding the best resilience scores.",
+     ACCENT_GREEN),
+    ("H3", "Baseline validates methodology",
+     "A trivial fault (1% CPU, 1 second) with default scheduling should "
+     "produce 100% resilience — any degradation indicates pre-existing instability.",
+     CLR_INFRA),
+]
+
+for i, (label, title, desc, clr) in enumerate(hypotheses):
+    y = 3.6 + i * 1.3
+    add_rounded_box(slide, 0.6, y, 1.0, 0.9, clr, label, 18, WHITE, True)
+    add_rounded_box(slide, 1.8, y, 10.9, 0.9, VERY_DARK,
+                    border_color=clr, border_width=Pt(2))
+    add_text_box(slide, 2.0, y + 0.02, 10.5, 0.3, title,
+                 font_size=15, bold=True, color=clr)
+    add_text_box(slide, 2.0, y + 0.38, 10.5, 0.5, desc,
+                 font_size=12, color=LIGHT_GRAY)
+
+# Measured dimensions
+add_text_box(slide, 0.6, 7.0, 12, 0.3, "Measured Dimensions:",
+             font_size=12, bold=True, color=MID_GRAY)
+dims = [
+    ("Recovery Time", CLR_CHAOS),
+    ("Inter-Service Latency", CLR_METRICS),
+    ("Resource Utilization", CLR_ORCH),
+    ("I/O Throughput", CLR_OUTPUT),
+]
+for j, (name, clr) in enumerate(dims):
+    add_rounded_box(slide, 3.0 + j * 2.3, 6.95, 2.1, 0.35, clr,
+                    name, 11, WHITE, True)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 3 — INTRODUCTION: MICROSERVICES & THE PROBLEM
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Microservices & The Problem")
-
-# What are microservices
-add_rounded_box(slide, 0.6, 1.5, 5.8, 2.5, VERY_DARK,
-                border_color=CLR_CLI)
-add_text_box(slide, 0.8, 1.5, 5.4, 0.35, "What Are Microservices?",
-             font_size=16, bold=True, color=CLR_CLI)
-add_bullet_frame(slide, 0.8, 1.9, 5.4, 2.0, [
-    "• Decomposed application: each service has a\n  single responsibility and own lifecycle",
-    "• Communicate via network (HTTP / gRPC / Redis)",
-    "• Deployed as containers on Kubernetes",
-    "• Independently scalable and deployable",
-], font_size=12, color=LIGHT_GRAY)
-
-# The problem
-add_rounded_box(slide, 6.8, 1.5, 5.8, 2.5, VERY_DARK,
-                border_color=ACCENT_RED)
-add_text_box(slide, 7.0, 1.5, 5.4, 0.35, "The Problem",
-             font_size=16, bold=True, color=ACCENT_RED)
-add_bullet_frame(slide, 7.0, 1.9, 5.4, 2.0, [
-    "• Kubernetes scheduler optimizes for resource fit,\n  not for resilience or fault isolation",
-    "• Pod placement determines which services share\n  node resources (CPU, memory, disk, network)",
-    "• Co-located services suffer correlated failures:\n  one fault cascades to neighbors on the same node",
-], font_size=12, color=LIGHT_GRAY)
-
-# What we investigated
-add_rounded_box(slide, 0.6, 4.3, 5.8, 1.5, VERY_DARK,
-                border_color=ACCENT_ORANGE)
-add_text_box(slide, 0.8, 4.3, 5.4, 0.35, "What We Investigated",
-             font_size=16, bold=True, color=ACCENT_ORANGE)
-add_bullet_frame(slide, 0.8, 4.7, 5.4, 1.0, [
-    "• 6 placement strategies × 2 fault types",
-    "• Measured: recovery time, latency, resources, I/O",
-    "• 12-microservice application (Google Online Boutique)",
-], font_size=12, color=LIGHT_GRAY)
-
-# Our solution
-add_rounded_box(slide, 6.8, 4.3, 5.8, 1.5, VERY_DARK,
-                border_color=ACCENT_GREEN)
-add_text_box(slide, 7.0, 4.3, 5.4, 0.35, "Our Proposed Solution",
-             font_size=16, bold=True, color=ACCENT_GREEN)
-add_bullet_frame(slide, 7.0, 4.7, 5.4, 1.0, [
-    "• ChaosProbe: automated framework to systematically\n  test placement strategies under chaos injection",
-    "• Collect structured metrics, store in graph DB,\n  compare strategies quantitatively",
-], font_size=12, color=LIGHT_GRAY)
-
-# Chaos engineering context
-add_rounded_box(slide, 0.6, 6.1, 12.1, 1.1, VERY_DARK,
-                border_color=MID_GRAY)
-add_text_box(slide, 0.8, 6.1, 11.7, 0.3, "Context: Chaos Engineering",
-             font_size=14, bold=True, color=LIGHT_GRAY)
-add_text_box(slide, 0.8, 6.45, 11.7, 0.7,
-    "Chaos engineering is the discipline of experimenting on a system to build confidence in its "
-    "ability to withstand turbulent conditions in production (Basiri et al., 2016). "
-    "We extend this by systematically varying pod placement to isolate topology's effect on resilience.",
-    font_size=12, color=MID_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 4 — PLACEMENT STRATEGIES (moved to introduction)
+# SLIDE 4 — RELATED WORK
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Placement Strategies")
+slide_title(slide, "Related Work")
+
+# Three columns: Placement, Chaos Eng, Gap
+add_rounded_box(slide, 0.5, 1.5, 3.8, 4.5, VERY_DARK,
+                border_color=CLR_ORCH, border_width=Pt(2))
+add_text_box(slide, 0.7, 1.55, 3.4, 0.35, "Pod Placement & Scheduling",
+             font_size=14, bold=True, color=CLR_ORCH)
+add_bullet_frame(slide, 0.7, 2.0, 3.4, 3.8, [
+    "• Borg (Verma et al., 2015)\n  Resource-aware bin-packing",
+    "• Medea (Garefalakis et al., 2018)\n  Topology spread constraints",
+    "• Sparrow (Ousterhout et al., 2013)\n  Decentralized random scheduling",
+    "• DeathStarBench (Gan et al., 2019)\n  Dependency-graph-aware placement",
+    "• Mars (2011); Delimitrou (2014)\n  Contention-aware co-scheduling",
+], font_size=11, color=LIGHT_GRAY)
+
+add_rounded_box(slide, 4.6, 1.5, 3.8, 4.5, VERY_DARK,
+                border_color=CLR_CHAOS, border_width=Pt(2))
+add_text_box(slide, 4.8, 1.55, 3.4, 0.35, "Chaos Engineering",
+             font_size=14, bold=True, color=CLR_CHAOS)
+add_bullet_frame(slide, 4.8, 2.0, 3.4, 3.8, [
+    "• Principles of Chaos Engineering\n  (Basiri et al., 2016)",
+    "• LitmusChaos — CNCF sandbox\n  ChaosEngine CRDs + ChaosCenter",
+    "• Chaos Monkey (Netflix, 2011)\n  Random instance termination",
+    "• Gremlin — fault injection SaaS\n  Commercial chaos platform",
+    "• Tail at Scale (Dean & Barroso,\n  2013) — latency sensitivity",
+], font_size=11, color=LIGHT_GRAY)
+
+add_rounded_box(slide, 8.7, 1.5, 3.8, 4.5, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(2))
+add_text_box(slide, 8.9, 1.55, 3.4, 0.35, "Gap — Our Contribution",
+             font_size=14, bold=True, color=ACCENT_BLUE)
+add_bullet_frame(slide, 8.9, 2.0, 3.4, 3.8, [
+    "• Existing work studies placement\n  OR resilience — not their interaction",
+    "• No framework systematically varies\n  placement under controlled chaos",
+    "• Missing: quantitative comparison\n  across multiple dimensions",
+    "• ChaosProbe bridges this gap:\n  6 strategies × 2 faults × 4 metrics",
+    "• Graph storage preserves causal\n  topology for analysis",
+], font_size=11, color=LIGHT_GRAY)
+
+# Contention categories table
+add_text_box(slide, 0.5, 6.3, 12, 0.3,
+             "Expected Contention by Placement (Literature-Informed Hypotheses)",
+             font_size=14, bold=True, color=ACCENT_ORANGE)
+contention_data = [
+    ["Category", "Metric", "Colocate Impact", "Key Reference"],
+    ["CPU Contention", "Millicores, throttle seconds",
+     "Shared cores → throttling", "Burns et al. (2016)"],
+    ["Memory Pressure", "Working set bytes",
+     "Shared memory → evictions", "Verma et al. (2015)"],
+    ["Network Latency", "HTTP response time (ms)",
+     "Shared network stack", "Gan et al. (2019)"],
+    ["Disk I/O", "Sequential R/W bytes/s",
+     "Shared bandwidth", "Dean & Barroso (2013)"],
+]
+add_table(slide, 0.5, 6.55, 12.3, 0.85, 5, 4, contention_data,
+          font_size=9, header_color=ACCENT_ORANGE)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 5 — PLACEMENT STRATEGIES (independent variable)
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Placement Strategies",
+            subtitle_text="Independent variable: 6 strategies + baseline + default scheduler")
 
 strat_data = [
     ("Baseline",
@@ -443,7 +500,7 @@ strat_data = [
      "Moderate (packed)", "Minimizes nodes used",
      "Borg (Verma 2015; Burns 2016)"),
     ("Dependency-aware",
-     "Co-locate communicating services\nvia service-graph partitioning\n(BFS from frontend root)",
+     "Co-locate communicating services\nvia service-graph partitioning\n(BFS from entry-point root)",
      ACCENT_BLUE,
      [(0.3, 0.25), (0.55, 0.4), (1.1, 0.3), (1.3, 0.55)],
      "Moderate (grouped)", "Preserves service-graph edges",
@@ -453,193 +510,140 @@ strat_data = [
 for i, (name, desc, clr, dots, contention, note, cite) in enumerate(strat_data):
     col = i % 4
     row = i // 4
-    cw, ch = 3.05, 2.6
+    cw, ch = 3.05, 2.4
     bx = 0.25 + col * 3.25
-    by = 1.5 + row * 2.9
+    by = 1.7 + row * 2.7
 
     add_rounded_box(slide, bx, by, cw, ch, VERY_DARK,
                     border_color=clr, border_width=Pt(2))
     add_text_box(slide, bx + 0.08, by + 0.05, cw - 0.16, 0.32, name,
                  font_size=13, bold=True, color=clr)
-    add_text_box(slide, bx + 0.08, by + 0.40, 1.45, 1.20, desc,
+    add_text_box(slide, bx + 0.08, by + 0.38, 1.45, 1.10, desc,
                  font_size=8, color=LIGHT_GRAY)
 
     for dx, dy in dots:
-        add_rounded_box(slide, bx + 1.55 + dx * 0.85, by + 0.55 + dy * 0.75,
+        add_rounded_box(slide, bx + 1.55 + dx * 0.85, by + 0.50 + dy * 0.70,
                         0.18, 0.18, clr)
 
     cont_clr = (ACCENT_GREEN if contention in ("None (control)", "Minimum")
                 else ACCENT_RED if contention in ("Maximum", "High (asymmetric)")
                 else ACCENT_ORANGE)
-    add_text_box(slide, bx + 0.08, by + 1.65, cw - 0.16, 0.22,
+    add_text_box(slide, bx + 0.08, by + 1.55, cw - 0.16, 0.22,
                  f"Contention: {contention}", font_size=9, bold=True, color=cont_clr)
-    add_text_box(slide, bx + 0.08, by + 1.90, cw - 0.16, 0.22,
+    add_text_box(slide, bx + 0.08, by + 1.78, cw - 0.16, 0.22,
                  note, font_size=8, color=MID_GRAY)
-    add_text_box(slide, bx + 0.08, by + 2.20, cw - 0.16, 0.32,
+    add_text_box(slide, bx + 0.08, by + 2.02, cw - 0.16, 0.32,
                  cite, font_size=7, color=ACCENT_BLUE)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 5 — TARGET APPLICATION: ONLINE BOUTIQUE
+# SLIDE 6 — EXPERIMENTAL SETUP
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Target Application — Online Boutique")
+slide_title(slide, "Experimental Setup")
 
-add_text_box(slide, 0.5, 1.4, 6.0, 0.35,
-             "12 Microservices — Service Dependency Graph",
-             font_size=16, bold=True, color=ACCENT_BLUE)
+# Target application — left
+add_rounded_box(slide, 0.5, 1.5, 6.0, 3.5, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(2))
+add_text_box(slide, 0.7, 1.5, 5.6, 0.3, "Target Application — Google Online Boutique",
+             font_size=14, bold=True, color=ACCENT_BLUE)
 
-# Frontend
-add_rounded_box(slide, 3.5, 1.9, 2.0, 0.5, CLR_CLI,
-                "frontend", 11, WHITE, True)
-
-# Tier 2
-tier2 = [
-    ("productcatalog", 0.5, CLR_CHAOS),
-    ("currency", 2.1, CLR_ORCH),
-    ("cart", 3.7, CLR_ORCH),
-    ("recommend.", 5.2, CLR_ORCH),
-]
-for name, x, clr in tier2:
-    add_rounded_box(slide, x, 2.7, 1.3, 0.5, clr, name, 9, WHITE, True)
-    add_arrow(slide, 4.5, 2.4, x + 0.65, 2.7, LIGHT_GRAY, Pt(1))
-
-# Checkout
-add_rounded_box(slide, 2.2, 3.5, 1.4, 0.5, CLR_ORCH,
-                "checkout", 9, WHITE, True)
-add_arrow(slide, 4.5, 2.4, 2.9, 3.5, LIGHT_GRAY, Pt(1))
-
-# Redis
-add_rounded_box(slide, 4.5, 3.5, 1.5, 0.5, ACCENT_RED,
-                "redis-cart", 9, WHITE, True)
-add_arrow(slide, 4.35, 3.2, 5.25, 3.5, LIGHT_GRAY, Pt(1))
-
-# Bottom tier
-bottom = [("email", 0.5), ("payment", 2.0), ("shipping", 3.5)]
+# Service dependency graph (compact)
+add_rounded_box(slide, 2.8, 2.0, 1.8, 0.4, CLR_CLI,
+                "frontend", 10, WHITE, True)
+tier2 = [("productcatalog", 0.7), ("currency", 2.2), ("cart", 3.7)]
+for name, x in tier2:
+    add_rounded_box(slide, x, 2.6, 1.2, 0.35, CLR_ORCH, name, 8, WHITE, True)
+    add_arrow(slide, 3.7, 2.4, x + 0.6, 2.6, LIGHT_GRAY, Pt(1))
+add_rounded_box(slide, 1.7, 3.2, 1.2, 0.35, CLR_ORCH, "checkout", 8, WHITE, True)
+add_arrow(slide, 3.7, 2.4, 2.3, 3.2, LIGHT_GRAY, Pt(1))
+add_rounded_box(slide, 3.5, 3.2, 1.2, 0.35, ACCENT_RED, "redis-cart", 8, WHITE, True)
+add_arrow(slide, 3.4, 2.95, 4.1, 3.2, LIGHT_GRAY, Pt(1))
+bottom = [("email", 0.7), ("payment", 2.2), ("shipping", 3.7)]
 for name, x in bottom:
-    add_rounded_box(slide, x, 4.3, 1.3, 0.45, CLR_ORCH, name, 9, WHITE, True)
-    add_arrow(slide, 2.9, 4.0, x + 0.65, 4.3, LIGHT_GRAY, Pt(1))
+    add_rounded_box(slide, x, 3.8, 1.2, 0.35, CLR_ORCH, name, 8, WHITE, True)
+    add_arrow(slide, 2.3, 3.55, x + 0.6, 3.8, LIGHT_GRAY, Pt(1))
 
-# Chaos target highlight (transparent fill, border only)
-highlight = add_rounded_box(slide, 0.3, 2.5, 1.7, 0.9, DARK_BG,
-                border_color=ACCENT_RED, border_width=Pt(3))
-highlight.fill.background()
-add_text_box(slide, 0.3, 3.45, 1.7, 0.3, "Chaos Target",
-             font_size=10, bold=True, color=ACCENT_RED, alignment=PP_ALIGN.CENTER)
+add_text_box(slide, 0.7, 4.3, 5.6, 0.6,
+    "12 microservices, polyglot (Go, C#, Python, Java, Node.js)\n"
+    "Single replica per service — 100% pod-delete = full unavailability",
+    font_size=10, color=MID_GRAY)
 
-# Why this target
-add_rounded_box(slide, 7.0, 1.5, 5.8, 2.0, VERY_DARK,
-                border_color=ACCENT_RED)
-add_text_box(slide, 7.2, 1.5, 5.4, 0.3, "Why productcatalogservice?",
-             font_size=14, bold=True, color=ACCENT_RED)
-add_bullet_frame(slide, 7.2, 1.85, 5.4, 1.5, [
-    "• Central dependency: homepage, product pages,\n  recommendations, and search all depend on it",
-    "• Maximum blast radius: failure cascades to\n  frontend and all downstream consumers",
-    "• Single replica: 100% pod-delete guarantees\n  complete service unavailability during chaos",
-], font_size=11, color=LIGHT_GRAY)
+# Cluster topology — right
+add_rounded_box(slide, 6.8, 1.5, 5.8, 2.2, VERY_DARK,
+                border_color=CLR_INFRA, border_width=Pt(2))
+add_text_box(slide, 7.0, 1.5, 5.4, 0.3, "Cluster Topology (Proxmox / KVM)",
+             font_size=14, bold=True, color=CLR_INFRA)
 
-# Placement hypothesis
-add_rounded_box(slide, 7.0, 3.8, 5.8, 1.8, VERY_DARK,
-                border_color=ACCENT_GREEN)
-add_text_box(slide, 7.2, 3.8, 5.4, 0.3, "Placement Impact Hypothesis",
-             font_size=14, bold=True, color=ACCENT_GREEN)
-add_bullet_frame(slide, 7.2, 4.15, 5.4, 1.4, [
-    "• Colocate: productcatalog + frontend on same node\n  → correlated failure, worst latency & recovery",
-    "• Spread: productcatalog isolated on own node\n  → fault contained, fastest recovery",
-    "• Baseline: trivial fault (1% CPU, 1s)\n  → all probes pass, score = 100%",
-], font_size=11, color=LIGHT_GRAY)
-
-# Load generation
-add_rounded_box(slide, 0.5, 5.8, 5.5, 1.3, VERY_DARK,
-                border_color=CLR_CLI)
-add_text_box(slide, 0.7, 5.8, 5.1, 0.3, "Load Generation (Locust)",
-             font_size=13, bold=True, color=CLR_CLI)
-load_data = [
-    ["Profile", "Users", "Spawn Rate", "Duration"],
-    ["steady", "50", "10/s", "120s"],
-]
-add_table(slide, 0.7, 6.15, 5.1, 0.7, 2, 4, load_data, font_size=10)
-
-# Additional services note
-add_text_box(slide, 7.0, 5.8, 5.8, 0.3, "Additional Services",
-             font_size=13, bold=True, color=MID_GRAY)
-add_text_box(slide, 7.0, 6.15, 5.8, 0.8,
-    "ad-service, loadgenerator (Locust), plus infrastructure:\n"
-    "ChaosCenter (litmus namespace), Prometheus (monitoring),\n"
-    "Neo4j (neo4j namespace), metrics-server (kube-system)",
-    font_size=11, color=MID_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 6 — KEY DESIGN DECISIONS (moved earlier)
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Key Design Decisions")
-
-# Contributions banner
-add_rounded_box(slide, 0.6, 1.3, 12.1, 0.6, VERY_DARK,
+# Node boxes
+add_rounded_box(slide, 7.0, 1.9, 1.7, 0.7, RGBColor(0x22, 0x33, 0x55),
                 border_color=ACCENT_BLUE)
-add_text_box(slide, 0.8, 1.3, 11.7, 0.5,
-    "ChaosProbe contributions: Placement engine, metrics collection framework, result aggregation, "
-    "Neo4j graph storage, visualization pipeline  |  Existing tools: LitmusChaos, Prometheus, Neo4j, Locust",
-    font_size=13, color=LIGHT_GRAY)
+add_text_box(slide, 7.1, 1.9, 1.5, 0.2, "cp1", font_size=10, bold=True, color=ACCENT_BLUE)
+add_text_box(slide, 7.1, 2.15, 1.5, 0.4, "2 vCPU\n2 GiB", font_size=9, color=LIGHT_GRAY)
 
-decisions = [
-    ("Neo4j Graph Store",
-     "Graph DB preserves causal relationships between faults, "
-     "recovery cycles, and metrics. Cypher queries enable "
-     "blast-radius analysis and topology comparison.",
-     ACCENT_PURPLE),
-    ("ChaosCenter GraphQL API",
-     "All experiments submitted via ChaosCenter for audit "
-     "trail and dashboard visibility. Wraps ChaosEngine "
-     "in Argo Workflow with RBAC management.",
-     CLR_CHAOS),
-    ("Background Thread Probers",
-     "6 continuous probers run as daemon threads with "
-     "phase markers. Non-blocking, real-time collection "
-     "via shared ContinuousProberBase lifecycle.",
-     CLR_METRICS),
-    ("6-Probe Scoring Granularity",
-     "Probes produce 7 distinct score levels (0–100%). "
-     "Each maps to a resilience state. Includes controls "
-     "for blast-radius validation (cart, healthz).",
-     ACCENT_ORANGE),
-    ("Reproducible Randomness",
-     "Random and adversarial strategies use seeded "
-     "PRNGs. Same seed = same placement = comparable "
-     "results across experiment runs.",
-     CLR_ORCH),
-    ("Trivial-Fault Baseline",
-     "Baseline swaps pod-delete → pod-cpu-hog (1% CPU, 1s). "
-     "Probes execute identically but no pods are killed, "
-     "giving a true control measurement.",
-     CLR_INFRA),
+worker_specs = [("w1", "2 GiB", 8.8), ("w2", "2 GiB", 9.7),
+                ("w3", "4 GiB", 10.6), ("w4", "4 GiB", 11.5)]
+for name, ram, x in worker_specs:
+    add_rounded_box(slide, x, 1.9, 0.8, 0.7, RGBColor(0x22, 0x44, 0x22),
+                    border_color=ACCENT_GREEN)
+    add_text_box(slide, x + 0.05, 1.9, 0.7, 0.2, name,
+                 font_size=9, bold=True, color=ACCENT_GREEN)
+    add_text_box(slide, x + 0.05, 2.15, 0.7, 0.4, f"2 vCPU\n{ram}",
+                 font_size=8, color=LIGHT_GRAY)
+
+add_text_box(slide, 7.0, 2.7, 5.4, 0.3,
+    "K8s v1.28.6 • Calico CNI • containerd 1.7.11 • Total: 10 vCPU, 14 GiB",
+    font_size=9, color=MID_GRAY)
+
+# Experiment configurations — bottom
+add_rounded_box(slide, 0.5, 5.2, 6.0, 2.1, VERY_DARK,
+                border_color=CLR_CHAOS, border_width=Pt(2))
+add_text_box(slide, 0.7, 5.2, 5.6, 0.3, "Fault Injection Experiments",
+             font_size=14, bold=True, color=CLR_CHAOS)
+exp_data = [
+    ["", "pod-delete (availability)", "pod-cpu-hog (contention)"],
+    ["Target", "productcatalogservice", "currencyservice"],
+    ["Duration", "120s (5s interval)", "60s"],
+    ["Parameters", "FORCE=true, 100% pods", "1 core, 100% load"],
+    ["Probes", "6 httpProbes", "1 httpProbe"],
 ]
+add_table(slide, 0.7, 5.55, 5.6, 1.6, 5, 3, exp_data,
+          font_size=9, header_color=CLR_CHAOS)
 
-for i, (title, desc, clr) in enumerate(decisions):
-    col = i % 2
-    row = i // 2
-    x = 0.5 + col * 6.4
-    y = 2.1 + row * 1.7
-    add_rounded_box(slide, x, y, 6.0, 1.4, VERY_DARK,
-                    border_color=clr, border_width=Pt(2))
-    add_text_box(slide, x + 0.15, y + 0.05, 5.7, 0.3, title,
-                 font_size=14, bold=True, color=clr)
-    add_text_box(slide, x + 0.15, y + 0.4, 5.7, 0.95, desc,
-                 font_size=12, color=LIGHT_GRAY)
+# Baseline + infrastructure — right bottom
+add_rounded_box(slide, 6.8, 3.9, 5.8, 1.1, VERY_DARK,
+                border_color=CLR_INFRA, border_width=Pt(2))
+add_text_box(slide, 7.0, 3.9, 5.4, 0.3, "Baseline (Control Group)",
+             font_size=13, bold=True, color=CLR_INFRA)
+add_text_box(slide, 7.0, 4.25, 5.4, 0.6,
+    "Swaps pod-delete → pod-cpu-hog with DURATION=1s, CPU_LOAD=1%\n"
+    "All probes execute identically — expected result: 100% score, 0 recovery cycles",
+    font_size=11, color=LIGHT_GRAY)
+
+add_rounded_box(slide, 6.8, 5.2, 5.8, 2.1, VERY_DARK,
+                border_color=CLR_STORAGE, border_width=Pt(2))
+add_text_box(slide, 7.0, 5.2, 5.4, 0.3, "Infrastructure Components",
+             font_size=14, bold=True, color=CLR_STORAGE)
+infra_data = [
+    ["Component", "Purpose"],
+    ["LitmusChaos + ChaosCenter", "Fault injection engine (Helm)"],
+    ["Prometheus + kube-state-metrics", "Cluster metrics (PromQL)"],
+    ["Neo4j 5 Community", "Graph storage (14 node types, 18 rels)"],
+    ["Locust (steady: 50 users, 10/s)", "Load generation (120s)"],
+]
+add_table(slide, 7.0, 5.55, 5.4, 1.6, 5, 2, infra_data,
+          font_size=9, header_color=CLR_STORAGE)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 7 — SYSTEM ARCHITECTURE (simplified, ≤6 components per area)
+# SLIDE 7 — CHAOSPOBE FRAMEWORK
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "System Architecture")
+slide_title(slide, "ChaosProbe — System Architecture")
 
-# ChaosProbe — left
+# ChaosProbe components — left
 add_text_box(slide, 0.3, 1.4, 6.0, 0.3, "ChaosProbe (our contribution)",
              font_size=16, bold=True, color=ACCENT_BLUE)
 
@@ -671,7 +675,7 @@ for name, desc, clr, x, y in cp_components:
     add_text_box(slide, x + 0.1, y + 0.45, 2.6, 0.5, desc,
                  font_size=10, color=LIGHT_GRAY)
 
-# Existing tools — right
+# External infrastructure — right
 add_text_box(slide, 6.8, 1.4, 6.0, 0.3, "Infrastructure (existing tools)",
              font_size=16, bold=True, color=CLR_INFRA)
 
@@ -689,7 +693,7 @@ infra_components = [
      "Container orchestration.\ncontainerd runtime, Metrics API,\nWatch API for recovery tracking",
      CLR_ORCH, 9.9, 1.8),
     ("Locust",
-     "Load generation.\nConfigurable user count, spawn rate.\nHTTP traffic to frontend",
+     "Load generation.\nConfigurable user count, spawn rate.\nHTTP traffic to entry-point service",
      CLR_CLI, 9.9, 3.0),
     ("Proxmox\n(KVM/QEMU)",
      "Virtualization host.\n5 VMs: 1 control plane +\n4 worker nodes",
@@ -711,84 +715,10 @@ add_text_box(slide, 6.2, 2.05, 0.6, 0.2, "uses", font_size=10, color=MID_GRAY)
 add_text_box(slide, 6.2, 3.25, 0.6, 0.2, "queries", font_size=10, color=MID_GRAY)
 add_text_box(slide, 6.2, 4.45, 0.6, 0.2, "stores", font_size=10, color=MID_GRAY)
 
-# CLI flow
-add_text_box(slide, 0.3, 5.5, 12, 0.8,
-    "CLI commands: chaosprobe init (provision cluster) → chaosprobe run (execute experiments) "
-    "→ chaosprobe visualize (generate charts) → chaosprobe graph (Neo4j analysis queries)",
-    font_size=11, color=MID_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 8 — INFRASTRUCTURE & CLUSTER TOPOLOGY
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Infrastructure & Cluster Topology")
-
-# Proxmox host
-add_rounded_box(slide, 0.6, 1.5, 12.1, 3.5, VERY_DARK,
-                border_color=MID_GRAY, border_width=Pt(2))
-add_text_box(slide, 0.8, 1.55, 3, 0.3, "Proxmox Host (KVM/QEMU)",
-             font_size=13, bold=True, color=LIGHT_GRAY)
-
-# Control plane
-add_rounded_box(slide, 1.0, 2.0, 2.2, 1.5, RGBColor(0x22, 0x33, 0x55),
-                border_color=ACCENT_BLUE)
-add_text_box(slide, 1.1, 2.0, 2.0, 0.3, "cp1 — Control Plane",
-             font_size=11, bold=True, color=ACCENT_BLUE)
-add_bullet_frame(slide, 1.1, 2.3, 2.0, 1.1, [
-    "2 vCPU • 2 GiB RAM",
-    "K8s API Server + etcd",
-    "scheduler, controller-mgr",
-], font_size=10, color=LIGHT_GRAY)
-
-# Workers
-workers = [
-    ("worker1", "2 GiB", 3.5),
-    ("worker2", "2 GiB", 5.7),
-    ("worker3", "4 GiB", 7.9),
-    ("worker4", "4 GiB", 10.1),
-]
-for name, ram, x in workers:
-    add_rounded_box(slide, x, 2.0, 1.9, 1.5, RGBColor(0x22, 0x44, 0x22),
-                    border_color=ACCENT_GREEN)
-    add_text_box(slide, x + 0.1, 2.0, 1.7, 0.3, name,
-                 font_size=11, bold=True, color=ACCENT_GREEN)
-    add_bullet_frame(slide, x + 0.1, 2.3, 1.7, 1.1, [
-        f"2 vCPU • {ram} RAM",
-        "containerd 1.7.11",
-        "K8s v1.28.6",
-    ], font_size=10, color=LIGHT_GRAY)
-
-# Summary line
-add_text_box(slide, 1.0, 3.6, 11.0, 0.35,
-    "Provisioned via Kubespray 2.24 + Vagrant (libvirt)  |  "
-    "CNI: Calico  |  DNS: CoreDNS  |  Total: 10 vCPU, 14 GiB RAM",
-    font_size=11, color=MID_GRAY)
-
-# Infrastructure components table
-add_text_box(slide, 0.6, 5.2, 12, 0.3, "Installed Infrastructure Components",
+# Experiment lifecycle — bottom
+add_text_box(slide, 0.3, 5.5, 12, 0.3, "Experiment Lifecycle",
              font_size=16, bold=True, color=ACCENT_BLUE)
 
-infra_data = [
-    ["Namespace", "Component", "Purpose", "Install Method"],
-    ["litmus", "ChaosCenter + operator + CRDs", "Fault injection & experiment mgmt", "Helm chart"],
-    ["monitoring", "Prometheus + kube-state-metrics", "Cluster metrics (PromQL)", "Helm chart"],
-    ["neo4j", "Neo4j 5-community", "Graph storage (14 node types)", "K8s Deployment"],
-    ["kube-system", "metrics-server", "Node/pod CPU & memory API", "Official manifest"],
-    ["online-boutique", "12 microservices + subscriber", "Target application", "K8s manifests"],
-]
-add_table(slide, 0.6, 5.55, 12.1, 1.8, 6, 4, infra_data, font_size=11)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 9 — EXPERIMENT LIFECYCLE & DATA FLOW (merged, simplified)
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Experiment Lifecycle & Data Flow")
-
-# Top pipeline
 phases = [
     ("1. Configure",    "Load YAML\nValidate specs",        CLR_CLI,     0.3),
     ("2. Place",        "Apply strategy\nPatch nodeSelector", CLR_ORCH,  2.8),
@@ -797,610 +727,467 @@ phases = [
     ("5. Store",        "Neo4j sync\nCharts + export",      CLR_STORAGE, 10.3),
 ]
 for title, desc, clr, x in phases:
-    add_rounded_box(slide, x, 1.5, 2.2, 1.2, clr, "", 10, WHITE, True,
+    add_rounded_box(slide, x, 5.9, 2.2, 1.0, clr, "", 10, WHITE, True,
                     border_color=clr)
-    add_text_box(slide, x + 0.05, 1.5, 2.1, 0.3, title,
-                 font_size=12, bold=True, color=WHITE)
-    add_text_box(slide, x + 0.1, 1.8, 2.0, 0.8, desc,
+    add_text_box(slide, x + 0.05, 5.9, 2.1, 0.3, title,
+                 font_size=11, bold=True, color=WHITE)
+    add_text_box(slide, x + 0.1, 6.2, 2.0, 0.6, desc,
                  font_size=10, color=TRANS_WHITE)
 for i in range(len(phases) - 1):
     x1 = phases[i][3] + 2.2
     x2 = phases[i + 1][3]
-    add_arrow(slide, x1, 2.1, x2, 2.1, LIGHT_GRAY, Pt(2))
-
-# Phase timeline
-add_text_box(slide, 0.3, 3.0, 12, 0.3, "Three-Phase Measurement Window",
-             font_size=16, bold=True, color=ACCENT_BLUE)
-add_rounded_box(slide, 0.3, 3.4, 3.5, 0.5, CLR_ORCH,
-                "PreChaos — steady state (30s)", 11, WHITE, True)
-add_rounded_box(slide, 4.0, 3.4, 4.5, 0.5, CLR_CHAOS,
-                "DuringChaos — fault active (120s)", 11, WHITE, True)
-add_rounded_box(slide, 8.7, 3.4, 4.0, 0.5, CLR_METRICS,
-                "PostChaos — recovery observation", 11, WHITE, True)
-
-# Data flow columns
-add_text_box(slide, 0.3, 4.2, 12, 0.3, "Data Flow",
-             font_size=16, bold=True, color=ACCENT_BLUE)
-
-flow_cols = [
-    ("Input",
-     ["experiment.yaml", "K8s manifests", "probe definitions"],
-     CLR_CLI, 0.3),
-    ("Processing",
-     ["Config → topology", "Placement → nodeSelector", "ChaosRunner → API"],
-     CLR_ORCH, 2.8),
-    ("Collection",
-     ["RecoveryWatcher", "5 continuous probers", "ResultCollector (CRDs)"],
-     CLR_METRICS, 5.3),
-    ("Storage",
-     ["Neo4j (14 node types)", "Per-run metrics", "Anomaly labels"],
-     CLR_STORAGE, 7.8),
-    ("Output",
-     ["9 chart types (PNG)", "HTML summary", "ML dataset (CSV)"],
-     CLR_OUTPUT, 10.3),
-]
-for title, items, clr, x in flow_cols:
-    add_text_box(slide, x, 4.5, 2.2, 0.25, title,
-                 font_size=11, bold=True, color=clr)
-    for j, item in enumerate(items):
-        add_rounded_box(slide, x, 4.8 + j * 0.55, 2.2, 0.45, VERY_DARK,
-                        item, 10, LIGHT_GRAY, False, border_color=clr)
-for i in range(len(flow_cols) - 1):
-    x1 = flow_cols[i][3] + 2.2
-    x2 = flow_cols[i + 1][3]
-    add_arrow(slide, x1, 5.3, x2, 5.3, LIGHT_GRAY, Pt(1.5))
-
-# Loop note
-add_text_box(slide, 0.3, 6.5, 12, 0.7,
-    "Strategy loop: for each of 6 strategies × N iterations: "
-    "settle (30s) → start probers → start Locust → pre-chaos baseline → "
-    "run chaos (120s) → post-chaos recovery → collect & sync to Neo4j",
-    font_size=11, color=MID_GRAY)
+    add_arrow(slide, x1, 6.4, x2, 6.4, LIGHT_GRAY, Pt(2))
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 10 — METRICS COLLECTION: PROBERS
+# SLIDE 8 — MEASUREMENT DESIGN
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Metrics Collection — Probers")
+slide_title(slide, "Measurement Design")
 
-add_text_box(slide, 0.5, 1.3, 12, 0.3, "6 Continuous Probers Run as Background Threads",
+# Three-phase timeline
+add_text_box(slide, 0.5, 1.3, 12, 0.3, "Three-Phase Measurement Window",
              font_size=16, bold=True, color=ACCENT_BLUE)
+add_rounded_box(slide, 0.5, 1.65, 3.5, 0.45, CLR_ORCH,
+                "PreChaos — steady state (30s)", 11, WHITE, True)
+add_rounded_box(slide, 4.2, 1.65, 4.5, 0.45, CLR_CHAOS,
+                "DuringChaos — fault active (120s)", 11, WHITE, True)
+add_rounded_box(slide, 8.9, 1.65, 3.8, 0.45, CLR_METRICS,
+                "PostChaos — recovery observation", 11, WHITE, True)
 
+# Probers table — left
+add_text_box(slide, 0.5, 2.4, 7, 0.3, "6 Continuous Probers (Background Threads)",
+             font_size=14, bold=True, color=CLR_METRICS)
 prober_data = [
     ["Prober", "What It Measures", "Data Source", "Interval"],
     ["RecoveryWatcher", "Pod deletion → scheduled → ready (ms)", "K8s Watch API", "Real-time"],
-    ["LatencyProber", "HTTP route latency + error rates", "kubectl exec → curl", "~2s"],
+    ["LatencyProber", "HTTP route latency + error rates", "kubectl exec → python3/wget", "~2s"],
+    ["RedisProber", "Redis ops/s (GET/SET throughput)", "kubectl exec → redis-cli", "~10s"],
+    ["DiskProber", "Sequential disk R/W bytes/s", "kubectl exec → dd", "~10s"],
     ["ResourceProber", "Node/pod CPU (millicores) + memory", "Metrics API (v1beta1)", "~5s"],
-    ["PrometheusProber", "pod_ready, CPU throttle, network I/O", "PromQL queries", "~10s"],
-    ["ThroughputProber", "Redis ops/s, disk R/W bytes/s", "redis-cli, dd commands", "~10s"],
+    ["PrometheusProber", "pod_ready, CPU/memory, throttle, net rx", "PromQL queries", "~10s"],
 ]
-add_table(slide, 0.3, 1.8, 12.7, 2.8, 6, 4, prober_data, font_size=11)
+add_table(slide, 0.3, 2.8, 7.5, 2.4, 7, 4, prober_data, font_size=10)
 
-# How probers work
-add_text_box(slide, 0.5, 4.9, 12, 0.3, "Prober Lifecycle",
-             font_size=16, bold=True, color=ACCENT_GREEN)
-add_bullet_frame(slide, 0.5, 5.3, 12, 2.0, [
-    "• All probers extend ContinuousProberBase — shared start/stop lifecycle with phase markers",
-    "• Non-blocking: each prober runs in its own daemon thread, collecting in real-time",
-    "• Phase-aware: measurements tagged PreChaos / DuringChaos / PostChaos for comparison",
-    "• Infrastructure: metrics-server, Prometheus + kube-state-metrics, redis-cart pod, K8s API",
-], font_size=13, color=LIGHT_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 10b — CONTENTION CATEGORIES
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Contention Categories")
-
-add_text_box(slide, 0.5, 1.3, 12, 0.3,
-             "Expected Impact by Placement — with Literature References",
-             font_size=16, bold=True, color=ACCENT_ORANGE)
-
-contention_data = [
-    ["Category", "Metric", "Expected Colocate Impact", "Literature"],
-    ["Node CPU Utilization", "CPU millicores, throttle seconds",
-     "Shared cores → CPU throttling under load",
-     "Burns et al. (2016) — Borg"],
-    ["Memory Pressure", "Working set bytes, OOM events",
-     "Shared memory → evictions when overcommitted",
-     "Verma et al. (2015) — Borg"],
-    ["Inter-Service Latency", "HTTP response time (ms) per route",
-     "Network stack contention on shared node",
-     "Gan et al. (2019) — DeathStarBench"],
-    ["Disk I/O Throughput", "Sequential R/W bytes/s, ops/s",
-     "Shared disk bandwidth → degraded throughput",
-     "Dean & Barroso (2013) — Tail at Scale"],
-    ["Recovery Time", "Deletion → scheduled → ready (ms)",
-     "Scheduler contention delays pod placement",
-     "Hightower et al. (2017) — K8s Up & Running"],
-]
-add_table(slide, 0.3, 1.8, 12.7, 3.5, 6, 4, contention_data,
-          font_size=11, header_color=ACCENT_ORANGE)
-
-# Key insight
-add_rounded_box(slide, 0.5, 5.6, 12.3, 1.3, VERY_DARK,
-                border_color=ACCENT_BLUE, border_width=Pt(2))
-add_text_box(slide, 0.7, 5.65, 11.9, 0.3, "Key Insight",
-             font_size=16, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 0.7, 6.0, 11.9, 0.8,
-    "Colocating all pods on a single node maximizes contention across all five categories simultaneously. "
-    "Spreading pods across nodes minimizes per-node contention but may introduce cross-node network latency. "
-    "These trade-offs are what ChaosProbe quantifies.",
-    font_size=13, color=LIGHT_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 11 — PROBE DESIGN
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Probe Design")
-
-# Definition
-add_rounded_box(slide, 0.5, 1.3, 12.3, 0.8, VERY_DARK,
-                border_color=ACCENT_BLUE)
-add_text_box(slide, 0.7, 1.35, 11.9, 0.7,
-    "A probe is a lightweight health check executed inside the Kubernetes cluster during chaos. "
-    "Probes validate whether a service remains reachable and responsive under fault injection. "
-    "System health is measured by how many probes pass — each failure indicates degraded resilience.",
-    font_size=13, color=LIGHT_GRAY)
-
-# Probe table
-probe_data = [
-    ["Probe Name", "Mode", "Endpoint", "Timeout", "Retry"],
-    ["frontend-product-strict", "Continuous (2s)", "/product/OLJCESPC7Z", "3s", "1"],
-    ["frontend-homepage-strict", "Continuous (2s)", "/", "3s", "1"],
-    ["frontend-homepage-moderate", "Continuous (3s)", "/", "3s", "2"],
-    ["frontend-cart", "Continuous (4s)", "/cart", "5s", "2"],
-    ["frontend-homepage-edge", "Edge (5s)", "/", "15s", "5"],
-    ["frontend-healthz", "Continuous (4s)", "/_healthz", "5s", "2"],
-]
-add_table(slide, 0.3, 2.4, 12.7, 2.8, 7, 5, probe_data, font_size=11)
-
-# Sensitivity layers
-add_text_box(slide, 0.5, 5.5, 12, 0.3, "Probe Sensitivity Layers",
-             font_size=16, bold=True, color=ACCENT_BLUE)
-add_bullet_frame(slide, 0.5, 5.9, 6.0, 1.5, [
-    "Strict (2s, 1 retry): detects any disruption",
-    "Moderate (3–4s, 2 retries): strategy differences emerge",
-], font_size=13, color=LIGHT_GRAY)
-add_bullet_frame(slide, 6.5, 5.9, 6.0, 1.5, [
-    "Edge (5s, 5 retries): validates eventual recovery",
-    "Control (healthz, cart): detects node-level contention",
-], font_size=13, color=LIGHT_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 11b — RESILIENCE SCORING
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Resilience Scoring")
-
-# Formula
-add_rounded_box(slide, 0.5, 1.3, 12.3, 0.7, VERY_DARK,
-                border_color=ACCENT_BLUE, border_width=Pt(2))
-add_text_box(slide, 0.7, 1.35, 11.9, 0.3, "Scoring Formula",
-             font_size=16, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 0.7, 1.7, 11.9, 0.25,
-    "score = Σ(probeSuccess%) / N   •   verdict = PASS if all probes pass, else FAIL",
-    font_size=14, color=WHITE)
-
-# Score interpretation - larger, more readable
-add_text_box(slide, 0.5, 2.3, 12, 0.3, "Score Interpretation",
-             font_size=16, bold=True, color=ACCENT_ORANGE)
-
-scores = [
-    ("0%",   "All 6 probes failed — total disruption"),
-    ("17%",  "1 probe passed — node alive but service down"),
-    ("33%",  "2 probes — eventual recovery only"),
-    ("50%",  "3 probes — moderate resilience"),
-    ("67%",  "4 probes — good recovery"),
-    ("83%",  "5 probes — fast recovery"),
-    ("100%", "All probes passed — no visible disruption"),
-]
-for i, (score, meaning) in enumerate(scores):
-    y = 2.75 + i * 0.45
-    pct = int(score.replace("%", ""))
-    badge_clr = (ACCENT_RED if pct <= 33
-                 else ACCENT_ORANGE if pct <= 67
-                 else ACCENT_GREEN)
-    add_rounded_box(slide, 0.7, y, 0.8, 0.35, badge_clr,
-                    score, 14, WHITE, True)
-    add_text_box(slide, 1.7, y, 10.5, 0.35, meaning,
-                 font_size=14, color=LIGHT_GRAY)
-
-# Expected results box
-add_rounded_box(slide, 0.5, 6.0, 12.3, 1.2, VERY_DARK,
-                border_color=ACCENT_GREEN)
-add_text_box(slide, 0.7, 6.0, 11.9, 0.3, "Expected Results by Strategy",
-             font_size=16, bold=True, color=ACCENT_GREEN)
-add_bullet_frame(slide, 0.7, 6.4, 5.5, 0.7, [
-    "• Baseline: 100% — trivial fault, no disruption",
-    "• Spread: 67–100% — fault isolation limits impact",
-], font_size=13, color=LIGHT_GRAY)
-add_bullet_frame(slide, 6.5, 6.4, 5.5, 0.7, [
-    "• Default: 33–67% — partial isolation by scheduler",
-    "• Colocate: 0–33% — all services affected by fault",
-], font_size=13, color=LIGHT_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 12 — EXPERIMENT CONFIGURATIONS (replicable)
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Experiment Configurations")
-add_text_box(slide, 0.6, 1.1, 12, 0.3,
-             "All experiments are fully defined and replicable with these exact parameters",
-             font_size=13, color=MID_GRAY)
-
-# pod-delete
-add_rounded_box(slide, 0.5, 1.5, 5.8, 3.0, VERY_DARK,
-                border_color=CLR_CHAOS, border_width=Pt(2))
-add_text_box(slide, 0.7, 1.5, 5.4, 0.3, "Experiment 1: pod-delete (Availability)",
-             font_size=14, bold=True, color=CLR_CHAOS)
-pd_data = [
-    ["Parameter", "Value"],
-    ["Fault Type", "pod-delete"],
-    ["Target", "productcatalogservice (online-boutique)"],
-    ["TOTAL_CHAOS_DURATION", "120 seconds"],
-    ["CHAOS_INTERVAL", "5 seconds"],
-    ["PODS_AFFECTED_PERC", "100%"],
-    ["FORCE", "true"],
-    ["Probes", "6 httpProbes (see Probe Design slide)"],
-]
-add_table(slide, 0.7, 1.85, 5.4, 2.5, 8, 2, pd_data,
-          font_size=10, header_color=CLR_CHAOS)
-
-# pod-cpu-hog
-add_rounded_box(slide, 6.8, 1.5, 5.8, 3.0, VERY_DARK,
-                border_color=ACCENT_ORANGE, border_width=Pt(2))
-add_text_box(slide, 7.0, 1.5, 5.4, 0.3, "Experiment 2: pod-cpu-hog (Contention)",
+# Probes + scoring — right
+add_text_box(slide, 8.2, 2.4, 5, 0.3, "Resilience Probes (LitmusChaos)",
              font_size=14, bold=True, color=ACCENT_ORANGE)
-ch_data = [
-    ["Parameter", "Value"],
-    ["Fault Type", "pod-cpu-hog"],
-    ["Target", "currencyservice (online-boutique)"],
-    ["TOTAL_CHAOS_DURATION", "60 seconds"],
-    ["CPU_CORES", "1"],
-    ["CPU_LOAD", "100%"],
-    ["Probes", "1 httpProbe (frontend-availability)"],
+
+probe_summary = [
+    ["Probe", "Mode", "Timeout"],
+    ["frontend-product-strict", "Continuous (2s)", "3s, 1 retry"],
+    ["frontend-homepage-strict", "Continuous (2s)", "3s, 1 retry"],
+    ["frontend-homepage-moderate", "Continuous (3s)", "3s, 2 retries"],
+    ["frontend-cart", "Continuous (4s)", "5s, 2 retries"],
+    ["frontend-homepage-edge", "Edge (5s)", "15s, 5 retries"],
+    ["frontend-healthz", "Continuous (4s)", "5s, 2 retries"],
 ]
-add_table(slide, 7.0, 1.85, 5.4, 2.3, 7, 2, ch_data,
-          font_size=10, header_color=ACCENT_ORANGE)
+add_table(slide, 8.2, 2.8, 4.8, 2.4, 7, 3, probe_summary,
+          font_size=9, header_color=ACCENT_ORANGE)
 
-# Baseline
-add_rounded_box(slide, 0.5, 4.7, 6.0, 1.8, VERY_DARK,
-                border_color=CLR_INFRA, border_width=Pt(2))
-add_text_box(slide, 0.7, 4.7, 5.6, 0.3, "Baseline Configuration (Control Group)",
-             font_size=14, bold=True, color=CLR_INFRA)
-add_bullet_frame(slide, 0.7, 5.05, 5.6, 1.3, [
-    "• Fault swapped: pod-delete → pod-cpu-hog",
-    "• TOTAL_CHAOS_DURATION = 1 second",
-    "• CPU_CORES = 0, CPU_LOAD = 1 (1% stress)",
-    "• All 6 probes execute identically (same timeouts)",
-    "• Expected result: 100% score, 0 recovery cycles",
-], font_size=10, color=LIGHT_GRAY)
+# Scoring — bottom
+add_text_box(slide, 0.5, 5.5, 12, 0.3, "Resilience Scoring",
+             font_size=16, bold=True, color=ACCENT_BLUE)
 
-# Why no recovery time in baseline
-add_rounded_box(slide, 6.8, 4.7, 5.8, 1.8, VERY_DARK,
-                border_color=ACCENT_GREEN)
-add_text_box(slide, 7.0, 4.7, 5.4, 0.3, "Why Baseline Shows No Recovery Time",
-             font_size=14, bold=True, color=ACCENT_GREEN)
-add_bullet_frame(slide, 7.0, 5.05, 5.4, 1.3, [
-    "• pod-cpu-hog does NOT delete pods",
-    "• RecoveryWatcher only triggers on pod deletion",
-    "• Therefore: 0 recovery cycles, N/A recovery time",
-    "• Any non-zero recovery = pre-existing instability",
-    "• This validates the control: no fault = no impact",
-], font_size=10, color=LIGHT_GRAY)
+add_rounded_box(slide, 0.5, 5.9, 5.5, 0.5, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(2))
+add_text_box(slide, 0.7, 5.95, 5.1, 0.4,
+    "score = Σ(probeSuccess%) / N    verdict = PASS iff all probes pass",
+    font_size=13, bold=True, color=WHITE)
 
-# Replicate
-add_rounded_box(slide, 0.5, 6.7, 12.1, 0.6, VERY_DARK,
-                border_color=ACCENT_BLUE)
-add_text_box(slide, 0.7, 6.7, 11.7, 0.5,
-    "Replicate:  chaosprobe init --scenario placement-experiment.yaml  →  "
-    "chaosprobe run --strategies baseline,default,colocate,spread,random,adversarial,best-fit,dependency-aware --iterations 3  →  "
-    "chaosprobe visualize",
-    font_size=12, color=LIGHT_GRAY)
+# Score scale
+scores_compact = [
+    ("0%", ACCENT_RED), ("17%", ACCENT_RED), ("33%", ACCENT_RED),
+    ("50%", ACCENT_ORANGE), ("67%", ACCENT_ORANGE),
+    ("83%", ACCENT_GREEN), ("100%", ACCENT_GREEN),
+]
+for j, (pct, clr) in enumerate(scores_compact):
+    add_rounded_box(slide, 6.5 + j * 0.95, 5.9, 0.8, 0.5, clr,
+                    pct, 12, WHITE, True)
+add_text_box(slide, 6.5, 6.45, 6.7, 0.3,
+             "Total disruption  ←                              →  No visible impact",
+             font_size=10, color=MID_GRAY, alignment=PP_ALIGN.CENTER)
+
+# Key design points
+add_bullet_frame(slide, 0.5, 6.6, 6.0, 0.8, [
+    "• 5 probers extend ContinuousProberBase; RecoveryWatcher uses K8s Watch API",
+    "• Phase-aware: measurements tagged PreChaos / DuringChaos / PostChaos",
+], font_size=11, color=LIGHT_GRAY)
+add_bullet_frame(slide, 6.8, 6.6, 6.0, 0.8, [
+    "• Strict → Moderate → Edge: layered sensitivity",
+    "• Control probes (healthz, cart): detect node-level contention",
+], font_size=11, color=LIGHT_GRAY)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 13 — NEO4J GRAPH SCHEMA (verified, cleaner layout)
+# SLIDE 9 — RESULTS: RESILIENCE SCORES
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Neo4j Graph Schema")
-
-# Source: verified against chaosprobe/storage/neo4j_writer.py (MERGE/CREATE statements)
-# 14 node types, 18 relationships
-
-NODE_W, NODE_H = 1.75, 0.45
-def node_box(x, y, name, clr, fsize=10, w=NODE_W, h=NODE_H):
-    add_rounded_box(slide, x, y, w, h, clr, name, fsize, WHITE, True)
-
-def rel_label(x, y, text, w=1.8, color=MID_GRAY, size=9):
-    add_text_box(slide, x, y, w, 0.22, text, font_size=size, color=color)
-
-# ── Section 1: Cluster Topology (top row) ──
-add_text_box(slide, 0.3, 1.25, 5.0, 0.25, "Cluster Topology",
-             font_size=11, bold=True, color=CLR_INFRA)
-
-# K8sNode ← Deployment → Service (with Service self-loop DEPENDS_ON)
-node_box(0.3, 1.55, "K8sNode", CLR_INFRA)
-node_box(2.35, 1.55, "Deployment", CLR_ORCH)
-node_box(4.4, 1.55, "Service", CLR_ORCH)
-
-# Deployment → K8sNode  (SCHEDULED_ON)
-add_arrow(slide, 2.35, 1.78, 2.05, 1.78, CLR_ORCH, Pt(1.5))
-rel_label(1.35, 1.30, "SCHEDULED_ON", w=1.15)
-
-# Deployment → Service  (EXPOSES)
-add_arrow(slide, 4.1, 1.78, 4.4, 1.78, CLR_ORCH, Pt(1.5))
-rel_label(3.35, 1.30, "EXPOSES", w=0.9)
-
-# Service self-loop  (DEPENDS_ON)
-add_arrow(slide, 5.3, 1.62, 5.6, 1.45, CLR_ORCH, Pt(1.2))
-add_arrow(slide, 5.6, 1.45, 5.6, 1.95, CLR_ORCH, Pt(1.2))
-add_arrow(slide, 5.6, 1.95, 5.3, 1.95, CLR_ORCH, Pt(1.2))
-rel_label(5.7, 1.63, "DEPENDS_ON", w=1.2)
-
-# ── Section 2: Central ChaosRun + PlacementStrategy ──
-node_box(5.55, 3.1, "ChaosRun", CLR_CHAOS, fsize=13, w=2.3, h=0.65)
-node_box(2.55, 3.2, "PlacementStrategy", CLR_CLI, fsize=9, w=2.2)
-
-# ChaosRun → PlacementStrategy  (USED_STRATEGY)
-add_arrow(slide, 5.55, 3.42, 4.75, 3.42, CLR_CLI, Pt(1.5))
-rel_label(4.55, 2.95, "USED_STRATEGY", w=1.5)
-
-# Deployment → ChaosRun  (TARGETED_BY)
-add_arrow(slide, 3.1, 2.0, 5.55, 3.18, CLR_CHAOS, Pt(1.5))
-rel_label(3.35, 2.45, "TARGETED_BY", w=1.4)
-
-# ── Section 3: Experiment Results (right) ──
-add_text_box(slide, 8.2, 1.25, 5.0, 0.25, "Experiment Results",
-             font_size=11, bold=True, color=CLR_CHAOS)
-node_box(8.2, 1.55, "ExperimentResult", CLR_CHAOS, fsize=9, w=2.2)
-node_box(10.7, 1.55, "ProbeResult", ACCENT_RED, fsize=9, w=1.9)
-
-add_arrow(slide, 10.4, 1.78, 10.7, 1.78, CLR_CHAOS, Pt(1.5))
-rel_label(10.05, 1.30, "HAS_PROBE", w=1.0)
-
-# ChaosRun → ExperimentResult  (HAS_RESULT)
-add_arrow(slide, 7.85, 3.25, 8.2, 1.95, CLR_CHAOS, Pt(1.5))
-rel_label(8.0, 2.35, "HAS_RESULT", w=1.2)
-
-# RecoveryCycle
-node_box(8.2, 3.2, "RecoveryCycle", CLR_METRICS, fsize=9, w=2.0)
-add_arrow(slide, 7.85, 3.42, 8.2, 3.42, CLR_METRICS, Pt(1.5))
-rel_label(7.95, 3.65, "HAS_RECOVERY_CYCLE", w=1.9)
-
-# ── Section 4: Metrics & Telemetry (bottom-left) ──
-add_text_box(slide, 0.3, 4.35, 6.0, 0.25, "Metrics & Telemetry",
-             font_size=11, bold=True, color=CLR_METRICS)
-
-metric_nodes = [
-    ("MetricsPhase",   0.3, 4.65, CLR_METRICS, "HAS_METRICS_PHASE"),
-    ("MetricsSample",  2.25, 4.65, CLR_METRICS, "HAS_SAMPLE"),
-    ("AnomalyLabel",   4.2, 4.65, CLR_CHAOS,   "HAS_ANOMALY_LABEL"),
-    ("CascadeEvent",   6.15, 4.65, ACCENT_ORANGE, "HAS_CASCADE_EVENT"),
-]
-for name, x, y, clr, rel in metric_nodes:
-    node_box(x, y, name, clr, fsize=9)
-    add_arrow(slide, 6.65, 3.8, x + NODE_W / 2, y, clr, Pt(1.2))
-    rel_label(x - 0.05, y + NODE_H + 0.02, rel, w=NODE_W + 0.1, size=8)
-
-# AnomalyLabel → Service  (TARGETS / AFFECTS) — dashed back-reference
-add_arrow(slide, 4.95, 4.65, 5.0, 2.05, CLR_CHAOS, Pt(1.0))
-rel_label(4.1, 3.55, "TARGETS / AFFECTS", w=1.8, color=LIGHT_GRAY, size=8)
-
-# ── Section 5: Pod State (bottom-right) ──
-add_text_box(slide, 8.2, 4.35, 5.0, 0.25, "Pod State",
-             font_size=11, bold=True, color=CLR_ORCH)
-node_box(8.2, 4.65, "PodSnapshot", CLR_ORCH, fsize=9, w=2.0)
-node_box(10.5, 4.65, "ContainerLog", CLR_INFRA, fsize=9, w=2.0)
-
-# ChaosRun → PodSnapshot
-add_arrow(slide, 7.85, 3.75, 9.2, 4.65, CLR_ORCH, Pt(1.2))
-rel_label(8.2, 5.15, "HAS_POD_SNAPSHOT", w=1.9, size=8)
-
-# PodSnapshot → ContainerLog
-add_arrow(slide, 10.2, 4.87, 10.5, 4.87, CLR_INFRA, Pt(1.2))
-rel_label(10.4, 5.15, "HAS_CONTAINER_LOG", w=1.9, size=8)
-
-# PodSnapshot cross-refs back to K8sNode + Deployment
-rel_label(8.2, 5.42, "PodSnapshot → K8sNode (RUNNING_ON)", w=4.0, size=8, color=LIGHT_GRAY)
-rel_label(8.2, 5.62, "PodSnapshot → Deployment (BELONGS_TO)", w=4.0, size=8, color=LIGHT_GRAY)
-
-# ── Schema summary footer (compact, inside box) ──
-add_rounded_box(slide, 0.3, 6.05, 7.7, 1.25, VERY_DARK,
-                border_color=ACCENT_PURPLE)
-add_text_box(slide, 0.45, 6.1, 7.4, 0.3,
-             "14 Node Types · 18 Relationships (verified from neo4j_writer.py)",
-             font_size=11, bold=True, color=ACCENT_PURPLE)
-add_text_box(slide, 0.45, 6.4, 7.4, 0.9,
-    "Topology:   K8sNode · Deployment · Service · PlacementStrategy\n"
-    "Run:            ChaosRun · ExperimentResult · ProbeResult · RecoveryCycle\n"
-    "Telemetry:  MetricsPhase · MetricsSample · AnomalyLabel · CascadeEvent\n"
-    "Pod state:  PodSnapshot · ContainerLog",
-    font_size=9, color=LIGHT_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 14 — RESULTS: VISUALIZATION SUMMARY
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Results — Visualization Summary")
+slide_title(slide, "Results — Resilience Scores")
 
 charts_dir = _find_latest_charts_dir()
 
-# Top row: 3 key charts
-chart_configs = [
-    ("resilience_scores.png", "Resilience Scores by Strategy", 0.3, 1.4, 4.0, 2.6),
-    ("latency_by_strategy.png", "Inter-Service Latency by Strategy", 4.6, 1.4, 4.0, 2.6),
-    ("recovery_times.png", "Recovery Times by Strategy", 8.9, 1.4, 4.0, 2.6),
-]
-for filename, label, x, y, w, h in chart_configs:
-    img_path = os.path.join(charts_dir, filename) if charts_dir else None
-    add_image_or_placeholder(slide, x, y, w, h, img_path,
-                             f"[{label}]\nGenerated by:\nchaosprobe visualize")
-    add_text_box(slide, x, y + h, w, 0.3, label,
-                 font_size=11, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
-
-# Bottom row: 3 more charts
-chart_configs2 = [
-    ("resource_utilization.png", "Resource Utilization (CPU/Memory)", 0.3, 4.5, 4.0, 2.3),
-    ("throughput_by_strategy.png", "I/O Throughput by Strategy", 4.6, 4.5, 4.0, 2.3),
-    ("latency_degradation.png", "Latency Degradation (Pre vs During)", 8.9, 4.5, 4.0, 2.3),
-]
-for filename, label, x, y, w, h in chart_configs2:
-    img_path = os.path.join(charts_dir, filename) if charts_dir else None
-    add_image_or_placeholder(slide, x, y, w, h, img_path,
-                             f"[{label}]\nGenerated by:\nchaosprobe visualize")
-    add_text_box(slide, x, y + h, w, 0.3, label,
-                 font_size=11, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
-
-# Key finding
-add_text_box(slide, 0.3, 7.1, 12.7, 0.3,
-    "Key finding: colocate strategy consistently shows worst inter-service latency and longest "
-    "recovery times — this scenario should be avoided in production deployments.",
-    font_size=13, bold=True, color=ACCENT_ORANGE)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 15 — INTER-SERVICE LATENCY FOCUS
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Inter-Service Latency During Chaos")
-
-# Large chart
-if charts_dir:
-    img = os.path.join(charts_dir, "latency_degradation.png")
-else:
-    img = None
-add_image_or_placeholder(slide, 0.5, 1.4, 7.5, 4.5, img,
-                         "[Latency Degradation: Pre-Chaos vs During-Chaos]\n\n"
-                         "Side-by-side bar chart per strategy showing\n"
-                         "HTTP route mean latency increase during fault injection.\n\n"
+# Large resilience chart
+img_path = os.path.join(charts_dir, "resilience_scores.png") if charts_dir else None
+add_image_or_placeholder(slide, 0.5, 1.4, 7.5, 4.5, img_path,
+                         "[Resilience Scores by Strategy]\n\n"
+                         "Bar chart showing resilience score (0–100%)\n"
+                         "per placement strategy.\n\n"
                          "Generated by: chaosprobe visualize")
 
-# Analysis
-add_rounded_box(slide, 8.5, 1.4, 4.3, 2.8, VERY_DARK,
-                border_color=ACCENT_RED, border_width=Pt(2))
-add_text_box(slide, 8.7, 1.4, 3.9, 0.3, "Key Observations",
-             font_size=14, bold=True, color=ACCENT_RED)
-add_bullet_frame(slide, 8.7, 1.75, 3.9, 2.3, [
-    "• Colocate: highest latency degradation\n  across all routes — worst strategy",
-    "• Spread: minimal latency increase —\n  fault isolation contains impact",
-    "• Default: moderate — scheduler partially\n  separates dependent services",
-    "• Adversarial: high — heavy pods on\n  same node amplifies contention",
-], font_size=10, color=LIGHT_GRAY)
+# Key observations — right
+add_rounded_box(slide, 8.5, 1.4, 4.3, 4.5, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(2))
+add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Key Observations",
+             font_size=16, bold=True, color=ACCENT_BLUE)
+add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
+    "• Baseline: 100% score as expected —\n  validates experimental methodology",
+    "• Colocate: consistently lowest scores —\n  maximum contention degrades all probes",
+    "• Spread: highest scores among non-baseline\n  — fault isolation limits blast radius",
+    "• Default: moderate — K8s scheduler provides\n  partial but unintentional isolation",
+    "• Random & Adversarial: variable —\n  depends on resource-hotspot placement",
+], font_size=11, color=LIGHT_GRAY)
 
-# Why colocate worst
-add_rounded_box(slide, 8.5, 4.5, 4.3, 1.5, VERY_DARK,
-                border_color=ACCENT_ORANGE)
-add_text_box(slide, 8.7, 4.5, 3.9, 0.3, "Why Colocate Performs Worst",
-             font_size=13, bold=True, color=ACCENT_ORANGE)
-add_bullet_frame(slide, 8.7, 4.85, 3.9, 1.1, [
-    "• All 12 services on 1 node: shared CPU,\n  memory, network stack, disk I/O",
-    "• Pod deletion causes cascading resource\n  pressure on all co-located services",
-    "• Conclusion: this placement should be\n  avoided in production environments",
-], font_size=10, color=LIGHT_GRAY)
-
-# Ranking
+# Hypothesis check
 add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
-                border_color=ACCENT_BLUE)
-add_text_box(slide, 0.7, 6.2, 11.9, 0.3,
-             "Strategy Ranking by Inter-Service Latency (best → worst)",
-             font_size=13, bold=True, color=ACCENT_BLUE)
-ranking = [
-    ("Spread", ACCENT_GREEN, 0.7),
-    ("Default", CLR_CLI, 3.2),
-    ("Random", ACCENT_ORANGE, 5.7),
-    ("Adversarial", ACCENT_PURPLE, 8.2),
-    ("Colocate", ACCENT_RED, 10.7),
-]
-for name, clr, x in ranking:
-    add_rounded_box(slide, x, 6.55, 2.0, 0.4, clr, name, 12, WHITE, True)
-for i in range(len(ranking) - 1):
-    x1 = ranking[i][2] + 2.0
-    x2 = ranking[i + 1][2]
-    add_arrow(slide, x1, 6.75, x2, 6.75, LIGHT_GRAY, Pt(2))
+                border_color=ACCENT_GREEN, border_width=Pt(2))
+add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "Hypothesis Validation",
+             font_size=14, bold=True, color=ACCENT_GREEN)
+add_text_box(slide, 0.7, 6.55, 3.7, 0.6,
+    "H1 (colocate = worst): Supported",
+    font_size=13, bold=True, color=ACCENT_RED)
+add_text_box(slide, 4.6, 6.55, 3.7, 0.6,
+    "H2 (spread = best isolation): Supported",
+    font_size=13, bold=True, color=ACCENT_GREEN)
+add_text_box(slide, 8.5, 6.55, 4.0, 0.6,
+    "H3 (baseline = 100%): Supported",
+    font_size=13, bold=True, color=CLR_INFRA)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 16 — SUMMARY & FUTURE WORK
+# SLIDE 10 — RESULTS: RECOVERY TIME & LATENCY
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Summary & Future Work")
+slide_title(slide, "Results — Recovery Time & Latency")
+
+# Recovery times chart — left
+img_path = os.path.join(charts_dir, "recovery_times.png") if charts_dir else None
+add_image_or_placeholder(slide, 0.3, 1.4, 6.2, 3.5, img_path,
+                         "[Recovery Times by Strategy]\n\n"
+                         "Box plot: pod deletion → ready (ms)\n"
+                         "per placement strategy.\n\n"
+                         "Generated by: chaosprobe visualize")
+add_text_box(slide, 0.3, 4.95, 6.2, 0.3, "Recovery Time (pod deletion → ready)",
+             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
+
+# Latency degradation chart — right
+img_path = os.path.join(charts_dir, "latency_degradation.png") if charts_dir else None
+add_image_or_placeholder(slide, 6.8, 1.4, 6.2, 3.5, img_path,
+                         "[Latency Degradation: Pre vs During Chaos]\n\n"
+                         "Grouped bar chart: HTTP route latency\n"
+                         "pre-chaos vs during-chaos per strategy.\n\n"
+                         "Generated by: chaosprobe visualize")
+add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "Latency Degradation (Pre-Chaos vs During-Chaos)",
+             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
+
+# Analysis — bottom
+add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
+                border_color=ACCENT_RED)
+add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery Time Analysis",
+             font_size=14, bold=True, color=ACCENT_RED)
+add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
+    "• Colocate: longest recovery — scheduler contention\n  on the saturated node delays rescheduling",
+    "• Spread: fastest recovery — dedicated node resources\n  allow immediate rescheduling",
+    "• Baseline: 0 recovery cycles (no pods deleted) — control",
+], font_size=11, color=LIGHT_GRAY)
+
+add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
+                border_color=ACCENT_ORANGE)
+add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "Latency Analysis",
+             font_size=14, bold=True, color=ACCENT_ORANGE)
+add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
+    "• Colocate: highest degradation — shared CPU, memory,\n  and network stack amplify latency during fault",
+    "• Spread: minimal increase — fault isolation contains\n  impact to the targeted service's node",
+    "• Adversarial: high — resource-heavy hotspot node\n  amplifies cross-service contention",
+], font_size=11, color=LIGHT_GRAY)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 11 — RESULTS: RESOURCES & THROUGHPUT
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Results — Resources & Throughput")
+
+# Resource utilization chart — left
+img_path = os.path.join(charts_dir, "resource_utilization.png") if charts_dir else None
+add_image_or_placeholder(slide, 0.3, 1.4, 6.2, 3.5, img_path,
+                         "[Resource Utilization (CPU/Memory)]\n\n"
+                         "Per-strategy CPU and memory utilization\n"
+                         "across experiment phases.\n\n"
+                         "Generated by: chaosprobe visualize")
+add_text_box(slide, 0.3, 4.95, 6.2, 0.3, "Resource Utilization (CPU & Memory)",
+             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
+
+# Throughput chart — right
+img_path = os.path.join(charts_dir, "throughput_by_strategy.png") if charts_dir else None
+add_image_or_placeholder(slide, 6.8, 1.4, 6.2, 3.5, img_path,
+                         "[I/O Throughput by Strategy]\n\n"
+                         "Redis ops/s and disk R/W bytes/s\n"
+                         "per placement strategy.\n\n"
+                         "Generated by: chaosprobe visualize")
+add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "I/O Throughput (Redis ops/s, Disk bytes/s)",
+             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
+
+# Analysis — bottom
+add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
+                border_color=CLR_METRICS)
+add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Resource Analysis",
+             font_size=14, bold=True, color=CLR_METRICS)
+add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
+    "• Colocate: highest CPU throttling — all services\n  compete for shared cores on a single node",
+    "• Spread: most stable resource usage — dedicated\n  per-node capacity minimizes contention",
+    "• Memory pressure correlates with placement density",
+], font_size=11, color=LIGHT_GRAY)
+
+add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
+                border_color=CLR_OUTPUT)
+add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "Throughput Analysis",
+             font_size=14, bold=True, color=CLR_OUTPUT)
+add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
+    "• Disk I/O: colocate shows degraded throughput due\n  to shared disk bandwidth across all services",
+    "• Redis: throughput varies with network locality —\n  co-located cart+redis may benefit from low latency",
+    "• Spread: consistent throughput — isolated I/O paths",
+], font_size=11, color=LIGHT_GRAY)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 12 — DISCUSSION
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Discussion")
+
+# Strategy comparison heatmap — left
+img_path = os.path.join(charts_dir, "strategy_comparison_heatmap.png") if charts_dir else None
+add_image_or_placeholder(slide, 0.3, 1.4, 6.5, 3.5, img_path,
+                         "[Strategy Comparison Heatmap]\n\n"
+                         "All thesis dimensions normalised to 0-1.\n"
+                         "Green = better, Red = worse.\n\n"
+                         "Generated by: chaosprobe visualize")
+
+# Hypothesis evaluation — right
+add_text_box(slide, 7.2, 1.4, 5.5, 0.3, "Hypothesis Evaluation",
+             font_size=16, bold=True, color=ACCENT_BLUE)
+
+hyp_results = [
+    ("H1", "Colocate = worst resilience",
+     "Colocate: lowest scores, longest recovery,\nhighest latency & CPU throttling.",
+     ACCENT_RED, "Supported"),
+    ("H2", "Spread = best fault isolation",
+     "Spread: best non-baseline scores, minimal\nlatency increase, fastest recovery.",
+     ACCENT_GREEN, "Supported"),
+    ("H3", "Baseline = 100% (valid method)",
+     "Trivial fault → 100% score, 0 recovery\ncycles — confirms measurement validity.",
+     CLR_INFRA, "Supported"),
+]
+
+for i, (label, title, explanation, clr, verdict) in enumerate(hyp_results):
+    y = 1.85 + i * 1.1
+    add_rounded_box(slide, 7.2, y, 0.7, 0.8, clr, label, 14, WHITE, True)
+    add_rounded_box(slide, 8.1, y, 4.6, 0.8, VERY_DARK,
+                    border_color=clr, border_width=Pt(2))
+    add_text_box(slide, 8.25, y + 0.02, 3.3, 0.25, title,
+                 font_size=12, bold=True, color=clr)
+    add_text_box(slide, 8.25, y + 0.3, 3.3, 0.45, explanation,
+                 font_size=10, color=LIGHT_GRAY)
+    add_rounded_box(slide, 11.5, y + 0.2, 1.1, 0.35, clr,
+                    verdict, 10, WHITE, True)
+
+# Key insights
+add_text_box(slide, 0.5, 5.6, 12, 0.3, "Key Insights",
+             font_size=18, bold=True, color=ACCENT_ORANGE)
+
+add_rounded_box(slide, 0.5, 6.0, 3.9, 1.2, VERY_DARK,
+                border_color=ACCENT_ORANGE)
+add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Placement Matters",
+             font_size=13, bold=True, color=ACCENT_ORANGE)
+add_text_box(slide, 0.7, 6.3, 3.5, 0.8,
+    "Topology is not just a resource concern — "
+    "it directly determines fault blast radius "
+    "and recovery characteristics.",
+    font_size=11, color=LIGHT_GRAY)
+
+add_rounded_box(slide, 4.7, 6.0, 3.9, 1.2, VERY_DARK,
+                border_color=ACCENT_BLUE)
+add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Scheduler Is Not Enough",
+             font_size=13, bold=True, color=ACCENT_BLUE)
+add_text_box(slide, 4.9, 6.3, 3.5, 0.8,
+    "Default K8s scheduling provides some isolation "
+    "but is not optimized for resilience — "
+    "intentional placement is needed.",
+    font_size=11, color=LIGHT_GRAY)
+
+add_rounded_box(slide, 8.9, 6.0, 3.9, 1.2, VERY_DARK,
+                border_color=ACCENT_GREEN)
+add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "Multi-Dimensional Impact",
+             font_size=13, bold=True, color=ACCENT_GREEN)
+add_text_box(slide, 9.1, 6.3, 3.5, 0.8,
+    "Placement affects all measured dimensions: "
+    "recovery, latency, resources, and throughput "
+    "— not just a single metric.",
+    font_size=11, color=LIGHT_GRAY)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 13 — THREATS TO VALIDITY
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Threats to Validity")
+
+threats = [
+    ("Internal Validity", ACCENT_RED, [
+        ("Single application",
+         "Results based on Google Online Boutique — a representative but single microservice "
+         "benchmark. Other application topologies may yield different results."),
+        ("Single replica per service",
+         "100% pod-delete guarantees unavailability, but production systems typically run "
+         "multiple replicas. Results represent worst-case single-replica scenarios."),
+        ("Virtualized environment",
+         "KVM/QEMU introduces virtualization overhead. Bare-metal clusters may show "
+         "different performance characteristics, especially for I/O metrics."),
+    ]),
+    ("External Validity", ACCENT_ORANGE, [
+        ("Cluster scale",
+         "5-node cluster (1 control plane + 4 workers, 10 vCPU, 14 GiB). Larger clusters "
+         "with more nodes and resources may show different placement effects."),
+        ("Fault types",
+         "Only pod-delete and pod-cpu-hog tested. Network partitions, disk faults, "
+         "and memory pressure faults may reveal different strategy rankings."),
+        ("Traffic pattern",
+         "Steady-state load (50 users, 10/s). Bursty, ramping, or production-like "
+         "traffic patterns may affect results differently."),
+    ]),
+]
+
+for col, (category, clr, items) in enumerate(threats):
+    x = 0.5 + col * 6.4
+    add_rounded_box(slide, x, 1.5, 6.0, 5.5, VERY_DARK,
+                    border_color=clr, border_width=Pt(2))
+    add_text_box(slide, x + 0.2, 1.55, 5.6, 0.35, category,
+                 font_size=16, bold=True, color=clr)
+
+    for j, (threat_title, threat_desc) in enumerate(items):
+        ty = 2.1 + j * 1.6
+        add_text_box(slide, x + 0.2, ty, 5.6, 0.3, threat_title,
+                     font_size=13, bold=True, color=WHITE)
+        add_text_box(slide, x + 0.2, ty + 0.35, 5.6, 1.0, threat_desc,
+                     font_size=11, color=LIGHT_GRAY)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 14 — CONCLUSION & FUTURE WORK
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Conclusion & Future Work")
 
 # Key contributions
-add_rounded_box(slide, 0.5, 1.5, 5.8, 3.0, VERY_DARK,
+add_rounded_box(slide, 0.5, 1.5, 5.8, 3.2, VERY_DARK,
                 border_color=ACCENT_GREEN)
-add_text_box(slide, 0.7, 1.5, 5.4, 0.35, "Key Contributions",
+add_text_box(slide, 0.7, 1.5, 5.4, 0.35, "Contributions",
              font_size=18, bold=True, color=ACCENT_GREEN)
-add_bullet_frame(slide, 0.7, 1.95, 5.4, 2.4, [
+add_bullet_frame(slide, 0.7, 1.95, 5.4, 2.6, [
+    "• ChaosProbe framework: automated placement-\n"
+    "  aware chaos testing for Kubernetes",
     "• Systematic evaluation of 6 placement strategies\n"
-    "  under fault injection in Kubernetes",
-    "• Quantified impact on recovery time, inter-service\n"
-    "  latency, resource utilization, and I/O throughput",
+    "  under 2 fault types across 4 metric dimensions",
     "• Neo4j graph storage preserving causal\n"
     "  relationships for topology-aware analysis",
-    "• Reproducible framework: exact configs,\n"
-    "  seeded randomness, automated comparison",
+    "• Reproducible methodology: seeded randomness,\n"
+    "  exact configs, automated comparison pipeline",
 ], font_size=12, color=LIGHT_GRAY)
 
 # Key findings
-add_rounded_box(slide, 6.8, 1.5, 5.8, 3.0, VERY_DARK,
+add_rounded_box(slide, 6.8, 1.5, 5.8, 3.2, VERY_DARK,
                 border_color=ACCENT_BLUE)
 add_text_box(slide, 7.0, 1.5, 5.4, 0.35, "Key Findings",
              font_size=18, bold=True, color=ACCENT_BLUE)
-add_bullet_frame(slide, 7.0, 1.95, 5.4, 2.4, [
-    "• Colocate is consistently the worst strategy:\n"
-    "  highest latency, longest recovery, most contention",
-    "• Spread provides best fault isolation:\n"
-    "  minimal latency degradation under chaos",
-    "• Placement topology significantly affects\n"
-    "  resilience — not just resource availability",
-    "• Baseline validates methodology: trivial fault\n"
-    "  produces 100% score as expected",
+add_bullet_frame(slide, 7.0, 1.95, 5.4, 2.6, [
+    "• Placement topology has a measurable and\n"
+    "  significant impact on chaos resilience",
+    "• Colocate: consistently worst — highest latency,\n"
+    "  longest recovery, most contention",
+    "• Spread: consistently best fault isolation —\n"
+    "  minimal degradation across all metrics",
+    "• All three hypotheses supported by\n"
+    "  experimental evidence",
 ], font_size=12, color=LIGHT_GRAY)
 
 # Future work
-add_rounded_box(slide, 0.5, 4.65, 12.1, 1.55, VERY_DARK,
+add_rounded_box(slide, 0.5, 4.9, 12.1, 1.6, VERY_DARK,
                 border_color=ACCENT_ORANGE)
-add_text_box(slide, 0.7, 4.65, 11.7, 0.35, "Future Work",
+add_text_box(slide, 0.7, 4.9, 11.7, 0.35, "Future Work",
              font_size=16, bold=True, color=ACCENT_ORANGE)
-add_bullet_frame(slide, 0.7, 5.0, 5.6, 1.15, [
+add_bullet_frame(slide, 0.7, 5.3, 5.6, 1.15, [
     "• Multi-fault injection — concurrent faults\n  for complex failure scenarios",
     "• Larger cluster scale — 20+ nodes, 100+ services",
     "• ML-based anomaly detection on collected dataset",
 ], font_size=11, color=LIGHT_GRAY)
-add_bullet_frame(slide, 6.7, 5.0, 5.7, 1.15, [
+add_bullet_frame(slide, 6.7, 5.3, 5.7, 1.15, [
     "• Custom placement policies — RL-based scheduling",
     "• Production-like traffic patterns & workloads",
     "• Integration with GitOps for automated remediation",
 ], font_size=11, color=LIGHT_GRAY)
 
 # Core message
-add_rounded_box(slide, 0.5, 6.35, 12.1, 1.05, VERY_DARK,
+add_rounded_box(slide, 0.5, 6.7, 12.1, 0.7, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(3))
-add_text_box(slide, 0.7, 6.35, 11.7, 0.3, "Core Message",
-             font_size=14, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 0.7, 6.65, 11.7, 0.7,
+add_text_box(slide, 0.7, 6.75, 11.7, 0.6,
     "Pod placement topology has a measurable and significant impact on microservice resilience "
-    "under chaos injection. By systematically varying placement strategies and measuring "
-    "recovery time, inter-service latency, and resource utilization, ChaosProbe demonstrates "
-    "that topology-aware scheduling is essential for building resilient cloud-native systems.",
-    font_size=11, color=WHITE)
+    "under chaos injection. Topology-aware scheduling is essential for building resilient "
+    "cloud-native systems.",
+    font_size=14, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 15 — QUESTIONS
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+
+add_text_box(slide, 1.5, 2.0, 10.3, 1.2, "Thank You",
+             font_size=48, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
+
+dline = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,
+    Inches(5.0), Inches(3.3), Inches(3.3), Pt(3))
+dline.fill.solid()
+dline.fill.fore_color.rgb = ACCENT_BLUE
+dline.line.fill.background()
+
+add_text_box(slide, 1.5, 3.7, 10.3, 0.8, "Questions?",
+             font_size=36, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
+
+# Summary badges at bottom
+summary_items = [
+    ("6", "Placement\nStrategies", CLR_ORCH),
+    ("2", "Fault\nTypes", CLR_CHAOS),
+    ("4", "Metric\nDimensions", CLR_METRICS),
+    ("3/3", "Hypotheses\nSupported", ACCENT_GREEN),
+]
+for i, (val, label, clr) in enumerate(summary_items):
+    x = 2.5 + i * 2.3
+    add_rounded_box(slide, x, 5.2, 1.8, 1.0, VERY_DARK,
+                    border_color=clr)
+    add_text_box(slide, x, 5.2, 1.8, 0.5, val,
+                 font_size=24, bold=True, color=clr,
+                 alignment=PP_ALIGN.CENTER)
+    add_text_box(slide, x, 5.65, 1.8, 0.5, label,
+                 font_size=11, color=LIGHT_GRAY, alignment=PP_ALIGN.CENTER)
 
 
 # ══════════════════════════════════════════════════════════════════════

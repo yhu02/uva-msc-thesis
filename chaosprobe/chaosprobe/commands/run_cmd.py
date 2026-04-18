@@ -14,6 +14,7 @@ from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
     extract_experiment_types,
+    extract_load_service,
     extract_target_deployment,
     wait_for_healthy_deployments,
 )
@@ -411,6 +412,17 @@ def run(
             )
             sys.exit(1)
 
+    # Sort by contention severity: low-contention strategies first so
+    # lingering node pressure from heavy strategies doesn't skew results.
+    # baseline/default (not in the enum) get order 0/-1 to run first.
+    def _sort_key(name: str) -> int:
+        try:
+            return PlacementStrategy(name).execution_order
+        except ValueError:
+            return -1 if name == "baseline" else 0
+
+    strategy_list.sort(key=_sort_key)
+
     if iterations < 1:
         click.echo("Error: --iterations must be >= 1", err=True)
         sys.exit(1)
@@ -452,6 +464,7 @@ def run(
 
     # ── Pre-flight checks ──────────────────────────────────────
     click.echo("\nPre-flight checks...")
+    load_service = extract_load_service(shared_scenario)
     preflight = run_preflight_checks(
         namespace,
         measure_prometheus=measure_prometheus,
@@ -460,6 +473,7 @@ def run(
         load_profile=load_profile,
         target_url=target_url,
         timeout=timeout,
+        load_service=load_service,
     )
     core_api = preflight["core_api"]
     chaoscenter_config = preflight["chaoscenter_config"]
@@ -533,6 +547,7 @@ def run(
         core_api=core_api,
         chaoscenter_config=chaoscenter_config,
         frontend_pf_port=frontend_pf_port,
+        load_service=load_service,
         metrics_collector=metrics_collector,
         mutator=mutator,
         graph_store=graph_store,

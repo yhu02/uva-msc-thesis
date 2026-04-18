@@ -168,7 +168,9 @@ def _extract_http_routes(
 
                 # Extract service name from hostname (e.g. frontend.online-boutique.svc...)
                 host = parsed.hostname or ""
-                service = host.split(".")[0] if host else "frontend"
+                service = host.split(".")[0] if host else ""
+                if not service:
+                    continue  # skip routes with no resolvable service
 
                 method_def = inputs.get("method", {})
                 method = "GET" if "get" in method_def else "POST"
@@ -259,6 +261,7 @@ class RunContext:
     core_api: Any  # kubernetes CoreV1Api
     chaoscenter_config: Optional[Dict[str, Any]]
     frontend_pf_port: Optional[int]
+    load_service: str  # service name for load target port-forward
 
     metrics_collector: MetricsCollector
     mutator: PlacementMutator
@@ -425,11 +428,11 @@ def _run_single_iteration(
 
     iter_locust_runner = None
     if ctx.load_profile:
-        # Re-ensure frontend port-forward is alive (placement changes may
-        # have restarted the frontend pod, killing the kubectl tunnel).
+        # Re-ensure load-target port-forward is alive (placement changes may
+        # have restarted the target pod, killing the kubectl tunnel).
         if ctx.frontend_pf_port and ctx.target_url and "localhost" in ctx.target_url:
             pf.ensure(
-                "frontend", ctx.namespace,
+                ctx.load_service, ctx.namespace,
                 [f"{ctx.frontend_pf_port}:80"], "localhost", ctx.frontend_pf_port,
             )
         base_profile = LoadProfile.from_name(ctx.load_profile)

@@ -167,6 +167,8 @@ Abstract base for all continuous probers. Manages background thread lifecycle, p
 
 Subclasses: `ContinuousLatencyProber`, `ContinuousRedisProber`, `ContinuousDiskProber`, `ContinuousResourceProber`, `ContinuousPrometheusProber`.
 
+**Helpers**: `find_ready_pod()` finds a ready pod by `app=` label. `find_probe_pod()` auto-discovers any pod with a shell (and optionally python3) in the namespace — no hardcoded service preferences. `pod_has_shell()` verifies shell access via `kubectl exec`.
+
 #### recovery.py — RecoveryWatcher
 
 **Class: `RecoveryWatcher(namespace, deployment_name)`**
@@ -206,7 +208,7 @@ Output includes: `deploymentName`, `timeWindow`, `recovery`, `podStatus`, `event
 | `random` | Random assignment per deployment (reproducible with seed) |
 | `adversarial` | Top-N resource-heavy deployments on one node (worst-fit) |
 | `best-fit` | Best-fit decreasing bin-packing (Borg-style; concentrates load on fewest nodes) |
-| `dependency-aware` | BFS partition over the service-dependency graph (co-locates communicating services) |
+| `dependency-aware` | BFS partition over the service-dependency graph (co-locates communicating services; root selected by lowest in-degree) |
 
 **Dataclasses**: `NodeInfo`, `DeploymentInfo`, `NodeAssignment`
 
@@ -360,21 +362,31 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 
 #### strategy_runner.py (~617 lines)
 
-**Dataclass: `RunContext`** — carries all state for a run: namespace, timeout, seed, settle_time, iterations, measurement flags, Neo4j credentials, shared scenario, service routes, etc.
+**Dataclass: `RunContext`** — carries all state for a run: namespace, timeout, seed, settle_time, iterations, measurement flags, Neo4j credentials, shared scenario, service routes, `load_service` (entry-point service name derived from scenario), etc.
 
 **Function**: `execute_strategy(ctx, strategy_name, idx, total)` — executes one placement strategy: apply placement → settle → run iterations → collect results → clear placement.
 
 #### run_phases.py (~669 lines)
 
-Pre-flight checks, graph store initialization, result writing, iteration aggregation, stale resource cleanup.
+Pre-flight checks, graph store initialization, result writing, iteration aggregation, stale resource cleanup. `_setup_load_target()` accepts a `load_service` parameter (derived from the scenario's httpProbe URLs) for port-forwarding to the application entry-point.
 
 #### probers.py (~209 lines)
 
-`create_and_start_probers()`, `stop_and_collect_probers()` — manages continuous prober lifecycle in parallel.
+`create_and_start_probers()`, `stop_and_collect_probers()` — manages continuous prober lifecycle in parallel. Passes `exclude_services=[target_deployment]` to the disk prober so it avoids benchmarking on the pod being deleted by chaos.
+
+#### preflight.py
+
+| Function | Purpose |
+|---|---|
+| `extract_target_deployment(scenario)` | Extracts target deployment from ChaosEngine appinfo. Raises `ValueError` if not found. |
+| `extract_load_service(scenario)` | Extracts the load-target service name from the scenario's httpProbe URLs. |
+| `extract_experiment_types(scenario)` | Lists LitmusChaos experiment types referenced in the scenario. |
+| `wait_for_healthy_deployments(namespace)` | Blocks until all deployments in the namespace are fully ready. |
+| `check_pods_ready(namespace, label)` | Checks that at least one matching pod is Running and Ready. |
 
 #### portforward.py (~120 lines)
 
-Module-level kubectl port-forward lifecycle management. Start/stop/ensure port-forwards for Neo4j, Prometheus, frontend.
+Module-level kubectl port-forward lifecycle management. Start/stop/ensure port-forwards for Neo4j, Prometheus, and the application entry-point service.
 
 ---
 
@@ -1409,9 +1421,9 @@ The analysis prompt defines which data signals are reliable and which are not, b
 | Node resources (`MetricsPhase` resources) | **Medium** | CPU/memory contention analysis | `pod_total_*` frequently null (metrics-server limitation) |
 | Prometheus (`MetricsPhase` prometheus) | **Medium** | Cluster-wide trends | `pod_ready_count` stays 16.0 during chaos (10s scrape too coarse for 1-2s recovery) |
 | Redis throughput | **Control** | Confirms blast radius doesn't reach data layer | Stable across all phases; used as negative evidence |
-| Cascade timeline (`CascadeEvent`) | **Low** | Route-level error propagation | `peakLatency_ms` null due to broken latency prober |
-| Latency prober (`MetricsPhase` latency) | **Broken** | Nothing usable | 100% errors in all phases including pre-chaos — prober misconfiguration |
-| Disk prober (`MetricsPhase` disk) | **Broken** | Nothing usable | 100% read errors in all phases — volume provisioning issue |
+| Cascade timeline (`CascadeEvent`) | **Low** | Route-level error propagation | `peakLatency_ms` may be null for routes not targeted by probes |
+| Latency prober (`MetricsPhase` latency) | **Medium** | Route-level HTTP response time | Derives target service from URL; pre-flight validates reachability |
+| Disk prober (`MetricsPhase` disk) | **Medium** | Sequential I/O throughput | Auto-discovers exec-capable pods; excludes chaos target service |
 
 #### Autonomous Operator Flow (FIX_LOOP.md)
 

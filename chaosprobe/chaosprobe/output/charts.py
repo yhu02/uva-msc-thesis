@@ -862,3 +862,164 @@ def chart_prometheus_by_phase(
 
 
 _chart_prometheus_by_phase = chart_prometheus_by_phase
+
+
+# ---------------------------------------------------------------------------
+# Strategy comparison heatmap — all thesis dimensions in one chart
+# ---------------------------------------------------------------------------
+
+def chart_strategy_comparison_heatmap(
+    strategies: Dict[str, Any],
+    output_path: Path,
+    latency_data: Optional[Dict[str, Dict[str, Any]]] = None,
+    throughput_data: Optional[Dict[str, Dict[str, Any]]] = None,
+    resource_data: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Optional[str]:
+    """Generate a heatmap comparing all thesis dimensions per strategy.
+
+    Columns: Resilience Score, Recovery Time, Latency Degradation,
+    CPU Utilization, Throughput Impact.  Values are normalised so that
+    green = good, red = bad, making the strategy ranking instantly
+    visible across all four metric dimensions.
+    """
+    import numpy as np
+
+    strat_names = sorted(strategies.keys())
+    if len(strat_names) < 2:
+        return None
+
+    dimensions = [
+        "Resilience\nScore",
+        "Recovery\nTime",
+        "Latency\nDegradation",
+        "CPU Util.\n(during chaos)",
+        "Throughput\nImpact",
+    ]
+
+    # Build raw matrix  (rows = strategies, cols = dimensions)
+    raw = []
+    for name in strat_names:
+        row = [
+            strategies[name].get("avgResilienceScore", 0),  # higher = better
+            strategies[name].get("avgMeanRecovery_ms"),      # lower = better
+            None,  # latency degradation %                    (lower = better)
+            None,  # CPU during chaos                         (lower = better)
+            None,  # throughput impact %                      (lower = better)
+        ]
+
+        # Latency degradation: mean % increase pre → during across routes
+        if latency_data and name in latency_data:
+            phases = latency_data[name].get("phases", {})
+            pre = phases.get("pre-chaos", {}).get("routes", {})
+            during = phases.get("during-chaos", {}).get("routes", {})
+            pcts = []
+            for route in set(pre) & set(during):
+                pm = pre[route].get("mean_ms")
+                dm = during[route].get("mean_ms")
+                if pm and pm > 0 and dm is not None:
+                    pcts.append(((dm - pm) / pm) * 100)
+            if pcts:
+                row[2] = sum(pcts) / len(pcts)
+
+        # CPU during chaos
+        if resource_data and name in resource_data:
+            during_phase = resource_data[name].get("phases", {}).get("during-chaos", {})
+            cpu = during_phase.get("node", {}).get("meanCpu_percent")
+            row[3] = cpu
+
+        # Throughput impact: mean % decrease pre → during across ops
+        if throughput_data and name in throughput_data:
+            phases = throughput_data[name].get("phases", {})
+            pre = phases.get("pre-chaos", {})
+            during = phases.get("during-chaos", {})
+            drops = []
+            for target in ("redis", "disk"):
+                for op in set(list(pre.get(target, {})) + list(during.get(target, {}))):
+                    pv = pre.get(target, {}).get(op, {}).get("meanOpsPerSecond")
+                    dv = during.get(target, {}).get(op, {}).get("meanOpsPerSecond")
+                    if pv and pv > 0 and dv is not None:
+                        drops.append(((pv - dv) / pv) * 100)
+            if drops:
+                row[4] = sum(drops) / len(drops)
+
+        raw.append(row)
+
+    # Drop dimensions with no data at all
+    keep = []
+    for c in range(len(dimensions)):
+        if any(raw[r][c] is not None for r in range(len(strat_names))):
+            keep.append(c)
+    if len(keep) < 2:
+        return None
+
+    dim_labels = [dimensions[c] for c in keep]
+    data = [[raw[r][c] for c in keep] for r in range(len(strat_names))]
+
+    # Normalise each column to 0-1 (direction: 0 = worst, 1 = best)
+    n_rows = len(strat_names)
+    n_cols = len(keep)
+    norm = [[0.5] * n_cols for _ in range(n_rows)]  # default mid-point
+
+    for c_idx, orig_c in enumerate(keep):
+        col_vals = [data[r][c_idx] for r in range(n_rows) if data[r][c_idx] is not None]
+        if not col_vals or max(col_vals) == min(col_vals):
+            continue
+        lo, hi = min(col_vals), max(col_vals)
+        higher_is_better = (orig_c == 0)  # only resilience score
+        for r in range(n_rows):
+            v = data[r][c_idx]
+            if v is None:
+                norm[r][c_idx] = 0.5
+            else:
+                scaled = (v - lo) / (hi - lo)
+                norm[r][c_idx] = scaled if higher_is_better else (1.0 - scaled)
+
+    norm_arr = np.array(norm)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(max(8, 2 * n_cols), max(4, 0.8 * n_rows)))
+
+    # Green = good, Red = bad
+    from matplotlib.colors import LinearSegmentedColormap
+    thesis_cmap = LinearSegmentedColormap.from_list(
+        "thesis", ["#E74C3C", "#F39C12", "#2ECC71"]
+    )
+
+    im = ax.imshow(norm_arr, cmap=thesis_cmap, aspect="auto", vmin=0, vmax=1)
+
+    ax.set_xticks(range(n_cols))
+    ax.set_xticklabels(dim_labels, fontsize=10, ha="center")
+    ax.set_yticks(range(n_rows))
+    ax.set_yticklabels(strat_names, fontsize=11)
+
+    # Annotate cells with raw values
+    for r in range(n_rows):
+        for c in range(n_cols):
+            v = data[r][c]
+            if v is None:
+                txt = "n/a"
+            elif keep[c] == 0:
+                txt = f"{v:.1f}%"
+            elif keep[c] == 1:
+                txt = f"{v:.0f}ms"
+            elif keep[c] in (2, 4):
+                txt = f"{v:+.0f}%"
+            else:
+                txt = f"{v:.1f}%"
+            ax.text(c, r, txt, ha="center", va="center",
+                    fontsize=9, fontweight="bold",
+                    color="white" if norm[r][c] < 0.35 or norm[r][c] > 0.65 else "black")
+
+    ax.set_title("Strategy Comparison — All Thesis Dimensions\n"
+                 "(green = better, red = worse)", fontsize=13, pad=15)
+    fig.colorbar(im, ax=ax, label="Normalised Score (0 = worst, 1 = best)",
+                 fraction=0.03, pad=0.04)
+
+    plt.tight_layout()
+    filepath = str(output_path / "strategy_comparison_heatmap.png")
+    fig.savefig(filepath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return filepath
+
+
+_chart_strategy_comparison_heatmap = chart_strategy_comparison_heatmap

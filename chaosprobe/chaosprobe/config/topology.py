@@ -42,8 +42,8 @@ _SKIP_ENV_NAMES = frozenset({
     "SHOPPING_ASSISTANT_SERVICE_ADDR",
 })
 
-# Known TCP-only services (not gRPC)
-_TCP_SERVICES = frozenset({"redis-cart", "redis", "memcached"})
+# Protocol inference for well-known technologies
+_TCP_PREFIXES = ("redis", "memcached")
 
 
 def _infer_protocol(target_service: str, port: str) -> str:

@@ -75,7 +75,35 @@ def extract_target_deployment(scenario: Dict[str, Any]) -> str:
         applabel = appinfo.get("applabel", "")
         if applabel.startswith("app="):
             return applabel.split("=", 1)[1]
-    return "checkoutservice"
+    raise ValueError(
+        "Could not extract target deployment from scenario. "
+        "Ensure each ChaosEngine experiment has spec.spec.appinfo.applabel "
+        "set (e.g. 'app=myservice')."
+    )
+
+
+def extract_load_service(scenario: Dict[str, Any]) -> str:
+    """Extract the load-target service from httpProbe URLs in the scenario.
+
+    Returns the hostname of the first httpProbe URL (the service that receives
+    user-facing traffic), or ``"frontend"`` as a last-resort default.
+    """
+    from urllib.parse import urlparse
+
+    for exp_entry in scenario.get("experiments", []):
+        spec = exp_entry.get("spec", {})
+        for exp in spec.get("spec", {}).get("experiments", []):
+            for probe in exp.get("spec", {}).get("probe", []):
+                if probe.get("type") != "httpProbe":
+                    continue
+                url = probe.get("httpProbe/inputs", {}).get("url", "")
+                if not url:
+                    continue
+                host = urlparse(url).hostname or ""
+                service = host.split(".")[0] if host else ""
+                if service:
+                    return service
+    return "frontend"
 
 
 def check_pods_ready(namespace: str, label: str) -> bool:

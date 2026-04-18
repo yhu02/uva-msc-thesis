@@ -89,12 +89,12 @@ def find_probe_pod(
     """Find a pod suitable for running probe commands.
 
     Discovers running pods in the namespace and tests whether they have
-    a usable shell.  Pods labelled ``app=loadgenerator`` are preferred
-    because they typically bundle Python and HTTP tools.
+    a usable shell.  When *require_python3* is True the selected pod
+    must also have a working ``python3`` interpreter.  If no pod satisfies
+    that constraint, falls back to any pod with a shell.
 
-    When *require_python3* is True the selected pod must also have a
-    working ``python3`` interpreter.  If no pod satisfies that
-    constraint, falls back to any pod with a shell.
+    Pods are checked in alphabetical order; the first pod with a shell
+    (and python3 if required) is returned.
     """
     try:
         pods = core_api.list_namespaced_pod(
@@ -105,10 +105,6 @@ def find_probe_pod(
         return None
 
     ready_pods: List[str] = []
-    load_gen_pods: List[str] = []
-    # Also prefer Python-based services (emailservice, recommendationservice)
-    python_pods: List[str] = []
-    _PYTHON_APPS = {"loadgenerator", "emailservice", "recommendationservice"}
 
     for pod in pods.items:
         if not pod.status.conditions:
@@ -119,21 +115,13 @@ def find_probe_pod(
         )
         if not is_ready:
             continue
-        name = pod.metadata.name
-        labels = pod.metadata.labels or {}
-        app_label = labels.get("app", "")
-        if app_label == "loadgenerator":
-            load_gen_pods.append(name)
-        elif app_label in _PYTHON_APPS:
-            python_pods.append(name)
-        else:
-            ready_pods.append(name)
+        ready_pods.append(pod.metadata.name)
 
-    # Priority: loadgenerator > other Python pods > everything else
-    ordered = load_gen_pods + python_pods + ready_pods
+    # Deterministic order for reproducibility
+    ready_pods.sort()
 
     shell_pods: List[str] = []
-    for name in ordered:
+    for name in ready_pods:
         if pod_has_shell(core_api, namespace, name):
             if require_python3:
                 if _pod_has_python3(core_api, namespace, name):

@@ -61,6 +61,23 @@ class PlacementStrategy(str, Enum):
         }
         return descriptions[self]
 
+    @property
+    def execution_order(self) -> int:
+        """Execution priority (lower = earlier).
+
+        High-contention strategies (colocate, best-fit) run last so their
+        lingering node pressure doesn't skew results for other strategies.
+        """
+        order = {
+            self.SPREAD: 0,
+            self.RANDOM: 1,
+            self.DEPENDENCY_AWARE: 2,
+            self.ADVERSARIAL: 3,
+            self.BEST_FIT: 4,
+            self.COLOCATE: 5,
+        }
+        return order.get(self, 99)
+
 
 @dataclass
 class NodeInfo:
@@ -447,7 +464,7 @@ def _compute_dependency_aware(
     placement work such as μServe, DeathStarBench, Sinan, Orca):
 
     1. Build an undirected adjacency from the dependency edges.
-    2. Pick a root (``frontend`` if present, else the highest-degree node).
+    2. Pick a root (the node with fewest incoming edges — the entry-point).
     3. BFS from the root, producing a traversal order where dependent
        services are adjacent.
     4. Chunk the order into ``K`` contiguous groups (``K`` = worker nodes);
@@ -477,12 +494,13 @@ def _compute_dependency_aware(
         adj[s].add(t)
         adj[t].add(s)
 
-    # Root selection: explicit "frontend" wins; otherwise highest degree
-    # (stable sort by name for determinism).
-    if "frontend" in dep_names:
-        root = "frontend"
-    else:
-        root = sorted(dep_names, key=lambda n: (-len(adj[n]), n))[0]
+    # Root selection: prefer the node with fewest incoming (depended-on-by)
+    # edges — this is the application entry-point.  Ties broken by highest
+    # total degree (most connections), then alphabetically for determinism.
+    in_degree: Dict[str, int] = {name: 0 for name in dep_names}
+    for _s, t in edges:
+        in_degree[t] = in_degree.get(t, 0) + 1
+    root = sorted(dep_names, key=lambda n: (in_degree.get(n, 0), -len(adj[n]), n))[0]
 
     # BFS order (neighbours visited in alphabetical order for determinism).
     order: List[str] = []

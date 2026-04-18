@@ -37,6 +37,20 @@ from chaosprobe.metrics.base import (
 logger = logging.getLogger(__name__)
 
 
+def _service_from_url(url: str) -> str:
+    """Extract the service name from a cluster-internal URL.
+
+    URLs follow the pattern ``http://{service}.{ns}.svc.cluster.local...``.
+    Returns the first hostname segment, or ``"unknown"`` if parsing fails.
+    """
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or ""
+        return host.split(".")[0] if host else "unknown"
+    except Exception:
+        return "unknown"
+
+
 @dataclass
 class LatencySample:
     """A single latency measurement."""
@@ -164,10 +178,10 @@ class LatencyProber:
 
         routes_info = list(http_routes)
         result_map = {}
-        for source, route, description, _method in routes_info:
+        for service, route, description, _method in routes_info:
             result_map[route] = LatencyResult(
-                source=source,
-                target="frontend",
+                source=service,
+                target=service,
                 route=route,
                 protocol="http",
                 description=description,
@@ -177,8 +191,8 @@ class LatencyProber:
             with ThreadPoolExecutor(max_workers=len(routes_info)) as pool:
                 for _ in range(samples):
                     futures = {}
-                    for _src, route, _desc, method in routes_info:
-                        url = f"http://frontend.{self.namespace}.svc.cluster.local{route}"
+                    for service, route, _desc, method in routes_info:
+                        url = f"http://{service}.{self.namespace}.svc.cluster.local{route}"
                         fut = pool.submit(
                             self._measure_http_from_pod,
                             probe_pod,
@@ -192,8 +206,8 @@ class LatencyProber:
                     if interval > 0:
                         time.sleep(interval)
         else:
-            for _src, route, _desc, method in routes_info:
-                url = f"http://frontend.{self.namespace}.svc.cluster.local{route}"
+            for service, route, _desc, method in routes_info:
+                url = f"http://{service}.{self.namespace}.svc.cluster.local{route}"
                 for _ in range(samples):
                     sample = self._measure_http_from_pod(probe_pod, url, method, route)
                     result_map[route].samples.append(sample)
@@ -349,6 +363,7 @@ class LatencyProber:
         then falls back to wget + shell timing if python3 is unavailable.
         """
         now = datetime.now(timezone.utc).isoformat()
+        target = _service_from_url(url)
 
         if self._use_wget:
             return self._measure_http_wget(pod_name, url, route, now)
@@ -405,7 +420,7 @@ class LatencyProber:
             if len(parts) >= 2 and parts[0] == "ERR":
                 return LatencySample(
                     source="probe-pod",
-                    target="frontend",
+                    target=target,
                     route=route,
                     protocol="http",
                     latency_ms=0,
@@ -422,7 +437,7 @@ class LatencyProber:
                     ok = 200 <= status_code < 400
                     return LatencySample(
                         source="probe-pod",
-                        target="frontend",
+                        target=target,
                         route=route,
                         protocol="http",
                         latency_ms=round(latency_ms, 2),
@@ -433,7 +448,7 @@ class LatencyProber:
 
             return LatencySample(
                 source="probe-pod",
-                target="frontend",
+                target=target,
                 route=route,
                 protocol="http",
                 latency_ms=0,
@@ -454,7 +469,7 @@ class LatencyProber:
                 return self._measure_http_wget(pod_name, url, route, now)
             return LatencySample(
                 source="probe-pod",
-                target="frontend",
+                target=target,
                 route=route,
                 protocol="http",
                 latency_ms=0,
@@ -476,6 +491,7 @@ class LatencyProber:
         busybox (Alpine) only gives second precision — still far better than
         zero data.
         """
+        target = _service_from_url(url)
         # Shell one-liner: timestamp → wget → timestamp → print
         # Handles both GNU date (%s%N = nanoseconds) and busybox (%N → literal).
         cmd = [
@@ -507,7 +523,7 @@ class LatencyProber:
             if len(parts) >= 2 and parts[0] == "ERR":
                 return LatencySample(
                     source="probe-pod",
-                    target="frontend",
+                    target=target,
                     route=route,
                     protocol="http",
                     latency_ms=0,
@@ -525,7 +541,7 @@ class LatencyProber:
                         ok = 200 <= status_code < 400
                         return LatencySample(
                             source="probe-pod",
-                            target="frontend",
+                            target=target,
                             route=route,
                             protocol="http",
                             latency_ms=round(latency_ms, 2),
@@ -538,7 +554,7 @@ class LatencyProber:
 
             return LatencySample(
                 source="probe-pod",
-                target="frontend",
+                target=target,
                 route=route,
                 protocol="http",
                 latency_ms=0,
@@ -550,7 +566,7 @@ class LatencyProber:
         except Exception as e:
             return LatencySample(
                 source="probe-pod",
-                target="frontend",
+                target=target,
                 route=route,
                 protocol="http",
                 latency_ms=0,
@@ -678,10 +694,16 @@ class ContinuousLatencyProber(ContinuousProberBase):
         if not self._cached_probe_pod:
             logger.warning("No probe pod found at start — will retry during probing")
         else:
-            # Pre-flight: verify the probe pod can reach the frontend
+            # Pre-flight: verify the probe pod can reach the first route's
             # service so we get actionable errors instead of silent 100%
             # failures across all phases.
-            test_url = f"http://frontend.{self.namespace}.svc.cluster.local/_healthz"
+            if self._http_routes:
+                preflight_service = self._http_routes[0][0]
+                preflight_path = self._http_routes[0][1]
+            else:
+                preflight_service = "frontend"
+                preflight_path = "/_healthz"
+            test_url = f"http://{preflight_service}.{self.namespace}.svc.cluster.local{preflight_path}"
             sample = self._prober._measure_http_from_pod(
                 self._cached_probe_pod, test_url, "GET", "/_healthz",
             )

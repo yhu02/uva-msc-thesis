@@ -27,6 +27,7 @@ from chaosprobe.output.charts import (  # noqa: E402
     chart_resilience_scores as _chart_resilience_scores,
     chart_resource_by_phase as _chart_resource_by_phase,
     chart_resource_utilization as _chart_resource_utilization,
+    chart_strategy_comparison_heatmap as _chart_strategy_comparison_heatmap,
     chart_throughput_by_strategy as _chart_throughput_by_strategy,
     chart_throughput_degradation as _chart_throughput_degradation,
     extract_latency_data as _extract_latency_data,
@@ -178,6 +179,16 @@ def generate_from_dict(
         path = _chart_prometheus_by_phase(prometheus_by_strategy, output_path)
         if path:
             generated.append(path)
+
+    # Strategy comparison heatmap — all thesis dimensions in one chart
+    path = _chart_strategy_comparison_heatmap(
+        strategies, output_path,
+        latency_data=latency_by_strategy,
+        throughput_data=throughput_by_strategy,
+        resource_data=resource_by_strategy,
+    )
+    if path:
+        generated.append(path)
 
     html_path = _generate_html_summary(
         generated,
@@ -432,56 +443,169 @@ def _generate_html_summary(
     </table>"""
 
     img_tags = ""
+    # Group charts by thesis section for structured display
+    chart_sections: Dict[str, List[str]] = {
+        "overview": [],
+        "recovery": [],
+        "latency": [],
+        "resources": [],
+        "throughput": [],
+        "prometheus": [],
+    }
     for path in chart_paths:
-        if path.endswith(".png"):
-            filename = Path(path).name
-            img_tags += f'<img src="{filename}" style="max-width:100%; margin:10px 0;">\n'
+        if not path.endswith(".png"):
+            continue
+        fname = Path(path).name
+        if "heatmap" in fname or "resilience" in fname:
+            chart_sections["overview"].append(fname)
+        elif "recovery" in fname:
+            chart_sections["recovery"].append(fname)
+        elif "latency" in fname:
+            chart_sections["latency"].append(fname)
+        elif "resource" in fname:
+            chart_sections["resources"].append(fname)
+        elif "throughput" in fname:
+            chart_sections["throughput"].append(fname)
+        elif "prometheus" in fname:
+            chart_sections["prometheus"].append(fname)
+        else:
+            chart_sections["overview"].append(fname)
+
+    def _img_tags_for(section: str) -> str:
+        return "\n".join(
+            f'<img src="{f}" style="max-width:100%; margin:10px 0;">'
+            for f in chart_sections.get(section, [])
+        )
 
     html = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>ChaosProbe Experiment Results</title>
+    <title>ChaosProbe — Thesis Experiment Report</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 40px; background: #f5f5f5; }}
-        h1 {{ color: #333; }}
-        table {{ border-collapse: collapse; width: 100%; margin: 20px 0; background: white; }}
-        th, td {{ border: 1px solid #ddd; padding: 12px 16px; text-align: left; }}
-        th {{ background: #4CAF50; color: white; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               margin: 0; padding: 0; background: #f5f5f5; color: #333; }}
+        .container {{ max-width: 1200px; margin: 0 auto; padding: 40px 20px; }}
+        h1 {{ color: #1a1a2e; border-bottom: 3px solid #0096D6; padding-bottom: 10px; }}
+        h2 {{ color: #1a1a2e; margin-top: 40px; border-left: 4px solid #0096D6; padding-left: 12px; }}
+        h3 {{ color: #555; }}
+        .rq {{ background: #e8f4fd; border-left: 4px solid #0096D6; padding: 15px 20px;
+               margin: 20px 0; border-radius: 4px; font-style: italic; font-size: 1.1em; }}
+        .hypothesis {{ display: flex; gap: 15px; margin: 10px 0; padding: 12px 16px;
+                       background: white; border-radius: 6px; border-left: 4px solid #ccc;
+                       box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+        .hypothesis.h1 {{ border-left-color: #E74C3C; }}
+        .hypothesis.h2 {{ border-left-color: #2ECC71; }}
+        .hypothesis.h3 {{ border-left-color: #7F8C8D; }}
+        .hypothesis .label {{ font-weight: bold; min-width: 30px; }}
+        table {{ border-collapse: collapse; width: 100%; margin: 15px 0; background: white;
+                 box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 6px; overflow: hidden; }}
+        th, td {{ border: 1px solid #e0e0e0; padding: 10px 14px; text-align: left; }}
+        th {{ background: #1a1a2e; color: white; font-weight: 600; }}
         tr:nth-child(even) {{ background: #f9f9f9; }}
-        .charts {{ margin: 20px 0; }}
-        img {{ border: 1px solid #ddd; border-radius: 4px; }}
+        .section-charts {{ margin: 20px 0; }}
+        .section-charts img {{ border: 1px solid #ddd; border-radius: 6px;
+                               box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 100%; }}
+        .dimension {{ background: white; border-radius: 8px; padding: 20px 25px; margin: 20px 0;
+                      box-shadow: 0 2px 6px rgba(0,0,0,0.08); }}
+        .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd;
+                   color: #888; font-size: 0.9em; }}
     </style>
 </head>
 <body>
-    <h1>ChaosProbe - Experiment Results</h1>
+<div class="container">
+    <h1>ChaosProbe — Thesis Experiment Report</h1>
 
-    <h2>Strategy Comparison ({iterations} iteration{"s" if iterations != 1 else ""} per strategy)</h2>
-    <table>
-        <tr>
-            <th>Strategy</th>
-            <th>Runs</th>
-            <th>Avg Resilience Score</th>
-            <th>Pass Rate</th>
-            <th>Mean Recovery (ms)</th>
-            <th>Median Recovery (ms)</th>
-            <th>P95 Recovery (ms)</th>
-        </tr>
-        {rows}
-    </table>
-
-    {latency_section}
-
-    {throughput_section}
-
-    {resource_section}
-
-    {prometheus_section}
-
-    <h2>Charts</h2>
-    <div class="charts">
-        {img_tags}
+    <div class="rq">
+        <strong>RQ:</strong> How does pod placement topology affect microservice resilience
+        under fault injection in Kubernetes?
     </div>
+
+    <div class="hypothesis h1">
+        <span class="label" style="color:#E74C3C">H1</span>
+        <span>Maximum contention (colocate) degrades resilience — colocating all pods on a
+        single node maximizes resource contention and produces the worst resilience scores.</span>
+    </div>
+    <div class="hypothesis h2">
+        <span class="label" style="color:#2ECC71">H2</span>
+        <span>Spreading improves fault isolation — distributing pods across nodes minimizes
+        per-node contention and yields the best resilience scores.</span>
+    </div>
+    <div class="hypothesis h3">
+        <span class="label" style="color:#7F8C8D">H3</span>
+        <span>Baseline validates methodology — a trivial fault with default scheduling should
+        produce 100% resilience, confirming measurement validity.</span>
+    </div>
+
+    <!-- ═══ Overview ═══ -->
+    <h2>Strategy Comparison Overview</h2>
+    <div class="dimension">
+        <table>
+            <tr>
+                <th>Strategy</th>
+                <th>Runs</th>
+                <th>Resilience Score</th>
+                <th>Pass Rate</th>
+                <th>Mean Recovery (ms)</th>
+                <th>Median Recovery (ms)</th>
+                <th>P95 Recovery (ms)</th>
+            </tr>
+            {rows}
+        </table>
+        <div class="section-charts">{_img_tags_for("overview")}</div>
+    </div>
+
+    <!-- ═══ Dimension 1: Recovery Time ═══ -->
+    <h2>Dimension 1 — Recovery Time</h2>
+    <div class="dimension">
+        <p>Time from pod deletion to pod ready, measured via the Kubernetes Watch API.
+        Lower recovery time indicates better fault tolerance under the given placement.</p>
+        <div class="section-charts">{_img_tags_for("recovery")}</div>
+    </div>
+
+    <!-- ═══ Dimension 2: Inter-Service Latency ═══ -->
+    <h2>Dimension 2 — Inter-Service Latency</h2>
+    <div class="dimension">
+        <p>HTTP route latency measured via <code>kubectl exec</code> using python3/wget probes.
+        Degradation from pre-chaos to during-chaos quantifies fault impact on service communication.</p>
+        {latency_section}
+        <div class="section-charts">{_img_tags_for("latency")}</div>
+    </div>
+
+    <!-- ═══ Dimension 3: Resource Utilization ═══ -->
+    <h2>Dimension 3 — Resource Utilization</h2>
+    <div class="dimension">
+        <p>Node-level CPU and memory utilization from the Kubernetes Metrics API.
+        Higher utilization during chaos correlates with resource contention from co-location.</p>
+        {resource_section}
+        <div class="section-charts">{_img_tags_for("resources")}</div>
+    </div>
+
+    <!-- ═══ Dimension 4: I/O Throughput ═══ -->
+    <h2>Dimension 4 — I/O Throughput</h2>
+    <div class="dimension">
+        <p>Redis ops/s and sequential disk read/write bandwidth measured via
+        <code>redis-cli</code> and <code>dd</code>. Throughput degradation during chaos
+        reflects shared I/O contention on co-located nodes.</p>
+        {throughput_section}
+        <div class="section-charts">{_img_tags_for("throughput")}</div>
+    </div>
+
+    <!-- ═══ Prometheus Cluster Metrics ═══ -->
+    <h2>Supplementary — Prometheus Cluster Metrics</h2>
+    <div class="dimension">
+        <p>Pod readiness, CPU throttling, memory working set, and network receive bytes
+        collected via PromQL. These metrics supplement the primary four dimensions.</p>
+        {prometheus_section}
+        <div class="section-charts">{_img_tags_for("prometheus")}</div>
+    </div>
+
+    <div class="footer">
+        Generated by ChaosProbe &middot;
+        {iterations} iteration{"s" if iterations != 1 else ""} per strategy &middot;
+        4 metric dimensions &middot; {len(strategies)} strategies evaluated
+    </div>
+</div>
 </body>
 </html>"""
 

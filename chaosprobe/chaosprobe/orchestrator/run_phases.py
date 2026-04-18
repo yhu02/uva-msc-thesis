@@ -305,6 +305,7 @@ def _setup_load_target(
     namespace: str,
     load_profile: Optional[str],
     target_url: Optional[str],
+    load_service: str = "frontend",
 ) -> Tuple[Optional[str], int]:
     """Ensure load target is reachable, setting up a port-forward if needed."""
     local_port = LOAD_TARGET_LOCAL_PORT
@@ -314,7 +315,7 @@ def _setup_load_target(
     if load_profile:
         if not pf.check_port("localhost", local_port):
             pf.ensure(
-                "frontend", namespace,
+                load_service, namespace,
                 [f"{local_port}:80"], "localhost", local_port,
             )
         target_url = f"http://localhost:{local_port}"
@@ -343,6 +344,7 @@ def run_preflight_checks(
     load_profile: Optional[str],
     target_url: Optional[str],
     timeout: int,
+    load_service: str = "frontend",
 ) -> Dict[str, Any]:
     """Run all pre-flight checks before the strategy loop.
 
@@ -372,7 +374,7 @@ def run_preflight_checks(
     click.echo("  Deployments: all ready")
 
     target_url, frontend_pf_port = _setup_load_target(
-        namespace, load_profile, target_url,
+        namespace, load_profile, target_url, load_service=load_service,
     )
 
     # Start background monitor to auto-restart dead port-forward processes
@@ -465,6 +467,32 @@ from chaosprobe.orchestrator.probers import (  # noqa: E402, F401
 # ---------------------------------------------------------------------------
 # 4.  Final summary output
 # ---------------------------------------------------------------------------
+
+def _regenerate_presentation() -> None:
+    """Re-run create_presentation.py so the .pptx reflects the latest charts."""
+    import subprocess
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[3] / "create_presentation.py"
+    if not script.exists():
+        return
+    click.echo(f"\n{'─' * 60}")
+    click.echo("Regenerating presentation...")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                click.echo(f"  {line}")
+        else:
+            click.echo(f"  Warning: presentation generation failed: {result.stderr.strip()}")
+    except Exception as e:
+        click.echo(f"  Warning: could not regenerate presentation: {e}")
+
 
 def write_run_results(
     overall_results: Dict[str, Any],
@@ -560,6 +588,9 @@ def write_run_results(
                 click.echo("  No data available to visualize.")
         except ImportError as e:
             click.echo(f"  Skipping visualization: {e}", err=True)
+
+    # Regenerate thesis presentation (picks up latest charts)
+    _regenerate_presentation()
 
     # Close graph database connection
     if graph_store:

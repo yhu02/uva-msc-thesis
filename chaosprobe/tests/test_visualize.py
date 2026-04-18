@@ -12,6 +12,7 @@ from chaosprobe.output.visualize import (
     _chart_latency_by_strategy,
     _chart_latency_degradation,
     _extract_latency_data,
+    _chart_strategy_comparison_heatmap,
     _chart_throughput_by_strategy,
     _chart_throughput_degradation,
     _extract_throughput_data,
@@ -559,3 +560,100 @@ class TestPrometheusVisualization:
             content = f.read()
         assert "Prometheus Cluster Metrics" in content
         assert "http_error_rate" in content
+
+
+class TestStrategyComparisonHeatmap:
+    @pytest.fixture
+    def strategies(self):
+        return {
+            "colocate": {
+                "avgResilienceScore": 33.0,
+                "avgMeanRecovery_ms": 5200.0,
+                "passRate": 0.0,
+            },
+            "spread": {
+                "avgResilienceScore": 83.0,
+                "avgMeanRecovery_ms": 2100.0,
+                "passRate": 1.0,
+            },
+            "baseline": {
+                "avgResilienceScore": 100.0,
+                "avgMeanRecovery_ms": None,
+                "passRate": 1.0,
+            },
+        }
+
+    def test_heatmap_generated(self, strategies, tmp_path):
+        path = _chart_strategy_comparison_heatmap(strategies, tmp_path)
+        assert path is not None
+        assert os.path.exists(path)
+        assert path.endswith("strategy_comparison_heatmap.png")
+
+    def test_heatmap_with_latency_resource_throughput(self, strategies, tmp_path):
+        latency_data = {
+            "colocate": {
+                "phases": {
+                    "pre-chaos": {"routes": {"/product": {"mean_ms": 50}}},
+                    "during-chaos": {"routes": {"/product": {"mean_ms": 200}}},
+                },
+            },
+            "spread": {
+                "phases": {
+                    "pre-chaos": {"routes": {"/product": {"mean_ms": 50}}},
+                    "during-chaos": {"routes": {"/product": {"mean_ms": 60}}},
+                },
+            },
+        }
+        resource_data = {
+            "colocate": {
+                "phases": {
+                    "during-chaos": {"node": {"meanCpu_percent": 85.0}},
+                },
+            },
+            "spread": {
+                "phases": {
+                    "during-chaos": {"node": {"meanCpu_percent": 45.0}},
+                },
+            },
+        }
+        throughput_data = {
+            "colocate": {
+                "phases": {
+                    "pre-chaos": {"redis": {"GET": {"meanOpsPerSecond": 1000}}},
+                    "during-chaos": {"redis": {"GET": {"meanOpsPerSecond": 400}}},
+                },
+            },
+            "spread": {
+                "phases": {
+                    "pre-chaos": {"redis": {"GET": {"meanOpsPerSecond": 1000}}},
+                    "during-chaos": {"redis": {"GET": {"meanOpsPerSecond": 900}}},
+                },
+            },
+        }
+        path = _chart_strategy_comparison_heatmap(
+            strategies, tmp_path,
+            latency_data=latency_data,
+            throughput_data=throughput_data,
+            resource_data=resource_data,
+        )
+        assert path is not None
+        assert os.path.exists(path)
+
+    def test_heatmap_single_strategy_returns_none(self, tmp_path):
+        path = _chart_strategy_comparison_heatmap(
+            {"colocate": {"avgResilienceScore": 50}}, tmp_path
+        )
+        assert path is None
+
+    def test_heatmap_no_data_returns_none(self, tmp_path):
+        # Two strategies but all values are None — only resilience has data
+        # (which is enough for 1 column, but need >= 2)
+        path = _chart_strategy_comparison_heatmap(
+            {
+                "a": {"avgResilienceScore": 0},
+                "b": {"avgResilienceScore": 0},
+            },
+            tmp_path,
+        )
+        # Only resilience column, recovery is None for both → only 1 column → None
+        assert path is None

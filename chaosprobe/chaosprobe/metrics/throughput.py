@@ -158,7 +158,7 @@ class ThroughputProber:
         Returns:
             List of ThroughputResult for write and read operations.
         """
-        redis_pod = self._find_ready_pod("redis-cart")
+        redis_pod = self._find_ready_pod(redis_host)
         if not redis_pod:
             return []
 
@@ -195,6 +195,7 @@ class ThroughputProber:
         block_size_kb: int = 1024,
         count: int = 10,
         disk_path: str = "/tmp/chaosprobe_disktest",
+        exclude_services: Optional[List[str]] = None,
     ) -> List[ThroughputResult]:
         """Measure disk write/read throughput inside a pod.
 
@@ -207,11 +208,12 @@ class ThroughputProber:
             block_size_kb: Block size in KB for dd.
             count: Number of blocks per dd operation.
             disk_path: Full path for the test file inside the pod.
+            exclude_services: Service names to skip during pod discovery.
 
         Returns:
             List of ThroughputResult for disk write and read.
         """
-        pod = self._find_exec_pod(target_service)
+        pod = self._find_exec_pod(target_service, exclude_services=exclude_services)
         if not pod:
             return []
 
@@ -292,33 +294,68 @@ class ThroughputProber:
         """Find a ready pod for a service."""
         return find_ready_pod(self.core_api, self.namespace, service_name)
 
-    def _find_exec_pod(self, target_service: str) -> Optional[str]:
+    def _find_exec_pod(
+        self, target_service: str, *, exclude_services: Optional[List[str]] = None,
+    ) -> Optional[str]:
         """Find a pod that supports shell exec for benchmarks.
 
-        Many application pods are distroless (no shell). This tries
-        the target first, verifies shell access, then falls back to pods
-        known to have a shell. Results are cached to avoid repeated
-        exec checks.
+        Many application pods are distroless (no shell).  This tries
+        the target first, then auto-discovers all running pods in the
+        namespace and checks each for shell access.  Results are cached
+        to avoid repeated exec checks.
+
+        Parameters
+        ----------
+        target_service:
+            Preferred service to benchmark on.
+        exclude_services:
+            Service names to skip (e.g. the chaos target being killed).
         """
         with self._cache_lock:
             if target_service in self._exec_pod_cache:
                 return self._exec_pod_cache[target_service]
 
-        candidates = [
-            target_service,
-            "redis-cart",
-            "loadgenerator",
-            "currencyservice",
-            "emailservice",
-        ]
-        for svc in candidates:
-            pod = self._find_ready_pod(svc)
+        exclude = set(exclude_services or [])
+
+        # Try the preferred target first (if not excluded)
+        if target_service not in exclude:
+            pod = self._find_ready_pod(target_service)
             if pod:
                 resp = self._exec_in_pod(pod, ["sh", "-c", "echo ok"])
                 if not resp.startswith("ERROR:") and "ok" in resp:
                     with self._cache_lock:
                         self._exec_pod_cache[target_service] = pod
                     return pod
+
+        # Auto-discover all running pods in the namespace
+        try:
+            pods = self.core_api.list_namespaced_pod(
+                self.namespace, field_selector="status.phase=Running",
+            )
+        except Exception:
+            pods = None
+
+        if pods:
+            # Extract unique app labels, skip excluded services
+            seen: set = set()
+            for p in pods.items:
+                labels = p.metadata.labels or {}
+                app = labels.get("app", "")
+                if not app or app in exclude or app in seen:
+                    continue
+                seen.add(app)
+                if not (p.status.conditions and any(
+                    c.type == "Ready" and c.status == "True"
+                    for c in p.status.conditions
+                )):
+                    continue
+                pod_name = p.metadata.name
+                resp = self._exec_in_pod(pod_name, ["sh", "-c", "echo ok"])
+                if not resp.startswith("ERROR:") and "ok" in resp:
+                    with self._cache_lock:
+                        self._exec_pod_cache[target_service] = pod_name
+                    return pod_name
+
         with self._cache_lock:
             self._exec_pod_cache[target_service] = None
         return None
@@ -610,6 +647,7 @@ class ContinuousDiskProber(ContinuousProberBase):
         disk_target: str = "redis-cart",
         block_size_kb: int = 512,
         block_count: int = 5,
+        exclude_services: Optional[List[str]] = None,
     ):
         super().__init__(namespace, interval, name="disk-prober")
         self._prober = ThroughputProber(namespace)
@@ -617,6 +655,7 @@ class ContinuousDiskProber(ContinuousProberBase):
         self._block_size_kb = block_size_kb
         self._block_count = block_count
         self._disk_path: str = "/tmp/chaosprobe_disktest"
+        self._exclude_services: List[str] = list(exclude_services or [])
 
     def start(self) -> None:
         """Start with a pre-flight disk I/O check.
@@ -627,7 +666,9 @@ class ContinuousDiskProber(ContinuousProberBase):
         the primary target can't write anywhere.
         """
         _CANDIDATE_DIRS = ["/tmp", "/data", "/var/tmp"]
-        pod = self._prober._find_exec_pod(self._disk_target)
+        pod = self._prober._find_exec_pod(
+            self._disk_target, exclude_services=self._exclude_services,
+        )
         if not pod:
             logger.warning(
                 "Disk prober: no exec-capable pod found for target %s",
@@ -654,35 +695,53 @@ class ContinuousDiskProber(ContinuousProberBase):
                 super().start()
                 return
 
-        # All dirs failed on this pod — try other candidate pods
-        for svc in ("loadgenerator", "emailservice", "currencyservice"):
-            alt_pod = self._prober._find_ready_pod(svc)
-            if not alt_pod or alt_pod == pod:
-                continue
-            resp = self._prober._exec_in_pod(
-                alt_pod, ["sh", "-c", "echo ok"],
+        # All dirs failed on this pod — try other pods in the namespace
+        try:
+            all_pods = self._prober.core_api.list_namespaced_pod(
+                self._prober.namespace,
+                field_selector="status.phase=Running",
             )
-            if "ok" not in resp:
-                continue
-            for d in _CANDIDATE_DIRS:
-                path = f"{d}/chaosprobe_disktest"
+        except Exception:
+            all_pods = None
+
+        exclude = set(self._exclude_services)
+        if all_pods:
+            for p in all_pods.items:
+                labels = p.metadata.labels or {}
+                app = labels.get("app", "")
+                if app in exclude:
+                    continue
+                alt_pod = p.metadata.name
+                if alt_pod == pod:
+                    continue
+                if not (p.status.conditions and any(
+                    c.type == "Ready" and c.status == "True"
+                    for c in p.status.conditions
+                )):
+                    continue
                 resp = self._prober._exec_in_pod(
-                    alt_pod,
-                    ["sh", "-c",
-                     f"dd if=/dev/zero of={path} bs=1k count=1 2>&1 "
-                     f"&& echo OK || echo FAIL"],
+                    alt_pod, ["sh", "-c", "echo ok"],
                 )
-                if "OK" in resp:
-                    self._disk_path = path
-                    # Update the exec pod cache so _probe_loop uses this pod
-                    with self._prober._cache_lock:
-                        self._prober._exec_pod_cache[self._disk_target] = alt_pod
-                    logger.info(
-                        "Disk prober pre-flight OK on fallback pod %s (path: %s)",
-                        alt_pod, path,
+                if "ok" not in resp:
+                    continue
+                for d in _CANDIDATE_DIRS:
+                    path = f"{d}/chaosprobe_disktest"
+                    resp = self._prober._exec_in_pod(
+                        alt_pod,
+                        ["sh", "-c",
+                         f"dd if=/dev/zero of={path} bs=1k count=1 2>&1 "
+                         f"&& echo OK || echo FAIL"],
                     )
-                    super().start()
-                    return
+                    if "OK" in resp:
+                        self._disk_path = path
+                        with self._prober._cache_lock:
+                            self._prober._exec_pod_cache[self._disk_target] = alt_pod
+                        logger.info(
+                            "Disk prober pre-flight OK on fallback pod %s (path: %s)",
+                            alt_pod, path,
+                        )
+                        super().start()
+                        return
 
         logger.warning(
             "Disk prober pre-flight FAILED: no writable directory found "
@@ -724,6 +783,7 @@ class ContinuousDiskProber(ContinuousProberBase):
                     block_size_kb=self._block_size_kb,
                     count=self._block_count,
                     disk_path=self._disk_path,
+                    exclude_services=self._exclude_services,
                 )
                 for r in results:
                     if r.samples:
