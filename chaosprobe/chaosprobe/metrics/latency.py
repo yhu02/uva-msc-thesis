@@ -29,6 +29,7 @@ from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.base import (
     ContinuousProberBase,
     exec_in_pod,
+    find_all_probe_pods,
     find_probe_pod,
     find_ready_pod,
     pod_has_shell,
@@ -137,10 +138,16 @@ class LatencyProber:
             print(r.summary())
     """
 
-    def __init__(self, namespace: str, timeout_seconds: int = 5):
+    def __init__(
+        self,
+        namespace: str,
+        timeout_seconds: int = 5,
+        exclude_prefixes: Optional[List[str]] = None,
+    ):
         self.namespace = namespace
         self.timeout_seconds = timeout_seconds
         self._use_wget: bool = False  # fallback when python3 unavailable
+        self._exclude_prefixes = exclude_prefixes
 
         ensure_k8s_config()
 
@@ -344,7 +351,21 @@ class LatencyProber:
         Prefers pods with python3 for nanosecond-precision timing.
         Falls back to any pod with a shell (will use wget instead).
         """
-        return find_probe_pod(self.core_api, self.namespace, require_python3=True)
+        return find_probe_pod(
+            self.core_api,
+            self.namespace,
+            require_python3=True,
+            exclude_prefixes=self._exclude_prefixes,
+        )
+
+    def _find_all_probe_pods(self) -> List[str]:
+        """Return all pods suitable for probing, in alphabetical order."""
+        return find_all_probe_pods(
+            self.core_api,
+            self.namespace,
+            require_python3=True,
+            exclude_prefixes=self._exclude_prefixes,
+        )
 
     def _pod_has_shell(self, pod_name: str) -> bool:
         """Quick check whether *pod_name* has a usable shell."""
@@ -373,19 +394,21 @@ class LatencyProber:
         # Wrapped in try/except so errors always print to stdout
         # (without this, exceptions go to stderr and stdout is empty,
         # causing "Unexpected output: " errors).
+        # URL is passed via sys.argv to avoid shell/code injection from
+        # URLs containing quotes or other special characters.
         py_script = (
             "import time,sys\n"
             "try:\n"
             " import urllib.request as u;"
-            f"s=int(time.time()*1e9);"
-            f"r=u.urlopen('{url}',timeout={self.timeout_seconds});"
-            f"_=r.read();"
-            f"e=int(time.time()*1e9);"
-            f"print(r.status,s,e)\n"
+            "s=int(time.time()*1e9);"
+            "r=u.urlopen(sys.argv[1],timeout=int(sys.argv[2]));"
+            "_=r.read();"
+            "e=int(time.time()*1e9);"
+            "print(r.status,s,e)\n"
             "except Exception as ex:\n"
             " print('ERR',str(ex)[:200])"
         )
-        cmd = ["python3", "-c", py_script]
+        cmd = ["python3", "-c", py_script, url, str(self.timeout_seconds)]
 
         try:
             resp = stream(
@@ -402,12 +425,16 @@ class LatencyProber:
 
             stripped = resp.strip()
 
-            # Detect python3 not available (empty output or shell error)
-            if (
-                not stripped
-                or "not found" in stripped.lower()
-                or "no such file" in stripped.lower()
-                or "executable file not found" in stripped.lower()
+            # Detect python3 not available: empty output or common shell
+            # error strings.  Only check short responses to avoid false
+            # positives from HTML bodies containing "not found".
+            if not stripped or (
+                len(stripped) < 120
+                and (
+                    "not found" in stripped.lower()
+                    or "no such file" in stripped.lower()
+                    or "executable file not found" in stripped.lower()
+                )
             ):
                 logger.info(
                     "python3 not available in pod %s, switching to wget",
@@ -432,7 +459,7 @@ class LatencyProber:
                 status_code = int(parts[0])
                 start_ns = int(parts[1])
                 end_ns = int(parts[2])
-                if start_ns > 0 and end_ns > 0:
+                if start_ns > 0 and end_ns > start_ns:
                     latency_ms = (end_ns - start_ns) / 1_000_000
                     ok = 200 <= status_code < 400
                     return LatencySample(
@@ -492,19 +519,21 @@ class LatencyProber:
         zero data.
         """
         target = _service_from_url(url)
-        # Shell one-liner: timestamp → wget → timestamp → print
-        # Handles both GNU date (%s%N = nanoseconds) and busybox (%N → literal).
-        cmd = [
-            "sh", "-c",
-            f"S=$(date +%s%N 2>/dev/null); "
-            f'case "$S" in *N*|*%*) S=$(date +%s)000000000;; esac; '
-            f"wget -q -O /dev/null --timeout={self.timeout_seconds} "
-            f"'{url}' 2>/dev/null; RC=$?; "
-            f"E=$(date +%s%N 2>/dev/null); "
-            f'case "$E" in *N*|*%*) E=$(date +%s)000000000;; esac; '
-            f'if [ "$RC" -eq 0 ]; then echo "200 $S $E"; '
-            f'else echo "ERR wget_rc=$RC"; fi',
-        ]
+        # Shell one-liner: timestamp -> wget -> timestamp -> print
+        # Handles both GNU date (%s%N = nanoseconds) and busybox (%N -> literal).
+        # URL and timeout are passed as positional arguments ($1, $2) to
+        # avoid shell injection from URLs containing quotes.
+        shell_script = (
+            'S=$(date +%s%N 2>/dev/null); '
+            'case "$S" in *N*|*%*) S=$(date +%s)000000000;; esac; '
+            'wget -q -O /dev/null --timeout="$2" '
+            '"$1" 2>/dev/null; RC=$?; '
+            'E=$(date +%s%N 2>/dev/null); '
+            'case "$E" in *N*|*%*) E=$(date +%s)000000000;; esac; '
+            'if [ "$RC" -eq 0 ]; then echo "200 $S $E"; '
+            'else echo "ERR wget_rc=$RC"; fi'
+        )
+        cmd = ["sh", "-c", shell_script, "sh", url, str(self.timeout_seconds)]
 
         try:
             resp = stream(
@@ -596,13 +625,13 @@ class LatencyProber:
 
         py_script = (
             "import socket,time;"
-            f"s=socket.socket();"
-            f"s.settimeout({self.timeout_seconds});"
-            f"t0=int(time.time()*1e9);"
-            f"s.connect(('{hostname}',{port}));"
-            f"t1=int(time.time()*1e9);"
-            f"s.close();"
-            f"print(t0,t1)"
+            "s=socket.socket();"
+            f"s.settimeout({int(self.timeout_seconds)});"
+            "t0=int(time.time()*1e9);"
+            f"s.connect(('{hostname}',{int(port)}));"
+            "t1=int(time.time()*1e9);"
+            "s.close();"
+            "print(t0,t1)"
         )
         cmd = ["python3", "-c", py_script]
 
@@ -623,7 +652,7 @@ class LatencyProber:
             if len(parts) >= 2:
                 start_ns = int(parts[0])
                 end_ns = int(parts[1])
-                if start_ns > 0 and end_ns > 0:
+                if start_ns > 0 and end_ns > start_ns:
                     latency_ms = (end_ns - start_ns) / 1_000_000
                     return LatencySample(
                         source=source,
@@ -680,49 +709,64 @@ class ContinuousLatencyProber(ContinuousProberBase):
         interval: float = 2.0,
         timeout_seconds: int = 5,
         http_routes: Optional[List[Tuple[str, str, str, str]]] = None,
+        exclude_prefixes: Optional[List[str]] = None,
+        expected_chaos_duration: Optional[float] = None,
     ):
         super().__init__(namespace, interval, name="latency-prober")
         self._http_routes = http_routes
-        self._prober = LatencyProber(namespace, timeout_seconds)
+        self._prober = LatencyProber(
+            namespace, timeout_seconds, exclude_prefixes=exclude_prefixes,
+        )
         self._cached_probe_pod: Optional[str] = None
+        self._expected_chaos_duration = expected_chaos_duration
 
     def start(self) -> None:
         """Start continuous latency probing in background."""
-        # Resolve the probe pod once at start to avoid repeated K8s API
-        # lookups on every measurement cycle.
-        self._cached_probe_pod = self._prober._find_probe_pod()
-        if not self._cached_probe_pod:
-            logger.warning("No probe pod found at start — will retry during probing")
+        # Resolve the probe pod once at start.  Try all candidate pods
+        # until one passes the pre-flight connectivity check.
+        candidates = self._prober._find_all_probe_pods()
+        if not candidates:
+            candidates = []
+            first = self._prober._find_probe_pod()
+            if first:
+                candidates = [first]
+
+        if self._http_routes:
+            preflight_service = self._http_routes[0][0]
+            preflight_path = self._http_routes[0][1]
         else:
-            # Pre-flight: verify the probe pod can reach the first route's
-            # service so we get actionable errors instead of silent 100%
-            # failures across all phases.
-            if self._http_routes:
-                preflight_service = self._http_routes[0][0]
-                preflight_path = self._http_routes[0][1]
-            else:
-                preflight_service = "frontend"
-                preflight_path = "/_healthz"
-            test_url = f"http://{preflight_service}.{self.namespace}.svc.cluster.local{preflight_path}"
+            preflight_service = "frontend"
+            preflight_path = "/_healthz"
+        test_url = f"http://{preflight_service}.{self.namespace}.svc.cluster.local{preflight_path}"
+
+        for pod in candidates:
             sample = self._prober._measure_http_from_pod(
-                self._cached_probe_pod, test_url, "GET", "/_healthz",
+                pod, test_url, "GET", preflight_path,
             )
-            if sample.status != "ok":
-                logger.warning(
-                    "Latency prober pre-flight check FAILED from pod %s "
-                    "to %s: %s — all latency samples will likely be errors. "
-                    "Check DNS resolution and network policies.",
-                    self._cached_probe_pod,
-                    test_url,
-                    sample.error,
-                )
-            else:
+            if sample.status == "ok":
+                self._cached_probe_pod = pod
                 logger.info(
                     "Latency prober pre-flight OK: pod %s → %s (%.1fms)",
-                    self._cached_probe_pod,
-                    test_url,
-                    sample.latency_ms,
+                    pod, test_url, sample.latency_ms,
                 )
+                break
+            else:
+                logger.info(
+                    "Pre-flight failed from pod %s: %s — trying next candidate",
+                    pod, sample.error,
+                )
+
+        if not self._cached_probe_pod:
+            if candidates:
+                self._cached_probe_pod = candidates[0]
+                logger.warning(
+                    "Latency prober pre-flight FAILED from all %d candidate pods "
+                    "— using %s anyway. All latency samples will likely be errors.",
+                    len(candidates), self._cached_probe_pod,
+                )
+            else:
+                logger.warning("No probe pod found at start — will retry during probing")
+
         super().start()
 
     def result(self) -> Dict[str, Any]:

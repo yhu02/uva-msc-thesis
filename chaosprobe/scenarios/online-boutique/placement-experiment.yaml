@@ -23,25 +23,28 @@
 # productcatalogservice. Under colocate, pod-delete churn creates node-level
 # resource contention that degrades co-located services and slows recovery.
 #
-# Probe design rationale (6 probes for granular resilience scoring):
+# Probe design rationale (7 probes for granular resilience scoring):
 #
 #   Continuous probes run every few seconds throughout chaos. A SINGLE failed
 #   check (after retries) marks the entire probe as "Failed". This makes the
 #   probe mode and retry/timeout settings critical for differentiation.
 #
-#   We use a layered strategy with a spread of sensitivities so that
-#   different recovery speeds produce different scores:
-#   - 2 strict probes (3s timeout, 1 retry ≈ 6s window) — expected to
-#     fail under pod-delete; confirm that chaos has impact.
-#   - 2 moderate probes (3-5s timeout, 2 retries ≈ 9-15s window) — pass
-#     only when recovery is fast (<3s); this is where strategy
-#     differences become visible.
-#   - 1 Edge probe (checks only at start + end) — validates eventual
-#     recovery after chaos stops.
-#   - 1 control probe (healthz, 5s timeout, 2 retries ≈ 15s) — detects
-#     node-level contention that affects local endpoints.
+#   We use 4 sensitivity tiers so that different recovery speeds produce
+#   different scores:
 #
-#   With 6 probes, resilience scores can be: 0, 17, 33, 50, 67, 83, or 100%.
+#   Tier 1 — Strict (2 probes): 3s timeout, 1 retry ≈ 6s window.
+#     Expected to fail under pod-delete; confirm chaos has impact.
+#
+#   Tier 2 — Moderate-tight (2 probes): 3s timeout, 2 retries ≈ 9s window.
+#     Pass only when recovery is fast (<3s per check window).
+#
+#   Tier 3 — Moderate-loose (2 probes): 5s timeout, 3 retries ≈ 20s window.
+#     Pass when recovery is moderate (<5s); catches slow strategies.
+#
+#   Tier 4 — Control (1 probe): healthz endpoint, 5s timeout, 3 retries.
+#     Detects node-level contention that affects even local endpoints.
+#
+#   With 7 probes, resilience scores can be: 0, 14, 28, 42, 57, 71, 85, 100%.
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:
@@ -67,14 +70,10 @@ spec:
             - name: PODS_AFFECTED_PERC
               value: "100"
         probe:
-          # ── Strict probes ───────────────────────────────────────────
-          # These are expected to fail under 100% pod-delete. They confirm
-          # that killing productcatalogservice actually causes disruption.
+          # ── Tier 1: Strict probes (3s timeout, 1 retry ≈ 6s) ──────
+          # Expected to fail under 100% pod-delete. Confirm chaos impact.
 
           # Probe 1: Product page (strict) — directly depends on productcatalog.
-          # With 3s timeout and 1 retry, tolerates normal cluster jitter but
-          # still catches pod-delete disruption (multi-second outages). Over
-          # 120s with 2s interval (~60 checks), near-certain to catch at least one.
           - name: frontend-product-strict
             type: httpProbe
             mode: Continuous
@@ -90,7 +89,6 @@ spec:
               retry: 1
 
           # Probe 2: Homepage (strict) — depends on productcatalog + recommendation + ad.
-          # Same settings as above.
           - name: frontend-homepage-strict
             type: httpProbe
             mode: Continuous
@@ -105,17 +103,11 @@ spec:
               interval: 2s
               retry: 1
 
-          # ── Moderate probes ─────────────────────────────────────────
-          # These have enough tolerance to absorb a fast (<3s) recovery
-          # but NOT a slow one. With CHAOS_INTERVAL=5 the pod is deleted
-          # every 5s; a strategy that recovers in <3s will pass these,
-          # while one that takes >3s will fail — this is where placement
-          # differences become visible.
+          # ── Tier 2: Moderate-tight probes (3s timeout, 2 retries ≈ 9s) ─
+          # Pass only when recovery is fast (<3s). This tier differentiates
+          # fast-recovering strategies (spread, dependency-aware) from slow ones.
 
-          # Probe 3: Homepage (moderate) — same endpoint as the strict
-          # probe but with 2 retries × 3s = ~9s total window per check.
-          # The 3s interval gives ~40 check windows over 120s of chaos,
-          # making it likely to catch recoveries slower than ~3s.
+          # Probe 3: Homepage (moderate-tight)
           - name: frontend-homepage-moderate
             type: httpProbe
             mode: Continuous
@@ -130,11 +122,28 @@ spec:
               interval: 3s
               retry: 2
 
-          # Probe 4: Cart page (moderate control) — hits cartservice +
-          # redis, NOT productcatalog. Should pass under spread/default
-          # but fail under colocate/adversarial where node-level resource
-          # contention from pod-delete churn degrades unrelated routes.
-          # Moderate tolerance: 2 retries × 5s = ~15s window.
+          # Probe 4: Product page (moderate-tight) — same tier, different route.
+          - name: frontend-product-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 3s
+              retry: 2
+
+          # ── Tier 3: Moderate-loose probes (5s timeout, 3 retries ≈ 20s) ─
+          # Pass when recovery is moderate. Catches strategies with slow
+          # recovery (>5s) that might still pass tier 2.
+
+          # Probe 5: Cart page (moderate-loose) — hits cartservice + redis,
+          # NOT productcatalog. Fails under colocate/adversarial where
+          # node-level resource contention degrades unrelated routes.
           - name: frontend-cart
             type: httpProbe
             mode: Continuous
@@ -147,18 +156,13 @@ spec:
             runProperties:
               probeTimeout: 5s
               interval: 4s
-              retry: 2
+              retry: 3
 
-          # ── Edge probe ──────────────────────────────────────────────
-          # Checks only at the START and END of chaos. Validates that the
-          # system recovers after chaos stops. Should pass for all strategies
-          # that achieve eventual recovery.
-
-          # Probe 5: Homepage (edge) — verifies steady-state before chaos
-          # starts and confirms recovery after chaos ends.
-          - name: frontend-homepage-edge
+          # Probe 6: Homepage (moderate-loose) — generous tolerance catches
+          # only the slowest recovery strategies.
+          - name: frontend-homepage-loose
             type: httpProbe
-            mode: Edge
+            mode: Continuous
             httpProbe/inputs:
               url: http://frontend.online-boutique.svc.cluster.local
               method:
@@ -166,21 +170,16 @@ spec:
                   criteria: ==
                   responseCode: "200"
             runProperties:
-              probeTimeout: 15s
-              interval: 5s
-              retry: 5
+              probeTimeout: 5s
+              interval: 4s
+              retry: 3
 
-          # ── Healthcheck probe ───────────────────────────────────────
+          # ── Tier 4: Control probe ──────────────────────────────────
           # The /_healthz endpoint is served locally by the frontend and
-          # does NOT call any backend service. It should pass unless the
-          # frontend pod itself is under severe resource pressure (CPU/memory
-          # contention on the node).
+          # does NOT call any backend service. Failure indicates severe
+          # node-level resource pressure (CPU/memory contention).
 
-          # Probe 6: Healthcheck (control) — pure infrastructure health.
-          # Failure here indicates the placement strategy causes so much
-          # node-level contention that even local endpoints are degraded.
-          # Moderate tolerance (5s × 2 retries ≈ 15s) — tight enough to
-          # detect sustained node pressure from colocated pod churn.
+          # Probe 7: Healthcheck (control) — pure infrastructure health.
           - name: frontend-healthz
             type: httpProbe
             mode: Continuous
@@ -193,4 +192,4 @@ spec:
             runProperties:
               probeTimeout: 5s
               interval: 4s
-              retry: 2
+              retry: 3

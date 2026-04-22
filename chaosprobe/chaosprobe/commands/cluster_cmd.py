@@ -180,7 +180,7 @@ def cluster_vagrant():
 @cluster_vagrant.command("init")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
 @click.option("--control-planes", "-c", default=1, type=int, help="Number of control plane nodes")
-@click.option("--workers", "-w", default=2, type=int, help="Number of worker nodes")
+@click.option("--workers", "-w", default=4, type=int, help="Number of worker nodes")
 @click.option(
     "--memory", "-m", default=None, type=int,
     help="Memory for ALL VMs in MB (overrides --cp-memory/--worker-memory)",

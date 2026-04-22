@@ -9,6 +9,7 @@ from chaosprobe.metrics.throughput import (
     ContinuousDiskProber,
     ThroughputResult,
     ThroughputSample,
+    _parse_dd_elapsed_seconds,
 )
 
 
@@ -209,6 +210,100 @@ class TestContinuousDiskProber:
         assert phases["during-chaos"]["disk"]["write"]["meanOpsPerSecond"] == 30.0
 
 
+class TestDdElapsedParser:
+    def test_parses_gnu_dd(self):
+        out = (
+            "4+0 records in\n"
+            "4+0 records out\n"
+            "262144 bytes (262 kB, 256 KiB) copied, 0.00213 s, 123 MB/s\n"
+        )
+        assert _parse_dd_elapsed_seconds(out) == 0.00213
+
+    def test_parses_busybox_dd(self):
+        out = (
+            "4+0 records in\n"
+            "4+0 records out\n"
+            "262144 bytes (256.0KB) copied, 0.000876 seconds, 285.0MB/s\n"
+        )
+        assert _parse_dd_elapsed_seconds(out) == 0.000876
+
+    def test_parses_scientific_notation(self):
+        out = "262144 bytes (256 KiB) copied, 1.5e-05 s, 16 GB/s"
+        assert _parse_dd_elapsed_seconds(out) == 1.5e-05
+
+    def test_parses_zero_elapsed(self):
+        # Some dd versions round sub-microsecond ops to 0.
+        out = "262144 bytes (256.0KB) copied, 0 seconds, 0MB/s"
+        assert _parse_dd_elapsed_seconds(out) == 0.0
+
+    def test_returns_none_on_missing_summary(self):
+        assert _parse_dd_elapsed_seconds("dd: /some/path: Read-only file system") is None
+        assert _parse_dd_elapsed_seconds("") is None
+
+    def test_returns_none_on_garbled_float(self):
+        out = "262144 bytes copied, NaNsOmething s, foo"
+        # Regex requires digits up front, so this should not match.
+        assert _parse_dd_elapsed_seconds(out) is None
+
+
+class TestContinuousDiskProberSerializesError:
+    def test_probe_loop_preserves_error_in_timeseries(self, monkeypatch):
+        """Regression: the continuous disk prober used to drop ``sample.error``
+        when serializing to the time series, making field failures invisible."""
+        import time as _time
+        from unittest.mock import MagicMock
+
+        prober = ContinuousDiskProber.__new__(ContinuousDiskProber)
+        prober._lock = threading.Lock()
+        prober._stop_event = threading.Event()
+        prober._time_series = []
+        prober._probe_errors = 0
+        prober._start_time = _time.time()
+        prober._chaos_start_time = None
+        prober._chaos_end_time = None
+        prober._expected_chaos_duration = None
+        prober._post_chaos_buffer = 15.0
+        prober.interval = 10.0
+        prober.namespace = "test-ns"
+        prober._disk_target = "redis-cart"
+        prober._disk_path = "/tmp/chaosprobe_disktest"
+        prober._block_size_kb = 64
+        prober._block_count = 4
+        prober._exclude_services = []
+
+        # Build a fake prober whose disk benchmark returns an error sample
+        # with a populated error field.
+        err_sample = ThroughputSample(
+            operation="write", target="disk",
+            ops_per_second=0, latency_ms=0,
+            status="error", timestamp="2026-04-22T18:00:00+00:00",
+            error="dd elapsed<=0 (workload too small): copied, 0 seconds",
+        )
+        err_result = ThroughputResult(target="disk", operation="write", description="")
+        err_result.samples.append(err_sample)
+
+        fake_prober = MagicMock()
+        fake_prober.measure_disk_throughput.return_value = [err_result]
+        fake_prober._cache_lock = threading.Lock()
+        fake_prober._exec_pod_cache = {}
+        prober._prober = fake_prober
+
+        # Run one loop iteration by stopping immediately after the first wait.
+        def _wait_then_stop(timeout):
+            prober._stop_event.set()
+            return True
+        monkeypatch.setattr(prober._stop_event, "wait", _wait_then_stop)
+
+        prober._probe_loop()
+
+        assert len(prober._time_series) == 1
+        entry = prober._time_series[0]
+        write_entry = entry["disk"]["write"]
+        assert write_entry["status"] == "error"
+        assert "error" in write_entry
+        assert "elapsed<=0" in write_entry["error"]
+
+
 class TestContinuousProberBase:
     def test_current_phase_transitions(self):
         import time
@@ -216,6 +311,8 @@ class TestContinuousProberBase:
         prober._lock = threading.Lock()
         prober._chaos_start_time = None
         prober._chaos_end_time = None
+        prober._expected_chaos_duration = None
+        prober._post_chaos_buffer = 15.0
 
         now = time.time()
         assert prober._current_phase(now) == "pre-chaos"
@@ -231,6 +328,8 @@ class TestContinuousProberBase:
         import time
         prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
         prober._lock = threading.Lock()
+        prober._expected_chaos_duration = None
+        prober._post_chaos_buffer = 15.0
 
         base = time.time()
         prober._chaos_start_time = base + 10

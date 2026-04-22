@@ -522,7 +522,7 @@ class Neo4jWriterMixin:
                     rid=run_id,
                     phase=phase,
                     samples=phase_data.get("sampleCount", 0),
-                    node_name=resources.get("nodeName"),
+                    node_name=",".join(resources.get("nodeNames", [])) or resources.get("nodeName"),
                     mean_cpu=node_data.get("meanCpu_millicores"),
                     max_cpu=node_data.get("maxCpu_millicores"),
                     mean_mem=node_data.get("meanMemory_bytes"),

@@ -249,9 +249,9 @@ uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 --strategy colocat
 ### Probe (Rust cmdProbes)
 
 ```bash
-uv run chaosprobe probe init --scenario <path>
-uv run chaosprobe probe build --scenario <path>
-uv run chaosprobe probe list --scenario <path>
+uv run chaosprobe probe init <name> --scenario <path>
+uv run chaosprobe probe build <scenario>
+uv run chaosprobe probe list <scenario>
 ```
 
 ### Cluster

@@ -85,6 +85,7 @@ def find_probe_pod(
     core_api: Any,
     namespace: str,
     require_python3: bool = False,
+    exclude_prefixes: Optional[List[str]] = None,
 ) -> Optional[str]:
     """Find a pod suitable for running probe commands.
 
@@ -92,6 +93,9 @@ def find_probe_pod(
     a usable shell.  When *require_python3* is True the selected pod
     must also have a working ``python3`` interpreter.  If no pod satisfies
     that constraint, falls back to any pod with a shell.
+
+    Pods matching *exclude_prefixes* (e.g. the chaos target deployment)
+    are skipped — they may be killed during experiments.
 
     Pods are checked in alphabetical order; the first pod with a shell
     (and python3 if required) is returned.
@@ -104,6 +108,8 @@ def find_probe_pod(
     except Exception:
         return None
 
+    _exclude = tuple(exclude_prefixes) if exclude_prefixes else ()
+
     ready_pods: List[str] = []
 
     for pod in pods.items:
@@ -115,7 +121,10 @@ def find_probe_pod(
         )
         if not is_ready:
             continue
-        ready_pods.append(pod.metadata.name)
+        name = pod.metadata.name
+        if _exclude and name.startswith(_exclude):
+            continue
+        ready_pods.append(name)
 
     # Deterministic order for reproducibility
     ready_pods.sort()
@@ -138,6 +147,56 @@ def find_probe_pod(
         )
         return shell_pods[0]
     return None
+
+
+def find_all_probe_pods(
+    core_api: Any,
+    namespace: str,
+    require_python3: bool = False,
+    exclude_prefixes: Optional[List[str]] = None,
+) -> List[str]:
+    """Return all pods suitable for probing, in alphabetical order.
+
+    Unlike ``find_probe_pod`` which returns the first match, this
+    returns *all* candidates so callers can iterate through them
+    when the first pod fails a connectivity pre-flight check.
+    """
+    try:
+        pods = core_api.list_namespaced_pod(
+            namespace,
+            field_selector="status.phase=Running",
+        )
+    except Exception:
+        return []
+
+    _exclude = tuple(exclude_prefixes) if exclude_prefixes else ()
+
+    ready_pods: List[str] = []
+    for pod in pods.items:
+        if not pod.status.conditions:
+            continue
+        is_ready = any(
+            c.type == "Ready" and c.status == "True"
+            for c in pod.status.conditions
+        )
+        if not is_ready:
+            continue
+        name = pod.metadata.name
+        if _exclude and name.startswith(_exclude):
+            continue
+        ready_pods.append(name)
+
+    ready_pods.sort()
+
+    result: List[str] = []
+    for name in ready_pods:
+        if pod_has_shell(core_api, namespace, name):
+            if require_python3:
+                if _pod_has_python3(core_api, namespace, name):
+                    result.append(name)
+            else:
+                result.append(name)
+    return result
 
 
 def exec_in_pod(core_api: Any, namespace: str, pod_name: str, command: List[str]) -> str:
@@ -181,6 +240,8 @@ class ContinuousProberBase:
         self._start_time: Optional[float] = None
         self._chaos_start_time: Optional[float] = None
         self._chaos_end_time: Optional[float] = None
+        self._expected_chaos_duration: Optional[float] = None
+        self._post_chaos_buffer: float = 15.0  # seconds; default, can be overridden
         self._probe_errors: int = 0
         self._thread_name = name
 
@@ -212,9 +273,17 @@ class ContinuousProberBase:
             chaos_end = self._chaos_end_time
         if chaos_start is None or now < chaos_start:
             return "pre-chaos"
-        if chaos_end is None or now < chaos_end:
-            return "during-chaos"
-        return "post-chaos"
+        if chaos_end is not None and now >= chaos_end:
+            return "post-chaos"
+        # Cap: if expected duration is set and exceeded, treat as post-chaos.
+        # Use a dynamic buffer that scales with the expected chaos duration
+        # (at least 15s, at most 30s) to account for variable recovery times.
+        if self._expected_chaos_duration is not None:
+            buffer = max(self._post_chaos_buffer, self._expected_chaos_duration * 0.15)
+            buffer = min(buffer, 30.0)
+            if now >= chaos_start + self._expected_chaos_duration + buffer:
+                return "post-chaos"
+        return "during-chaos"
 
     def _make_entry(self, now: float, phase: str) -> Dict[str, Any]:
         return {

@@ -153,6 +153,43 @@ class PlacementMutator:
 
         return result
 
+    def get_node_pod_usage(self) -> Dict[str, Tuple[int, int]]:
+        """Sum pod resource **requests** currently scheduled on each node.
+
+        Returns ``{node_name: (cpu_millicores, memory_bytes)}``.  Used by
+        the best-fit strategy so its bin capacity reflects actual free
+        room rather than raw allocatable (which ignores kube-system,
+        chaos infra, monitoring, load generators, etc.).
+
+        Only pods with a ``node_name`` assigned and a non-terminal phase
+        are counted.  Pods without explicit requests contribute 0 — the
+        same convention the kube scheduler uses.
+        """
+        usage: Dict[str, Tuple[int, int]] = {}
+        try:
+            pods = self.core_api.list_pod_for_all_namespaces().items
+        except ApiException:
+            return usage
+
+        for pod in pods:
+            node = getattr(pod.spec, "node_name", None)
+            if not node:
+                continue
+            phase = (pod.status.phase or "").lower()
+            if phase in ("succeeded", "failed"):
+                continue
+            cpu_m = 0
+            mem_b = 0
+            for c in pod.spec.containers or []:
+                reqs = getattr(c.resources, "requests", None) if c.resources else None
+                if not reqs:
+                    continue
+                cpu_m += int(parse_cpu_quantity(reqs.get("cpu", "0")))
+                mem_b += parse_memory_quantity(reqs.get("memory", "0"))
+            prev_cpu, prev_mem = usage.get(node, (0, 0))
+            usage[node] = (prev_cpu + cpu_m, prev_mem + mem_b)
+        return usage
+
     def get_service_dependencies(self) -> List[Tuple[str, str]]:
         """Discover ``(source, target)`` service dependency edges for the namespace.
 
@@ -222,6 +259,14 @@ class PlacementMutator:
         ):
             dependencies = self.get_service_dependencies()
 
+        # Best-fit needs realistic free capacity — otherwise it packs
+        # everything onto alphabetically-first nodes and the resulting
+        # pods go Pending because kube-system / chaos / monitoring pods
+        # already consumed much of the allocatable.
+        node_existing_usage: Optional[Dict[str, Tuple[int, int]]] = None
+        if strategy == PlacementStrategy.BEST_FIT:
+            node_existing_usage = self.get_node_pod_usage()
+
         assignment = compute_assignments(
             strategy=strategy,
             deployments=all_deps,
@@ -229,6 +274,7 @@ class PlacementMutator:
             target_node=target_node,
             seed=seed,
             dependencies=dependencies,
+            node_existing_usage=node_existing_usage,
         )
 
         self._apply_assignment(assignment)

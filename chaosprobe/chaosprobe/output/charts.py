@@ -58,7 +58,8 @@ def _extract_metric(
     """Generic metric extractor shared by latency, resource, and prometheus.
 
     Looks for ``metrics.<key>`` first in the top-level strategy data,
-    then falls back to the first iteration that has it.
+    then falls back to the median-scoring iteration (by resilience score)
+    to avoid using unrepresentative outlier data.
 
     Args:
         raw_strategies: ``{"baseline": {...}, "colocate": {...}, ...}``
@@ -77,14 +78,19 @@ def _extract_metric(
                 result[name] = data
                 continue
 
-        for it in sdata.get("iterations", []):
-            m = it.get("metrics", {})
-            data = m.get(key, {})
-            if data:
-                if require_available and not data.get("available", False):
-                    continue
-                result[name] = data
-                break
+        # Fallback: pick the median-scoring iteration (more representative
+        # than the first, which may be an outlier or poisoned by prior state).
+        iterations = sdata.get("iterations", [])
+        if iterations:
+            sorted_iters = sorted(
+                [it for it in iterations if it.get("metrics", {}).get(key)],
+                key=lambda it: it.get("resilienceScore", 0),
+            )
+            if sorted_iters:
+                median_it = sorted_iters[len(sorted_iters) // 2]
+                data = median_it["metrics"][key]
+                if not (require_available and not data.get("available", False)):
+                    result[name] = data
 
     return result
 

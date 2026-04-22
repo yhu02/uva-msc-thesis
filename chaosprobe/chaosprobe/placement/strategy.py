@@ -164,6 +164,7 @@ def compute_assignments(
     target_node: Optional[str] = None,
     seed: Optional[int] = None,
     dependencies: Optional[List[Tuple[str, str]]] = None,
+    node_existing_usage: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> NodeAssignment:
     """Compute node assignments for a given strategy.
 
@@ -175,6 +176,12 @@ def compute_assignments(
         seed: Random seed for RANDOM strategy reproducibility.
         dependencies: For DEPENDENCY_AWARE, a list of ``(source, target)``
             service dependency edges.  Ignored by other strategies.
+        node_existing_usage: For BEST_FIT, a map of
+            ``node_name -> (used_cpu_millicores, used_memory_bytes)`` that
+            accounts for pods already scheduled on each node (system pods,
+            chaos infra, monitoring, etc.).  When provided, best-fit uses
+            ``allocatable - used`` as its bin capacity so it does not
+            over-pack onto a node that cannot actually fit the workload.
 
     Returns:
         A NodeAssignment with deployment→node mappings.
@@ -203,7 +210,9 @@ def compute_assignments(
     elif strategy == PlacementStrategy.ADVERSARIAL:
         return _compute_adversarial(deployments, schedulable, node_names)
     elif strategy == PlacementStrategy.BEST_FIT:
-        return _compute_best_fit(deployments, schedulable, node_names)
+        return _compute_best_fit(
+            deployments, schedulable, node_names, node_existing_usage or {}
+        )
     elif strategy == PlacementStrategy.DEPENDENCY_AWARE:
         return _compute_dependency_aware(
             deployments, schedulable, node_names, dependencies or []
@@ -263,8 +272,9 @@ def _compute_spread(
     node_names: List[str],
 ) -> NodeAssignment:
     """Distribute deployments evenly across nodes using round-robin."""
+    sorted_deps = sorted(deployments, key=lambda d: d.name)
     assignments = {}
-    for idx, dep in enumerate(deployments):
+    for idx, dep in enumerate(sorted_deps):
         assignments[dep.name] = node_names[idx % len(node_names)]
 
     # Count per node
@@ -292,7 +302,8 @@ def _compute_random(
 ) -> NodeAssignment:
     """Random node assignment per deployment."""
     rng = random.Random(seed)
-    assignments = {d.name: rng.choice(node_names) for d in deployments}
+    sorted_deps = sorted(deployments, key=lambda d: d.name)
+    assignments = {d.name: rng.choice(node_names) for d in sorted_deps}
 
     per_node: Dict[str, int] = {}
     for node in assignments.values():
@@ -396,6 +407,7 @@ def _compute_best_fit(
     deployments: List[DeploymentInfo],
     nodes: List[NodeInfo],
     node_names: List[str],
+    node_existing_usage: Dict[str, Tuple[int, int]],
 ) -> NodeAssignment:
     """Best-fit decreasing bin-packing.
 
@@ -404,34 +416,55 @@ def _compute_best_fit(
     concentrates load onto the fewest nodes possible — the canonical
     "best-fit" heuristic from the bin-packing literature and the default
     philosophy of Borg's scoring function (Verma et al., EuroSys 2015).
+
+    When *node_existing_usage* is supplied, the initial bin capacity is
+    ``allocatable - already-used`` so pods from kube-system, chaos infra,
+    or monitoring stacks do not invisibly inflate available room.  Without
+    this accounting, best-fit packs all workloads onto the first
+    alphabetical node and the resulting pods go Pending.
     """
-    # Remaining capacity per node, tracked as the same millicore-equivalent.
-    remaining: Dict[str, float] = {
-        n.name: n.allocatable_cpu_millicores
-        + n.allocatable_memory_bytes / (1024 * 1024)
-        for n in nodes
-    }
+    # Track CPU and memory separately — collapsing them into a single
+    # scalar weight hides single-dimension exhaustion (e.g. enough free
+    # memory in total but insufficient CPU).  A deployment only fits on
+    # a node when BOTH its CPU and memory requests fit.
+    free_cpu: Dict[str, int] = {}
+    free_mem: Dict[str, int] = {}
+    for n in nodes:
+        used_cpu, used_mem = node_existing_usage.get(n.name, (0, 0))
+        free_cpu[n.name] = max(0, n.allocatable_cpu_millicores - used_cpu)
+        free_mem[n.name] = max(0, n.allocatable_memory_bytes - used_mem)
+
     per_node: Dict[str, int] = {name: 0 for name in node_names}
     assignments: Dict[str, str] = {}
 
     sorted_deps = sorted(deployments, key=_deployment_weight, reverse=True)
 
     for dep in sorted_deps:
-        w = _deployment_weight(dep)
+        cpu_req = dep.cpu_request_millicores
+        mem_req = dep.memory_request_bytes
 
-        # Prefer nodes that still have room; among those, pick the one
-        # whose post-placement slack is smallest (tightest fit).
-        fits = [(remaining[name] - w, name) for name in node_names if remaining[name] >= w]
+        # Candidates where both dimensions fit; pick the one whose
+        # combined post-placement slack is smallest (tightest fit).
+        fits: List[Tuple[float, str]] = []
+        for name in node_names:
+            if free_cpu[name] >= cpu_req and free_mem[name] >= mem_req:
+                slack = (free_cpu[name] - cpu_req) + (free_mem[name] - mem_req) / (1024 * 1024)
+                fits.append((slack, name))
+
         if fits:
             fits.sort()
             chosen = fits[0][1]
         else:
             # Nothing fits cleanly — fall back to the node with the most
-            # remaining capacity (the scheduler would have to overcommit).
-            chosen = max(node_names, key=lambda n: remaining[n])
+            # combined remaining capacity (scheduler would have to overcommit).
+            chosen = max(
+                node_names,
+                key=lambda n: free_cpu[n] + free_mem[n] / (1024 * 1024),
+            )
 
         assignments[dep.name] = chosen
-        remaining[chosen] = max(0.0, remaining[chosen] - w)
+        free_cpu[chosen] = max(0, free_cpu[chosen] - cpu_req)
+        free_mem[chosen] = max(0, free_mem[chosen] - mem_req)
         per_node[chosen] += 1
 
     used_nodes = sum(1 for c in per_node.values() if c > 0)
@@ -521,15 +554,29 @@ def _compute_dependency_aware(
             seen.add(name)
 
     # Partition the ordered list into K (= number of worker nodes) roughly
-    # equal contiguous chunks.
+    # equal contiguous chunks.  Using ceil-based sizes so the tail does not
+    # pile up on the last chunk: with n=11, k=4 this yields [3,3,3,2]
+    # instead of the floor-division pattern [2,2,2,5] that wrecks locality
+    # by dumping the BFS leaves onto one node.
     k = len(node_names)
     n = len(order)
-    chunk_size = max(1, n // k)
+    q, r = divmod(n, k)
+    chunk_sizes = [q + (1 if i < r else 0) for i in range(k)]
     assignments: Dict[str, str] = {}
     per_node: Dict[str, int] = {name: 0 for name in node_names}
 
+    boundaries: List[int] = []
+    running = 0
+    for sz in chunk_sizes:
+        running += sz
+        boundaries.append(running)
+
     for i, name in enumerate(order):
-        node_idx = min(i // chunk_size, k - 1)
+        node_idx = 0
+        for b_i, b in enumerate(boundaries):
+            if i < b:
+                node_idx = b_i
+                break
         chosen = node_names[node_idx]
         assignments[name] = chosen
         per_node[chosen] += 1

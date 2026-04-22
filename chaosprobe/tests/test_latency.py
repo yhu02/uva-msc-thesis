@@ -185,6 +185,8 @@ class TestContinuousLatencyProber:
         prober._lock = threading.Lock()
         prober._chaos_start_time = None
         prober._chaos_end_time = None
+        prober._expected_chaos_duration = None
+        prober._post_chaos_buffer = 15.0
 
         now = time.time()
         assert prober._current_phase(now) == "pre-chaos"
@@ -193,4 +195,21 @@ class TestContinuousLatencyProber:
         assert prober._current_phase(now) == "during-chaos"
 
         prober._chaos_end_time = now - 5
+        assert prober._current_phase(now) == "post-chaos"
+
+    def test_current_phase_chaos_duration_cap(self):
+        """during-chaos is capped at expected_chaos_duration + dynamic buffer."""
+        import time
+        prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
+        prober._lock = threading.Lock()
+        prober._chaos_end_time = None
+        prober._expected_chaos_duration = 120.0
+        prober._post_chaos_buffer = 15.0
+
+        now = time.time()
+        # Dynamic buffer for 120s chaos: max(15, 120*0.15)=18s, clamped to 18s
+        prober._chaos_start_time = now - 130  # 130s ago, within 120+18 buffer
+        assert prober._current_phase(now) == "during-chaos"
+
+        prober._chaos_start_time = now - 140  # 140s ago, exceeds 120+18=138s cap
         assert prober._current_phase(now) == "post-chaos"

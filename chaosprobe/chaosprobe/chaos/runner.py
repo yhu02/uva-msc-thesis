@@ -32,6 +32,66 @@ _TERMINAL_PHASES = frozenset({
 _MAX_TARGET_RETRIES = 2
 
 
+def _extract_probe_verdicts_from_execution_data(
+    execution_data: Any,
+) -> Dict[str, str]:
+    """Parse per-probe verdicts from ChaosCenter executionData JSON.
+
+    The ``executionData`` field is a JSON string containing an Argo
+    workflow-style structure with a ``nodes`` dict keyed by node-id.
+    ChaosEngine nodes contain ``chaosData.chaosResult.status.probeStatuses``
+    — a list of per-probe entries with ``status.verdict`` = "Passed"/"Failed".
+
+    Returns a dict mapping probe name → "Pass" | "Fail" | "Unknown".
+    """
+    if not execution_data:
+        return {}
+    try:
+        if isinstance(execution_data, str):
+            data = _json.loads(execution_data)
+        else:
+            data = execution_data
+
+        verdicts: Dict[str, str] = {}
+
+        # nodes is a dict keyed by node-id
+        nodes = data.get("nodes", {})
+        if not isinstance(nodes, dict):
+            return {}
+
+        for node in nodes.values():
+            if not isinstance(node, dict):
+                continue
+            # Probe statuses live under chaosData.chaosResult.status.probeStatuses
+            chaos_data = node.get("chaosData", {})
+            if not chaos_data:
+                continue
+            probe_statuses = (
+                chaos_data.get("chaosResult", {})
+                .get("status", {})
+                .get("probeStatuses", [])
+            )
+            for ps in probe_statuses:
+                name = ps.get("name", "")
+                if not name:
+                    continue
+                status = ps.get("status", {})
+                if isinstance(status, dict):
+                    verdict_str = status.get("verdict", "")
+                    if "Pass" in verdict_str:
+                        verdicts[name] = "Pass"
+                    elif "Fail" in verdict_str:
+                        verdicts[name] = "Fail"
+                    else:
+                        verdicts.setdefault(name, "Unknown")
+                elif isinstance(status, str):
+                    verdicts[name] = "Pass" if "Pass" in status else "Fail"
+
+        return verdicts
+    except Exception:
+        return {}
+
+
 class ChaosRunner:
     """Runs chaos experiments exclusively through the ChaosCenter GraphQL API.
 
@@ -185,6 +245,9 @@ class ChaosRunner:
             "faultsPassed": result.get("faultsPassed"),
             "faultsFailed": result.get("faultsFailed"),
             "totalFaults": result.get("totalFaults"),
+            "probeVerdicts": _extract_probe_verdicts_from_execution_data(
+                result.get("executionData")
+            ),
         }
         if "error" in result:
             entry["error"] = result["error"]

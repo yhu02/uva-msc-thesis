@@ -262,8 +262,63 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
                 },
             )
         click.echo(f"  Triggered rollout restart for {len(_restart_names)} deployment(s)")
+
+        # Wait for ALL restarted deployments to finish rolling out before
+        # proceeding.  `wait_for_healthy_deployments` only checks
+        # ready_replicas >= desired, which is satisfied by the *old* pods
+        # while the rollout is still in progress.  Instead, we poll until
+        # updated_replicas == desired for every deployment so that fresh
+        # pods (with cold caches, JVM warm-up, etc.) are fully serving
+        # traffic before the first experiment starts.
+        import time as _time_mod
+        _restart_deadline = _time_mod.time() + 180
+        click.echo(f"  Waiting for {len(_restart_names)} rollout(s) to complete (timeout: 180s)...")
+        _pending = list(_restart_names)
+        while _pending and _time_mod.time() < _restart_deadline:
+            _still_pending = []
+            _deps = _apps_api.list_namespaced_deployment(namespace)
+            _dep_map = {d.metadata.name: d for d in _deps.items}
+            for _name in _pending:
+                _dep = _dep_map.get(_name)
+                if _dep is None:
+                    continue  # deployment gone, skip
+                _desired = _dep.spec.replicas if _dep.spec.replicas is not None else 1
+                if _desired == 0:
+                    continue
+                _gen = _dep.metadata.generation or 0
+                _obs_gen = (_dep.status.observed_generation or 0) if _dep.status else 0
+                _updated = (_dep.status.updated_replicas or 0) if _dep.status else 0
+                _avail = (_dep.status.available_replicas or 0) if _dep.status else 0
+                if _obs_gen < _gen or _updated < _desired or _avail < _desired:
+                    _still_pending.append(_name)
+            _pending = _still_pending
+            if _pending:
+                _time_mod.sleep(5)
+        if _pending:
+            click.echo(
+                f"  WARNING: {len(_pending)} rollout(s) did not complete in time: {_pending}",
+                err=True,
+            )
+        else:
+            click.echo("  All rollouts complete.")
     except Exception as e:
         click.echo(f"  WARNING: rollout restart failed ({e})", err=True)
+
+
+def _save_partial_results(overall_results: Dict[str, Any], results_dir: Path) -> None:
+    """Persist partial results after each strategy completes.
+
+    Writes a ``partial_summary.json`` so that if a later strategy (or
+    the final summary step) crashes, all data collected so far is
+    recoverable from disk.
+    """
+    import json as _json_mod
+
+    try:
+        partial_path = results_dir / "partial_summary.json"
+        partial_path.write_text(_json_mod.dumps(overall_results, indent=2, default=str))
+    except Exception:
+        pass  # best-effort — don't crash the run for a save failure
 
 
 def _print_run_banner(
@@ -555,9 +610,24 @@ def run(
     )
 
     for idx, strategy_name in enumerate(strategy_list, 1):
-        strategy_result, strategy_passed = execute_strategy(
-            run_ctx, strategy_name, idx, total,
-        )
+        try:
+            strategy_result, strategy_passed = execute_strategy(
+                run_ctx, strategy_name, idx, total,
+            )
+        except Exception as e:
+            click.echo(
+                f"\n  FATAL ERROR in strategy '{strategy_name}': {e}",
+                err=True,
+            )
+            strategy_result = {
+                "strategy": strategy_name,
+                "status": "error",
+                "placement": None,
+                "experiment": None,
+                "metrics": None,
+                "error": str(e),
+            }
+            strategy_passed = False
         overall_results["strategies"][strategy_name] = strategy_result
         if strategy_result["status"] == "error":
             failed += 1
@@ -565,6 +635,10 @@ def run(
             passed += 1
         else:
             failed += 1
+
+        # Persist partial results after each strategy so that a crash
+        # in a later strategy doesn't lose everything collected so far.
+        _save_partial_results(overall_results, results_dir)
 
     # ── Final cleanup: clear placement ──
     click.echo(f"\n{'─' * 60}")

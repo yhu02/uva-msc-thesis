@@ -25,16 +25,60 @@ def wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
     """Wait until all application deployments in the namespace have all replicas ready.
 
     Litmus infrastructure deployments are excluded from the check.
+
+    Transient K8s API connection errors (e.g. API server restart,
+    network blip) are retried within the timeout budget rather than
+    immediately propagated.  This prevents a temporary ``Connection
+    refused`` from crashing the entire experiment run.
     """
     from kubernetes import client
+    from kubernetes.client.rest import ApiException
+    from urllib3.exceptions import HTTPError, MaxRetryError, NewConnectionError
 
     ensure_k8s_config()
 
     apps_api = client.AppsV1Api()
     deadline = time.time() + timeout
+    consecutive_errors = 0
+    max_consecutive_errors = 6  # 6 * 5s = 30s of sustained API failure
 
     while time.time() < deadline:
-        all_ready = True
+        try:
+            all_ready = True
+            deps = apps_api.list_namespaced_deployment(namespace)
+            consecutive_errors = 0  # reset on success
+            for dep in deps.items:
+                if dep.metadata.name in LITMUS_INFRA_DEPLOYMENTS:
+                    continue
+                desired = dep.spec.replicas if dep.spec.replicas is not None else 1
+                if desired == 0:
+                    continue
+                ready = (dep.status.ready_replicas or 0) if dep.status else 0
+                available = (dep.status.available_replicas or 0) if dep.status else 0
+                if ready < desired or available < desired:
+                    all_ready = False
+                    break
+            if all_ready:
+                return
+        except (ApiException, HTTPError, MaxRetryError, NewConnectionError,
+                ConnectionError, OSError) as exc:
+            consecutive_errors += 1
+            click.echo(
+                f"    Warning: K8s API error during health check "
+                f"(attempt {consecutive_errors}): {exc}",
+                err=True,
+            )
+            if consecutive_errors >= max_consecutive_errors:
+                click.echo(
+                    f"    Warning: K8s API unreachable for "
+                    f"{consecutive_errors} consecutive checks, giving up wait",
+                    err=True,
+                )
+                return
+        time.sleep(5)
+
+    # Log which deployments are not ready but don't fail
+    try:
         deps = apps_api.list_namespaced_deployment(namespace)
         for dep in deps.items:
             if dep.metadata.name in LITMUS_INFRA_DEPLOYMENTS:
@@ -43,29 +87,18 @@ def wait_for_healthy_deployments(namespace: str, timeout: int = 60) -> None:
             if desired == 0:
                 continue
             ready = (dep.status.ready_replicas or 0) if dep.status else 0
-            available = (dep.status.available_replicas or 0) if dep.status else 0
-            if ready < desired or available < desired:
-                all_ready = False
-                break
-        if all_ready:
-            return
-        time.sleep(5)
-
-    # Log which deployments are not ready but don't fail
-    deps = apps_api.list_namespaced_deployment(namespace)
-    for dep in deps.items:
-        if dep.metadata.name in LITMUS_INFRA_DEPLOYMENTS:
-            continue
-        desired = dep.spec.replicas if dep.spec.replicas is not None else 1
-        if desired == 0:
-            continue
-        ready = (dep.status.ready_replicas or 0) if dep.status else 0
-        if ready < desired:
-            click.echo(
-                f"    Warning: {dep.metadata.name} not fully ready "
-                f"({ready}/{desired} replicas)",
-                err=True,
-            )
+            if ready < desired:
+                click.echo(
+                    f"    Warning: {dep.metadata.name} not fully ready "
+                    f"({ready}/{desired} replicas)",
+                    err=True,
+                )
+    except (ApiException, HTTPError, MaxRetryError, NewConnectionError,
+            ConnectionError, OSError):
+        click.echo(
+            "    Warning: could not list deployments for readiness summary",
+            err=True,
+        )
 
 
 def extract_target_deployment(scenario: Dict[str, Any]) -> str:
@@ -120,8 +153,8 @@ def check_pods_ready(namespace: str, label: str) -> bool:
                 ready = all(cs.ready for cs in (pod.status.container_statuses or []))
                 if ready:
                     return True
-    except Exception:
-        pass
+    except Exception as e:
+        click.echo(f"    Warning: pod readiness check failed ({e})", err=True)
     return False
 
 

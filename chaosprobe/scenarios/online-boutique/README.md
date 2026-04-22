@@ -225,7 +225,7 @@ chaosprobe cleanup online-boutique --all
 
 ## Placement Scenarios
 
-Placement experiments control pod scheduling to study how co-location affects multiple resilience dimensions under chaos: pod recovery time, inter-service latency, Redis/disk I/O throughput, node resource utilisation, and fault cascade propagation. All strategies use a single shared experiment file (`placement-experiment.yaml` — pod-delete on productcatalogservice with 6 frontend HTTP probes at varying sensitivity levels) while 6 continuous probers collect multi-signal telemetry throughout each run.
+Placement experiments control pod scheduling to study how co-location affects multiple resilience dimensions under chaos: pod recovery time, inter-service latency, Redis/disk I/O throughput, node resource utilisation, and fault cascade propagation. All strategies use a single shared experiment file (`placement-experiment.yaml` — pod-delete on productcatalogservice with 7 frontend HTTP probes across 4 sensitivity tiers) while continuous probers collect multi-signal telemetry throughout each run.
 
 **Strategies:**
 

@@ -9,14 +9,14 @@ ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-
 ```
 ChaosProbe CLI
       │
-      ├── cli.py (~263 lines, thin shell)
+      ├── cli.py (~274 lines, thin shell)
       │     status, provision, compare, cleanup + command registrations
       │
       ├── commands/  (10 extracted command modules)
       │     run_cmd, init_cmd, delete_cmd, graph_cmd, visualize_cmd,
       │     placement_cmd, cluster_cmd, dashboard_cmd, probe_cmd, shared
       │
-      ├── Cluster Manager (provisioner/setup.py, ~1000 lines)
+      ├── Cluster Manager (provisioner/setup.py, ~1006 lines)
       │     LitmusSetup inherits: _VagrantMixin, _ComponentsMixin,
       │     _ChaosCenterAPIMixin, _ChaosCenterMixin
       │     ├── Vagrant (local dev: multi-node KVM/libvirt cluster)
@@ -311,7 +311,7 @@ Neo4j is the **sole persistent store**. No SQLite.
 
 Thin shell composing `Neo4jWriterMixin` and `Neo4jReaderMixin`. Supports context manager protocol.
 
-#### neo4j_writer.py (~872 lines)
+#### neo4j_writer.py (~980 lines)
 
 All write operations: topology sync, run persistence, metrics samples, time-series data, anomaly labels, cascade events, pod snapshots.
 
@@ -335,7 +335,7 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 | `cleanup()` | Deletes all applied resources in reverse order |
 | `cleanup_namespace()` | Deletes entire namespace |
 
-#### setup.py (~1,009 lines)
+#### setup.py (~1,006 lines)
 
 **Class: `LitmusSetup`** — inherits `_VagrantMixin`, `_ComponentsMixin`, `_ChaosCenterAPIMixin`, `_ChaosCenterMixin`.
 
@@ -352,7 +352,7 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 - `provisioner/vagrant.py` — `_VagrantMixin` (~591 lines)
 - `provisioner/components.py` — `_ComponentsMixin` (~439 lines)
 - `provisioner/chaoscenter.py` — `_ChaosCenterMixin` (~520 lines)
-- `provisioner/chaoscenter_api.py` — `_ChaosCenterAPIMixin` (~801 lines)
+- `provisioner/chaoscenter_api.py` — `_ChaosCenterAPIMixin` (~802 lines)
 
 **Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 4096MB RAM, Kubespray v2.24.0.
 
@@ -360,17 +360,17 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 
 ### 2.10 Orchestrator (`orchestrator/`)
 
-#### strategy_runner.py (~617 lines)
+#### strategy_runner.py (~911 lines)
 
 **Dataclass: `RunContext`** — carries all state for a run: namespace, timeout, seed, settle_time, iterations, measurement flags, Neo4j credentials, shared scenario, service routes, `load_service` (entry-point service name derived from scenario), etc.
 
 **Function**: `execute_strategy(ctx, strategy_name, idx, total)` — executes one placement strategy: apply placement → settle → run iterations → collect results → clear placement.
 
-#### run_phases.py (~669 lines)
+#### run_phases.py (~808 lines)
 
 Pre-flight checks, graph store initialization, result writing, iteration aggregation, stale resource cleanup. `_setup_load_target()` accepts a `load_service` parameter (derived from the scenario's httpProbe URLs) for port-forwarding to the application entry-point.
 
-#### probers.py (~209 lines)
+#### probers.py (~236 lines)
 
 `create_and_start_probers()`, `stop_and_collect_probers()` — manages continuous prober lifecycle in parallel. Passes `exclude_services=[target_deployment]` to the disk prober so it avoids benchmarking on the pod being deleted by chaos.
 
@@ -384,7 +384,7 @@ Pre-flight checks, graph store initialization, result writing, iteration aggrega
 | `wait_for_healthy_deployments(namespace)` | Blocks until all deployments in the namespace are fully ready. |
 | `check_pods_ready(namespace, label)` | Checks that at least one matching pod is Running and Ready. |
 
-#### portforward.py (~120 lines)
+#### portforward.py (~123 lines)
 
 Module-level kubectl port-forward lifecycle management. Start/stop/ensure port-forwards for Neo4j, Prometheus, and the application entry-point service.
 
@@ -501,9 +501,9 @@ Options: `--format csv|parquet`, `--strategy <name>`. Parquet requires `pyarrow`
 
 | Command | Purpose |
 |---|---|
-| `chaosprobe probe init --scenario <path>` | Scaffold a new Rust cmdProbe |
-| `chaosprobe probe build --scenario <path>` | Build Rust probe binaries |
-| `chaosprobe probe list --scenario <path>` | List discovered probes |
+| `chaosprobe probe init <name> --scenario <path>` | Scaffold a new Rust cmdProbe |
+| `chaosprobe probe build <scenario>` | Build Rust probe binaries |
+| `chaosprobe probe list <scenario>` | List discovered probes |
 
 ### Cluster Management
 
@@ -640,16 +640,17 @@ Microservice resilience under chaos varies with pod placement strategy due to di
 
 ### Probes
 
-6 probes with a spread of sensitivities for granular scoring (0/17/33/50/67/83/100%):
+7 probes across 4 sensitivity tiers for granular scoring (0/14/28/42/57/71/85/100%):
 
 | Probe | Type | Mode | Tolerance | Purpose |
 |---|---|---|---|---|
 | `frontend-product-strict` | httpProbe | Continuous (2s) | 3s timeout, 1 retry (≈6s) | Strict: confirms disruption via product page |
 | `frontend-homepage-strict` | httpProbe | Continuous (2s) | 3s timeout, 1 retry (≈6s) | Strict: confirms disruption via homepage |
-| `frontend-homepage-moderate` | httpProbe | Continuous (3s) | 3s timeout, 2 retries (≈9s) | Moderate: passes only with fast (<3s) recovery |
-| `frontend-cart` | httpProbe | Continuous (4s) | 5s timeout, 2 retries (≈15s) | Moderate control: detects node contention (cart is independent) |
-| `frontend-homepage-edge` | httpProbe | Edge (5s) | 15s timeout, 5 retries | Edge: validates eventual recovery |
-| `frontend-healthz` | httpProbe | Continuous (4s) | 5s timeout, 2 retries (≈15s) | Control: detects node-level resource pressure |
+| `frontend-homepage-moderate` | httpProbe | Continuous (3s) | 3s timeout, 2 retries (≈9s) | Moderate-tight: passes only with fast (<3s) recovery |
+| `frontend-product-moderate` | httpProbe | Continuous (3s) | 3s timeout, 2 retries (≈9s) | Moderate-tight: same tier, different route |
+| `frontend-cart` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Moderate-loose: detects node contention (cart is independent) |
+| `frontend-homepage-loose` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Moderate-loose: catches only the slowest recovery strategies |
+| `frontend-healthz` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Control: detects node-level resource pressure |
 
 ### Strategy Configurations
 
@@ -672,12 +673,12 @@ Microservice resilience under chaos varies with pod placement strategy due to di
 chaosprobe/
   chaosprobe/
     __init__.py              # version 0.1.0
-    cli.py                   # CLI entry point (~273 lines)
+    cli.py                   # CLI entry point (~274 lines)
     k8s.py                   # Singleton k8s config loader
     commands/
       shared.py              # Neo4j option decorators, shared helpers
-      run_cmd.py             # run command (~576 lines)
-      init_cmd.py            # init command (~297 lines)
+      run_cmd.py             # run command (~670 lines)
+      init_cmd.py            # init command (~298 lines)
       delete_cmd.py          # delete command (~152 lines)
       graph_cmd.py           # graph subcommands
       visualize_cmd.py       # visualize + ml-export commands
@@ -690,7 +691,7 @@ chaosprobe/
       topology.py            # Service dependency extraction
       validator.py           # Validation
     chaos/
-      runner.py              # ChaosCenter GraphQL experiment execution (~529 lines)
+      runner.py              # ChaosCenter GraphQL experiment execution (~598 lines)
       manifest.py            # Argo Workflow manifest generation (~194 lines)
     collector/
       result_collector.py    # ChaosResult collection
@@ -709,9 +710,9 @@ chaosprobe/
       timeseries.py          # Time-series alignment
       remediation.py         # Remediation action logs
     orchestrator/
-      strategy_runner.py     # RunContext + execute_strategy() (~617 lines)
-      run_phases.py          # Preflight, graph init, result writing (~669 lines)
-      probers.py             # Continuous prober lifecycle (~214 lines)
+      strategy_runner.py     # RunContext + execute_strategy() (~911 lines)
+      run_phases.py          # Preflight, graph init, result writing (~808 lines)
+      probers.py             # Continuous prober lifecycle (~236 lines)
       portforward.py         # Port-forward management (~123 lines)
       preflight.py           # Pre-flight checks
     output/
@@ -725,17 +726,17 @@ chaosprobe/
       mutator.py             # K8s patch operations
     provisioner/
       kubernetes.py          # Manifest application
-      setup.py               # LitmusSetup main class (~1000 lines)
+      setup.py               # LitmusSetup main class (~1006 lines)
       vagrant.py             # _VagrantMixin (~591 lines)
       components.py          # _ComponentsMixin (~439 lines)
       chaoscenter.py         # _ChaosCenterMixin (~520 lines)
-      chaoscenter_api.py     # _ChaosCenterAPIMixin (~801 lines)
+      chaoscenter_api.py     # _ChaosCenterAPIMixin (~802 lines)
     probes/
       builder.py             # RustProbeBuilder
       templates.py           # Cargo.toml, main.rs, Dockerfile templates
     storage/
       neo4j_store.py         # Neo4j graph store (~111 lines)
-      neo4j_writer.py        # Write operations (~969 lines)
+      neo4j_writer.py        # Write operations (~980 lines)
       neo4j_reader.py        # Read operations (~879 lines)
     graph/
       analysis.py            # High-level graph analysis functions
@@ -941,16 +942,17 @@ RETURN p.probe_name, p.verdict, p.description
 ORDER BY p.probe_name
 ```
 
-**Score interpretation** (6 probes → 7 possible scores):
+**Score interpretation** (7 probes → 8 possible scores):
 
 | Score | Meaning |
 |---|---|
 | 100% | All probes passed — no visible disruption |
-| 83% | 5/6 — one strict failed, recovery ~6–9s |
-| 66% | 4/6 — both strict failed, recovery ~9s+ |
-| 50% | 3/6 — moderate also failed |
-| 33% | 2/6 — only edge + healthz passed |
-| 16% | 1/6 — only healthz passed (node alive, service down) |
+| 85% | 6/7 — one strict failed, recovery ~6–9s |
+| 71% | 5/7 — both strict failed, recovery ~9s+ |
+| 57% | 4/7 — moderate-tight also failed |
+| 42% | 3/7 — only moderate-loose + control passed |
+| 28% | 2/7 — only cart + healthz passed |
+| 14% | 1/7 — only healthz passed (node alive, service down) |
 | 0% | Total disruption |
 
 #### Step 3 — What fault was injected, when exactly?
@@ -1368,8 +1370,8 @@ The analysis prompt (`ANALYSIS_PROMPT.md`) instructs the model to perform 9 anal
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │  5. PROBE ANALYSIS                                              │    │
 │  │     ─ Per-probe verdict table across all strategies             │    │
-│  │     ─ Score interpretation: 16% = only healthz survived         │    │
-│  │       66% = moderate+edge+cart+healthz passed                   │    │
+│  │     ─ Score interpretation: 14% = only healthz survived         │    │
+│  │       71% = moderate-tight+loose+cart+healthz passed            │    │
 │  │     ─ What differentiates strategy scores                       │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                          │                                              │
@@ -1514,15 +1516,15 @@ Returns the full JSON document (~5-20KB) with all sections.
 >
 > Probe verdicts: frontend-healthz=Pass, frontend-homepage-strict=Fail,
 > frontend-product-strict=Fail, frontend-cart=Pass, frontend-homepage-moderate=Pass,
-> frontend-homepage-edge=Pass. Score: 66%.
+> frontend-product-moderate=Pass, frontend-homepage-loose=Pass. Score: 71%.
 >
 > Redis: 67 ops/s write, 70 ops/s read, 0 errors — stable across phases. Blast radius
 > limited to productcatalogservice dependency chain, not data layer."
 
 **4. AI compares strategies from the session:**
-> "colocate: 66% / 1529ms mean recovery / 19.9% error rate
->  spread:  66% / 1332ms mean recovery / 17.2% error rate
->  default: 16% / 1219ms mean recovery / 87.3% error rate ← dramatically worse
+> "colocate: 71% / 1529ms mean recovery / 19.9% error rate
+>  spread:  71% / 1332ms mean recovery / 17.2% error rate
+>  default: 14% / 1219ms mean recovery / 87.3% error rate ← dramatically worse
 >
 > Spread achieves equal resilience with lowest error rate. Default has fastest raw recovery
 > but worst user impact — likely due to K8s scheduling decisions under contention."

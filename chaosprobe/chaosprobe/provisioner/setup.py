@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -67,6 +68,10 @@ Vagrant.configure("2") do |config|
       node.vm.provider "libvirt" do |lv|
         lv.memory = CP_MEMORY
         lv.cpus = CP_CPUS
+        # Pin cpu_mode to avoid the vagrant-libvirt "CPU vendor
+        # specified without CPU model" XML error when the domain
+        # definition is updated.
+        lv.cpu_mode = "host-passthrough"
       end
 
       # Enable password-less sudo
@@ -86,6 +91,7 @@ Vagrant.configure("2") do |config|
       node.vm.provider "libvirt" do |lv|
         lv.memory = WORKER_MEMORY
         lv.cpus = WORKER_CPUS
+        lv.cpu_mode = "host-passthrough"
       end
 
       # Enable password-less sudo

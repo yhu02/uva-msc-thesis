@@ -199,8 +199,7 @@ class Neo4jReaderMixin:
                 rid=run_id,
             )
             probe_results = [
-                {"experiment": r["experiment_name"], **dict(r["props"])}
-                for r in probes_result
+                {"experiment": r["experiment_name"], **dict(r["props"])} for r in probes_result
             ]
 
             return {
@@ -370,7 +369,9 @@ class Neo4jReaderMixin:
                 }
             elif mtype == "resources":
                 metrics.setdefault("resources", {"available": True, "phases": {}})
-                metrics["resources"]["nodeName"] = mp.get("node_name")
+                raw_node = mp.get("node_name") or ""
+                node_names = [n for n in raw_node.split(",") if n]
+                metrics["resources"]["nodeNames"] = node_names
                 metrics["resources"]["phases"][phase] = {
                     "sampleCount": mp.get("sample_count", 0),
                     "node": {
@@ -511,10 +512,13 @@ class Neo4jReaderMixin:
             for log_entry in container_logs_raw:
                 pod_name = log_entry.get("pod_name", "")
                 container_name = log_entry.get("container_name", "")
-                pod_dict = pods_logs.setdefault(pod_name, {
-                    "restartCount": log_entry.get("restart_count", 0),
-                    "containers": {},
-                })
+                pod_dict = pods_logs.setdefault(
+                    pod_name,
+                    {
+                        "restartCount": log_entry.get("restart_count", 0),
+                        "containers": {},
+                    },
+                )
                 pod_dict["containers"][container_name] = {
                     "current": log_entry.get("current_log", ""),
                     "previous": log_entry.get("previous_log", ""),
@@ -578,7 +582,7 @@ class Neo4jReaderMixin:
             routes: Dict[str, Any] = {}
             for k, v in s.items():
                 if k.startswith("latency:") and k.endswith(":ms"):
-                    route = k[len("latency:"):-len(":ms")]
+                    route = k[len("latency:") : -len(":ms")]
                     err_key = f"latency:{route}:error"
                     routes[route] = {
                         "latency_ms": v,
@@ -627,7 +631,7 @@ class Neo4jReaderMixin:
             ops: Dict[str, Any] = {}
             for k, v in s.items():
                 if k.startswith("redis:") and k.endswith(":ops_per_s"):
-                    op = k[len("redis:"):-len(":ops_per_s")]
+                    op = k[len("redis:") : -len(":ops_per_s")]
                     lat_key = f"redis:{op}:latency_ms"
                     ops[op] = {
                         "ops_per_second": v,
@@ -651,7 +655,7 @@ class Neo4jReaderMixin:
             ops = {}
             for k, v in s.items():
                 if k.startswith("disk:") and k.endswith(":ops_per_s"):
-                    op = k[len("disk:"):-len(":ops_per_s")]
+                    op = k[len("disk:") : -len(":ops_per_s")]
                     bps_key = f"disk:{op}:bytes_per_s"
                     ops[op] = {
                         "ops_per_second": v,

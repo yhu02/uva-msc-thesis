@@ -9,6 +9,7 @@ operations-per-second and latency statistics.
 """
 
 import logging
+import re
 import statistics
 import threading
 import time
@@ -29,6 +30,28 @@ from chaosprobe.metrics.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Matches the elapsed-time field in dd's stderr summary line.
+# GNU dd:     "262144 bytes (262 kB, 256 KiB) copied, 0.00213 s, 123 MB/s"
+# busybox dd: "262144 bytes (256.0KB) copied, 0.000876 seconds, 285.0MB/s"
+# The `s` after the float matches both "s," and the start of "seconds,".
+_DD_ELAPSED_RE = re.compile(r"copied,\s*([0-9.eE+-]+)\s*s")
+
+
+def _parse_dd_elapsed_seconds(output: str) -> Optional[float]:
+    """Extract the elapsed-seconds value from a dd stderr summary line.
+
+    Returns ``None`` if no recognisable summary line is present (e.g.
+    dd failed before printing its report).
+    """
+    m = _DD_ELAPSED_RE.search(output)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -120,22 +143,6 @@ class ThroughputProber:
         self.core_api = client.CoreV1Api()
         self._exec_pod_cache: Dict[str, Optional[str]] = {}
         self._cache_lock = threading.Lock()
-
-    @staticmethod
-    def _nano_time_cmd() -> str:
-        """Return a shell snippet that prints epoch nanoseconds.
-
-        Tries python3 first (nanosecond precision), then GNU date +%s%N,
-        and finally falls back to date +%s with '000000000' appended.
-        Handles busybox date which outputs literal '%N' instead of
-        nanoseconds.
-        """
-        return (
-            "python3 -c 'import time;print(int(time.time()*1e9))' 2>/dev/null"
-            " || { T=$(date +%s%N 2>/dev/null); "
-            'case "$T" in *N*|*%*) echo $(date +%s)000000000;; '
-            "*) [ ${#T} -gt 15 ] && echo $T || echo ${T}000000000;; esac; }"
-        )
 
     def measure_redis_throughput(
         self,
@@ -324,8 +331,11 @@ class ThroughputProber:
                 resp = self._exec_in_pod(pod, ["sh", "-c", "echo ok"])
                 if not resp.startswith("ERROR:") and "ok" in resp:
                     with self._cache_lock:
-                        self._exec_pod_cache[target_service] = pod
-                    return pod
+                        # Re-check under lock to avoid overwriting a
+                        # concurrent discovery with a stale result.
+                        if target_service not in self._exec_pod_cache:
+                            self._exec_pod_cache[target_service] = pod
+                        return self._exec_pod_cache[target_service]
 
         # Auto-discover all running pods in the namespace
         try:
@@ -353,8 +363,9 @@ class ThroughputProber:
                 resp = self._exec_in_pod(pod_name, ["sh", "-c", "echo ok"])
                 if not resp.startswith("ERROR:") and "ok" in resp:
                     with self._cache_lock:
-                        self._exec_pod_cache[target_service] = pod_name
-                    return pod_name
+                        if target_service not in self._exec_pod_cache:
+                            self._exec_pod_cache[target_service] = pod_name
+                        return self._exec_pod_cache[target_service]
 
         with self._cache_lock:
             self._exec_pod_cache[target_service] = None
@@ -457,29 +468,29 @@ class ThroughputProber:
         count: int,
         disk_path: str = "/tmp/chaosprobe_disktest",
     ) -> ThroughputSample:
-        """Run a disk write or read benchmark with dd inside a pod."""
+        """Run a disk write or read benchmark with dd inside a pod.
+
+        Uses dd's own stderr summary ("copied, X.XXX s") for timing
+        instead of shell-wrapped timers — microsecond precision on both
+        GNU and busybox, no python3 dependency in the target pod.
+        """
         now = datetime.now(timezone.utc).isoformat()
         total_bytes = block_size_kb * 1024 * count
-        nano = self._nano_time_cmd()
 
         if operation == "write":
-            # Use conv=fdatasync if supported (GNU dd), fall back to sync.
-            # Capture dd stderr so we can diagnose failures (e.g. read-only fs).
+            # Try conv=fdatasync (GNU); if dd rejects it (busybox), retry without.
+            # In both cases redirect dd stdout to /dev/null and capture stderr to stdout
+            # so the "copied, X s" summary reaches us for parsing.
             cmd = [
                 "sh",
                 "-c",
-                f"START=$({nano}); "
-                f"ERR=$(dd if=/dev/zero of={disk_path} "
-                f"bs={block_size_kb}k count={count} conv=fdatasync 2>&1 >/dev/null) || "
-                f"ERR=$(dd if=/dev/zero of={disk_path} "
-                f"bs={block_size_kb}k count={count} 2>&1 >/dev/null; sync); "
-                f"END=$({nano}); "
-                f'if [ -n "$START" ] && [ -n "$END" ]; then '
-                f'echo "$START $END"; '
-                f'else echo "DIAG nano_fail start=$START end=$END err=$ERR"; fi',
+                f"dd if=/dev/zero of={disk_path} "
+                f"bs={block_size_kb}k count={count} conv=fdatasync 2>&1 >/dev/null "
+                f"|| dd if=/dev/zero of={disk_path} "
+                f"bs={block_size_kb}k count={count} 2>&1 >/dev/null",
             ]
         else:
-            # Write first if file doesn't exist, then read.
+            # Write first if the file doesn't exist, then read.
             # Skip drop_caches (requires root) — just read through cache.
             cmd = [
                 "sh",
@@ -488,13 +499,8 @@ class ThroughputProber:
                 f"dd if=/dev/zero of={disk_path} "
                 f"bs={block_size_kb}k count={count} 2>/dev/null; "
                 f"sync; "
-                f"START=$({nano}); "
-                f"ERR=$(dd if={disk_path} of=/dev/null "
-                f"bs={block_size_kb}k 2>&1 >/dev/null); "
-                f"END=$({nano}); "
-                f'if [ -n "$START" ] && [ -n "$END" ]; then '
-                f'echo "$START $END"; '
-                f'else echo "DIAG nano_fail start=$START end=$END err=$ERR"; fi',
+                f"dd if={disk_path} of=/dev/null "
+                f"bs={block_size_kb}k 2>&1 >/dev/null",
             ]
 
         resp = self._exec_in_pod(pod_name, cmd)
@@ -510,8 +516,8 @@ class ThroughputProber:
                 error=resp[:200],
             )
 
-        stripped = resp.strip()
-        if stripped.startswith("DIAG "):
+        elapsed_s = _parse_dd_elapsed_seconds(resp)
+        if elapsed_s is None:
             return ThroughputSample(
                 operation=operation,
                 target="disk",
@@ -519,40 +525,32 @@ class ThroughputProber:
                 latency_ms=0,
                 status="error",
                 timestamp=now,
-                error=stripped[:200],
+                error=f"dd output unparseable: {resp.strip()[:200]}",
+            )
+        if elapsed_s <= 0:
+            # dd can report "0 s" when the op is below its timer resolution.
+            # Flag rather than divide-by-zero.
+            return ThroughputSample(
+                operation=operation,
+                target="disk",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=f"dd elapsed<=0 (workload too small): {resp.strip()[:200]}",
             )
 
-        try:
-            parts = stripped.split()
-            if len(parts) >= 2:
-                start_ns = int(parts[0])
-                end_ns = int(parts[1])
-                if start_ns > 0 and end_ns > start_ns:
-                    elapsed_ms = (end_ns - start_ns) / 1_000_000
-                    elapsed_s = elapsed_ms / 1000
-                    ops_per_sec = count / elapsed_s if elapsed_s > 0 else 0
-                    bps = total_bytes / elapsed_s if elapsed_s > 0 else 0
-                    avg_latency = elapsed_ms / count if count > 0 else 0
-                    return ThroughputSample(
-                        operation=operation,
-                        target="disk",
-                        ops_per_second=round(ops_per_sec, 2),
-                        latency_ms=round(avg_latency, 4),
-                        bytes_per_second=round(bps, 2),
-                        status="ok",
-                        timestamp=now,
-                    )
-        except (ValueError, ZeroDivisionError):
-            pass
-
+        ops_per_sec = count / elapsed_s
+        bps = total_bytes / elapsed_s
+        avg_latency_ms = (elapsed_s * 1000) / count
         return ThroughputSample(
             operation=operation,
             target="disk",
-            ops_per_second=0,
-            latency_ms=0,
-            status="error",
+            ops_per_second=round(ops_per_sec, 2),
+            latency_ms=round(avg_latency_ms, 4),
+            bytes_per_second=round(bps, 2),
+            status="ok",
             timestamp=now,
-            error=f"Parse failed: {resp[:100]}",
         )
 
 
@@ -645,8 +643,8 @@ class ContinuousDiskProber(ContinuousProberBase):
         namespace: str,
         interval: float = 10.0,
         disk_target: str = "redis-cart",
-        block_size_kb: int = 512,
-        block_count: int = 5,
+        block_size_kb: int = 64,
+        block_count: int = 4,
         exclude_services: Optional[List[str]] = None,
     ):
         super().__init__(namespace, interval, name="disk-prober")
@@ -770,6 +768,7 @@ class ContinuousDiskProber(ContinuousProberBase):
         return data
 
     def _probe_loop(self) -> None:
+        consecutive_errors = 0
         while not self._stop_event.is_set():
             try:
                 now = time.time()
@@ -785,21 +784,44 @@ class ContinuousDiskProber(ContinuousProberBase):
                     disk_path=self._disk_path,
                     exclude_services=self._exclude_services,
                 )
+                all_ok = True
                 for r in results:
                     if r.samples:
                         s = r.samples[0]
-                        entry["disk"][r.operation] = {
+                        disk_entry: Dict[str, Any] = {
                             "ops_per_second": s.ops_per_second if s.status == "ok" else None,
                             "latency_ms": s.latency_ms if s.status == "ok" else None,
                             "bytes_per_second": s.bytes_per_second if s.status == "ok" else None,
                             "status": s.status,
                         }
+                        if s.status != "ok" and s.error:
+                            disk_entry["error"] = s.error[:200]
+                        entry["disk"][r.operation] = disk_entry
+                        if s.status != "ok":
+                            all_ok = False
+
+                if all_ok:
+                    consecutive_errors = 0
+                else:
+                    consecutive_errors += 1
+
+                # If the cached pod keeps failing, invalidate the cache so
+                # the next probe cycle rediscovers a healthy pod.
+                if consecutive_errors >= 3:
+                    with self._prober._cache_lock:
+                        self._prober._exec_pod_cache.pop(self._disk_target, None)
+                    consecutive_errors = 0
 
                 with self._lock:
                     self._time_series.append(entry)
 
             except Exception as exc:
                 logger.warning("Disk probe failed: %s", exc)
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    with self._prober._cache_lock:
+                        self._prober._exec_pod_cache.pop(self._disk_target, None)
+                    consecutive_errors = 0
                 with self._lock:
                     self._probe_errors += 1
 

@@ -47,9 +47,10 @@ def _clean_stale_resources(namespace: str) -> None:
     """Remove stale ChaosEngines, ChaosResults, Jobs, and Workflow pods."""
     from kubernetes import client as k8s_client_mod
 
+    custom_api = k8s_client_mod.CustomObjectsApi()
+
     # ChaosEngines
     try:
-        custom_api = k8s_client_mod.CustomObjectsApi()
         engines = custom_api.list_namespaced_custom_object(
             group="litmuschaos.io", version="v1alpha1",
             namespace=namespace, plural="chaosengines",
@@ -71,7 +72,6 @@ def _clean_stale_resources(namespace: str) -> None:
 
     # ChaosResults
     try:
-        custom_api = k8s_client_mod.CustomObjectsApi()
         results = custom_api.list_namespaced_custom_object(
             group="litmuschaos.io", version="v1alpha1",
             namespace=namespace, plural="chaosresults",
@@ -86,8 +86,8 @@ def _clean_stale_resources(namespace: str) -> None:
                     name=res["metadata"]["name"],
                 )
             click.echo("  ChaosResults: cleaned")
-    except Exception:
-        pass
+    except Exception as e:
+        click.echo(f"  ChaosResults: cleanup skipped ({e})", err=True)
 
     # Stale experiment jobs
     try:
@@ -96,13 +96,15 @@ def _clean_stale_resources(namespace: str) -> None:
             namespace, label_selector="app.kubernetes.io/part-of=litmus",
         )
         for job in jobs.items:
-            if job.status.succeeded or job.status.failed:
+            succeeded = getattr(job.status, "succeeded", None) if job.status else None
+            failed = getattr(job.status, "failed", None) if job.status else None
+            if succeeded or failed:
                 batch_api.delete_namespaced_job(
                     name=job.metadata.name, namespace=namespace,
                     propagation_policy="Background",
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        click.echo(f"  Stale jobs: cleanup skipped ({e})", err=True)
 
     # Stale Argo workflow pods
     try:
@@ -166,8 +168,8 @@ def _restart_unhealthy_infra(namespace: str) -> None:
                         pass
                 else:
                     click.echo(f"  WARNING: {dep_name} did not recover after restart", err=True)
-    except Exception:
-        pass
+    except Exception as e:
+        click.echo(f"  WARNING: infra health check failed ({e})", err=True)
 
 
 def _setup_prometheus_pf(measure_prometheus: bool) -> None:
@@ -539,10 +541,10 @@ def write_run_results(
     has_recovery = any(r.get("avgRecovery_ms") is not None for r in comparison_table)
     if has_recovery:
         click.echo(
-            f"\n  {'Strategy':<16s} {'Verdict':<8s} {'Score':<8s} "
-            f"{'Avg Rec.':<10s} {'Max Rec.':<10s} {'Status'}"
+            f"\n  {'Strategy':<16s} {'Verdict':<8s} {'Score (mean +/- sd)':<22s} "
+            f"{'Range':<10s} {'Avg Rec.':<10s} {'Max Rec.':<10s} {'Status'}"
         )
-        click.echo(f"  {'─' * 68}")
+        click.echo(f"  {'─' * 90}")
         for row in comparison_table:
             avg_r = (
                 f"{row['avgRecovery_ms']:.0f}ms"
@@ -554,9 +556,12 @@ def write_run_results(
                 if row.get("maxRecovery_ms") is not None
                 else "n/a"
             )
+            stddev = row.get("stddevScore", 0.0)
+            score_str = f"{row['resilienceScore']:.1f} +/- {stddev:.1f}"
+            range_str = row.get("scoreRange", "") or "n/a"
             click.echo(
                 f"  {row['strategy']:<16s} {row['verdict']:<8s} "
-                f"{row['resilienceScore']:<8.1f} {avg_r:<10s} {max_r:<10s} {row['status']}"
+                f"{score_str:<22s} {range_str:<10s} {avg_r:<10s} {max_r:<10s} {row['status']}"
             )
     else:
         click.echo(f"\n  {'Strategy':<20s} {'Verdict':<10s} {'Score':<10s} {'Status'}")
@@ -569,6 +574,16 @@ def write_run_results(
 
     click.echo(f"\n  Session: {ts}")
     click.echo(f"\n  Total: {total} | Passed: {passed} | Failed: {failed}")
+
+    # Per-iteration score breakdown (only for multi-iteration runs)
+    has_iters = any(len(r.get("perIterationScores", [])) > 1 for r in comparison_table)
+    if has_iters:
+        click.echo(f"\n  Per-Iteration Scores:")
+        for row in comparison_table:
+            scores = row.get("perIterationScores", [])
+            if scores:
+                scores_str = ", ".join(f"{s:.0f}" for s in scores)
+                click.echo(f"    {row['strategy']:<16s} [{scores_str}]")
 
     # Generate visualizations if requested
     if do_visualize:
@@ -623,8 +638,12 @@ def _build_comparison_table_impl(
             "status": data.get("status", "unknown"),
             "verdict": "ERROR",
             "resilienceScore": 0.0,
+            "stddevScore": 0.0,
+            "scoreRange": "",
             "avgRecovery_ms": None,
             "maxRecovery_ms": None,
+            "stddevRecovery_ms": None,
+            "perIterationScores": [],
         }
         if data.get("status") == "error":
             row["verdict"] = "ERROR"
@@ -634,9 +653,35 @@ def _build_comparison_table_impl(
         if iterations > 1:
             agg = data.get("aggregated", {})
             row["verdict"] = "PASS" if agg.get("passRate", 0) == 1.0 else "FAIL"
-            row["resilienceScore"] = agg.get("meanResilienceScore", 0.0)
+            # Prefer healthy-only mean when tainted iterations exist,
+            # so scores reflect actual strategy resilience rather than
+            # accumulated damage from cascading iteration poisoning.
+            if agg.get("taintedIterations", 0) > 0 and not agg.get("allIterationsTainted", False):
+                healthy_mean = agg.get(
+                    "meanResilienceScore_healthyOnly",
+                )
+                row["resilienceScore"] = (
+                    healthy_mean if healthy_mean is not None
+                    else agg.get("meanResilienceScore", 0.0)
+                )
+                healthy_sd = agg.get(
+                    "stddevResilienceScore_healthyOnly",
+                )
+                row["stddevScore"] = (
+                    healthy_sd if healthy_sd is not None
+                    else agg.get("stddevResilienceScore", 0.0)
+                )
+            else:
+                row["resilienceScore"] = agg.get("meanResilienceScore", 0.0)
+                row["stddevScore"] = agg.get("stddevResilienceScore", 0.0)
+            min_s = agg.get("minResilienceScore")
+            max_s = agg.get("maxResilienceScore")
+            if min_s is not None and max_s is not None:
+                row["scoreRange"] = f"{min_s:.0f}-{max_s:.0f}"
             row["avgRecovery_ms"] = agg.get("meanRecoveryTime_ms")
             row["maxRecovery_ms"] = agg.get("maxRecoveryTime_ms")
+            row["stddevRecovery_ms"] = agg.get("stddevRecoveryTime_ms")
+            row["perIterationScores"] = agg.get("perIterationScores", [])
         else:
             exp = data.get("experiment", {})
             row["verdict"] = exp.get("overallVerdict", "UNKNOWN")
@@ -674,14 +719,45 @@ def aggregate_iterations(
     verdicts = [ir["verdict"] for ir in iteration_results]
     pass_count = sum(1 for v in verdicts if v == "PASS")
 
+    # Track how many iterations had a healthy pre-chaos baseline.
+    # Tainted iterations (pre-chaos already degraded) produce unreliable
+    # scores because they reflect accumulated damage, not strategy resilience.
+    healthy_iters = [ir for ir in iteration_results if ir.get("preChaosHealthy", True)]
+    tainted_count = len(iteration_results) - len(healthy_iters)
+    all_tainted = len(healthy_iters) == 0 and tainted_count > 0
+    healthy_scores = [ir["resilienceScore"] for ir in healthy_iters] if healthy_iters else scores
+
+    healthy_stddev = (
+        round(statistics.stdev(healthy_scores), 1) if len(healthy_scores) > 1 else 0.0
+    )
     agg: Dict[str, Any] = {
         "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
         "passRate": round(pass_count / len(verdicts), 2),
         "meanResilienceScore": round(statistics.mean(scores), 1),
+        "meanResilienceScore_healthyOnly": round(statistics.mean(healthy_scores), 1),
+        "stddevResilienceScore": round(statistics.stdev(scores), 1) if len(scores) > 1 else 0.0,
+        "stddevResilienceScore_healthyOnly": healthy_stddev,
+        "minResilienceScore": min(scores),
+        "maxResilienceScore": max(scores),
         "totalExperiments": len(iteration_results),
         "passed": pass_count,
         "failed": len(verdicts) - pass_count,
+        "taintedIterations": tainted_count,
+        "allIterationsTainted": all_tainted,
+        "perIterationScores": scores,
     }
+
+    # Collect per-probe verdict tallies across iterations
+    probe_tally: Dict[str, Dict[str, int]] = {}
+    for ir in iteration_results:
+        for pname, pverdict in ir.get("probeVerdicts", {}).items():
+            probe_tally.setdefault(pname, {"Pass": 0, "Fail": 0, "Unknown": 0})
+            if pverdict in probe_tally[pname]:
+                probe_tally[pname][pverdict] += 1
+            else:
+                probe_tally[pname]["Unknown"] += 1
+    if probe_tally:
+        agg["probeVerdictTally"] = probe_tally
 
     # Aggregate recovery metrics from metrics.recovery.summary
     all_recovery_times: List[float] = []
@@ -695,18 +771,37 @@ def aggregate_iterations(
 
     if all_recovery_times:
         all_max = []
+        all_p95 = []
         for ir in iteration_results:
             rm = ir.get("metrics", {})
             if rm:
-                max_r = rm.get("recovery", {}).get("summary", {}).get("maxRecovery_ms")
+                summary = rm.get("recovery", {}).get("summary", {})
+                max_r = summary.get("maxRecovery_ms")
                 if max_r is not None:
                     all_max.append(max_r)
+                p95_r = summary.get("p95Recovery_ms")
+                if p95_r is not None:
+                    all_p95.append(p95_r)
 
         agg["meanRecoveryTime_ms"] = round(statistics.mean(all_recovery_times), 1)
+        agg["stddevRecoveryTime_ms"] = (
+            round(statistics.stdev(all_recovery_times), 1)
+            if len(all_recovery_times) > 1
+            else 0.0
+        )
         agg["medianRecoveryTime_ms"] = round(statistics.median(all_recovery_times), 1)
         agg["maxRecoveryTime_ms"] = max(all_max) if all_max else None
+        # Aggregate p95: use mean of per-iteration p95 values.
+        # Each all_p95 element is already a p95 from that iteration;
+        # averaging them gives a representative cross-iteration p95.
+        # (Taking max() would report the worst-case outlier, not a
+        # proper aggregate percentile.)
+        agg["p95RecoveryTime_ms"] = (
+            round(statistics.mean(all_p95), 1) if all_p95 else None
+        )
     else:
         agg["meanRecoveryTime_ms"] = None
+        agg["stddevRecoveryTime_ms"] = None
         agg["medianRecoveryTime_ms"] = None
         agg["maxRecoveryTime_ms"] = None
 

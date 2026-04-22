@@ -690,7 +690,8 @@ class _ChaosCenterAPIMixin:
                     "{ getExperimentRun(projectID: $pid, notifyID: $nid) "
                     "{ experimentRunID phase resiliencyScore "
                     "faultsPassed faultsFailed faultsAwaited "
-                    "faultsStopped totalFaults } }"
+                    "faultsStopped totalFaults "
+                    "executionData } }"
                 ),
                 "variables": {
                     "pid": project_id,

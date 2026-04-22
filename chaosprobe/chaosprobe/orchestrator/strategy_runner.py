@@ -28,6 +28,7 @@ from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.run_phases import (
     LOAD_TARGET_LOCAL_PORT,
     _clean_stale_resources,
+    _restart_unhealthy_infra,
     aggregate_iterations,
 )
 from chaosprobe.output.generator import OutputGenerator
@@ -226,6 +227,85 @@ def _wait_for_target_pod(
     )
 
 
+def _wait_for_app_ready(
+    namespace: str,
+    target_deployment: str,
+    timeout: int = 60,
+    http_routes: Optional[List[tuple]] = None,
+) -> None:
+    """Wait until all probed routes respond with HTTP 200.
+
+    K8s readiness probes may pass while the application isn't fully
+    serving traffic (e.g. during connection pool warm-up).  This does
+    actual HTTP checks from a probe pod to confirm end-to-end readiness
+    across ALL routes that will be probed during the experiment.
+
+    When *http_routes* is provided, every route must return 200 for
+    3 consecutive checks before the gate passes.  This prevents
+    iterations from starting with a degraded system (cascading
+    poisoning from a previous iteration's post-chaos damage).
+    """
+    from chaosprobe.metrics.base import exec_in_pod, find_probe_pod
+
+    from kubernetes import client as k8s_client
+
+    core = k8s_client.CoreV1Api()
+    pod = find_probe_pod(
+        core, namespace, require_python3=False,
+        exclude_prefixes=[target_deployment],
+    )
+    if not pod:
+        click.echo("    Warning: no probe pod for app-ready check, skipping")
+        return
+
+    # Build the list of URLs to check: all probed routes + healthz fallback
+    urls_to_check = []
+    if http_routes:
+        seen = set()
+        for service, path, _desc, _method in http_routes:
+            url = f"http://{service}.{namespace}.svc.cluster.local{path}"
+            if url not in seen:
+                urls_to_check.append((path, url))
+                seen.add(url)
+    if not urls_to_check:
+        urls_to_check = [("/_healthz", f"http://frontend.{namespace}.svc.cluster.local/_healthz")]
+
+    consecutive_ok = 0
+    required_consecutive = 3
+    deadline = time.time() + timeout
+    attempt = 0
+    while time.time() < deadline:
+        all_ok = True
+        for path, url in urls_to_check:
+            out = exec_in_pod(
+                core, namespace, pod,
+                ["sh", "-c", f"wget -q -O /dev/null --timeout=5 '{url}' 2>&1 && echo OK || echo FAIL"],
+            )
+            if "OK" not in out:
+                all_ok = False
+                break
+
+        if all_ok:
+            consecutive_ok += 1
+            if consecutive_ok >= required_consecutive:
+                if attempt > required_consecutive:
+                    click.echo(
+                        f"    App ready after {attempt} checks "
+                        f"({len(urls_to_check)} routes × {required_consecutive} consecutive OK)"
+                    )
+                return
+        else:
+            consecutive_ok = 0
+
+        attempt += 1
+        time.sleep(3)
+    click.echo(
+        f"    Warning: app-ready check timed out after {timeout}s — "
+        f"only {consecutive_ok}/{required_consecutive} consecutive OK. "
+        f"Iteration may start with degraded system."
+    )
+
+
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -298,6 +378,16 @@ def execute_strategy(
     }
 
     try:
+        # ── Inter-strategy cleanup ──
+        # Between back-to-back strategies, lingering ChaosEngines, helper pods,
+        # and completed jobs accumulate and degrade service routing (conntrack
+        # churn, port-forward leaks) on memory-constrained VM clusters.
+        click.echo("\n  Cleaning cluster state from previous strategy...")
+        _clean_stale_resources(ctx.namespace)
+        _restart_unhealthy_infra(ctx.namespace)
+        click.echo("  Waiting for all deployments to be ready...")
+        wait_for_healthy_deployments(ctx.namespace, timeout=120)
+
         _apply_placement(ctx, strategy_name, strategy_result)
         iteration_results = _run_iterations(ctx, strategy_name, strategy_result)
         passed = _aggregate_strategy(ctx, strategy_name, strategy_result, iteration_results)
@@ -339,12 +429,17 @@ def _apply_placement(
             d.name for d in all_deps
             if not d.name.startswith(_infra_prefixes) and d.replicas > 0
         ]
+        # Heavy placement strategies (adversarial, colocate) pack many
+        # services onto few nodes, causing long rollout times due to
+        # resource contention.  Use a generous timeout (5 min) instead
+        # of the experiment timeout or an arbitrary 120s cap.
+        rollout_timeout = max(300, ctx.timeout)
         assignment = ctx.mutator.apply_strategy(
             strategy=strat,
             seed=ctx.seed if strategy_name == "random" else None,
             deployments=app_deps if app_deps else None,
             wait=True,
-            timeout=min(ctx.timeout, 120),
+            timeout=rollout_timeout,
         )
         strategy_result["placement"] = assignment.to_dict()
 
@@ -374,6 +469,7 @@ def _run_single_iteration(
     # transient HTTP 500s on memory-constrained clusters.
     click.echo("    Cleaning stale resources from previous iteration...")
     _clean_stale_resources(ctx.namespace)
+    _restart_unhealthy_infra(ctx.namespace)
 
     step_label = "  Step 3" if ctx.iterations == 1 else "    Step A"
     if ctx.settle_time > 0:
@@ -402,6 +498,18 @@ def _run_single_iteration(
     # Extract HTTP routes from scenario probes for latency measurement
     http_routes = _extract_http_routes(scenario, ctx.namespace)
 
+    # Extract chaos duration for prober phase labeling
+    chaos_duration = _extract_chaos_duration(scenario)
+
+    # Verify app-level HTTP readiness across ALL probed routes before
+    # starting probers.  This prevents cascading poisoning where a
+    # previous iteration's post-chaos damage leaks into the next
+    # iteration's pre-chaos baseline.
+    _wait_for_app_ready(
+        ctx.namespace, ctx.target_deployment,
+        timeout=180, http_routes=http_routes or None,
+    )
+
     # Start probers + optional load generation
     probers = create_and_start_probers(
         ctx.namespace,
@@ -413,6 +521,7 @@ def _run_single_iteration(
         measure_prometheus=ctx.measure_prometheus,
         prometheus_url=ctx.prometheus_url,
         http_routes=http_routes or None,
+        expected_chaos_duration=float(chaos_duration),
     )
 
     # Compute windows before starting Locust so its duration covers the
@@ -526,6 +635,7 @@ def _run_single_iteration(
     # Sync to Neo4j
     if ctx.graph_store:
         _sync_neo4j(ctx, output_data)
+        click.echo(f"\n    Results synced to Neo4j (run: {output_data.get('runId', '')})")
 
     verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
     score = output_data.get("summary", {}).get("resilienceScore", 0)
@@ -533,15 +643,86 @@ def _run_single_iteration(
     avg_recovery = rec_summary.get("meanRecovery_ms")
     recovery_str = f" | Avg Recovery: {avg_recovery:.0f}ms" if avg_recovery else ""
 
-    click.echo(f"\n    Results synced to Neo4j (run: {output_data.get('runId', '')})")
-    click.echo(f"    Verdict: {verdict} | Resilience Score: {score:.1f}{recovery_str}")
+    click.echo(f"\n    Verdict: {verdict} | Resilience Score: {score:.1f}{recovery_str}")
+
+    # Assess pre-chaos baseline health from latency prober data.
+    # If most routes had errors before chaos even started, the iteration
+    # is "tainted" — its score reflects accumulated damage from a previous
+    # iteration rather than the placement strategy's actual resilience.
+    pre_chaos_tainted = False
+    latency_phases = (prober_results.get("latency") or {}).get("phases", {})
+    pre_chaos = latency_phases.get("pre-chaos", {})
+    if pre_chaos.get("sampleCount", 0) > 0:
+        total_errors = 0
+        total_ok = 0
+        for route_data in pre_chaos.get("routes", {}).values():
+            total_errors += route_data.get("errorCount", 0)
+            total_ok += route_data.get("sampleCount", 0)
+        # sampleCount counts successful measurements only; errorCount
+        # counts failed ones.  Total attempts = total_ok + total_errors.
+        total_attempts = total_ok + total_errors
+        if total_attempts > 0 and total_errors / total_attempts > 0.5:
+            pre_chaos_tainted = True
+            click.echo(
+                f"    WARNING: Pre-chaos baseline was degraded "
+                f"({total_errors}/{total_attempts} samples had errors). "
+                f"Score may not reflect strategy resilience."
+            )
+
+    # Extract per-probe verdicts for diagnostic analysis.
+    # LitmusChaos probe status is a dict of phase→verdict strings like
+    # {"Continuous": "Passed 👍"} rather than a top-level "verdict" key.
+    probe_verdicts = {}
+    for exp in output_data.get("experiments", []):
+        for probe in exp.get("probes", []):
+            pname = probe.get("name", "")
+            pverdict = "Unknown"
+
+            # First try phaseVerdicts (already parsed by result_collector)
+            phase_v = probe.get("phaseVerdicts", {})
+            if phase_v:
+                pverdict = "Pass" if all(
+                    v == "Pass" for v in phase_v.values()
+                ) else "Fail"
+            else:
+                # Fallback: parse the raw status map directly
+                pstatus = probe.get("status", {})
+                if isinstance(pstatus, dict):
+                    phase_results = []
+                    for key, val in pstatus.items():
+                        if key in ("verdict", "description"):
+                            continue
+                        if isinstance(val, str):
+                            phase_results.append(
+                                "Pass" if "Passed" in val else "Fail"
+                            )
+                    if phase_results:
+                        pverdict = "Pass" if all(
+                            v == "Pass" for v in phase_results
+                        ) else "Fail"
+
+            if pname:
+                probe_verdicts[pname] = pverdict
+
+    # If verdicts are empty or all "Unknown" (CRD probeStatuses was empty
+    # because ChaosCenter cleaned it up), fall back to ChaosCenter API
+    # verdicts extracted from executionData.
+    if not probe_verdicts or all(v == "Unknown" for v in probe_verdicts.values()):
+        executed = runner.get_executed_experiments()
+        for exp_entry in executed:
+            cc_verdicts = exp_entry.get("probeVerdicts", {})
+            if cc_verdicts:
+                probe_verdicts = cc_verdicts
+                break
 
     return {
         "iteration": iter_num,
         "verdict": verdict,
         "resilienceScore": score,
+        "probeVerdicts": probe_verdicts,
         "metrics": recovery,
         "runId": output_data.get("runId", ""),
+        "preChaosHealthy": not pre_chaos_tainted,
     }
 
 
@@ -550,11 +731,93 @@ def _run_iterations(
     strategy_name: str,
     strategy_result: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """Run all iterations for one strategy."""
-    return [
-        _run_single_iteration(ctx, strategy_name, strategy_result, i)
-        for i in range(1, ctx.iterations + 1)
-    ]
+    """Run all iterations for one strategy.
+
+    After every iteration (except the last), trigger a rolling restart
+    of app deployments so the next iteration starts from a clean state.
+    Post-chaos damage (stuck connections, unhealthy pods, resource
+    exhaustion) cascades into subsequent iterations if not cleared.
+
+    If a single iteration fails due to a transient error (K8s API
+    unreachable, timeout, etc.), it is recorded as an error iteration
+    and the loop continues to the next iteration rather than aborting
+    the entire strategy.
+    """
+    results: List[Dict[str, Any]] = []
+    for i in range(1, ctx.iterations + 1):
+        try:
+            ir = _run_single_iteration(ctx, strategy_name, strategy_result, i)
+        except Exception as e:
+            click.echo(
+                f"\n    ERROR in iteration {i}/{ctx.iterations}: {e}",
+                err=True,
+            )
+            ir = {
+                "iteration": i,
+                "verdict": "ERROR",
+                "resilienceScore": 0,
+                "probeVerdicts": {},
+                "metrics": {},
+                "runId": "",
+                "preChaosHealthy": False,
+                "error": str(e),
+            }
+        results.append(ir)
+        # Restart between iterations to prevent cascading damage.
+        # Skip restart after the last iteration (cleanup happens at strategy level).
+        if i < ctx.iterations:
+            click.echo("    Restarting app deployments for clean next iteration...")
+            _restart_app_deployments(ctx.namespace, ctx.target_deployment)
+    return results
+
+
+def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
+    """Trigger a rollout restart of all app deployments in the namespace.
+
+    This clears post-chaos damage (stuck connections, unhealthy pods,
+    resource exhaustion) that the settle-time alone cannot fix.
+    """
+    from kubernetes import client as k8s_client
+
+    apps_api = k8s_client.AppsV1Api()
+    try:
+        deps = apps_api.list_namespaced_deployment(namespace)
+        infra_prefixes = (
+            "chaos-exporter", "chaos-operator", "event-tracker",
+            "subscriber", "workflow-controller",
+        )
+        app_deps = [
+            d.metadata.name for d in deps.items
+            if not d.metadata.name.startswith(infra_prefixes)
+            and (d.spec.replicas or 0) > 0
+        ]
+        if not app_deps:
+            return
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        patch_failures = 0
+        for dep_name in app_deps:
+            try:
+                apps_api.patch_namespaced_deployment(
+                    dep_name, namespace, {
+                        "spec": {"template": {"metadata": {"annotations": {
+                            "chaosprobe.io/restartedAt": now,
+                        }}}},
+                    },
+                )
+            except Exception as exc:
+                patch_failures += 1
+                click.echo(f"    Warning: failed to restart {dep_name}: {exc}")
+
+        restarted = len(app_deps) - patch_failures
+        click.echo(f"    Triggered rollout restart for {restarted}/{len(app_deps)} deployment(s)")
+
+        # Wait for all rollouts to complete
+        wait_for_healthy_deployments(namespace, timeout=180)
+        click.echo("    All rollouts complete.")
+    except Exception as e:
+        click.echo(f"    Warning: deployment restart failed: {e}")
 
 
 def _aggregate_strategy(
@@ -570,12 +833,29 @@ def _aggregate_strategy(
         strategy_result["experiment"] = strategy_result["aggregated"]
         strategy_result["status"] = "completed"
 
+        # Expose metrics from the median-scoring iteration at the
+        # top-level so that charts.py _extract_metric() can find
+        # latency/resource/prometheus data without falling back to
+        # iteration[0] which may be unrepresentative.
+        sorted_iters = sorted(
+            iteration_results,
+            key=lambda ir: ir.get("resilienceScore", 0),
+        )
+        median_iter = sorted_iters[(len(sorted_iters) - 1) // 2]
+        strategy_result["metrics"] = median_iter.get("metrics")
+
         agg = strategy_result["aggregated"]
         iter_passed = sum(1 for ir in iteration_results if ir["verdict"] == "PASS")
+        tainted = agg.get("taintedIterations", 0)
+        taint_str = f" ({tainted} tainted)" if tainted > 0 else ""
         click.echo(
             f"\n    Aggregated: {iter_passed}/{ctx.iterations} passed | "
-            f"Mean Score: {agg['meanResilienceScore']:.1f}"
+            f"Mean Score: {agg['meanResilienceScore']:.1f}{taint_str}"
         )
+        if tainted > 0:
+            click.echo(
+                f"    Healthy-only Mean Score: {agg['meanResilienceScore_healthyOnly']:.1f}"
+            )
         if agg.get("meanRecoveryTime_ms") is not None:
             click.echo(
                 f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
@@ -591,6 +871,7 @@ def _aggregate_strategy(
             "failed": 0 if ir["verdict"] == "PASS" else 1,
             "totalExperiments": 1,
         }
+        strategy_result["probeVerdicts"] = ir.get("probeVerdicts", {})
         strategy_result["metrics"] = ir["metrics"]
         strategy_result["status"] = "completed"
         strategy_result["runId"] = ir["runId"]

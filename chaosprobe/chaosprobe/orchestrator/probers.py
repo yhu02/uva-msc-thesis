@@ -25,6 +25,7 @@ def create_and_start_probers(
     measure_prometheus: bool,
     prometheus_url: Tuple[str, ...],
     http_routes: Any = None,
+    expected_chaos_duration: float | None = None,
 ) -> Dict[str, Any]:
     """Create continuous probers and start them in parallel.
 
@@ -39,7 +40,12 @@ def create_and_start_probers(
 
     watcher = RecoveryWatcher(namespace, target_deployment)
     latency_prober = (
-        ContinuousLatencyProber(namespace, http_routes=http_routes)
+        ContinuousLatencyProber(
+            namespace,
+            http_routes=http_routes,
+            exclude_prefixes=[target_deployment],
+            expected_chaos_duration=expected_chaos_duration,
+        )
         if measure_latency
         else None
     )
@@ -62,6 +68,13 @@ def create_and_start_probers(
         if measure_prometheus
         else None
     )
+
+    # Propagate expected chaos duration to all probers so the base class
+    # can cap "during-chaos" phase labeling (previously only latency had this).
+    if expected_chaos_duration is not None:
+        for p in (redis_prober, disk_prober, resource_prober, prometheus_prober):
+            if p is not None:
+                p._expected_chaos_duration = expected_chaos_duration
 
     probers_to_start = [
         (label, p)
@@ -134,6 +147,7 @@ def stop_and_collect_probers(
                     pass
 
     results: Dict[str, Any] = {}
+    error_breakdown: Dict[str, int] = {}
 
     # Locust
     if locust_runner:
@@ -158,6 +172,8 @@ def stop_and_collect_probers(
             phase_data = data.get("phases", {})
             during = phase_data.get("during-chaos", {})
             click.echo(f"    Latency: {during.get('sampleCount', 0)} samples during chaos")
+            if data.get("probeErrors", 0) > 0:
+                error_breakdown["latency"] = data["probeErrors"]
         except Exception as e:
             click.echo(f"    Warning: failed to collect latency data: {e}", err=True)
 
@@ -210,5 +226,11 @@ def stop_and_collect_probers(
     # Recovery watcher
     if probers.get("watcher"):
         results["recovery"] = probers["watcher"].result()
+
+    # Include per-prober error breakdown so users can diagnose which
+    # probers had issues instead of a single aggregated count.
+    if error_breakdown:
+        results["probeErrorBreakdown"] = error_breakdown
+        click.echo(f"    Probe errors: {error_breakdown}")
 
     return results

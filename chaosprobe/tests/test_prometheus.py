@@ -42,6 +42,8 @@ def _make_prober(**kwargs):
     prober._start_time = time.time()
     prober._chaos_start_time = None
     prober._chaos_end_time = None
+    prober._expected_chaos_duration = None
+    prober._post_chaos_buffer = 15.0
     prober._probe_errors = 0
     prober._consecutive_failures = 0
     prober._thread_name = "prometheus-prober"

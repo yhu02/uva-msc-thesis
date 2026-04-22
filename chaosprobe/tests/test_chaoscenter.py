@@ -1270,3 +1270,88 @@ class TestChaosRunnerProbeRegistration:
         runner = _make_runner()
         refs = runner._register_and_extract_probes(deepcopy(_ENGINE_SPEC))
         assert refs == []
+
+
+class TestExtractProbeVerdictsFromExecutionData:
+    """Tests for _extract_probe_verdicts_from_execution_data."""
+
+    def test_real_chaoscenter_format(self):
+        """Parse verdicts from actual ChaosCenter executionData structure."""
+        from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
+
+        execution_data = {
+            "nodes": {
+                "node-abc": {
+                    "name": "run-pod-delete",
+                    "phase": "Completed_With_Probe_Failure",
+                    "type": "ChaosEngine",
+                    "chaosData": {
+                        "chaosResult": {
+                            "status": {
+                                "probeStatuses": [
+                                    {
+                                        "name": "probe-strict",
+                                        "type": "httpProbe",
+                                        "mode": "Continuous",
+                                        "status": {
+                                            "verdict": "Failed",
+                                            "description": "500 != 200",
+                                        },
+                                    },
+                                    {
+                                        "name": "probe-loose",
+                                        "type": "httpProbe",
+                                        "mode": "Continuous",
+                                        "status": {
+                                            "verdict": "Passed",
+                                            "description": "200 == 200",
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                },
+                "node-def": {
+                    "name": "steps",
+                    "phase": "Succeeded",
+                    "type": "Steps",
+                },
+            },
+        }
+        verdicts = _extract_probe_verdicts_from_execution_data(execution_data)
+        assert verdicts == {"probe-strict": "Fail", "probe-loose": "Pass"}
+
+    def test_json_string_input(self):
+        """Accept JSON string as well as dict."""
+        from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
+        import json
+
+        data = {
+            "nodes": {
+                "n1": {
+                    "chaosData": {
+                        "chaosResult": {
+                            "status": {
+                                "probeStatuses": [
+                                    {"name": "p1", "status": {"verdict": "Passed"}},
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        verdicts = _extract_probe_verdicts_from_execution_data(json.dumps(data))
+        assert verdicts == {"p1": "Pass"}
+
+    def test_empty_input(self):
+        from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
+        assert _extract_probe_verdicts_from_execution_data(None) == {}
+        assert _extract_probe_verdicts_from_execution_data("") == {}
+        assert _extract_probe_verdicts_from_execution_data({}) == {}
+
+    def test_no_chaos_data_nodes(self):
+        from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
+        data = {"nodes": {"n1": {"name": "steps", "type": "Steps"}}}
+        assert _extract_probe_verdicts_from_execution_data(data) == {}

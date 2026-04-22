@@ -233,7 +233,7 @@ class _VagrantMixin:
         self,
         cluster_name: str = "chaosprobe",
         num_control_planes: int = 1,
-        num_workers: int = 2,
+        num_workers: int = 4,
         vm_memory: int | None = None,
         vm_cpus: int | None = None,
         cp_memory: int = 4096,

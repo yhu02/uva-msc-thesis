@@ -230,19 +230,6 @@ class RecoveryWatcher:
         return None
 
     @staticmethod
-    def _get_ready_time(pod) -> Optional[datetime]:
-        """Extract Ready condition lastTransitionTime."""
-        if not pod.status.conditions:
-            return None
-        for cond in pod.status.conditions:
-            if cond.type == "Ready" and cond.last_transition_time:
-                ts = cond.last_transition_time
-                if hasattr(ts, "tzinfo") and ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                return ts
-        return None
-
-    @staticmethod
     def _finalize_cycle(cycle: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a raw cycle into the output format with durations."""
         deletion = cycle["deletionTime"]

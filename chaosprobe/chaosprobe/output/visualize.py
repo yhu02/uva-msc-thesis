@@ -46,6 +46,21 @@ def check_matplotlib():
         )
 
 
+def _compute_pass_rate(exp: Dict[str, Any]) -> float:
+    """Compute pass rate from experiment data, handling single-iteration runs."""
+    pr = exp.get("passRate")
+    if pr is not None:
+        return pr
+    verdict = exp.get("overallVerdict", "")
+    if verdict == "PASS":
+        return 1.0
+    passed = exp.get("passed", 0)
+    total = exp.get("totalExperiments", 0)
+    if total > 0:
+        return round(passed / total, 2)
+    return 0.0
+
+
 def generate_from_summary(
     summary_path: str,
     output_dir: str,
@@ -95,21 +110,49 @@ def generate_from_dict(
     strategies = {}
     for name, sdata in raw_strategies.items():
         exp = sdata.get("experiment", {}) or {}
+        agg = sdata.get("aggregated", {}) or {}
         # Recovery metrics live in experiment for multi-iteration (aggregated),
         # but in metrics.recovery.summary for single-iteration runs.
         rec_summary = (sdata.get("metrics") or {}).get("recovery", {}).get("summary", {})
+
+        # Compute stddev/min/max from iterations if not in aggregated (backwards compat)
+        iter_scores = [it.get("resilienceScore", 0) for it in sdata.get("iterations", [])]
+        if iter_scores and len(iter_scores) > 1:
+            import statistics as _stats
+            stddev = agg.get("stddevResilienceScore") or round(_stats.stdev(iter_scores), 1)
+            min_s = agg.get("minResilienceScore") if agg.get("minResilienceScore") is not None else min(iter_scores)
+            max_s = agg.get("maxResilienceScore") if agg.get("maxResilienceScore") is not None else max(iter_scores)
+        else:
+            stddev = agg.get("stddevResilienceScore", 0.0)
+            min_s = agg.get("minResilienceScore")
+            max_s = agg.get("maxResilienceScore")
+
+        # Prefer healthy-only mean when tainted iterations exist
+        tainted = agg.get("taintedIterations", 0)
+        all_tainted = agg.get("allIterationsTainted", False)
+        if tainted > 0 and not all_tainted:
+            avg_score = agg.get("meanResilienceScore_healthyOnly", exp.get("meanResilienceScore", exp.get("resilienceScore", 0)))
+            stddev = agg.get("stddevResilienceScore_healthyOnly") or stddev
+        else:
+            avg_score = exp.get("meanResilienceScore", exp.get("resilienceScore", 0))
+
         strategies[name] = {
-            "avgResilienceScore": exp.get("meanResilienceScore", exp.get("resilienceScore", 0)),
-            "passRate": exp.get("passRate", 0.0),
+            "avgResilienceScore": avg_score,
+            "stddevResilienceScore": stddev,
+            "minResilienceScore": min_s,
+            "maxResilienceScore": max_s,
+            "passRate": _compute_pass_rate(exp),
             "avgMeanRecovery_ms": (
                 exp.get("meanRecoveryTime_ms")
                 if exp.get("meanRecoveryTime_ms") is not None
                 else rec_summary.get("meanRecovery_ms")
             ),
             "avgP95Recovery_ms": (
-                exp.get("maxRecoveryTime_ms")
-                if exp.get("maxRecoveryTime_ms") is not None
+                exp.get("p95RecoveryTime_ms")
+                if exp.get("p95RecoveryTime_ms") is not None
                 else rec_summary.get("p95Recovery_ms")
+                if rec_summary.get("p95Recovery_ms") is not None
+                else exp.get("maxRecoveryTime_ms")
             ),
             "medianRecovery_ms": exp.get("medianRecoveryTime_ms")
             or rec_summary.get("medianRecovery_ms"),
@@ -199,11 +242,255 @@ def generate_from_dict(
         throughput_data=throughput_by_strategy,
         resource_data=resource_by_strategy,
         prometheus_data=prometheus_by_strategy,
+        raw_strategies=raw_strategies,
     )
     if html_path:
         generated.append(html_path)
 
     return generated
+
+
+def _build_hypothesis_evaluation(
+    strategies: Dict[str, Any],
+    resource_data: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> str:
+    """Build HTML section evaluating H1, H2, H3 against actual data."""
+    evals = []
+
+    # H3: Baseline == 100?
+    baseline = strategies.get("baseline", {})
+    baseline_score = baseline.get("avgResilienceScore", 0)
+    if baseline_score == 100.0:
+        h3_status = "supported"
+        h3_color = "#2ECC71"
+        h3_detail = f"Baseline scored {baseline_score:.0f}% — methodology validated."
+    elif baseline_score >= 90:
+        h3_status = "partially supported"
+        h3_color = "#F39C12"
+        h3_detail = f"Baseline scored {baseline_score:.1f}% — close to expected 100%."
+    else:
+        h3_status = "refuted"
+        h3_color = "#E74C3C"
+        h3_detail = f"Baseline scored {baseline_score:.1f}% — expected 100%, methodology issue."
+
+    # H1: Colocate has worst resilience?
+    colocate = strategies.get("colocate", {})
+    colocate_score = colocate.get("avgResilienceScore", 0)
+    non_baseline = {k: v for k, v in strategies.items() if k != "baseline"}
+    if non_baseline:
+        worst_name = min(non_baseline, key=lambda k: non_baseline[k].get("avgResilienceScore", 0))
+        worst_score = non_baseline[worst_name].get("avgResilienceScore", 0)
+        best_name = max(non_baseline, key=lambda k: non_baseline[k].get("avgResilienceScore", 0))
+        best_score = non_baseline[best_name].get("avgResilienceScore", 0)
+
+        # Use standard deviation to define a meaningful "close" threshold
+        # instead of a fixed ±5 margin.  If the overlap between two
+        # strategies' error bars is large, the difference is noise.
+        colocate_sd = colocate.get("stddevResilienceScore", 0)
+        worst_sd = non_baseline[worst_name].get("stddevResilienceScore", 0)
+        # Overlap margin: mean of both stddevs (at least 5 to handle zero-variance)
+        margin = max(5.0, (colocate_sd + worst_sd) / 2)
+
+        # Check CPU contention
+        colocate_cpu = ""
+        if resource_data and "colocate" in resource_data:
+            cpu = resource_data["colocate"].get("phases", {}).get(
+                "during-chaos", {}
+            ).get("node", {}).get("meanCpu_percent")
+            if cpu is not None:
+                other_cpus = []
+                for s, rd in resource_data.items():
+                    if s not in ("colocate", "baseline"):
+                        oc = rd.get("phases", {}).get("during-chaos", {}).get(
+                            "node", {}
+                        ).get("meanCpu_percent")
+                        if oc is not None:
+                            other_cpus.append(oc)
+                avg_other = sum(other_cpus) / len(other_cpus) if other_cpus else 0
+                colocate_cpu = (
+                    f" Colocate CPU during chaos: {cpu:.1f}% vs "
+                    f"other strategies avg: {avg_other:.1f}%."
+                )
+
+        if worst_name == "colocate":
+            h1_status = "supported"
+            h1_color = "#2ECC71"
+            h1_detail = (
+                f"Colocate scored {colocate_score:.1f} — worst among all strategies.{colocate_cpu}"
+            )
+        elif colocate_score <= worst_score + margin:
+            h1_status = "partially supported"
+            h1_color = "#F39C12"
+            h1_detail = (
+                f"Colocate scored {colocate_score:.1f}, near worst ({worst_name}: "
+                f"{worst_score:.1f}) within noise margin ±{margin:.0f}.{colocate_cpu}"
+            )
+        else:
+            h1_status = "refuted"
+            h1_color = "#E74C3C"
+            h1_detail = (
+                f"Colocate scored {colocate_score:.1f}, but {worst_name} scored "
+                f"{worst_score:.1f} (worst). Probe timing may dominate over resource "
+                f"contention effects.{colocate_cpu}"
+            )
+    else:
+        h1_status = "inconclusive"
+        h1_color = "#95A5A6"
+        h1_detail = "Insufficient strategies to evaluate."
+
+    # H2: Spread has best resilience?
+    spread = strategies.get("spread", {})
+    spread_score = spread.get("avgResilienceScore", 0)
+    if non_baseline:
+        spread_sd = spread.get("stddevResilienceScore", 0)
+        best_sd = non_baseline[best_name].get("stddevResilienceScore", 0)
+        h2_margin = max(5.0, (spread_sd + best_sd) / 2)
+
+        if best_name == "spread":
+            h2_status = "supported"
+            h2_color = "#2ECC71"
+            h2_detail = f"Spread scored {spread_score:.1f} — best among all strategies."
+        elif spread_score >= best_score - h2_margin:
+            h2_status = "partially supported"
+            h2_color = "#F39C12"
+            h2_detail = (
+                f"Spread scored {spread_score:.1f}, near best ({best_name}: "
+                f"{best_score:.1f}) within noise margin ±{h2_margin:.0f}."
+            )
+        else:
+            h2_status = "refuted"
+            h2_color = "#E74C3C"
+            h2_detail = (
+                f"Spread scored {spread_score:.1f}, but {best_name} scored "
+                f"{best_score:.1f} (best). Score variance (stddev="
+                f"{spread.get('stddevResilienceScore', 0):.1f}) suggests probe-timing "
+                f"noise exceeds the placement signal."
+            )
+    else:
+        h2_status = "inconclusive"
+        h2_color = "#95A5A6"
+        h2_detail = "Insufficient strategies to evaluate."
+
+    return f"""
+    <h2>Hypothesis Evaluation</h2>
+    <div class="dimension">
+        <div class="hypothesis h1" style="border-left-color: {h1_color};">
+            <span class="label" style="color:{h1_color}">H1</span>
+            <span><strong style="color:{h1_color}">{h1_status.upper()}</strong> &mdash; {h1_detail}</span>
+        </div>
+        <div class="hypothesis h2" style="border-left-color: {h2_color};">
+            <span class="label" style="color:{h2_color}">H2</span>
+            <span><strong style="color:{h2_color}">{h2_status.upper()}</strong> &mdash; {h2_detail}</span>
+        </div>
+        <div class="hypothesis h3" style="border-left-color: {h3_color};">
+            <span class="label" style="color:{h3_color}">H3</span>
+            <span><strong style="color:{h3_color}">{h3_status.upper()}</strong> &mdash; {h3_detail}</span>
+        </div>
+    </div>"""
+
+
+def _build_iteration_table(
+    raw_strategies: Dict[str, Any],
+    iterations: int,
+) -> str:
+    """Build per-iteration score breakdown table."""
+    if iterations <= 1:
+        return ""
+
+    header_cells = "".join(f"<th>Iter {i + 1}</th>" for i in range(iterations))
+    rows = ""
+    for name in sorted(raw_strategies.keys()):
+        sdata = raw_strategies[name]
+        iters = sdata.get("iterations", [])
+        cells = ""
+        for it in iters:
+            s = it.get("resilienceScore", 0)
+            tainted = not it.get("preChaosHealthy", True)
+            if s >= 80:
+                bg = "#d4edda"
+            elif s >= 50:
+                bg = "#fff3cd"
+            else:
+                bg = "#f8d7da"
+            duration = (it.get("metrics") or {}).get("timeWindow", {}).get("duration_s")
+            dur_str = f"{duration:.1f}s" if isinstance(duration, (int, float)) else "—"
+            taint_marker = ' <span title="Pre-chaos baseline was degraded" style="color:#E74C3C; cursor:help;">&#x26A0;</span>' if tainted else ""
+            cells += (
+                f'<td style="background:{bg}; text-align:center;">'
+                f'{s:.0f}{taint_marker}<br><span style="color:#555; font-size:0.8em;">{dur_str}</span>'
+                f'</td>'
+            )
+        # Pad if fewer iterations
+        for _ in range(iterations - len(iters)):
+            cells += "<td>n/a</td>"
+        rows += f"<tr><td>{name}</td>{cells}</tr>\n"
+
+    return f"""
+    <h2>Per-Iteration Score Breakdown</h2>
+    <div class="dimension">
+        <table>
+            <tr><th>Strategy</th>{header_cells}</tr>
+            {rows}
+        </table>
+        <p style="color:#666; font-size:0.85em;">
+            Each cell shows resilience score and iteration duration.
+            Cells: <span style="background:#d4edda; padding:2px 6px;">&ge;80</span>
+            <span style="background:#fff3cd; padding:2px 6px;">50&ndash;79</span>
+            <span style="background:#f8d7da; padding:2px 6px;">&lt;50</span>
+            &ensp;<span style="color:#E74C3C;">&#x26A0;</span> = pre-chaos baseline was degraded
+            (score may reflect accumulated damage, not strategy resilience).
+        </p>
+    </div>"""
+
+
+def _build_placement_table(raw_strategies: Dict[str, Any]) -> str:
+    """Build placement topology table showing pod-to-node assignments."""
+    # Collect all deployments and nodes across strategies
+    all_deployments: set = set()
+    strategy_placements: Dict[str, Dict[str, str]] = {}
+
+    for name, sdata in raw_strategies.items():
+        placement = sdata.get("placement", {})
+        assignments = placement.get("assignments", {})
+        if assignments:
+            strategy_placements[name] = assignments
+            all_deployments.update(assignments.keys())
+
+    if not strategy_placements:
+        return ""
+
+    deployments = sorted(all_deployments)
+    strat_names = sorted(strategy_placements.keys())
+
+    # Build node color map for visual grouping
+    all_nodes = set()
+    for assigns in strategy_placements.values():
+        all_nodes.update(assigns.values())
+    node_list = sorted(all_nodes)
+    node_colors = ["#E3F2FD", "#FFF3E0", "#E8F5E9", "#F3E5F5", "#FBE9E7",
+                    "#E0F7FA", "#FFF9C4", "#F1F8E9"]
+
+    header = "".join(f"<th>{s}</th>" for s in strat_names)
+    rows = ""
+    for dep in deployments:
+        cells = ""
+        for strat in strat_names:
+            node = strategy_placements.get(strat, {}).get(dep, "—")
+            idx = node_list.index(node) if node in node_list else 0
+            bg = node_colors[idx % len(node_colors)]
+            cells += f'<td style="background:{bg}; font-size:0.85em;">{node}</td>'
+        rows += f"<tr><td style='font-size:0.85em;'>{dep}</td>{cells}</tr>\n"
+
+    return f"""
+    <h2>Placement Topology</h2>
+    <div class="dimension">
+        <p>Pod-to-node assignments per strategy. Color groups pods on the same node.</p>
+        <table>
+            <tr><th>Deployment</th>{header}</tr>
+            {rows}
+        </table>
+    </div>"""
+
 
 
 def _generate_html_summary(
@@ -215,6 +502,7 @@ def _generate_html_summary(
     throughput_data: Optional[Dict[str, Dict[str, Any]]] = None,
     resource_data: Optional[Dict[str, Dict[str, Any]]] = None,
     prometheus_data: Optional[Dict[str, Dict[str, Any]]] = None,
+    raw_strategies: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Generate an HTML page with embedded charts and summary table."""
     if not chart_paths:
@@ -229,11 +517,18 @@ def _generate_html_summary(
         p95_rec = data.get("avgP95Recovery_ms")
         p95_str = f"{p95_rec:.1f}" if p95_rec is not None else "n/a"
         run_count = data.get("runCount", iterations)
+        stddev = data.get("stddevResilienceScore", 0.0)
+        stddev_str = f"{stddev:.1f}" if stddev else "0.0"
+        min_s = data.get("minResilienceScore")
+        max_s = data.get("maxResilienceScore")
+        range_str = f"{min_s:.0f}&ndash;{max_s:.0f}" if min_s is not None and max_s is not None else "n/a"
         rows += f"""
         <tr>
             <td>{name}</td>
             <td>{run_count}</td>
             <td>{data.get('avgResilienceScore', 0):.1f}</td>
+            <td>&plusmn;{stddev_str}</td>
+            <td>{range_str}</td>
             <td>{data.get('passRate', 0):.0%}</td>
             <td>{avg_rec_str}</td>
             <td>{median_str}</td>
@@ -477,6 +772,15 @@ def _generate_html_summary(
             for f in chart_sections.get(section, [])
         )
 
+    # --- Hypothesis evaluation section ---
+    hypothesis_section = _build_hypothesis_evaluation(strategies, resource_data)
+
+    # --- Per-iteration score breakdown ---
+    iteration_section = _build_iteration_table(raw_strategies or {}, iterations)
+
+    # --- Placement topology ---
+    placement_section = _build_placement_table(raw_strategies or {})
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -545,6 +849,8 @@ def _generate_html_summary(
                 <th>Strategy</th>
                 <th>Runs</th>
                 <th>Resilience Score</th>
+                <th>Std Dev</th>
+                <th>Range</th>
                 <th>Pass Rate</th>
                 <th>Mean Recovery (ms)</th>
                 <th>Median Recovery (ms)</th>
@@ -552,8 +858,23 @@ def _generate_html_summary(
             </tr>
             {rows}
         </table>
+        <p style="color:#666; font-size:0.85em; margin-top:8px;">
+            <strong>Note:</strong> Resilience scores blend LitmusChaos probe verdicts (25%)
+            with continuous metrics: recovery speed (25%), latency preservation (25%),
+            error rate (15%), and throughput preservation (10%). This produces finer-grained
+            differentiation than probe verdicts alone.
+        </p>
         <div class="section-charts">{_img_tags_for("overview")}</div>
     </div>
+
+    <!-- ═══ Hypothesis Evaluation ═══ -->
+    {hypothesis_section}
+
+    <!-- ═══ Per-Iteration Breakdown ═══ -->
+    {iteration_section}
+
+    <!-- ═══ Placement Topology ═══ -->
+    {placement_section}
 
     <!-- ═══ Dimension 1: Recovery Time ═══ -->
     <h2>Dimension 1 — Recovery Time</h2>
