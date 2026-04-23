@@ -10,13 +10,28 @@ ChaosProbe runs locally on your machine and interacts with the cluster via `kube
 
 ### Proxmox VMs
 
-Create at least 1 VM (combined control plane + worker) or ideally 3+ VMs on your Proxmox server.
+Create at least 1 VM (combined control plane + worker) or ideally 5 VMs on your Proxmox server.
 
-| Role | CPU | RAM | Disk | OS |
-|------|-----|-----|------|----|
-| Control plane only | 2 cores | 2 GB | 20 GB | Ubuntu 22.04 Server |
-| Worker | 2-4 cores | 4-8 GB | 20-40 GB | Ubuntu 22.04 Server |
-| Combined (control plane + worker) | 2-4 cores | 6-8 GB | 20-40 GB | Ubuntu 22.04 Server |
+**Reference cluster topology** (used for thesis experiments):
+
+| Node | Role | vCPU | RAM | Disk | OS |
+|------|------|------|-----|------|----|
+| cp1 | Control plane | 2 | 2 GiB | 20 GB | Ubuntu 22.04 Server |
+| w1 | Worker | 2 | 2 GiB | 20 GB | Ubuntu 22.04 Server |
+| w2 | Worker | 2 | 2 GiB | 20 GB | Ubuntu 22.04 Server |
+| w3 | Worker | 2 | 4 GiB | 20 GB | Ubuntu 22.04 Server |
+| w4 | Worker | 2 | 4 GiB | 20 GB | Ubuntu 22.04 Server |
+| **Total** | | **10** | **14 GiB** | | |
+
+K8s v1.28.6 -- Calico CNI -- containerd 1.7.11
+
+**Minimum requirements:**
+
+| Role | CPU | RAM | Disk |
+|------|-----|-----|------|
+| Control plane only | 2 cores | 2 GB | 20 GB |
+| Worker | 2 cores | 2-4 GB | 20 GB |
+| Combined (control plane + worker) | 2-4 cores | 6-8 GB | 20-40 GB |
 
 All infrastructure (metrics-server, Prometheus, ChaosCenter, Neo4j) is pinned to the control plane to isolate it from chaos experiments on workers. Workers only run application workloads. In a single-VM setup (`roles: [control_plane, worker]`), everything shares one node — at least 6 GB is needed to fit K8s components, the infrastructure stack, and application workloads together.
 

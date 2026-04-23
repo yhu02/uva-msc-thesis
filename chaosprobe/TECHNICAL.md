@@ -623,6 +623,20 @@ confidence = 0.50 (base)
 
 ## 7. Placement Experiment Design
 
+### Cluster Topology
+
+5-node Proxmox/KVM cluster with heterogeneous worker memory:
+
+| Node | Role | vCPU | RAM | Notes |
+|------|------|------|-----|-------|
+| cp1 | Control plane | 2 | 2 GiB | Infrastructure only (Prometheus, Neo4j, ChaosCenter, metrics-server) |
+| w1 | Worker | 2 | 2 GiB | Application workloads |
+| w2 | Worker | 2 | 2 GiB | Application workloads |
+| w3 | Worker | 2 | 4 GiB | Application workloads |
+| w4 | Worker | 2 | 4 GiB | Application workloads |
+
+**Total**: 10 vCPU, 14 GiB -- K8s v1.28.6 -- Calico CNI -- containerd 1.7.11
+
 ### Hypothesis
 
 Microservice resilience under chaos varies with pod placement strategy due to differences in resource contention on co-located nodes. Specifically, placement affects:
