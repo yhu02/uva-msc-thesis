@@ -93,7 +93,7 @@ def _merge_resources(
         bk = nearest(_parse_iso(ts))
         if bk not in buckets:
             continue
-        node = entry.get("node", {})
+        node = entry.get("usedNode", {})
         buckets[bk]["node_cpu_millicores"] = node.get("cpu_millicores")
         buckets[bk]["node_cpu_percent"] = node.get("cpu_percent")
         buckets[bk]["node_memory_bytes"] = node.get("memory_bytes")

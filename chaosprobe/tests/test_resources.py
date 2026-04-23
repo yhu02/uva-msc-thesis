@@ -80,14 +80,19 @@ class TestParseMemoryQuantity:
 
 
 def _make_entry(phase, nodes):
-    """Return a synthetic time-series entry as emitted by the probe loop."""
+    """Return a synthetic time-series entry as emitted by the probe loop.
+
+    All nodes are treated as "used" (hosting namespace pods) since the
+    test entries represent application workload nodes.
+    """
     aggregated = ContinuousResourceProber._aggregate_node_metrics(nodes)
     stats = ContinuousResourceProber._node_stats(nodes)
     return {
         "phase": phase,
         "nodes": nodes,
-        "node": aggregated,
-        "nodeStats": stats,
+        "usedNode": aggregated,
+        "usedNodeStats": stats,
+        "usedNodeNames": [n["name"] for n in nodes],
         "pods": [],
     }
 
@@ -206,9 +211,9 @@ class TestContinuousResourceProberPhaseSplitting:
         assert phases["during-chaos"]["sampleCount"] == 2
         assert phases["post-chaos"]["sampleCount"] == 1
 
-        # Cluster-wide aggregate during chaos
+        # Cluster-wide aggregate during chaos (used nodes only)
         # tick 1: cpu_millicores sum = 1800, tick 2: sum = 1600 -> mean 1700
-        during_node = phases["during-chaos"]["node"]
+        during_node = phases["during-chaos"]["usedNode"]
         assert during_node["meanCpu_millicores"] == 1700.0
         assert during_node["maxCpu_millicores"] == 1800.0
         # percentages are tick averages across nodes, then meaned across ticks
@@ -236,7 +241,7 @@ class TestContinuousResourceProberPhaseSplitting:
         ]
         phases = prober._split_phases(series)
         assert phases["during-chaos"]["sampleCount"] == 1
-        assert "node" not in phases["during-chaos"]
+        assert "usedNode" not in phases["during-chaos"]
 
     def test_peak_node_percent_reported(self):
         """The hottest single node across a phase is surfaced."""
@@ -251,8 +256,8 @@ class TestContinuousResourceProberPhaseSplitting:
             ),
         ]
         phases = prober._split_phases(series)
-        assert phases["during-chaos"]["node"]["peakNodeCpu_percent"] == 95.0
-        assert phases["during-chaos"]["node"]["peakNodeMemory_percent"] == 90.0
+        assert phases["during-chaos"]["usedNode"]["peakNodeCpu_percent"] == 95.0
+        assert phases["during-chaos"]["usedNode"]["peakNodeMemory_percent"] == 90.0
 
 
 class TestContinuousResourceProberPhaseTransitions:

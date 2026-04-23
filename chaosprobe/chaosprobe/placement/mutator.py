@@ -29,8 +29,6 @@ from chaosprobe.placement.strategy import (
 PLACEMENT_LABEL_KEY = "kubernetes.io/hostname"
 # Annotation to track which deployments are managed by ChaosProbe placement
 MANAGED_ANNOTATION = "chaosprobe.io/placement-strategy"
-# Legacy label from previous versions (cleaned up on clear)
-_LEGACY_LABEL = "chaosprobe.io/placement-zone"
 
 
 class PlacementMutator:
@@ -350,9 +348,6 @@ class PlacementMutator:
             cleared.append(name)
             click.echo(f"  Cleared placement for: {name}")
 
-        # Clean up legacy labels from previous ChaosProbe versions
-        self._cleanup_legacy_labels()
-
         if wait and cleared:
             self._wait_for_rollouts(cleared, timeout)
 
@@ -412,21 +407,6 @@ class PlacementMutator:
                 except Exception as e:
                     dep = futures[future]
                     click.echo(f"  WARNING: Failed to patch '{dep}': {e}")
-
-    def _cleanup_legacy_labels(self) -> None:
-        """Remove legacy chaosprobe.io/placement-zone labels from nodes."""
-        try:
-            nodes = self.core_api.list_node()
-            for node in nodes.items:
-                labels = node.metadata.labels or {}
-                if _LEGACY_LABEL in labels:
-                    patch = {"metadata": {"labels": {_LEGACY_LABEL: None}}}
-                    try:
-                        self.core_api.patch_node(node.metadata.name, patch)
-                    except ApiException:
-                        pass
-        except ApiException:
-            pass
 
     def _patch_deployment_placement(
         self, deployment_name: str, node_name: str, strategy_name: str

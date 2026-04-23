@@ -170,14 +170,24 @@ class ContinuousResourceProber(ContinuousProberBase):
                     break
 
                 entry["nodes"] = node_metrics
-                entry["node"] = self._aggregate_node_metrics(node_metrics)
-                entry["nodeStats"] = self._node_stats(node_metrics)
 
                 pod_metrics = self._fetch_pod_metrics()
                 entry["pods"] = pod_metrics
                 entry["targetPods"] = [
                     p for p in pod_metrics if p.get("deployment") == self._deployment_name
                 ]
+
+                # Only aggregate nodes that host namespace pods.  This
+                # avoids idle nodes diluting the mean — critical for
+                # distinguishing colocate from spread.
+                used_node_names = self._fetch_used_node_names()
+                entry["usedNodeNames"] = sorted(used_node_names)
+                used_node_metrics = [
+                    n for n in node_metrics if n["name"] in used_node_names
+                ]
+                entry["usedNode"] = self._aggregate_node_metrics(used_node_metrics)
+                entry["usedNodeStats"] = self._node_stats(used_node_metrics)
+
                 if pod_metrics:
                     entry["podAggregate"] = {
                         "totalCpu_millicores": round(
@@ -231,6 +241,7 @@ class ContinuousResourceProber(ContinuousProberBase):
             "available": True,
             "nodeNames": sorted(self._node_capacity.keys()),
             "nodeCapacity": node_capacity_snapshot,
+            "usedNodeNames": sorted(self._fetch_used_node_names()),
             "timeSeries": series,
             "phases": phases,
             "config": {
@@ -261,9 +272,9 @@ class ContinuousResourceProber(ContinuousProberBase):
                 continue
 
             phase_summary: Dict[str, Any] = {"sampleCount": len(entries)}
-            node_agg = self._summarise_node_aggregate(entries)
-            if node_agg:
-                phase_summary["node"] = node_agg
+            used_node_agg = self._summarise_node_aggregate(entries)
+            if used_node_agg:
+                phase_summary["usedNode"] = used_node_agg
             per_node = self._summarise_per_node(entries)
             if per_node:
                 phase_summary["perNode"] = per_node
@@ -275,26 +286,32 @@ class ContinuousResourceProber(ContinuousProberBase):
     def _summarise_node_aggregate(
         entries: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Reduce the per-tick cluster-wide aggregate across a phase."""
-        cpu_values = [e["node"]["cpu_millicores"] for e in entries if "node" in e]
-        mem_values = [e["node"]["memory_bytes"] for e in entries if "node" in e]
+        """Reduce the per-tick used-node aggregate across a phase.
+
+        Only nodes hosting namespace pods are included (``usedNode`` key),
+        so idle nodes don't dilute the mean.
+        """
+        cpu_values = [e["usedNode"]["cpu_millicores"] for e in entries if "usedNode" in e]
+        mem_values = [e["usedNode"]["memory_bytes"] for e in entries if "usedNode" in e]
         cpu_pct = [
-            e["node"]["cpu_percent"] for e in entries if "node" in e and "cpu_percent" in e["node"]
+            e["usedNode"]["cpu_percent"]
+            for e in entries
+            if "usedNode" in e and "cpu_percent" in e["usedNode"]
         ]
         mem_pct = [
-            e["node"]["memory_percent"]
+            e["usedNode"]["memory_percent"]
             for e in entries
-            if "node" in e and "memory_percent" in e["node"]
+            if "usedNode" in e and "memory_percent" in e["usedNode"]
         ]
         max_cpu_pct_ticks = [
-            e.get("nodeStats", {}).get("maxCpu_percent")
+            e.get("usedNodeStats", {}).get("maxCpu_percent")
             for e in entries
-            if e.get("nodeStats", {}).get("maxCpu_percent") is not None
+            if e.get("usedNodeStats", {}).get("maxCpu_percent") is not None
         ]
         max_mem_pct_ticks = [
-            e.get("nodeStats", {}).get("maxMemory_percent")
+            e.get("usedNodeStats", {}).get("maxMemory_percent")
             for e in entries
-            if e.get("nodeStats", {}).get("maxMemory_percent") is not None
+            if e.get("usedNodeStats", {}).get("maxMemory_percent") is not None
         ]
 
         if not cpu_values:
@@ -398,6 +415,25 @@ class ContinuousResourceProber(ContinuousProberBase):
             return True
         except ApiException:
             return False
+
+    def _fetch_used_node_names(self) -> set:
+        """Return the set of node names that host at least one pod in the namespace."""
+        if not hasattr(self, "_core_api"):
+            return set()
+        try:
+            pods = self._core_api.list_namespaced_pod(
+                self.namespace,
+                field_selector="status.phase=Running",
+            )
+        except ApiException:
+            return set()
+
+        nodes = set()
+        for pod in pods.items:
+            node = pod.spec.node_name if pod.spec else None
+            if node:
+                nodes.add(node)
+        return nodes
 
     def _fetch_all_node_metrics(self) -> Optional[List[Dict[str, Any]]]:
         """Fetch per-node CPU/memory usage for *every* cluster node.

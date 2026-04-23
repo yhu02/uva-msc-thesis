@@ -167,6 +167,8 @@ Abstract base for all continuous probers. Manages background thread lifecycle, p
 
 Subclasses: `ContinuousLatencyProber`, `ContinuousRedisProber`, `ContinuousDiskProber`, `ContinuousResourceProber`, `ContinuousPrometheusProber`.
 
+**Used-nodes-only aggregation**: `ContinuousResourceProber` aggregates node-level CPU and memory metrics only across nodes that host pods in the target namespace. This prevents idle nodes from diluting placement-specific signals (e.g., `colocate` concentrates all pods on one node — averaging across all cluster nodes would hide the actual resource pressure on that node).
+
 **Helpers**: `find_ready_pod()` finds a ready pod by `app=` label. `find_probe_pod()` auto-discovers any pod with a shell (and optionally python3) in the namespace — no hardcoded service preferences. `pod_has_shell()` verifies shell access via `kubectl exec`.
 
 #### recovery.py — RecoveryWatcher
@@ -257,7 +259,7 @@ Compares two experiment runs and evaluates fix effectiveness.
 
 | Function (visualize.py) | Purpose |
 |---|---|
-| `generate_from_summary(summary_path, output_dir)` | Charts from legacy summary.json |
+| `generate_from_summary(summary_path, output_dir)` | Charts from summary.json |
 | `generate_from_dict(summary, output_dir)` | Charts from in-memory dict |
 
 | Function (charts.py) | Purpose |
@@ -441,7 +443,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 | `--measure-latency/--no-measure-latency` | on | Inter-service latency |
 | `--measure-redis/--no-measure-redis` | on | Redis throughput |
 | `--measure-disk/--no-measure-disk` | on | Disk I/O throughput |
-| `--measure-resources/--no-measure-resources` | on | Node/pod resource utilization |
+| `--measure-resources/--no-measure-resources` | on | Node/pod resource utilization (used nodes only) |
 | `--measure-prometheus/--no-measure-prometheus` | on | Prometheus cluster metrics |
 | `--collect-logs/--no-collect-logs` | on | Container logs from target deployment |
 | `--prometheus-url` | auto-discovered | Prometheus URL(s); repeat for multiple |
@@ -487,7 +489,7 @@ All graph commands accept `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`.
 | Command | Purpose |
 |---|---|
 | `chaosprobe visualize --neo4j-uri <uri> [--session <id>] -o <dir>` | Charts from Neo4j |
-| `chaosprobe visualize --summary <file> -o <dir>` | Charts from legacy summary.json |
+| `chaosprobe visualize --summary <file> -o <dir>` | Charts from summary.json |
 
 ### ML Export
 
@@ -703,7 +705,7 @@ chaosprobe/
       collector.py           # Metrics aggregation
       latency.py             # Inter-service latency prober
       throughput.py          # Redis/disk throughput probers
-      resources.py           # Resource usage prober
+      resources.py           # Resource usage prober (used nodes only)
       prometheus.py          # Prometheus metrics prober
       anomaly_labels.py      # Ground-truth ML labels
       cascade.py             # Fault propagation tracking
@@ -864,10 +866,10 @@ Each `MetricsSample.data` JSON blob can contain:
 |---|---|---|
 | `latency:<route>:ms` | `latency:frontend→productcatalog:ms` | Latency prober |
 | `latency:<route>:error` | `latency:frontend→productcatalog:error` | Latency prober (1=error, 0=ok) |
-| `node_cpu_millicores` | `250.5` | Resource prober |
-| `node_cpu_percent` | `12.5` | Resource prober |
-| `node_memory_bytes` | `2147483648` | Resource prober |
-| `node_memory_percent` | `52.3` | Resource prober |
+| `node_cpu_millicores` | `250.5` | Resource prober (used nodes only) |
+| `node_cpu_percent` | `12.5` | Resource prober (used nodes only) |
+| `node_memory_bytes` | `2147483648` | Resource prober (used nodes only) |
+| `node_memory_percent` | `52.3` | Resource prober (used nodes only) |
 | `pod_total_cpu_millicores` | `180.0` | Resource prober |
 | `pod_total_memory_bytes` | `1073741824` | Resource prober |
 | `pod_count` | `11` | Resource prober |

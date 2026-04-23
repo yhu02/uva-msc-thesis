@@ -93,7 +93,7 @@ class TestAlignTimeSeries:
             {
                 "timestamp": "2026-04-02T01:35:10+00:00",
                 "phase": "during-chaos",
-                "node": {
+                "usedNode": {
                     "cpu_millicores": 1200.5,
                     "cpu_percent": 30.0,
                     "memory_bytes": 3221225472,
@@ -149,8 +149,8 @@ class TestAlignTimeSeries:
             {
                 "timestamp": "2026-04-02T01:35:05+00:00",
                 "phase": "pre-chaos",
-                "node": {"cpu_percent": 25.0, "cpu_millicores": 1000,
-                         "memory_bytes": 0, "memory_percent": 0},
+                "usedNode": {"cpu_percent": 25.0, "cpu_millicores": 1000,
+                             "memory_bytes": 0, "memory_percent": 0},
                 "podAggregate": {},
             }
         ]

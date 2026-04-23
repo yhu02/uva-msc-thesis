@@ -47,7 +47,6 @@ def strategy_colors(names: List[str]) -> List[str]:
     return colors
 
 
-_strategy_colors = strategy_colors
 
 
 def _extract_metric(
@@ -148,10 +147,6 @@ def chart_resilience_scores(
     return filepath
 
 
-# Keep old private name for backwards-compatible test imports.
-_chart_resilience_scores = chart_resilience_scores
-
-
 def chart_recovery_times(
     strategies: Dict[str, Any],
     output_path: Path,
@@ -249,8 +244,6 @@ def chart_recovery_times(
     return filepath
 
 
-_chart_recovery_times = chart_recovery_times
-
 
 # ---------------------------------------------------------------------------
 # Latency charts + extraction
@@ -262,8 +255,6 @@ def extract_latency_data(
     """Extract latency phase data from raw strategy results."""
     return _extract_metric(raw_strategies, "latency")
 
-
-_extract_latency_data = extract_latency_data
 
 
 def chart_latency_by_strategy(
@@ -333,8 +324,6 @@ def chart_latency_by_strategy(
     plt.close(fig)
     return filepath
 
-
-_chart_latency_by_strategy = chart_latency_by_strategy
 
 
 def chart_latency_degradation(
@@ -412,8 +401,6 @@ def chart_latency_degradation(
     return filepath
 
 
-_chart_latency_degradation = chart_latency_degradation
-
 
 # ---------------------------------------------------------------------------
 # Throughput charts + extraction
@@ -467,8 +454,6 @@ def extract_throughput_data(
 
     return result
 
-
-_extract_throughput_data = extract_throughput_data
 
 
 def chart_throughput_by_strategy(
@@ -542,8 +527,6 @@ def chart_throughput_by_strategy(
     plt.close(fig)
     return filepath
 
-
-_chart_throughput_by_strategy = chart_throughput_by_strategy
 
 
 def chart_throughput_degradation(
@@ -632,8 +615,6 @@ def chart_throughput_degradation(
     return filepath
 
 
-_chart_throughput_degradation = chart_throughput_degradation
-
 
 # ---------------------------------------------------------------------------
 # Resource charts + extraction
@@ -646,14 +627,12 @@ def extract_resource_data(
     return _extract_metric(raw_strategies, "resources", require_available=True)
 
 
-_extract_resource_data = extract_resource_data
-
 
 def chart_resource_utilization(
     resource_by_strategy: Dict[str, Dict[str, Any]],
     output_path: Path,
 ) -> Optional[str]:
-    """Generate line chart of CPU% and memory% over time across strategies."""
+    """Generate line chart of CPU% and memory% over time for used nodes only."""
     if not resource_by_strategy:
         return None
 
@@ -667,8 +646,14 @@ def chart_resource_utilization(
             continue
 
         elapsed = [e["elapsed_s"] for e in series]
-        cpu_pct = [e.get("node", {}).get("cpu_percent", 0) for e in series]
-        mem_pct = [e.get("node", {}).get("memory_percent", 0) for e in series]
+        cpu_pct = [
+            e.get("usedNode", {}).get("cpu_percent", 0)
+            for e in series
+        ]
+        mem_pct = [
+            e.get("usedNode", {}).get("memory_percent", 0)
+            for e in series
+        ]
 
         ax_cpu.plot(
             elapsed,
@@ -688,7 +673,7 @@ def chart_resource_utilization(
         )
 
     ax_cpu.set_ylabel("CPU Utilization (%)")
-    ax_cpu.set_title("Node Resource Utilization During Experiment")
+    ax_cpu.set_title("Node Resource Utilization During Experiment (used nodes only)")
     ax_cpu.legend()
     ax_cpu.grid(alpha=0.3)
     ax_cpu.set_ylim(0, 105)
@@ -706,14 +691,12 @@ def chart_resource_utilization(
     return filepath
 
 
-_chart_resource_utilization = chart_resource_utilization
-
 
 def chart_resource_by_phase(
     resource_by_strategy: Dict[str, Dict[str, Any]],
     output_path: Path,
 ) -> Optional[str]:
-    """Generate bar chart showing mean CPU and memory per phase per strategy."""
+    """Generate bar chart showing mean CPU and memory per phase for used nodes only."""
     if not resource_by_strategy:
         return None
 
@@ -730,9 +713,10 @@ def chart_resource_by_phase(
         cpu_vals = []
         mem_vals = []
         for phase in phase_names:
-            pd = phases.get(phase, {}).get("node", {})
-            cpu_vals.append(pd.get("meanCpu_percent") or 0)
-            mem_vals.append(pd.get("meanMemory_percent") or 0)
+            phase_data = phases.get(phase, {})
+            nd = phase_data.get("usedNode", {})
+            cpu_vals.append(nd.get("meanCpu_percent") or 0)
+            mem_vals.append(nd.get("meanMemory_percent") or 0)
 
         x = [j + i * width for j in range(len(phase_names))]
         ax_cpu.bar(
@@ -757,8 +741,8 @@ def chart_resource_by_phase(
         )
 
     for ax, title, ylabel in [
-        (ax_cpu, "CPU Utilization by Phase", "Mean CPU (%)"),
-        (ax_mem, "Memory Utilization by Phase", "Mean Memory (%)"),
+        (ax_cpu, "CPU Utilization by Phase (used nodes)", "Mean CPU (%)"),
+        (ax_mem, "Memory Utilization by Phase (used nodes)", "Mean Memory (%)"),
     ]:
         ax.set_title(title)
         ax.set_ylabel(ylabel)
@@ -775,8 +759,6 @@ def chart_resource_by_phase(
     return filepath
 
 
-_chart_resource_by_phase = chart_resource_by_phase
-
 
 # ---------------------------------------------------------------------------
 # Prometheus charts + extraction
@@ -788,8 +770,6 @@ def extract_prometheus_data(
     """Extract Prometheus metrics data from raw strategy results."""
     return _extract_metric(raw_strategies, "prometheus", require_available=True)
 
-
-_extract_prometheus_data = extract_prometheus_data
 
 
 def chart_prometheus_by_phase(
@@ -867,8 +847,6 @@ def chart_prometheus_by_phase(
     return filepath
 
 
-_chart_prometheus_by_phase = chart_prometheus_by_phase
-
 
 # ---------------------------------------------------------------------------
 # Strategy comparison heatmap — all thesis dimensions in one chart
@@ -927,10 +905,10 @@ def chart_strategy_comparison_heatmap(
             if pcts:
                 row[2] = sum(pcts) / len(pcts)
 
-        # CPU during chaos
+        # CPU during chaos (used nodes only)
         if resource_data and name in resource_data:
             during_phase = resource_data[name].get("phases", {}).get("during-chaos", {})
-            cpu = during_phase.get("node", {}).get("meanCpu_percent")
+            cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
             row[3] = cpu
 
         # Throughput impact: mean % decrease pre → during across ops
@@ -1027,5 +1005,3 @@ def chart_strategy_comparison_heatmap(
     plt.close(fig)
     return filepath
 
-
-_chart_strategy_comparison_heatmap = chart_strategy_comparison_heatmap

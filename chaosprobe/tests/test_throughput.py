@@ -2,15 +2,23 @@
 
 import threading
 
-
 from chaosprobe.metrics.base import ContinuousProberBase
 from chaosprobe.metrics.throughput import (
-    ContinuousRedisProber,
     ContinuousDiskProber,
+    ContinuousRedisProber,
     ThroughputResult,
     ThroughputSample,
+    _aggregate_disk_samples,
     _parse_dd_elapsed_seconds,
 )
+
+
+def _mk_disk_sample(status="ok", ops=1000, lat=1.0, bps=262_144_000, err=None):
+    return ThroughputSample(
+        operation="write", target="disk",
+        ops_per_second=ops, latency_ms=lat, bytes_per_second=bps,
+        status=status, timestamp="2026-04-22T18:00:00+00:00", error=err,
+    )
 
 
 class TestThroughputSample:
@@ -266,29 +274,24 @@ class TestContinuousDiskProberSerializesError:
         prober.interval = 10.0
         prober.namespace = "test-ns"
         prober._disk_target = "redis-cart"
-        prober._disk_path = "/tmp/chaosprobe_disktest"
         prober._block_size_kb = 64
         prober._block_count = 4
         prober._exclude_services = []
+        prober._probe_points = [("pod-a", "node-1", "/tmp/chaosprobe_disktest")]
 
-        # Build a fake prober whose disk benchmark returns an error sample
-        # with a populated error field.
-        err_sample = ThroughputSample(
-            operation="write", target="disk",
-            ops_per_second=0, latency_ms=0,
-            status="error", timestamp="2026-04-22T18:00:00+00:00",
-            error="dd elapsed<=0 (workload too small): copied, 0 seconds",
-        )
-        err_result = ThroughputResult(target="disk", operation="write", description="")
-        err_result.samples.append(err_sample)
-
+        # Build a fake throughput prober whose per-pod benchmark returns
+        # error samples carrying a populated error field.
+        def _fake_benchmark(pod, op, bsz, count, path):
+            return ThroughputSample(
+                operation=op, target="disk",
+                ops_per_second=0, latency_ms=0,
+                status="error", timestamp="2026-04-22T18:00:00+00:00",
+                error=f"dd elapsed<=0 ({op} at {path})",
+            )
         fake_prober = MagicMock()
-        fake_prober.measure_disk_throughput.return_value = [err_result]
-        fake_prober._cache_lock = threading.Lock()
-        fake_prober._exec_pod_cache = {}
+        fake_prober._disk_benchmark.side_effect = _fake_benchmark
         prober._prober = fake_prober
 
-        # Run one loop iteration by stopping immediately after the first wait.
         def _wait_then_stop(timeout):
             prober._stop_event.set()
             return True
@@ -302,6 +305,65 @@ class TestContinuousDiskProberSerializesError:
         assert write_entry["status"] == "error"
         assert "error" in write_entry
         assert "elapsed<=0" in write_entry["error"]
+        # Per-node breakdown preserves the original error message per node
+        assert write_entry["perNode"]["node-1"]["status"] == "error"
+        assert "elapsed<=0" in write_entry["perNode"]["node-1"]["error"]
+        assert write_entry["probeCount"] == 0
+        assert write_entry["errorCount"] == 1
+
+
+class TestAggregateDiskSamples:
+    def test_mean_matches_single_node_case(self):
+        """Single probe point collapses to the original scalar shape."""
+        agg = _aggregate_disk_samples([("pod-a", "node-1", _mk_disk_sample(ops=500))])
+        assert agg["ops_per_second"] == 500
+        assert agg["status"] == "ok"
+        assert agg["probeCount"] == 1
+        assert agg["errorCount"] == 0
+        assert agg["stddevOpsPerSecond"] == 0.0
+        assert agg["minOpsPerSecond"] == 500
+        assert agg["maxOpsPerSecond"] == 500
+        assert set(agg["perNode"]) == {"node-1"}
+
+    def test_mean_and_spread_across_nodes(self):
+        samples = [
+            ("pod-a", "node-1", _mk_disk_sample(ops=100)),
+            ("pod-b", "node-2", _mk_disk_sample(ops=200)),
+            ("pod-c", "node-3", _mk_disk_sample(ops=300)),
+        ]
+        agg = _aggregate_disk_samples(samples)
+        assert agg["ops_per_second"] == 200
+        assert agg["minOpsPerSecond"] == 100
+        assert agg["maxOpsPerSecond"] == 300
+        assert agg["probeCount"] == 3
+        assert agg["stddevOpsPerSecond"] == 100.0  # stdev([100,200,300])
+        assert set(agg["perNode"]) == {"node-1", "node-2", "node-3"}
+
+    def test_partial_failure_still_reports_mean(self):
+        samples = [
+            ("pod-a", "node-1", _mk_disk_sample(ops=100)),
+            ("pod-b", "node-2", _mk_disk_sample(status="error", ops=0, lat=0, err="oops")),
+        ]
+        agg = _aggregate_disk_samples(samples)
+        assert agg["status"] == "ok"
+        assert agg["ops_per_second"] == 100
+        assert agg["probeCount"] == 1
+        assert agg["errorCount"] == 1
+        assert agg["perNode"]["node-2"]["status"] == "error"
+        assert agg["perNode"]["node-2"]["error"] == "oops"
+
+    def test_all_failed_returns_error_aggregate(self):
+        samples = [
+            ("pod-a", "node-1", _mk_disk_sample(status="error", ops=0, lat=0, err="readonly fs")),
+            ("pod-b", "node-2", _mk_disk_sample(status="error", ops=0, lat=0, err="no space")),
+        ]
+        agg = _aggregate_disk_samples(samples)
+        assert agg["status"] == "error"
+        assert agg["ops_per_second"] is None
+        assert agg["probeCount"] == 0
+        assert agg["errorCount"] == 2
+        # representative error surfaces for quick diagnosis
+        assert "readonly fs" in agg["error"]
 
 
 class TestContinuousProberBase:

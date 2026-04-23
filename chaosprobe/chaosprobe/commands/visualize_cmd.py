@@ -19,7 +19,7 @@ from chaosprobe.commands.shared import (
     "-s",
     type=click.Path(exists=True),
     default=None,
-    help="Path to a summary.json file (legacy)",
+    help="Path to a summary.json file",
 )
 @click.option(
     "--output-dir",
@@ -45,7 +45,7 @@ def visualize(
 ):
     """Generate visualization charts from experiment results.
 
-    Can read from Neo4j graph database or a legacy summary.json file.
+    Can read from Neo4j graph database or a summary.json file.
 
     \b
     Examples:

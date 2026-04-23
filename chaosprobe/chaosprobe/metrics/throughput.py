@@ -19,14 +19,15 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from kubernetes import client
-from kubernetes.client.rest import ApiException
-from kubernetes.stream import stream
 
 from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.base import (
     ContinuousProberBase,
-    exec_in_pod as _base_exec_in_pod,
+    find_probe_pods_per_node,
     find_ready_pod,
+)
+from chaosprobe.metrics.base import (
+    exec_in_pod as _base_exec_in_pod,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,75 @@ def _parse_dd_elapsed_seconds(output: str) -> Optional[float]:
         return float(m.group(1))
     except ValueError:
         return None
+
+
+def _aggregate_disk_samples(
+    per_pod_samples: List[tuple],
+) -> Dict[str, Any]:
+    """Aggregate per-pod disk samples into a single tick-level record.
+
+    Parameters
+    ----------
+    per_pod_samples:
+        ``[(pod_name, node_name, ThroughputSample), ...]`` — one entry
+        per probed node.
+
+    Returns a dict shaped for placement analysis with flat aggregate
+    fields (``ops_per_second`` = mean across nodes) and cross-node
+    distribution (``stddev``/``min``/``max`` + ``perNode`` breakdown).
+    When every sample failed, the flat fields are ``None`` and
+    ``status='error'``.
+    """
+    ok = [(p, n, s) for p, n, s in per_pod_samples if s.status == "ok"]
+    err = [(p, n, s) for p, n, s in per_pod_samples if s.status != "ok"]
+
+    per_node: Dict[str, Dict[str, Any]] = {}
+    for pod, node, s in per_pod_samples:
+        per_node[node] = {
+            "pod": pod,
+            "ops_per_second": s.ops_per_second if s.status == "ok" else None,
+            "latency_ms": s.latency_ms if s.status == "ok" else None,
+            "bytes_per_second": s.bytes_per_second if s.status == "ok" else None,
+            "status": s.status,
+        }
+        if s.status != "ok" and s.error:
+            per_node[node]["error"] = s.error[:200]
+
+    if not ok:
+        entry: Dict[str, Any] = {
+            "ops_per_second": None,
+            "latency_ms": None,
+            "bytes_per_second": None,
+            "status": "error",
+            "probeCount": 0,
+            "errorCount": len(err),
+            "perNode": per_node,
+        }
+        # Surface one representative error for quick diagnosis.
+        if err and err[0][2].error:
+            entry["error"] = err[0][2].error[:200]
+        return entry
+
+    ops = [s.ops_per_second for _, _, s in ok]
+    lats = [s.latency_ms for _, _, s in ok]
+    bps_list = [s.bytes_per_second for _, _, s in ok if s.bytes_per_second is not None]
+
+    return {
+        "ops_per_second": round(statistics.mean(ops), 2),
+        "latency_ms": round(statistics.mean(lats), 4),
+        "bytes_per_second": (
+            round(statistics.mean(bps_list), 2) if bps_list else None
+        ),
+        "status": "ok",
+        "probeCount": len(ok),
+        "errorCount": len(err),
+        "minOpsPerSecond": round(min(ops), 2),
+        "maxOpsPerSecond": round(max(ops), 2),
+        "stddevOpsPerSecond": (
+            round(statistics.stdev(ops), 2) if len(ops) > 1 else 0.0
+        ),
+        "perNode": per_node,
+    }
 
 
 @dataclass
@@ -627,7 +697,27 @@ class ContinuousRedisProber(ContinuousProberBase):
 
 
 class ContinuousDiskProber(ContinuousProberBase):
-    """Runs disk I/O throughput benchmarks in a background thread during chaos.
+    """Runs disk I/O benchmarks from one probe pod per cluster node.
+
+    Placement strategies (colocate, spread, adversarial, …) distribute
+    workload across nodes differently, so a single probe pod cannot
+    distinguish them: if the chaos-target pod lands on a different node
+    than the probe, the probe sees no effect regardless of strategy.
+
+    At ``start()`` the prober discovers one writable probe pod per
+    distinct node and remembers (pod, node, path) for each.  Each tick
+    then runs ``dd`` in parallel across all per-node probe pods and
+    records:
+
+    * a tick-level aggregate (mean across nodes) in the
+      ``ops_per_second`` / ``latency_ms`` / ``bytes_per_second`` fields;
+    * ``probeCount``, ``errorCount``, ``stddevOpsPerSecond``,
+      ``minOpsPerSecond`` and ``maxOpsPerSecond`` describing the
+      cross-node distribution;
+    * a ``perNode`` map with the full per-node sample.
+
+    The *disk_target* argument only acts as a hint for the
+    first-probe-pod preference.
 
     Usage::
 
@@ -637,6 +727,8 @@ class ContinuousDiskProber(ContinuousProberBase):
         prober.stop()
         data = prober.result()
     """
+
+    _CANDIDATE_DIRS = ("/tmp", "/data", "/var/tmp")
 
     def __init__(
         self,
@@ -652,31 +744,60 @@ class ContinuousDiskProber(ContinuousProberBase):
         self._disk_target = disk_target
         self._block_size_kb = block_size_kb
         self._block_count = block_count
-        self._disk_path: str = "/tmp/chaosprobe_disktest"
         self._exclude_services: List[str] = list(exclude_services or [])
+        # [(pod_name, node_name, writable_path), ...]
+        self._probe_points: List[tuple] = []
 
     def start(self) -> None:
-        """Start with a pre-flight disk I/O check.
-
-        Tries multiple writable directories (``/tmp``, ``/data``,
-        ``/var/tmp``) to handle pods with read-only root filesystems
-        (e.g. redis-cart on Alpine).  Falls back to different pods if
-        the primary target can't write anywhere.
-        """
-        _CANDIDATE_DIRS = ["/tmp", "/data", "/var/tmp"]
-        pod = self._prober._find_exec_pod(
-            self._disk_target, exclude_services=self._exclude_services,
+        """Discover one writable probe pod per node and pre-flight each."""
+        candidates = find_probe_pods_per_node(
+            self._prober.core_api,
+            self._prober.namespace,
+            require_python3=False,
+            exclude_prefixes=self._exclude_services,
         )
-        if not pod:
+
+        if not candidates:
             logger.warning(
-                "Disk prober: no exec-capable pod found for target %s",
-                self._disk_target,
+                "Disk prober: no ready pods found for per-node probing "
+                "(namespace=%s, excluded=%s)",
+                self._prober.namespace, self._exclude_services,
             )
             super().start()
             return
 
-        # Try multiple writable directories on the discovered pod
-        for d in _CANDIDATE_DIRS:
+        for pod, node in candidates:
+            path = self._find_writable_path(pod)
+            if path:
+                self._probe_points.append((pod, node, path))
+                logger.info(
+                    "Disk prober per-node probe OK: pod=%s node=%s path=%s",
+                    pod, node, path,
+                )
+            else:
+                logger.info(
+                    "Disk prober: no writable dir on pod %s (node %s) — skipping",
+                    pod, node,
+                )
+
+        if not self._probe_points:
+            logger.warning(
+                "Disk prober: none of %d per-node candidate pods had a "
+                "writable directory — all samples will be errors.",
+                len(candidates),
+            )
+        else:
+            logger.info(
+                "Disk prober probing %d node(s): %s",
+                len(self._probe_points),
+                ", ".join(f"{n}({p})" for p, n, _ in self._probe_points),
+            )
+
+        super().start()
+
+    def _find_writable_path(self, pod: str) -> Optional[str]:
+        """Return the first writable candidate directory on *pod*, or None."""
+        for d in self._CANDIDATE_DIRS:
             path = f"{d}/chaosprobe_disktest"
             resp = self._prober._exec_in_pod(
                 pod,
@@ -685,67 +806,8 @@ class ContinuousDiskProber(ContinuousProberBase):
                  f"&& echo OK || echo FAIL"],
             )
             if "OK" in resp:
-                self._disk_path = path
-                logger.info(
-                    "Disk prober pre-flight OK on pod %s (path: %s)",
-                    pod, path,
-                )
-                super().start()
-                return
-
-        # All dirs failed on this pod — try other pods in the namespace
-        try:
-            all_pods = self._prober.core_api.list_namespaced_pod(
-                self._prober.namespace,
-                field_selector="status.phase=Running",
-            )
-        except Exception:
-            all_pods = None
-
-        exclude = set(self._exclude_services)
-        if all_pods:
-            for p in all_pods.items:
-                labels = p.metadata.labels or {}
-                app = labels.get("app", "")
-                if app in exclude:
-                    continue
-                alt_pod = p.metadata.name
-                if alt_pod == pod:
-                    continue
-                if not (p.status.conditions and any(
-                    c.type == "Ready" and c.status == "True"
-                    for c in p.status.conditions
-                )):
-                    continue
-                resp = self._prober._exec_in_pod(
-                    alt_pod, ["sh", "-c", "echo ok"],
-                )
-                if "ok" not in resp:
-                    continue
-                for d in _CANDIDATE_DIRS:
-                    path = f"{d}/chaosprobe_disktest"
-                    resp = self._prober._exec_in_pod(
-                        alt_pod,
-                        ["sh", "-c",
-                         f"dd if=/dev/zero of={path} bs=1k count=1 2>&1 "
-                         f"&& echo OK || echo FAIL"],
-                    )
-                    if "OK" in resp:
-                        self._disk_path = path
-                        with self._prober._cache_lock:
-                            self._prober._exec_pod_cache[self._disk_target] = alt_pod
-                        logger.info(
-                            "Disk prober pre-flight OK on fallback pod %s (path: %s)",
-                            alt_pod, path,
-                        )
-                        super().start()
-                        return
-
-        logger.warning(
-            "Disk prober pre-flight FAILED: no writable directory found "
-            "on any candidate pod — disk samples will likely all be errors.",
-        )
-        super().start()
+                return path
+        return None
 
     def result(self) -> Dict[str, Any]:
         with self._lock:
@@ -755,6 +817,10 @@ class ContinuousDiskProber(ContinuousProberBase):
         data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
+            "probePoints": [
+                {"pod": p, "node": n, "path": path}
+                for p, n, path in self._probe_points
+            ],
             "config": {
                 "interval_s": self.interval,
                 "namespace": self.namespace,
@@ -768,61 +834,57 @@ class ContinuousDiskProber(ContinuousProberBase):
         return data
 
     def _probe_loop(self) -> None:
-        consecutive_errors = 0
         while not self._stop_event.is_set():
             try:
                 now = time.time()
                 phase = self._current_phase(now)
                 entry = self._make_entry(now, phase)
-                entry["disk"] = {}
-
-                results = self._prober.measure_disk_throughput(
-                    target_service=self._disk_target,
-                    samples=1,
-                    block_size_kb=self._block_size_kb,
-                    count=self._block_count,
-                    disk_path=self._disk_path,
-                    exclude_services=self._exclude_services,
-                )
-                all_ok = True
-                for r in results:
-                    if r.samples:
-                        s = r.samples[0]
-                        disk_entry: Dict[str, Any] = {
-                            "ops_per_second": s.ops_per_second if s.status == "ok" else None,
-                            "latency_ms": s.latency_ms if s.status == "ok" else None,
-                            "bytes_per_second": s.bytes_per_second if s.status == "ok" else None,
-                            "status": s.status,
-                        }
-                        if s.status != "ok" and s.error:
-                            disk_entry["error"] = s.error[:200]
-                        entry["disk"][r.operation] = disk_entry
-                        if s.status != "ok":
-                            all_ok = False
-
-                if all_ok:
-                    consecutive_errors = 0
-                else:
-                    consecutive_errors += 1
-
-                # If the cached pod keeps failing, invalidate the cache so
-                # the next probe cycle rediscovers a healthy pod.
-                if consecutive_errors >= 3:
-                    with self._prober._cache_lock:
-                        self._prober._exec_pod_cache.pop(self._disk_target, None)
-                    consecutive_errors = 0
+                entry["disk"] = self._run_all_probes()
 
                 with self._lock:
                     self._time_series.append(entry)
 
             except Exception as exc:
                 logger.warning("Disk probe failed: %s", exc)
-                consecutive_errors += 1
-                if consecutive_errors >= 3:
-                    with self._prober._cache_lock:
-                        self._prober._exec_pod_cache.pop(self._disk_target, None)
-                    consecutive_errors = 0
                 with self._lock:
                     self._probe_errors += 1
 
             self._stop_event.wait(timeout=self.interval)
+
+    def _run_all_probes(self) -> Dict[str, Any]:
+        """Run dd benchmarks on every per-node probe pod in parallel.
+
+        Returns ``{"write": <aggregate>, "read": <aggregate>}`` where each
+        aggregate contains the tick-level mean plus cross-node distribution
+        statistics and a per-node breakdown.
+        """
+        if not self._probe_points:
+            return {}
+
+        def _probe_one(pod: str, node: str, path: str) -> tuple:
+            w = self._prober._disk_benchmark(
+                pod, "write", self._block_size_kb, self._block_count, path,
+            )
+            r = self._prober._disk_benchmark(
+                pod, "read", self._block_size_kb, self._block_count, path,
+            )
+            return (pod, node, w, r)
+
+        results: List[tuple] = []
+        with ThreadPoolExecutor(max_workers=min(len(self._probe_points), 8)) as pool:
+            futs = [
+                pool.submit(_probe_one, p, n, path)
+                for p, n, path in self._probe_points
+            ]
+            for f in futs:
+                try:
+                    results.append(f.result())
+                except Exception as exc:
+                    logger.warning("per-pod disk probe raised: %s", exc)
+
+        write_samples = [(pod, node, w) for pod, node, w, _ in results]
+        read_samples = [(pod, node, r) for pod, node, _, r in results]
+        return {
+            "write": _aggregate_disk_samples(write_samples),
+            "read": _aggregate_disk_samples(read_samples),
+        }

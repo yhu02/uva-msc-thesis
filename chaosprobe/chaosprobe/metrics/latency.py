@@ -14,7 +14,6 @@ computes statistics (mean, median, p95, p99, min, max).
 
 import logging
 import statistics
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -22,14 +21,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from kubernetes import client
-from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
 from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.base import (
     ContinuousProberBase,
-    exec_in_pod,
     find_all_probe_pods,
+    find_all_probe_pods_with_node,
     find_probe_pod,
     find_ready_pod,
     pod_has_shell,
@@ -688,11 +686,112 @@ class LatencyProber:
             )
 
 
-class ContinuousLatencyProber(ContinuousProberBase):
-    """Runs latency probing in a background thread during chaos experiments.
+def _aggregate_latency_samples(
+    per_pod_samples: List[Tuple[str, str, LatencySample]],
+) -> Dict[str, Any]:
+    """Aggregate per-pod HTTP latency samples into a single tick-level record.
 
-    Takes periodic measurements and provides before/during/after comparison
-    data with per-route latency statistics.
+    Parameters
+    ----------
+    per_pod_samples:
+        ``[(pod_name, node_name, LatencySample), ...]`` — one sample per
+        probed pod.  Multiple pods per node are allowed and expected:
+        same-node pods can still take different network paths via
+        service load-balancing (kube-proxy/IPVS conntrack hash) and can
+        be subject to different per-pod network policies or sidecars.
+
+    Returns a dict whose flat fields (``latency_ms``, ``status``) provide
+    the tick-level aggregate (mean across all probed pods).
+    Cross-pod distribution fields (``probeCount``, ``stddevLatency_ms``,
+    ``minLatency_ms``, ``maxLatency_ms``) aggregate across all probes.
+    ``perPod`` carries raw per-pod results; ``perNode`` aggregates those
+    across same-node pods for placement analysis.
+    """
+    ok = [(p, n, s) for p, n, s in per_pod_samples if s.status == "ok"]
+    err = [(p, n, s) for p, n, s in per_pod_samples if s.status != "ok"]
+
+    per_pod: Dict[str, Dict[str, Any]] = {}
+    by_node: Dict[str, List[LatencySample]] = {}
+    for pod, node, s in per_pod_samples:
+        per_pod[pod] = {
+            "node": node,
+            "latency_ms": s.latency_ms if s.status == "ok" else None,
+            "status": s.status,
+        }
+        if s.status != "ok" and s.error:
+            per_pod[pod]["error"] = s.error[:200]
+        by_node.setdefault(node, []).append(s)
+
+    per_node: Dict[str, Dict[str, Any]] = {}
+    for node, samples in by_node.items():
+        ok_node = [s for s in samples if s.status == "ok"]
+        lats_node = [s.latency_ms for s in ok_node]
+        per_node[node] = {
+            "podCount": len(samples),
+            "okCount": len(ok_node),
+            "errorCount": len(samples) - len(ok_node),
+            "mean_ms": (
+                round(statistics.mean(lats_node), 2) if lats_node else None
+            ),
+            "stddev_ms": (
+                round(statistics.stdev(lats_node), 2)
+                if len(lats_node) > 1 else 0.0
+            ),
+        }
+
+    if not ok:
+        entry: Dict[str, Any] = {
+            "latency_ms": None,
+            "status": "error",
+            "probeCount": 0,
+            "errorCount": len(err),
+            "perPod": per_pod,
+            "perNode": per_node,
+        }
+        if err and err[0][2].error:
+            entry["error"] = err[0][2].error[:200]
+        return entry
+
+    lats = [s.latency_ms for _, _, s in ok]
+    return {
+        "latency_ms": round(statistics.mean(lats), 2),
+        "status": "ok",
+        "probeCount": len(ok),
+        "errorCount": len(err),
+        "minLatency_ms": round(min(lats), 2),
+        "maxLatency_ms": round(max(lats), 2),
+        "stddevLatency_ms": (
+            round(statistics.stdev(lats), 2) if len(lats) > 1 else 0.0
+        ),
+        "perPod": per_pod,
+        "perNode": per_node,
+    }
+
+
+class ContinuousLatencyProber(ContinuousProberBase):
+    """Runs HTTP latency probing from every eligible pod during chaos.
+
+    Each pod is an independent vantage point even when co-located on the
+    same node: service load-balancing (kube-proxy/IPVS conntrack hash)
+    can route same-node pods to different target endpoints, and per-pod
+    network policies or sidecars can shape traffic differently.
+    Probing every pod therefore gives more independent samples than
+    one-per-node and is the right granularity for the placement
+    analysis this prober supports.
+
+    At ``start()`` every ready pod with a shell (+ python3) is
+    discovered.  Each tick runs the HTTP probe in parallel from every
+    vantage point.  Per-tick records carry:
+
+    * ``latency_ms`` / ``status`` — flat aggregate fields (mean across
+      pods; ``status='ok'`` if any probe succeeded);
+    * ``probeCount`` / ``errorCount`` — how many vantage points
+      contributed / failed;
+    * ``minLatency_ms`` / ``maxLatency_ms`` / ``stddevLatency_ms`` —
+      cross-pod variance;
+    * ``perPod`` — raw per-pod samples keyed by pod name;
+    * ``perNode`` — same samples aggregated per scheduling node, for
+      placement analysis.
 
     Usage::
 
@@ -717,55 +816,45 @@ class ContinuousLatencyProber(ContinuousProberBase):
         self._prober = LatencyProber(
             namespace, timeout_seconds, exclude_prefixes=exclude_prefixes,
         )
-        self._cached_probe_pod: Optional[str] = None
+        # [(pod_name, node_name), ...] populated in start()
+        self._probe_points: List[Tuple[str, str]] = []
         self._expected_chaos_duration = expected_chaos_duration
 
     def start(self) -> None:
-        """Start continuous latency probing in background."""
-        # Resolve the probe pod once at start.  Try all candidate pods
-        # until one passes the pre-flight connectivity check.
-        candidates = self._prober._find_all_probe_pods()
-        if not candidates:
-            candidates = []
+        """Discover every eligible probe pod (all ready pods with python3)."""
+        self._probe_points = find_all_probe_pods_with_node(
+            self._prober.core_api,
+            self._prober.namespace,
+            require_python3=True,
+            exclude_prefixes=self._prober._exclude_prefixes,
+        )
+
+        if self._probe_points:
+            node_counts: Dict[str, int] = {}
+            for _pod, node in self._probe_points:
+                node_counts[node] = node_counts.get(node, 0) + 1
+            logger.info(
+                "Latency prober probing %d pod(s) across %d node(s): %s",
+                len(self._probe_points),
+                len(node_counts),
+                ", ".join(
+                    f"{n}({c} pods)" for n, c in sorted(node_counts.items())
+                ),
+            )
+        else:
+            # Fallback: keep at least one vantage point if discovery
+            # returned nothing (rare — e.g. every pod freshly-created).
             first = self._prober._find_probe_pod()
             if first:
-                candidates = [first]
-
-        if self._http_routes:
-            preflight_service = self._http_routes[0][0]
-            preflight_path = self._http_routes[0][1]
-        else:
-            preflight_service = "frontend"
-            preflight_path = "/_healthz"
-        test_url = f"http://{preflight_service}.{self.namespace}.svc.cluster.local{preflight_path}"
-
-        for pod in candidates:
-            sample = self._prober._measure_http_from_pod(
-                pod, test_url, "GET", preflight_path,
-            )
-            if sample.status == "ok":
-                self._cached_probe_pod = pod
-                logger.info(
-                    "Latency prober pre-flight OK: pod %s → %s (%.1fms)",
-                    pod, test_url, sample.latency_ms,
-                )
-                break
-            else:
-                logger.info(
-                    "Pre-flight failed from pod %s: %s — trying next candidate",
-                    pod, sample.error,
-                )
-
-        if not self._cached_probe_pod:
-            if candidates:
-                self._cached_probe_pod = candidates[0]
+                self._probe_points.append((first, "unknown"))
                 logger.warning(
-                    "Latency prober pre-flight FAILED from all %d candidate pods "
-                    "— using %s anyway. All latency samples will likely be errors.",
-                    len(candidates), self._cached_probe_pod,
+                    "Latency prober: no pods discovered — falling back to %s",
+                    first,
                 )
             else:
-                logger.warning("No probe pod found at start — will retry during probing")
+                logger.warning(
+                    "Latency prober: no probe pod found at start — will retry",
+                )
 
         super().start()
 
@@ -779,6 +868,9 @@ class ContinuousLatencyProber(ContinuousProberBase):
         data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
+            "probePoints": [
+                {"pod": p, "node": n} for p, n in self._probe_points
+            ],
             "config": {
                 "interval_s": self.interval,
                 "namespace": self.namespace,
@@ -790,55 +882,65 @@ class ContinuousLatencyProber(ContinuousProberBase):
 
     def _probe_loop(self) -> None:
         """Main probe loop running in the background."""
-        consecutive_failures = 0
         while not self._stop_event.is_set():
             try:
-                http_results = self._prober.measure_http_routes(
-                    samples=1,
-                    interval=0,
-                    parallel=True,
-                    probe_pod=self._cached_probe_pod,
-                    http_routes=self._http_routes,
-                )
                 now = time.time()
                 entry = self._make_entry(now, self._current_phase(now))
-                entry["routes"] = {}
-
-                for r in http_results:
-                    if r.samples:
-                        s = r.samples[0]
-                        entry["routes"][r.route] = {
-                            "latency_ms": s.latency_ms if s.status == "ok" else None,
-                            "status": s.status,
-                            "error": s.error,
-                        }
+                entry["routes"] = self._run_all_probes()
 
                 with self._lock:
                     self._time_series.append(entry)
-
-                # If no routes were collected, the cached pod may be stale
-                if not entry["routes"]:
-                    consecutive_failures += 1
-                    if consecutive_failures >= 2:
-                        new_pod = self._prober._find_probe_pod()
-                        if new_pod:
-                            self._cached_probe_pod = new_pod
-                            consecutive_failures = 0
-                else:
-                    consecutive_failures = 0
 
             except Exception as exc:
                 logger.warning("Latency probe failed: %s", exc)
                 with self._lock:
                     self._probe_errors += 1
-                consecutive_failures += 1
-                if consecutive_failures >= 2:
-                    new_pod = self._prober._find_probe_pod()
-                    if new_pod:
-                        self._cached_probe_pod = new_pod
-                        consecutive_failures = 0
 
             self._stop_event.wait(timeout=self.interval)
+
+    def _run_all_probes(self) -> Dict[str, Any]:
+        """Probe each route from every probe pod in parallel."""
+        if not self._probe_points or not self._http_routes:
+            return {}
+
+        # per_route_samples[route] = [(pod, node, LatencySample), ...]
+        per_route_samples: Dict[str, List[Tuple[str, str, LatencySample]]] = {
+            route: [] for _svc, route, _d, _m in self._http_routes
+        }
+
+        def _probe_one(
+            pod: str, node: str,
+        ) -> List[Tuple[str, str, LatencySample]]:
+            results: List[Tuple[str, str, LatencySample]] = []
+            for service, route, _desc, method in self._http_routes:
+                url = (
+                    f"http://{service}.{self.namespace}.svc.cluster.local{route}"
+                )
+                sample = self._prober._measure_http_from_pod(
+                    pod, url, method, route,
+                )
+                results.append((pod, node, sample))
+            return results
+
+        with ThreadPoolExecutor(max_workers=min(len(self._probe_points), 8)) as pool:
+            futs = [
+                pool.submit(_probe_one, pod, node)
+                for pod, node in self._probe_points
+            ]
+            for f in futs:
+                try:
+                    for pod, node, sample in f.result():
+                        per_route_samples.setdefault(sample.route, []).append(
+                            (pod, node, sample),
+                        )
+                except Exception as exc:
+                    logger.warning("per-pod latency probe raised: %s", exc)
+
+        return {
+            route: _aggregate_latency_samples(samples)
+            for route, samples in per_route_samples.items()
+            if samples
+        }
 
     def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Split time series into phases with per-route latency statistics."""
@@ -860,22 +962,32 @@ class ContinuousLatencyProber(ContinuousProberBase):
 
             route_latencies: Dict[str, List[float]] = {}
             route_errors: Dict[str, int] = {}
+            route_stddevs: Dict[str, List[float]] = {}
+            route_maxes: Dict[str, List[float]] = {}
 
             for entry in entries:
                 for route, data in entry.get("routes", {}).items():
                     route_latencies.setdefault(route, [])
                     route_errors.setdefault(route, 0)
+                    route_stddevs.setdefault(route, [])
+                    route_maxes.setdefault(route, [])
                     if data.get("latency_ms") is not None:
                         route_latencies[route].append(data["latency_ms"])
                     if data.get("status") != "ok":
                         route_errors[route] += 1
+                    # Capture per-tick cross-node spread so the phase summary
+                    # can surface "how different were the vantage points?"
+                    if data.get("stddevLatency_ms") is not None:
+                        route_stddevs[route].append(data["stddevLatency_ms"])
+                    if data.get("maxLatency_ms") is not None:
+                        route_maxes[route].append(data["maxLatency_ms"])
 
             routes_summary = {}
             for route, latencies in route_latencies.items():
                 if latencies:
                     sorted_lats = sorted(latencies)
                     p95_idx = min(int(len(sorted_lats) * 0.95), len(sorted_lats) - 1)
-                    routes_summary[route] = {
+                    summary = {
                         "mean_ms": round(statistics.mean(latencies), 2),
                         "median_ms": round(statistics.median(latencies), 2),
                         "p95_ms": round(sorted_lats[p95_idx], 2),
@@ -884,6 +996,17 @@ class ContinuousLatencyProber(ContinuousProberBase):
                         "sampleCount": len(latencies),
                         "errorCount": route_errors.get(route, 0),
                     }
+                    stddevs = route_stddevs.get(route, [])
+                    if stddevs:
+                        summary["meanCrossNodeStddev_ms"] = round(
+                            statistics.mean(stddevs), 2,
+                        )
+                    maxes = route_maxes.get(route, [])
+                    if maxes:
+                        summary["maxCrossNodeLatency_ms"] = round(
+                            max(maxes), 2,
+                        )
+                    routes_summary[route] = summary
                 else:
                     routes_summary[route] = {
                         "mean_ms": None,

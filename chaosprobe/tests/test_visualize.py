@@ -6,19 +6,21 @@ import pytest
 
 from chaosprobe.output.visualize import (
     generate_from_summary,
-    _strategy_colors,
-    _chart_resilience_scores,
-    _chart_recovery_times,
-    _chart_latency_by_strategy,
-    _chart_latency_degradation,
-    _extract_latency_data,
-    _chart_strategy_comparison_heatmap,
-    _chart_throughput_by_strategy,
-    _chart_throughput_degradation,
-    _extract_throughput_data,
-    _extract_prometheus_data,
-    _chart_prometheus_by_phase,
     _generate_html_summary,
+)
+from chaosprobe.output.charts import (
+    strategy_colors,
+    chart_resilience_scores,
+    chart_recovery_times,
+    chart_latency_by_strategy,
+    chart_latency_degradation,
+    extract_latency_data,
+    chart_strategy_comparison_heatmap,
+    chart_throughput_by_strategy,
+    chart_throughput_degradation,
+    extract_throughput_data,
+    extract_prometheus_data,
+    chart_prometheus_by_phase,
 )
 
 
@@ -28,14 +30,14 @@ pytest.importorskip("matplotlib")
 
 class TestStrategyColors:
     def test_known_strategies(self):
-        colors = _strategy_colors(["default", "colocate", "spread"])
+        colors = strategy_colors(["default", "colocate", "spread"])
         assert len(colors) == 3
         assert colors[0] == "#2196F3"  # default
         assert colors[1] == "#F44336"  # colocate
         assert colors[2] == "#4CAF50"  # spread
 
     def test_unknown_strategies(self):
-        colors = _strategy_colors(["custom1", "custom2"])
+        colors = strategy_colors(["custom1", "custom2"])
         assert len(colors) == 2
 
 
@@ -73,24 +75,24 @@ class TestChartGeneration:
         }
 
     def test_resilience_scores_chart(self, strategies, tmp_path):
-        path = _chart_resilience_scores(strategies, tmp_path)
+        path = chart_resilience_scores(strategies, tmp_path)
         assert path is not None
         assert os.path.exists(path)
         assert path.endswith(".png")
 
     def test_recovery_times_chart(self, strategies, tmp_path):
-        path = _chart_recovery_times(strategies, tmp_path)
+        path = chart_recovery_times(strategies, tmp_path)
         assert path is not None
         assert os.path.exists(path)
 
     def test_resilience_scores_empty(self, tmp_path):
-        path = _chart_resilience_scores(
+        path = chart_resilience_scores(
             {"baseline": {"avgResilienceScore": 0}}, tmp_path
         )
         assert path is None
 
     def test_recovery_times_no_data(self, tmp_path):
-        path = _chart_recovery_times(
+        path = chart_recovery_times(
             {"baseline": {"avgMeanRecovery_ms": None}}, tmp_path
         )
         assert path is None
@@ -234,19 +236,19 @@ class TestLatencyCharts:
         }
 
     def test_chart_latency_by_strategy(self, latency_by_strategy, tmp_path):
-        path = _chart_latency_by_strategy(latency_by_strategy, tmp_path)
+        path = chart_latency_by_strategy(latency_by_strategy, tmp_path)
         assert path is not None
         assert os.path.exists(path)
         assert path.endswith("latency_by_strategy.png")
 
     def test_chart_latency_degradation(self, latency_by_strategy, tmp_path):
-        path = _chart_latency_degradation(latency_by_strategy, tmp_path)
+        path = chart_latency_degradation(latency_by_strategy, tmp_path)
         assert path is not None
         assert os.path.exists(path)
         assert path.endswith("latency_degradation.png")
 
     def test_chart_latency_by_strategy_no_data(self, tmp_path):
-        path = _chart_latency_by_strategy({}, tmp_path)
+        path = chart_latency_by_strategy({}, tmp_path)
         assert path is None
 
     def test_chart_latency_degradation_no_pre_chaos(self, tmp_path):
@@ -260,7 +262,7 @@ class TestLatencyCharts:
                 },
             },
         }
-        path = _chart_latency_degradation(data, tmp_path)
+        path = chart_latency_degradation(data, tmp_path)
         assert path is None
 
     def test_html_summary_with_latency(self, latency_by_strategy, tmp_path):
@@ -294,7 +296,7 @@ class TestLatencyCharts:
                 },
             },
         }
-        result = _extract_latency_data(raw)
+        result = extract_latency_data(raw)
         assert "baseline" in result
         assert result["baseline"]["phases"]["during-chaos"]["routes"]["/"]["mean_ms"] == 100
 
@@ -307,11 +309,11 @@ class TestLatencyCharts:
                 ],
             },
         }
-        result = _extract_latency_data(raw)
+        result = extract_latency_data(raw)
         assert "spread" in result
 
     def test_extract_latency_data_empty(self):
-        result = _extract_latency_data({"baseline": {"metrics": {}}})
+        result = extract_latency_data({"baseline": {"metrics": {}}})
         assert result == {}
 
 
@@ -374,19 +376,19 @@ class TestThroughputCharts:
         }
 
     def test_chart_throughput_by_strategy(self, throughput_by_strategy, tmp_path):
-        path = _chart_throughput_by_strategy(throughput_by_strategy, tmp_path)
+        path = chart_throughput_by_strategy(throughput_by_strategy, tmp_path)
         assert path is not None
         assert os.path.exists(path)
         assert path.endswith("throughput_by_strategy.png")
 
     def test_chart_throughput_degradation(self, throughput_by_strategy, tmp_path):
-        path = _chart_throughput_degradation(throughput_by_strategy, tmp_path)
+        path = chart_throughput_degradation(throughput_by_strategy, tmp_path)
         assert path is not None
         assert os.path.exists(path)
         assert path.endswith("throughput_degradation.png")
 
     def test_chart_throughput_by_strategy_no_data(self, tmp_path):
-        path = _chart_throughput_by_strategy({}, tmp_path)
+        path = chart_throughput_by_strategy({}, tmp_path)
         assert path is None
 
     def test_chart_throughput_degradation_no_pre_chaos(self, tmp_path):
@@ -400,7 +402,7 @@ class TestThroughputCharts:
                 },
             },
         }
-        path = _chart_throughput_degradation(data, tmp_path)
+        path = chart_throughput_degradation(data, tmp_path)
         assert path is None
 
     def test_html_summary_with_throughput(self, throughput_by_strategy, tmp_path):
@@ -433,7 +435,7 @@ class TestThroughputCharts:
                 },
             },
         }
-        result = _extract_throughput_data(raw)
+        result = extract_throughput_data(raw)
         assert "baseline" in result
 
     def test_extract_throughput_data_iterations(self):
@@ -445,11 +447,11 @@ class TestThroughputCharts:
                 ],
             },
         }
-        result = _extract_throughput_data(raw)
+        result = extract_throughput_data(raw)
         assert "spread" in result
 
     def test_extract_throughput_data_empty(self):
-        result = _extract_throughput_data({"baseline": {"metrics": {}}})
+        result = extract_throughput_data({"baseline": {"metrics": {}}})
         assert result == {}
 
 
@@ -470,7 +472,7 @@ class TestPrometheusVisualization:
                 },
             },
         }
-        result = _extract_prometheus_data(raw)
+        result = extract_prometheus_data(raw)
         assert "baseline" in result
         assert result["baseline"]["available"] is True
 
@@ -486,7 +488,7 @@ class TestPrometheusVisualization:
                 ],
             },
         }
-        result = _extract_prometheus_data(raw)
+        result = extract_prometheus_data(raw)
         assert "colocate" in result
 
     def test_extract_prometheus_data_not_available(self):
@@ -497,11 +499,11 @@ class TestPrometheusVisualization:
                 },
             },
         }
-        result = _extract_prometheus_data(raw)
+        result = extract_prometheus_data(raw)
         assert result == {}
 
     def test_extract_prometheus_data_empty(self):
-        result = _extract_prometheus_data({"baseline": {"metrics": {}}})
+        result = extract_prometheus_data({"baseline": {"metrics": {}}})
         assert result == {}
 
     def test_chart_prometheus_by_phase(self, tmp_path):
@@ -524,13 +526,13 @@ class TestPrometheusVisualization:
                 },
             },
         }
-        path = _chart_prometheus_by_phase(data, tmp_path)
+        path = chart_prometheus_by_phase(data, tmp_path)
         assert path is not None
         assert os.path.exists(path)
         assert path.endswith("prometheus_by_phase.png")
 
     def test_chart_prometheus_by_phase_empty(self, tmp_path):
-        path = _chart_prometheus_by_phase({}, tmp_path)
+        path = chart_prometheus_by_phase({}, tmp_path)
         assert path is None
 
     def test_html_includes_prometheus_section(self, tmp_path):
@@ -584,7 +586,7 @@ class TestStrategyComparisonHeatmap:
         }
 
     def test_heatmap_generated(self, strategies, tmp_path):
-        path = _chart_strategy_comparison_heatmap(strategies, tmp_path)
+        path = chart_strategy_comparison_heatmap(strategies, tmp_path)
         assert path is not None
         assert os.path.exists(path)
         assert path.endswith("strategy_comparison_heatmap.png")
@@ -630,7 +632,7 @@ class TestStrategyComparisonHeatmap:
                 },
             },
         }
-        path = _chart_strategy_comparison_heatmap(
+        path = chart_strategy_comparison_heatmap(
             strategies, tmp_path,
             latency_data=latency_data,
             throughput_data=throughput_data,
@@ -640,7 +642,7 @@ class TestStrategyComparisonHeatmap:
         assert os.path.exists(path)
 
     def test_heatmap_single_strategy_returns_none(self, tmp_path):
-        path = _chart_strategy_comparison_heatmap(
+        path = chart_strategy_comparison_heatmap(
             {"colocate": {"avgResilienceScore": 50}}, tmp_path
         )
         assert path is None
@@ -648,7 +650,7 @@ class TestStrategyComparisonHeatmap:
     def test_heatmap_no_data_returns_none(self, tmp_path):
         # Two strategies but all values are None — only resilience has data
         # (which is enough for 1 column, but need >= 2)
-        path = _chart_strategy_comparison_heatmap(
+        path = chart_strategy_comparison_heatmap(
             {
                 "a": {"avgResilienceScore": 0},
                 "b": {"avgResilienceScore": 0},

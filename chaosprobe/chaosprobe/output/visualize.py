@@ -20,21 +20,20 @@ except ImportError:
     HAS_MATPLOTLIB = False
 
 from chaosprobe.output.charts import (  # noqa: E402
-    chart_latency_by_strategy as _chart_latency_by_strategy,
-    chart_latency_degradation as _chart_latency_degradation,
-    chart_prometheus_by_phase as _chart_prometheus_by_phase,
-    chart_recovery_times as _chart_recovery_times,
-    chart_resilience_scores as _chart_resilience_scores,
-    chart_resource_by_phase as _chart_resource_by_phase,
-    chart_resource_utilization as _chart_resource_utilization,
-    chart_strategy_comparison_heatmap as _chart_strategy_comparison_heatmap,
-    chart_throughput_by_strategy as _chart_throughput_by_strategy,
-    chart_throughput_degradation as _chart_throughput_degradation,
-    extract_latency_data as _extract_latency_data,
-    extract_prometheus_data as _extract_prometheus_data,
-    extract_resource_data as _extract_resource_data,
-    extract_throughput_data as _extract_throughput_data,
-    strategy_colors as _strategy_colors,
+    chart_latency_by_strategy,
+    chart_latency_degradation,
+    chart_prometheus_by_phase,
+    chart_recovery_times,
+    chart_resilience_scores,
+    chart_resource_by_phase,
+    chart_resource_utilization,
+    chart_strategy_comparison_heatmap,
+    chart_throughput_by_strategy,
+    chart_throughput_degradation,
+    extract_latency_data,
+    extract_prometheus_data,
+    extract_resource_data,
+    extract_throughput_data,
 )
 
 
@@ -115,7 +114,7 @@ def generate_from_dict(
         # but in metrics.recovery.summary for single-iteration runs.
         rec_summary = (sdata.get("metrics") or {}).get("recovery", {}).get("summary", {})
 
-        # Compute stddev/min/max from iterations if not in aggregated (backwards compat)
+        # Compute stddev/min/max from iterations
         iter_scores = [it.get("resilienceScore", 0) for it in sdata.get("iterations", [])]
         if iter_scores and len(iter_scores) > 1:
             import statistics as _stats
@@ -175,56 +174,56 @@ def generate_from_dict(
                 if mean_rec is not None:
                     iteration_data[name]["recoveryTimes"].append(mean_rec)
 
-    path = _chart_resilience_scores(strategies, output_path, iteration_data)
+    path = chart_resilience_scores(strategies, output_path, iteration_data)
     if path:
         generated.append(path)
 
-    path = _chart_recovery_times(strategies, output_path, iteration_data)
+    path = chart_recovery_times(strategies, output_path, iteration_data)
     if path:
         generated.append(path)
 
     # Generate latency charts from per-strategy latency data
-    latency_by_strategy = _extract_latency_data(raw_strategies)
+    latency_by_strategy = extract_latency_data(raw_strategies)
     if latency_by_strategy:
-        path = _chart_latency_by_strategy(latency_by_strategy, output_path)
+        path = chart_latency_by_strategy(latency_by_strategy, output_path)
         if path:
             generated.append(path)
 
-        path = _chart_latency_degradation(latency_by_strategy, output_path)
+        path = chart_latency_degradation(latency_by_strategy, output_path)
         if path:
             generated.append(path)
 
     # Generate throughput charts from per-strategy throughput data
-    throughput_by_strategy = _extract_throughput_data(raw_strategies)
+    throughput_by_strategy = extract_throughput_data(raw_strategies)
     if throughput_by_strategy:
-        path = _chart_throughput_by_strategy(throughput_by_strategy, output_path)
+        path = chart_throughput_by_strategy(throughput_by_strategy, output_path)
         if path:
             generated.append(path)
 
-        path = _chart_throughput_degradation(throughput_by_strategy, output_path)
+        path = chart_throughput_degradation(throughput_by_strategy, output_path)
         if path:
             generated.append(path)
 
     # Generate resource utilization charts from per-strategy resource data
-    resource_by_strategy = _extract_resource_data(raw_strategies)
+    resource_by_strategy = extract_resource_data(raw_strategies)
     if resource_by_strategy:
-        path = _chart_resource_utilization(resource_by_strategy, output_path)
+        path = chart_resource_utilization(resource_by_strategy, output_path)
         if path:
             generated.append(path)
 
-        path = _chart_resource_by_phase(resource_by_strategy, output_path)
+        path = chart_resource_by_phase(resource_by_strategy, output_path)
         if path:
             generated.append(path)
 
     # Generate Prometheus metrics charts from per-strategy data
-    prometheus_by_strategy = _extract_prometheus_data(raw_strategies)
+    prometheus_by_strategy = extract_prometheus_data(raw_strategies)
     if prometheus_by_strategy:
-        path = _chart_prometheus_by_phase(prometheus_by_strategy, output_path)
+        path = chart_prometheus_by_phase(prometheus_by_strategy, output_path)
         if path:
             generated.append(path)
 
     # Strategy comparison heatmap — all thesis dimensions in one chart
-    path = _chart_strategy_comparison_heatmap(
+    path = chart_strategy_comparison_heatmap(
         strategies, output_path,
         latency_data=latency_by_strategy,
         throughput_data=throughput_by_strategy,
@@ -291,19 +290,19 @@ def _build_hypothesis_evaluation(
         # Overlap margin: mean of both stddevs (at least 5 to handle zero-variance)
         margin = max(5.0, (colocate_sd + worst_sd) / 2)
 
-        # Check CPU contention
+        # Check CPU contention (used nodes only)
         colocate_cpu = ""
         if resource_data and "colocate" in resource_data:
-            cpu = resource_data["colocate"].get("phases", {}).get(
+            during_phase = resource_data["colocate"].get("phases", {}).get(
                 "during-chaos", {}
-            ).get("node", {}).get("meanCpu_percent")
+            )
+            cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
             if cpu is not None:
                 other_cpus = []
                 for s, rd in resource_data.items():
                     if s not in ("colocate", "baseline"):
-                        oc = rd.get("phases", {}).get("during-chaos", {}).get(
-                            "node", {}
-                        ).get("meanCpu_percent")
+                        od = rd.get("phases", {}).get("during-chaos", {})
+                        oc = od.get("usedNode", {}).get("meanCpu_percent")
                         if oc is not None:
                             other_cpus.append(oc)
                 avg_other = sum(other_cpus) / len(other_cpus) if other_cpus else 0
@@ -559,11 +558,15 @@ def _generate_html_summary(
                 post_mean = post.get(route, {}).get("mean_ms")
                 during_p95 = during.get(route, {}).get("p95_ms")
                 during_errs = during.get(route, {}).get("errorCount", 0)
+                during_xnode = during.get(route, {}).get("meanCrossNodeStddev_ms")
+                during_peak = during.get(route, {}).get("maxCrossNodeLatency_ms")
 
                 pre_str = f"{pre_mean:.1f}" if pre_mean is not None else "n/a"
                 during_str = f"{during_mean:.1f}" if during_mean is not None else "n/a"
                 post_str = f"{post_mean:.1f}" if post_mean is not None else "n/a"
                 p95_str = f"{during_p95:.1f}" if during_p95 is not None else "n/a"
+                xnode_str = f"{during_xnode:.1f}" if during_xnode is not None else "n/a"
+                peak_str = f"{during_peak:.1f}" if during_peak is not None else "n/a"
 
                 # Highlight degradation
                 degradation = ""
@@ -578,6 +581,8 @@ def _generate_html_summary(
                 <td>{pre_str}</td>
                 <td>{during_str}{degradation}</td>
                 <td>{p95_str}</td>
+                <td>{xnode_str}</td>
+                <td>{peak_str}</td>
                 <td>{post_str}</td>
                 <td>{during_errs}</td>
             </tr>"""
@@ -591,6 +596,8 @@ def _generate_html_summary(
             <th>Pre-Chaos Mean (ms)</th>
             <th>During Chaos Mean (ms)</th>
             <th>During Chaos P95 (ms)</th>
+            <th title="Mean cross-pod stddev during chaos — higher means vantage points disagreed more, a placement-sensitivity signal">During Chaos Cross-Pod Stddev (ms)</th>
+            <th title="Highest single-pod mean latency observed during chaos">Worst Vantage Point (ms)</th>
             <th>Post-Chaos Mean (ms)</th>
             <th>Errors During Chaos</th>
         </tr>
@@ -618,6 +625,12 @@ def _generate_html_summary(
                     post_ops = post.get(target, {}).get(op, {}).get("meanOpsPerSecond")
                     during_lat = during.get(target, {}).get(op, {}).get("meanLatency_ms")
                     during_bps = during.get(target, {}).get(op, {}).get("meanBytesPerSecond")
+                    during_xnode = (
+                        during.get(target, {}).get(op, {}).get("meanCrossNodeStddevOpsPerSecond")
+                    )
+                    during_worst = (
+                        during.get(target, {}).get(op, {}).get("worstMinOpsPerSecond")
+                    )
 
                     pre_str = f"{pre_ops:.1f}" if pre_ops is not None else "n/a"
                     during_str = f"{during_ops:.1f}" if during_ops is not None else "n/a"
@@ -626,6 +639,8 @@ def _generate_html_summary(
                     bps_str = (
                         f"{during_bps / 1024 / 1024:.1f} MB/s" if during_bps is not None else "n/a"
                     )
+                    xnode_str = f"{during_xnode:.1f}" if during_xnode is not None else "n/a"
+                    worst_str = f"{during_worst:.1f}" if during_worst is not None else "n/a"
 
                     degradation = ""
                     if pre_ops and during_ops and during_ops < pre_ops * 0.7:
@@ -640,6 +655,8 @@ def _generate_html_summary(
                 <td>{during_str}{degradation}</td>
                 <td>{lat_str}</td>
                 <td>{bps_str}</td>
+                <td>{xnode_str}</td>
+                <td>{worst_str}</td>
                 <td>{post_str}</td>
             </tr>"""
 
@@ -653,6 +670,8 @@ def _generate_html_summary(
             <th>During Chaos Ops/s</th>
             <th>During Chaos Latency (ms)</th>
             <th>During Chaos Bandwidth</th>
+            <th title="Mean cross-node stddev of ops/s during chaos — higher means nodes diverged, a placement-sensitivity signal (disk only; redis is a single service)">During Chaos Cross-Node Stddev (ops/s)</th>
+            <th title="Worst single-node min ops/s observed during chaos">Worst Node Min (ops/s)</th>
             <th>Post-Chaos Ops/s</th>
         </tr>
         {throughput_rows}
@@ -663,34 +682,58 @@ def _generate_html_summary(
         resource_rows = ""
         for strat_name in sorted(resource_data.keys()):
             phases = resource_data[strat_name].get("phases", {})
+            used_nodes = resource_data[strat_name].get("usedNodeNames", [])
+            node_label = f" ({len(used_nodes)} used)" if used_nodes else ""
             for phase_name in ("pre-chaos", "during-chaos", "post-chaos"):
-                nd = phases.get(phase_name, {}).get("node", {})
+                phase_data = phases.get(phase_name, {})
+                nd = phase_data.get("usedNode", {})
                 cpu = nd.get("meanCpu_percent")
                 mem = nd.get("meanMemory_percent")
+                cpu_sd = nd.get("stddevCpu_percent")
+                mem_sd = nd.get("stddevMemory_percent")
+                peak_cpu = nd.get("peakNodeCpu_percent")
+                peak_mem = nd.get("peakNodeMemory_percent")
                 cpu_str = f"{cpu:.1f}" if cpu is not None else "n/a"
                 mem_str = f"{mem:.1f}" if mem is not None else "n/a"
+                cpu_sd_str = f"{cpu_sd:.1f}" if cpu_sd is not None else "n/a"
+                mem_sd_str = f"{mem_sd:.1f}" if mem_sd is not None else "n/a"
+                peak_cpu_str = f"{peak_cpu:.1f}" if peak_cpu is not None else "n/a"
+                peak_mem_str = f"{peak_mem:.1f}" if peak_mem is not None else "n/a"
                 samples = phases.get(phase_name, {}).get("sampleCount", 0)
                 resource_rows += f"""
             <tr>
-                <td>{strat_name}</td>
+                <td>{strat_name}{node_label}</td>
                 <td>{phase_name}</td>
                 <td>{cpu_str}</td>
+                <td>{cpu_sd_str}</td>
+                <td>{peak_cpu_str}</td>
                 <td>{mem_str}</td>
+                <td>{mem_sd_str}</td>
+                <td>{peak_mem_str}</td>
                 <td>{samples}</td>
             </tr>"""
 
         resource_section = f"""
-    <h2>Node Resource Utilization</h2>
+    <h2>Node Resource Utilization (Used Nodes Only)</h2>
     <table>
         <tr>
             <th>Strategy</th>
             <th>Phase</th>
             <th>Mean CPU (%)</th>
+            <th title="Stddev of CPU% across used nodes — higher means load concentrated on fewer nodes (colocate-like); lower means even spread">CPU Stddev (%)</th>
+            <th title="Hottest used node CPU% observed during the phase">Peak Node CPU (%)</th>
             <th>Mean Memory (%)</th>
+            <th title="Stddev of Memory% across used nodes">Mem Stddev (%)</th>
+            <th title="Hottest used node Memory% observed during the phase">Peak Node Mem (%)</th>
             <th>Samples</th>
         </tr>
         {resource_rows}
-    </table>"""
+    </table>
+    <p style="color:#666; font-size:0.85em; margin-top:8px;">
+        <strong>Note:</strong> Metrics are computed only for nodes that host at least one
+        namespace pod. Idle nodes are excluded so placement strategies (colocate vs spread)
+        produce visibly different resource profiles.
+    </p>"""
 
     prometheus_section = ""
     if prometheus_data:
@@ -814,6 +857,20 @@ def _generate_html_summary(
                       box-shadow: 0 2px 6px rgba(0,0,0,0.08); }}
         .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd;
                    color: #888; font-size: 0.9em; }}
+        .appendix {{ background: white; border-radius: 8px; padding: 20px 25px; margin: 20px 0;
+                     box-shadow: 0 2px 6px rgba(0,0,0,0.08); }}
+        .appendix details {{ margin: 12px 0; }}
+        .appendix summary {{ cursor: pointer; font-weight: 600; color: #1a1a2e; padding: 8px 0;
+                             font-size: 1.05em; }}
+        .appendix summary:hover {{ color: #0096D6; }}
+        .appendix code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px;
+                          font-size: 0.9em; }}
+        .appendix .formula {{ background: #f8f9fa; border-left: 3px solid #0096D6;
+                              padding: 10px 15px; margin: 10px 0; font-family: monospace;
+                              font-size: 0.95em; border-radius: 0 4px 4px 0; }}
+        .appendix ul {{ margin: 6px 0; padding-left: 24px; }}
+        .appendix li {{ margin: 4px 0; }}
+        .appendix p {{ margin: 8px 0; line-height: 1.5; }}
     </style>
 </head>
 <body>
@@ -897,6 +954,8 @@ def _generate_html_summary(
     <h2>Dimension 3 — Resource Utilization</h2>
     <div class="dimension">
         <p>Node-level CPU and memory utilization from the Kubernetes Metrics API.
+        Only nodes hosting namespace pods are included — idle nodes are excluded
+        so placement strategies produce distinct resource profiles.
         Higher utilization during chaos correlates with resource contention from co-location.</p>
         {resource_section}
         <div class="section-charts">{_img_tags_for("resources")}</div>
@@ -919,6 +978,193 @@ def _generate_html_summary(
         collected via PromQL. These metrics supplement the primary four dimensions.</p>
         {prometheus_section}
         <div class="section-charts">{_img_tags_for("prometheus")}</div>
+    </div>
+
+    <!-- ═══ Appendix: Methodology ═══ -->
+    <h2>Appendix — Methodology</h2>
+    <div class="appendix">
+        <p>This appendix documents how each metric in this report is calculated.
+        All formulas reference the actual implementation in the ChaosProbe source code.</p>
+
+        <details>
+            <summary>A.1 — Phase Classification</summary>
+            <p>Every continuous prober classifies each sample into one of three phases
+            based on chaos lifecycle timestamps:</p>
+            <ul>
+                <li><strong>pre-chaos</strong> — before <code>mark_chaos_start()</code> is called</li>
+                <li><strong>during-chaos</strong> — from chaos start until chaos end (or timeout)</li>
+                <li><strong>post-chaos</strong> — after <code>mark_chaos_end()</code> is called</li>
+            </ul>
+            <p>If the chaos engine does not report an end time, a safety cap prevents
+            the during-chaos window from growing indefinitely:</p>
+            <div class="formula">
+                buffer = clamp(expected_duration &times; 0.15, min=15s, max=30s)<br>
+                if elapsed &ge; expected_duration + buffer &rarr; post-chaos
+            </div>
+            <p>This dynamic buffer scales with experiment duration while remaining bounded,
+            giving enough time to capture immediate post-fault recovery behaviour in
+            the during-chaos window.</p>
+        </details>
+
+        <details>
+            <summary>A.2 — Resilience Score</summary>
+            <p>The resilience score (0&ndash;100) is derived from LitmusChaos probe verdicts.
+            Each experiment has a <code>probeSuccessPercentage</code> (the fraction of
+            probes that passed). The final score is a weighted average across all experiments:</p>
+            <div class="formula">
+                score = &sum;(w<sub>i</sub> &times; probeSuccessPercentage<sub>i</sub>) / &sum;(w<sub>i</sub>)
+            </div>
+            <p>By default all experiments have equal weight (w=1). The report note
+            describes how continuous metrics (recovery speed, latency, error rate,
+            throughput) contribute to differentiation beyond probe verdicts alone.</p>
+        </details>
+
+        <details>
+            <summary>A.3 — Recovery Time</summary>
+            <p>Measured via the Kubernetes Watch API by observing real-time pod lifecycle events.
+            A <strong>recovery cycle</strong> is defined as:</p>
+            <div class="formula">
+                Pod DELETED &rarr; new Pod Scheduled &rarr; new Pod Ready
+            </div>
+            <p>Each cycle records three durations:</p>
+            <ul>
+                <li><code>deletionToScheduled_ms</code> — time from deletion event to the replacement pod being scheduled</li>
+                <li><code>scheduledToReady_ms</code> — time from scheduling to the pod reaching Ready status</li>
+                <li><code>totalRecovery_ms</code> — end-to-end: deletion to Ready</li>
+            </ul>
+            <p>Summary statistics across all cycles in a run:</p>
+            <div class="formula">
+                mean, median, min, max, P95 (all in milliseconds)
+            </div>
+            <p>P95 is computed as <code>sorted_values[floor(n &times; 0.95)]</code>.</p>
+        </details>
+
+        <details>
+            <summary>A.4 — Inter-Service Latency</summary>
+            <p>Latency is measured by executing HTTP requests from inside the cluster via
+            <code>kubectl exec</code>, using python3 (preferred) or wget as a fallback.
+            Each target pod is probed independently as a separate <em>vantage point</em>.</p>
+
+            <p><strong>Per-route summary</strong> (computed over successful samples only):</p>
+            <div class="formula">
+                mean = &sum;(latency<sub>i</sub>) / n<br>
+                median = middle value of sorted latencies<br>
+                P95 = sorted[floor(n &times; 0.95)]<br>
+                P99 = sorted[floor(n &times; 0.99)]<br>
+                stddev = sample standard deviation (0 if n=1)
+            </div>
+
+            <p><strong>Error rate</strong>:</p>
+            <div class="formula">
+                errorRate = error_count / total_samples
+            </div>
+
+            <p><strong>Cross-pod standard deviation</strong> (placement signal):</p>
+            <div class="formula">
+                For each sampling tick, compute stddev across all pod vantage points.<br>
+                meanCrossNodeStddev = mean(per-tick stddevs) over the phase
+            </div>
+            <p>A higher cross-pod stddev indicates that different pods experienced
+            different latencies, which is a signal of placement-dependent behaviour
+            (e.g., one pod shares a node with the fault target while another does not).</p>
+
+            <p><strong>Worst vantage point</strong>:</p>
+            <div class="formula">
+                maxCrossNodeLatency = max(per-tick max latency) over the phase
+            </div>
+        </details>
+
+        <details>
+            <summary>A.5 — Resource Utilization</summary>
+            <p>Node-level CPU and memory metrics are fetched from the Kubernetes Metrics API
+            (<code>metrics.k8s.io/v1beta1</code>) every sampling interval.</p>
+
+            <p><strong>Used-nodes-only filtering</strong>: only nodes hosting at least one
+            running pod in the target namespace are included. This prevents idle nodes
+            from diluting placement-specific signals. For example, <em>colocate</em>
+            concentrates all pods on a single node &mdash; averaging CPU across 3 cluster
+            nodes would show ~30% instead of the actual ~80% on that node.</p>
+
+            <p><strong>Per-tick aggregate</strong> (across used nodes):</p>
+            <div class="formula">
+                cpu_millicores = &sum;(node CPU millicores)<br>
+                memory_bytes = &sum;(node memory bytes)<br>
+                cpu_percent = mean(node CPU %) &mdash; average utilization across used nodes<br>
+                memory_percent = mean(node memory %)
+            </div>
+
+            <p><strong>Phase summary</strong>:</p>
+            <div class="formula">
+                meanCpu_percent = mean(per-tick cpu_percent) over phase<br>
+                stddevCpu_percent = stdev(per-tick cpu_percent) over phase<br>
+                peakNodeCpu_percent = max(per-tick cpu_percent) over phase
+            </div>
+            <p>The same pattern applies to memory metrics. Standard deviation across ticks
+            indicates variability; peak shows the worst-case node pressure observed.</p>
+        </details>
+
+        <details>
+            <summary>A.6 — I/O Throughput</summary>
+            <p>Two I/O subsystems are probed independently:</p>
+
+            <p><strong>Redis throughput</strong> (via <code>redis-cli</code>):</p>
+            <div class="formula">
+                ops_per_sec = (operation_count / elapsed_ms) &times; 1000<br>
+                avg_latency_ms = elapsed_ms / operation_count
+            </div>
+            <p>Timing uses <code>redis-cli TIME</code> for microsecond precision.
+            Operations measured: SET and GET.</p>
+
+            <p><strong>Disk throughput</strong> (via <code>dd</code>):</p>
+            <div class="formula">
+                ops_per_sec = block_count / elapsed_s<br>
+                bytes_per_sec = total_bytes / elapsed_s<br>
+                avg_latency_ms = (elapsed_s &times; 1000) / block_count
+            </div>
+            <p>Sequential I/O with configurable block size. Operations measured:
+            write and read.</p>
+
+            <p><strong>Cross-node aggregation</strong> (placement signal):</p>
+            <div class="formula">
+                meanOpsPerSecond = mean(ops/s across all nodes)<br>
+                stddevOpsPerSecond = stdev(ops/s across all nodes)<br>
+                meanCrossNodeStddev = mean(per-tick cross-node stddev)<br>
+                worstMinOpsPerSecond = min(per-tick worst-node ops/s)
+            </div>
+            <p>Higher cross-node stddev indicates uneven I/O performance across nodes,
+            which correlates with placement-induced resource contention.</p>
+        </details>
+
+        <details>
+            <summary>A.7 — Hypothesis Evaluation</summary>
+            <p>Three hypotheses are evaluated programmatically against the collected data:</p>
+
+            <p><strong>Noise margin</strong> (used to determine if score differences are meaningful):</p>
+            <div class="formula">
+                noise_margin = max(5.0, (&sigma;<sub>strategy1</sub> + &sigma;<sub>strategy2</sub>) / 2)
+            </div>
+            <p>Where &sigma; is the standard deviation of resilience scores across iterations.
+            A minimum of 5 points prevents false signals from low-variance runs.</p>
+
+            <p><strong>H1</strong> &mdash; <em>Colocate has lowest resilience</em>:</p>
+            <ul>
+                <li>Supported: colocate score is the lowest and the gap exceeds the noise margin</li>
+                <li>Also checks CPU contention: compares colocate&rsquo;s during-chaos CPU utilization
+                    against the mean of other strategies as corroborating evidence</li>
+            </ul>
+
+            <p><strong>H2</strong> &mdash; <em>Spread has highest resilience</em>:</p>
+            <ul>
+                <li>Supported: spread score is the highest and the gap exceeds the noise margin</li>
+            </ul>
+
+            <p><strong>H3</strong> &mdash; <em>Baseline achieves 100%</em>:</p>
+            <ul>
+                <li>Supported: baseline resilience score is exactly 100</li>
+                <li>The baseline strategy applies no placement constraints and runs no chaos,
+                    serving as a control to validate the experimental setup</li>
+            </ul>
+        </details>
     </div>
 
     <div class="footer">

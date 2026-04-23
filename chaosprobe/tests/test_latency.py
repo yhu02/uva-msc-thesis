@@ -2,12 +2,25 @@
 
 import threading
 
-
 from chaosprobe.metrics.latency import (
     ContinuousLatencyProber,
     LatencyResult,
     LatencySample,
+    _aggregate_latency_samples,
 )
+
+
+def _mk_latency_sample(latency_ms=50.0, status="ok", error=None):
+    return LatencySample(
+        source="frontend",
+        target="productcatalogservice",
+        route="/",
+        protocol="http",
+        latency_ms=latency_ms,
+        status=status,
+        timestamp="2026-03-24T12:00:00+00:00",
+        error=error,
+    )
 
 
 class TestLatencySample:
@@ -213,3 +226,109 @@ class TestContinuousLatencyProber:
 
         prober._chaos_start_time = now - 140  # 140s ago, exceeds 120+18=138s cap
         assert prober._current_phase(now) == "post-chaos"
+
+
+class TestAggregateLatencySamples:
+    def test_single_pod_ok(self):
+        per_pod = [("pod-a", "node-1", _mk_latency_sample(50.0))]
+        entry = _aggregate_latency_samples(per_pod)
+        assert entry["status"] == "ok"
+        assert entry["latency_ms"] == 50.0
+        assert entry["probeCount"] == 1
+        assert entry["errorCount"] == 0
+        assert entry["stddevLatency_ms"] == 0.0
+        assert entry["minLatency_ms"] == 50.0
+        assert entry["maxLatency_ms"] == 50.0
+        assert entry["perPod"]["pod-a"]["node"] == "node-1"
+        assert entry["perPod"]["pod-a"]["latency_ms"] == 50.0
+        assert entry["perPod"]["pod-a"]["status"] == "ok"
+        assert entry["perNode"]["node-1"]["podCount"] == 1
+        assert entry["perNode"]["node-1"]["mean_ms"] == 50.0
+        assert entry["perNode"]["node-1"]["stddev_ms"] == 0.0
+
+    def test_multi_pod_spread_across_nodes(self):
+        per_pod = [
+            ("pod-a", "node-1", _mk_latency_sample(40.0)),
+            ("pod-b", "node-2", _mk_latency_sample(60.0)),
+            ("pod-c", "node-3", _mk_latency_sample(80.0)),
+        ]
+        entry = _aggregate_latency_samples(per_pod)
+        assert entry["status"] == "ok"
+        assert entry["latency_ms"] == 60.0  # mean of 40,60,80
+        assert entry["probeCount"] == 3
+        assert entry["errorCount"] == 0
+        assert entry["minLatency_ms"] == 40.0
+        assert entry["maxLatency_ms"] == 80.0
+        assert entry["stddevLatency_ms"] == 20.0
+        assert set(entry["perPod"].keys()) == {"pod-a", "pod-b", "pod-c"}
+        assert entry["perPod"]["pod-b"]["latency_ms"] == 60.0
+        assert set(entry["perNode"].keys()) == {"node-1", "node-2", "node-3"}
+        assert entry["perNode"]["node-2"]["mean_ms"] == 60.0
+        assert entry["perNode"]["node-2"]["podCount"] == 1
+
+    def test_multi_pods_same_node_aggregated(self):
+        """Multiple pods on the same node collapse into one perNode entry."""
+        per_pod = [
+            ("pod-a", "node-1", _mk_latency_sample(40.0)),
+            ("pod-b", "node-1", _mk_latency_sample(60.0)),
+            ("pod-c", "node-2", _mk_latency_sample(100.0)),
+        ]
+        entry = _aggregate_latency_samples(per_pod)
+        assert entry["probeCount"] == 3
+        # Three perPod entries, two perNode buckets
+        assert len(entry["perPod"]) == 3
+        assert set(entry["perNode"].keys()) == {"node-1", "node-2"}
+        # node-1 has 2 pods: mean=50, stddev=sqrt(200)=~14.14
+        assert entry["perNode"]["node-1"]["podCount"] == 2
+        assert entry["perNode"]["node-1"]["mean_ms"] == 50.0
+        assert entry["perNode"]["node-1"]["stddev_ms"] == 14.14
+        # node-2 has 1 pod
+        assert entry["perNode"]["node-2"]["podCount"] == 1
+        assert entry["perNode"]["node-2"]["mean_ms"] == 100.0
+        assert entry["perNode"]["node-2"]["stddev_ms"] == 0.0
+
+    def test_partial_failure(self):
+        per_pod = [
+            ("pod-a", "node-1", _mk_latency_sample(30.0)),
+            ("pod-b", "node-2", _mk_latency_sample(
+                latency_ms=0, status="error", error="connection refused",
+            )),
+        ]
+        entry = _aggregate_latency_samples(per_pod)
+        assert entry["status"] == "ok"  # at least one probe succeeded
+        assert entry["latency_ms"] == 30.0  # mean over ok samples only
+        assert entry["probeCount"] == 1
+        assert entry["errorCount"] == 1
+        assert entry["perPod"]["pod-a"]["status"] == "ok"
+        assert entry["perPod"]["pod-b"]["status"] == "error"
+        assert entry["perPod"]["pod-b"]["latency_ms"] is None
+        assert entry["perPod"]["pod-b"]["error"] == "connection refused"
+        assert entry["perNode"]["node-2"]["errorCount"] == 1
+        assert entry["perNode"]["node-2"]["mean_ms"] is None
+
+    def test_all_failed(self):
+        per_pod = [
+            ("pod-a", "node-1", _mk_latency_sample(
+                latency_ms=0, status="error", error="timeout",
+            )),
+            ("pod-b", "node-2", _mk_latency_sample(
+                latency_ms=0, status="error", error="connection refused",
+            )),
+        ]
+        entry = _aggregate_latency_samples(per_pod)
+        assert entry["status"] == "error"
+        assert entry["latency_ms"] is None
+        assert entry["probeCount"] == 0
+        assert entry["errorCount"] == 2
+        assert "error" in entry
+        assert entry["perPod"]["pod-a"]["error"] == "timeout"
+        assert entry["perPod"]["pod-b"]["error"] == "connection refused"
+
+    def test_empty(self):
+        entry = _aggregate_latency_samples([])
+        assert entry["status"] == "error"
+        assert entry["latency_ms"] is None
+        assert entry["probeCount"] == 0
+        assert entry["errorCount"] == 0
+        assert entry["perPod"] == {}
+        assert entry["perNode"] == {}
