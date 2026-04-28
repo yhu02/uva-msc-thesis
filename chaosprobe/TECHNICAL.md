@@ -9,7 +9,7 @@ ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-
 ```
 ChaosProbe CLI
       │
-      ├── cli.py (~274 lines, thin shell)
+      ├── cli.py (~280 lines, thin shell)
       │     status, provision, compare, cleanup + command registrations
       │
       ├── commands/  (10 extracted command modules)
@@ -317,7 +317,7 @@ Thin shell composing `Neo4jWriterMixin` and `Neo4jReaderMixin`. Supports context
 
 All write operations: topology sync, run persistence, metrics samples, time-series data, anomaly labels, cascade events, pod snapshots.
 
-#### neo4j_reader.py (~876 lines)
+#### neo4j_reader.py (~883 lines)
 
 All read operations: run reconstruction (`get_run_output`), session queries, blast radius, strategy summaries, visualization data aggregation. See **Section 10** for the full graph schema and **Section 11** for the Cypher query cookbook.
 
@@ -353,7 +353,7 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 **Mixins** in separate files:
 - `provisioner/vagrant.py` — `_VagrantMixin` (~591 lines)
 - `provisioner/components.py` — `_ComponentsMixin` (~439 lines)
-- `provisioner/chaoscenter.py` — `_ChaosCenterMixin` (~520 lines)
+- `provisioner/chaoscenter.py` — `_ChaosCenterMixin` (~542 lines)
 - `provisioner/chaoscenter_api.py` — `_ChaosCenterAPIMixin` (~802 lines)
 
 **Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 4096MB RAM, Kubespray v2.24.0.
@@ -362,17 +362,17 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 
 ### 2.10 Orchestrator (`orchestrator/`)
 
-#### strategy_runner.py (~911 lines)
+#### strategy_runner.py (~948 lines)
 
 **Dataclass: `RunContext`** — carries all state for a run: namespace, timeout, seed, settle_time, iterations, measurement flags, Neo4j credentials, shared scenario, service routes, `load_service` (entry-point service name derived from scenario), etc.
 
 **Function**: `execute_strategy(ctx, strategy_name, idx, total)` — executes one placement strategy: apply placement → settle → run iterations → collect results → clear placement.
 
-#### run_phases.py (~808 lines)
+#### run_phases.py (~806 lines)
 
 Pre-flight checks, graph store initialization, result writing, iteration aggregation, stale resource cleanup. `_setup_load_target()` accepts a `load_service` parameter (derived from the scenario's httpProbe URLs) for port-forwarding to the application entry-point.
 
-#### probers.py (~236 lines)
+#### probers.py (~235 lines)
 
 `create_and_start_probers()`, `stop_and_collect_probers()` — manages continuous prober lifecycle in parallel. Passes `exclude_services=[target_deployment]` to the disk prober so it avoids benchmarking on the pod being deleted by chaos.
 
@@ -386,7 +386,7 @@ Pre-flight checks, graph store initialization, result writing, iteration aggrega
 | `wait_for_healthy_deployments(namespace)` | Blocks until all deployments in the namespace are fully ready. |
 | `check_pods_ready(namespace, label)` | Checks that at least one matching pod is Running and Ready. |
 
-#### portforward.py (~123 lines)
+#### portforward.py (~122 lines)
 
 Module-level kubectl port-forward lifecycle management. Start/stop/ensure port-forwards for Neo4j, Prometheus, and the application entry-point service.
 
@@ -394,7 +394,7 @@ Module-level kubectl port-forward lifecycle management. Start/stop/ensure port-f
 
 ### 2.11 Graph Analysis (`graph/`)
 
-#### analysis.py (~120 lines)
+#### analysis.py (~122 lines)
 
 High-level Neo4j graph queries:
 
@@ -689,13 +689,13 @@ Microservice resilience under chaos varies with pod placement strategy due to di
 chaosprobe/
   chaosprobe/
     __init__.py              # version 0.1.0
-    cli.py                   # CLI entry point (~274 lines)
+    cli.py                   # CLI entry point (~280 lines)
     k8s.py                   # Singleton k8s config loader
     commands/
       shared.py              # Neo4j option decorators, shared helpers
-      run_cmd.py             # run command (~670 lines)
-      init_cmd.py            # init command (~298 lines)
-      delete_cmd.py          # delete command (~152 lines)
+      run_cmd.py             # run command (~788 lines)
+      init_cmd.py            # init command (~313 lines)
+      delete_cmd.py          # delete command (~196 lines)
       graph_cmd.py           # graph subcommands
       visualize_cmd.py       # visualize + ml-export commands
       placement_cmd.py       # placement subcommands
@@ -707,7 +707,7 @@ chaosprobe/
       topology.py            # Service dependency extraction
       validator.py           # Validation
     chaos/
-      runner.py              # ChaosCenter GraphQL experiment execution (~598 lines)
+      runner.py              # ChaosCenter GraphQL experiment execution (~601 lines)
       manifest.py            # Argo Workflow manifest generation (~194 lines)
     collector/
       result_collector.py    # ChaosResult collection
@@ -726,10 +726,10 @@ chaosprobe/
       timeseries.py          # Time-series alignment
       remediation.py         # Remediation action logs
     orchestrator/
-      strategy_runner.py     # RunContext + execute_strategy() (~911 lines)
-      run_phases.py          # Preflight, graph init, result writing (~808 lines)
-      probers.py             # Continuous prober lifecycle (~236 lines)
-      portforward.py         # Port-forward management (~123 lines)
+      strategy_runner.py     # RunContext + execute_strategy() (~948 lines)
+      run_phases.py          # Preflight, graph init, result writing (~806 lines)
+      probers.py             # Continuous prober lifecycle (~235 lines)
+      portforward.py         # Port-forward management (~122 lines)
       preflight.py           # Pre-flight checks
     output/
       generator.py           # Structured output generation
@@ -745,7 +745,7 @@ chaosprobe/
       setup.py               # LitmusSetup main class (~1006 lines)
       vagrant.py             # _VagrantMixin (~591 lines)
       components.py          # _ComponentsMixin (~439 lines)
-      chaoscenter.py         # _ChaosCenterMixin (~520 lines)
+      chaoscenter.py         # _ChaosCenterMixin (~542 lines)
       chaoscenter_api.py     # _ChaosCenterAPIMixin (~802 lines)
     probes/
       builder.py             # RustProbeBuilder
@@ -753,7 +753,7 @@ chaosprobe/
     storage/
       neo4j_store.py         # Neo4j graph store (~111 lines)
       neo4j_writer.py        # Write operations (~980 lines)
-      neo4j_reader.py        # Read operations (~879 lines)
+      neo4j_reader.py        # Read operations (~883 lines)
     graph/
       analysis.py            # High-level graph analysis functions
   scenarios/
@@ -796,6 +796,7 @@ chaosprobe/
 - `matplotlib` (>=3.7.0) — Chart generation
 - `neo4j` (>=5.0.0) — Neo4j driver
 - `pyarrow` (>=12.0.0) — Parquet export
+- `python-dotenv` (>=1.0.0) — `.env` file loading
 
 ### Development
 - `pytest`, `pytest-cov` — Testing

@@ -25,12 +25,13 @@ AI reads output → edits K8s manifests → re-runs ChaosProbe → compares resu
 ```bash
 cd chaosprobe
 uv sync          # creates .venv, installs all dependencies
-cp .env.example .env   # optional — configure Neo4j, registry, etc.
 ```
+
+Optionally create a `.env` file to override Neo4j, registry, and other settings (see **Environment Variables** below). Shell-exported variables take precedence.
 
 ## Environment Variables
 
-ChaosProbe loads a `.env` file automatically (via python-dotenv). Copy `.env.example` to `.env` and adjust as needed. Shell-exported variables take precedence.
+ChaosProbe loads a `.env` file automatically (via python-dotenv). Create a `.env` in the project root and adjust as needed. Shell-exported variables take precedence.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -38,7 +39,8 @@ ChaosProbe loads a `.env` file automatically (via python-dotenv). Copy `.env.exa
 | `NEO4J_USER` | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | `chaosprobe` | Neo4j password |
 | `KUBECONFIG` | `~/.kube/config` | Path to kubeconfig |
-| `CHAOSPROBE_REGISTRY` | `ghcr.io/yhu02` | Container registry prefix for Rust probe images |
+| `CHAOSPROBE_REGISTRY` | `ghcr.io` | Container registry host for Rust probe images |
+| `CHAOSPROBE_REGISTRY_USER` | *(empty)* | Registry namespace / login user (e.g. `yhu02`) |
 
 ### Rust Probe Runtime Variables
 
