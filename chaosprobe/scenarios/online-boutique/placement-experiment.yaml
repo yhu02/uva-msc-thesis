@@ -193,3 +193,26 @@ spec:
               probeTimeout: 5s
               interval: 4s
               retry: 3
+
+          # ── Rust cmdProbe: Redis collateral-damage check ───────────
+          # Verifies Redis remains reachable during productcatalog chaos.
+          # Under colocate/adversarial, node-level contention from pod
+          # churn can degrade co-located services like redis-cart.
+          - name: check-redis
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-redis
+              comparator:
+                type: string
+                criteria: contains
+                value: "REDIS_OK"
+              source:
+                image: auto  # patched by ChaosProbe build
+                imagePullPolicy: Always
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 2

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import click
 
+from chaosprobe.probes.builder import DEFAULT_REGISTRY
+
 
 @click.group()
 def probe():
@@ -103,15 +105,25 @@ def probe_init(name: str, scenario: str, single_file: bool):
 @click.option(
     "--registry",
     "-r",
-    default="chaosprobe",
-    help="Container registry prefix (default: chaosprobe)",
+    default=DEFAULT_REGISTRY,
+    envvar="CHAOSPROBE_REGISTRY",
+    show_default=True,
+    help=(
+        "Container registry host (env: CHAOSPROBE_REGISTRY)."
+        " The image namespace comes from CHAOSPROBE_REGISTRY_USER."
+    ),
 )
 @click.option(
     "--kind-load",
     is_flag=True,
     help="Load built images into local kind cluster",
 )
-def probe_build(scenario: str, registry: str, kind_load: bool):
+@click.option(
+    "--push",
+    is_flag=True,
+    help="Push built images to the container registry",
+)
+def probe_build(scenario: str, registry: str, kind_load: bool, push: bool):
     """Compile Rust probes and build container images.
 
     Discovers .rs files and Cargo projects in SCENARIO/probes/,
@@ -121,12 +133,12 @@ def probe_build(scenario: str, registry: str, kind_load: bool):
     \b
     Examples:
       chaosprobe probe build scenarios/online-boutique
-      chaosprobe probe build scenarios/nginx -r docker.io/myuser
+      chaosprobe probe build scenarios/nginx -r ghcr.io/user --push
     """
     from chaosprobe.probes.builder import ProbeBuilderError, RustProbeBuilder
 
     scenario_path = str(Path(scenario).resolve())
-    builder = RustProbeBuilder(registry=registry, load_kind=kind_load)
+    builder = RustProbeBuilder(registry=registry, load_kind=kind_load, push=push)
 
     probes = builder.discover_probes(scenario_path)
     if not probes:

@@ -1,6 +1,36 @@
 """Pytest configuration and fixtures for the new ChaosCenter-native format."""
 
+import os
+
 import pytest
+
+# Vars loaded by `python-dotenv` when the CLI is exercised via CliRunner
+# (chaosprobe.cli.main calls load_dotenv). Persisting these into os.environ
+# leaks state between tests, so we strip them at session start and again
+# before each test that does not opt in via the `with_env` fixture.
+_LEAK_PRONE_VARS = (
+    "CHAOSPROBE_REGISTRY",
+    "CHAOSPROBE_REGISTRY_USER",
+    "CHAOSPROBE_REGISTRY_PASSWORD",
+    "NEO4J_URI",
+    "NEO4J_USER",
+    "NEO4J_PASSWORD",
+    "ANSIBLE_BECOME_PASS",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dotenv_vars(monkeypatch):
+    """Prevent .env values loaded by CliRunner from polluting other tests."""
+    for name in _LEAK_PRONE_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def pytest_configure(config):
+    # Also scrub once at session start in case a previous run or the parent
+    # shell pre-populated these.
+    for name in _LEAK_PRONE_VARS:
+        os.environ.pop(name, None)
 
 
 @pytest.fixture

@@ -537,7 +537,12 @@ class ChaosRunner:
                 },
             }
             if "source" in cmd_inputs:
-                request["kubernetesCMDProperties"]["source"] = cmd_inputs["source"]
+                import json as _json_mod
+
+                src = cmd_inputs["source"]
+                request["kubernetesCMDProperties"]["source"] = (
+                    _json_mod.dumps(src) if isinstance(src, dict) else str(src)
+                )
 
         elif probe_type == "promProbe":
             prom_inputs = probe_def.get("promProbe/inputs", {})

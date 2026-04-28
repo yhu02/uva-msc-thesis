@@ -50,3 +50,23 @@ spec:
               probeTimeout: 10s
               interval: 5s
               retry: 3
+
+          # Rust cmdProbe: verify Redis responds to PING before/after chaos
+          - name: check-redis
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-redis
+              comparator:
+                type: string
+                criteria: contains
+                value: "REDIS_OK"
+              source:
+                image: auto  # patched by ChaosProbe build
+                imagePullPolicy: Always
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 2

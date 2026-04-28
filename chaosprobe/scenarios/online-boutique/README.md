@@ -96,6 +96,12 @@ chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-schedu
 
 Tests in-cluster storage contention by injecting latency between the cart service and its Redis dependency. Measures whether slow storage cascades to checkout and frontend.
 
+**Probes:**
+- `frontend-availability` (httpProbe, Continuous) — monitors frontend HTTP 200 throughout chaos
+- `check-redis` (cmdProbe, Edge) — custom Rust probe that TCP-connects to Redis and sends a `PING` command, verifying `+PONG` response before and after chaos injection
+
+The `check-redis` probe is in `probes/check-redis/` and is automatically built and injected when running the experiment. Set `PROBE_REDIS_ADDR` to override the default Redis address (`redis-cart.online-boutique.svc.cluster.local:6379`).
+
 ```bash
 chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-redis-latency/experiment.yaml
 ```
@@ -183,6 +189,37 @@ Saturates disk bandwidth to test whether co-located services suffer from shared 
 ```bash
 chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-disk-throughput/experiment.yaml
 ```
+
+## Custom Rust Probes
+
+The `probes/` directory contains custom Rust cmdProbes that test service health beyond what HTTP probes can measure. These are compiled to static Linux binaries and packaged into minimal container images automatically.
+
+| Probe | Type | Target | Output |
+|---|---|---|---|
+| `check-redis` | Cargo project | `redis-cart:6379` | `REDIS_OK` or `REDIS_FAIL: <reason>` |
+
+**Build probes manually:**
+
+```bash
+# Build locally
+chaosprobe probe build scenarios/online-boutique
+
+# Build and push to GHCR
+chaosprobe probe build scenarios/online-boutique -r ghcr.io/<user> --push
+
+# List discovered probes
+chaosprobe probe list scenarios/online-boutique
+```
+
+**Add a new probe:**
+
+```bash
+chaosprobe probe init check-grpc -s scenarios/online-boutique
+# Edit probes/check-grpc/src/main.rs
+# Add cmdProbe entry to experiment YAML with source.image: auto
+```
+
+When using `chaosprobe run`, probes are built and injected automatically — no manual build step needed.
 
 ## Workflow
 

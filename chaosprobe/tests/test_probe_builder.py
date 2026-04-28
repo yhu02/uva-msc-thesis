@@ -48,7 +48,7 @@ class TestTemplates:
 
     def test_dockerfile_scratch_base(self):
         df = generate_dockerfile("myprobe")
-        assert "FROM scratch" in df
+        assert "FROM busybox:stable-musl" in df
         assert "COPY myprobe /probe/myprobe" in df
         assert 'ENTRYPOINT ["/probe/myprobe"]' in df
 

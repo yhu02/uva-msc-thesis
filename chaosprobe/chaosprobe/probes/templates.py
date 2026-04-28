@@ -124,14 +124,17 @@ fn run_check() -> Result<String, String> {{
 def generate_dockerfile(binary_name: str) -> str:
     """Generate a minimal Dockerfile for a compiled probe binary.
 
-    Uses ``scratch`` as the base image for the smallest possible
-    container. The binary is placed at ``/probe/<name>``.
+    Uses ``busybox:stable-musl`` as the base image so that
+    LitmusChaos can exec ``/bin/sh`` inside the probe container
+    (it creates a "sleeper" sidecar and runs the probe command via
+    ``kubectl exec``).  A ``scratch`` base would fail because there
+    is no shell.
 
     Args:
         binary_name: Name of the binary file (must be in the build context).
     """
     return f"""\
-FROM scratch
+FROM busybox:stable-musl
 COPY {binary_name} /probe/{binary_name}
 ENTRYPOINT ["/probe/{binary_name}"]
 """

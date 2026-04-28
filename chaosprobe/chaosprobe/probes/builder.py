@@ -10,6 +10,7 @@ Supported layouts:
 """
 
 import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
@@ -20,8 +21,11 @@ from chaosprobe.probes.templates import (
     generate_dockerfile,
 )
 
-# Default container registry prefix (can be overridden)
-DEFAULT_REGISTRY = "chaosprobe"
+# Default container registry host. Override with the CHAOSPROBE_REGISTRY
+# env var or the --registry flag on `chaosprobe probe build`. The image
+# namespace comes from CHAOSPROBE_REGISTRY_USER, so the final image path
+# is ``{registry}/{user}/{scenario}-{probe}:{hash}``.
+DEFAULT_REGISTRY = "ghcr.io"
 
 # Rust musl target for static Linux binaries
 MUSL_TARGET = "x86_64-unknown-linux-musl"
@@ -35,17 +39,28 @@ class RustProbeBuilder:
     """Compile Rust probes and package them as container images.
 
     Args:
-        registry: Container registry prefix (e.g. ``docker.io/myuser``).
+        registry: Container registry host (e.g. ``ghcr.io``). May also be
+            a host+namespace string like ``ghcr.io/some-org`` to override
+            the namespace; in that case ``user`` is ignored for the image
+            path (but still used for ``docker login``).
+        user: Registry namespace and login user (e.g. ``yhu02``). Falls
+            back to the ``CHAOSPROBE_REGISTRY_USER`` env var.
         load_kind: If True, load the built image into the local kind cluster.
+        push: If True, push the built image to the remote registry.
     """
 
     def __init__(
         self,
         registry: str = DEFAULT_REGISTRY,
+        user: Optional[str] = None,
         load_kind: bool = False,
+        push: bool = False,
     ):
         self.registry = registry.rstrip("/")
+        self.user = user if user is not None else os.environ.get("CHAOSPROBE_REGISTRY_USER", "")
         self.load_kind = load_kind
+        self.push = push
+        self._login_done = False
 
     # ── Discovery ─────────────────────────────────────────
 
@@ -196,7 +211,7 @@ class RustProbeBuilder:
         binary_bytes = Path(binary_path).read_bytes()
         tag_hash = hashlib.sha256(binary_bytes).hexdigest()[:8]
 
-        image_name = f"{self.registry}/{scenario_name}-{probe_name}"
+        image_name = f"{self._image_prefix()}/{scenario_name}-{probe_name}"
         image_tag = f"{image_name}:{tag_hash}"
 
         with tempfile.TemporaryDirectory(prefix="chaosprobe-probe-") as build_ctx:
@@ -224,6 +239,11 @@ class RustProbeBuilder:
         if self.load_kind:
             self._kind_load(image_tag)
 
+        # Optionally push to remote registry
+        if self.push:
+            self._push_image(image_tag)
+            self._push_image(f"{image_name}:latest")
+
         return image_tag
 
     def _kind_load(self, image_tag: str) -> None:
@@ -232,6 +252,63 @@ class RustProbeBuilder:
             ["kind", "load", "docker-image", image_tag],
             f"Failed to load image {image_tag} into kind cluster",
         )
+
+    def _push_image(self, image_tag: str) -> None:
+        """Push an image to the remote container registry."""
+        self._ensure_login()
+        _run_cmd(
+            ["docker", "push", image_tag],
+            f"Failed to push image {image_tag}",
+        )
+
+    def _registry_host(self) -> str:
+        """Return the registry hostname (e.g. ``ghcr.io``).
+
+        Treats the first path segment as a hostname if it contains a dot.
+        Bare prefixes like ``myuser`` map to ``docker.io`` (Docker's
+        convention for unqualified image names).
+        """
+        head = self.registry.split("/", 1)[0]
+        return head if "." in head else "docker.io"
+
+    def _image_prefix(self) -> str:
+        """Compose the full image prefix used for tagging.
+
+        - ``ghcr.io`` + user ``yhu02`` → ``ghcr.io/yhu02``
+        - ``ghcr.io/some-org`` (registry already includes a namespace)
+          + any user → ``ghcr.io/some-org`` (user is not appended)
+        - ``chaosprobe`` (local-only prefix, no user) → ``chaosprobe``
+        """
+        if self.user and "/" not in self.registry:
+            return f"{self.registry}/{self.user}"
+        return self.registry
+
+    def _ensure_login(self) -> None:
+        """Run ``docker login`` once per builder before the first push.
+
+        If ``CHAOSPROBE_REGISTRY_PASSWORD`` (and a user) are set, performs
+        a programmatic ``docker login`` via ``--password-stdin``.  Otherwise
+        assumes the user has already authenticated (e.g. ``docker login
+        ghcr.io``) and credentials exist in ``~/.docker/config.json``.
+        """
+        if self._login_done:
+            return
+        host = self._registry_host()
+        password = os.environ.get("CHAOSPROBE_REGISTRY_PASSWORD")
+        if self.user and password:
+            try:
+                subprocess.run(
+                    ["docker", "login", host, "-u", self.user, "--password-stdin"],
+                    input=password.encode(),
+                    capture_output=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as e:
+                stderr = (e.stderr or b"").decode().strip()
+                raise ProbeBuilderError(
+                    f"docker login {host} failed: {stderr or e.returncode}"
+                ) from e
+        self._login_done = True
 
     # ── Orchestrator ──────────────────────────────────────
 
@@ -313,6 +390,9 @@ def patch_probe_images(
                 source = inputs.setdefault("source", {})
                 source["image"] = built_images[probe_name]
 
+                # Ensure the probe pod can pull private images
+                source.setdefault("imagePullPolicy", "Always")
+
                 # Set default command to the binary path if not customised
                 if not inputs.get("command") or inputs["command"] == probe_name:
                     inputs["command"] = f"/probe/{probe_name}"
@@ -344,3 +424,66 @@ def _run_cmd(cmd: List[str], error_msg: str) -> subprocess.CompletedProcess:
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() or exc.stdout.strip() or str(exc)
         raise ProbeBuilderError(f"{error_msg}: {detail}") from exc
+
+
+def ensure_image_pull_secret(
+    namespace: str,
+    registry: str = DEFAULT_REGISTRY,
+    user: Optional[str] = None,
+    password: Optional[str] = None,
+    secret_name: str = "chaosprobe-registry",
+) -> bool:
+    """Create or update a docker-registry imagePullSecret and attach it to
+    the ``default`` service account so that LitmusChaos probe pods can pull
+    private images.
+
+    Returns True if the secret was created/updated, False if credentials
+    are not available (skipped silently).
+    """
+    user = user or os.environ.get("CHAOSPROBE_REGISTRY_USER", "")
+    password = password or os.environ.get("CHAOSPROBE_REGISTRY_PASSWORD", "")
+    if not user or not password:
+        return False
+
+    # Determine registry server hostname
+    head = registry.split("/", 1)[0]
+    server = head if "." in head else "https://index.docker.io/v1/"
+
+    # Create or replace the docker-registry secret
+    _run_cmd(
+        [
+            "kubectl", "delete", "secret", secret_name,
+            "-n", namespace, "--ignore-not-found",
+        ],
+        "Failed to delete old imagePullSecret",
+    )
+    _run_cmd(
+        [
+            "kubectl", "create", "secret", "docker-registry", secret_name,
+            "-n", namespace,
+            f"--docker-server={server}",
+            f"--docker-username={user}",
+            f"--docker-password={password}",
+        ],
+        "Failed to create imagePullSecret",
+    )
+
+    # Patch the default and litmus service accounts to use it
+    import json as _json_mod
+
+    patch = {"imagePullSecrets": [{"name": secret_name}]}
+    patch_json = _json_mod.dumps(patch)
+    for sa in ("default", "litmus-admin", "argo-chaos", "litmus"):
+        try:
+            _run_cmd(
+                [
+                    "kubectl", "patch", "serviceaccount", sa,
+                    "-n", namespace,
+                    "-p", patch_json,
+                ],
+                f"Failed to patch SA {sa}",
+            )
+        except ProbeBuilderError:
+            pass  # SA may not exist in this namespace
+
+    return True

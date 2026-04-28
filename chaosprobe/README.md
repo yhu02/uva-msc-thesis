@@ -25,7 +25,30 @@ AI reads output → edits K8s manifests → re-runs ChaosProbe → compares resu
 ```bash
 cd chaosprobe
 uv sync          # creates .venv, installs all dependencies
+cp .env.example .env   # optional — configure Neo4j, registry, etc.
 ```
+
+## Environment Variables
+
+ChaosProbe loads a `.env` file automatically (via python-dotenv). Copy `.env.example` to `.env` and adjust as needed. Shell-exported variables take precedence.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI |
+| `NEO4J_USER` | `neo4j` | Neo4j username |
+| `NEO4J_PASSWORD` | `chaosprobe` | Neo4j password |
+| `KUBECONFIG` | `~/.kube/config` | Path to kubeconfig |
+| `CHAOSPROBE_REGISTRY` | `ghcr.io/yhu02` | Container registry prefix for Rust probe images |
+
+### Rust Probe Runtime Variables
+
+These are set inside probe containers at runtime (via ChaosEngine env or Kubernetes pod env):
+
+| Variable | Default | Probe |
+|---|---|---|
+| `PROBE_REDIS_ADDR` | `redis-cart.online-boutique.svc.cluster.local:6379` | check-redis |
+| `PROBE_SERVICE` | `nginx-service.default.svc.cluster.local:80` | check-dns |
+| `PROBE_TARGET` | `nginx-service.default.svc.cluster.local:80` | check-endpoint |
 
 ## Prerequisites
 
@@ -248,11 +271,37 @@ uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 --strategy colocat
 
 ### Probe (Rust cmdProbes)
 
+Custom Rust probes are compiled to static Linux binaries, packaged into minimal (`scratch`) container images, and automatically injected into ChaosEngine `cmdProbe` specs at run time.
+
 ```bash
+# Scaffold a new probe (full Cargo project)
 uv run chaosprobe probe init <name> --scenario <path>
+
+# Scaffold a single-file probe (no Cargo.toml)
+uv run chaosprobe probe init <name> --single-file --scenario <path>
+
+# Build all probes in a scenario (local Docker)
 uv run chaosprobe probe build <scenario>
+
+# Build and load into local kind cluster
+uv run chaosprobe probe build <scenario> --kind-load
+
+# Build and push to GHCR (or any OCI registry)
+uv run chaosprobe probe build <scenario> -r ghcr.io/<user> --push
+
+# List discovered probes without building
 uv run chaosprobe probe list <scenario>
 ```
+
+**Workflow:**
+
+1. `chaosprobe probe init check-redis -s scenarios/online-boutique` — scaffolds `probes/check-redis/`
+2. Edit `probes/check-redis/src/main.rs` — implement the check logic
+3. Add a `cmdProbe` entry to the experiment YAML with `source.image: auto`
+4. `chaosprobe probe build scenarios/online-boutique` — compiles and builds images
+5. `chaosprobe run -n online-boutique` — auto-builds probes, patches `source.image`, runs experiment
+
+Probes print a result string to stdout. The ChaosEngine comparator matches against this output. Exit 0 means the check ran (verdict comes from the comparator); exit non-zero means the probe itself failed.
 
 ### Cluster
 

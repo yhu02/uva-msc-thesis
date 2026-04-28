@@ -175,13 +175,31 @@ def _load_and_prepare_scenario(
     if shared_scenario.get("probes"):
         click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
         try:
-            from chaosprobe.probes.builder import RustProbeBuilder, patch_probe_images
+            import os
+            import shutil
 
-            builder = RustProbeBuilder(registry="chaosprobe", load_kind=True)
+            from chaosprobe.probes.builder import (
+                DEFAULT_REGISTRY,
+                RustProbeBuilder,
+                ensure_image_pull_secret,
+                patch_probe_images,
+            )
+
+            registry = os.environ.get("CHAOSPROBE_REGISTRY", DEFAULT_REGISTRY)
+            use_kind = shutil.which("kind") is not None
+            builder = RustProbeBuilder(
+                registry=registry,
+                load_kind=use_kind,
+                push=not use_kind,
+            )
             built_images = builder.build_all(shared_scenario["path"])
             if built_images:
                 n = patch_probe_images(shared_scenario["experiments"], built_images)
                 click.echo(f"  Built and patched {n} cmdProbe image(s)")
+                # Ensure cluster can pull private images
+                if builder.push:
+                    if ensure_image_pull_secret(namespace, registry):
+                        click.echo("  Registry credentials synced to cluster")
         except Exception as e:
             click.echo(f"Warning: Rust probe build failed: {e}", err=True)
             click.echo("  Continuing without auto-built probes...", err=True)
