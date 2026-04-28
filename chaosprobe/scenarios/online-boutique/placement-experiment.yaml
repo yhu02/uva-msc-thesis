@@ -44,7 +44,14 @@
 #   Tier 4 — Control (1 probe): healthz endpoint, 5s timeout, 3 retries.
 #     Detects node-level contention that affects even local endpoints.
 #
-#   With 7 probes, resilience scores can be: 0, 14, 28, 42, 57, 71, 85, 100%.
+#   With 7 HTTP probes + 5 Rust cmdProbes (12 total), resilience scores
+#   step in ~8% increments (100/12 ≈ 8.3%) for finer differentiation.
+#
+#   The Rust cmdProbes (check-redis, check-http-latency, check-dns-latency,
+#   check-tcp-connect, check-cart-flow) capture orthogonal signals that
+#   the httpProbes miss: Redis collateral damage, raw HTTP latency
+#   thresholds, CoreDNS resolve time, TCP connect time, and a
+#   multi-route user journey.
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:
@@ -214,5 +221,102 @@ spec:
                   - name: chaosprobe-registry
             runProperties:
               probeTimeout: 10s
+              interval: 5s
+              retry: 2
+
+          # ── Rust cmdProbe: HTTP latency (Continuous) ───────────────
+          # Threshold-aware GET on the frontend homepage. Fails when the
+          # response body returns OK status but the wall-clock latency
+          # exceeds PROBE_LATENCY_MS_MAX (default 1000ms in the binary).
+          # Captures the latency-preservation component of the resilience
+          # score directly, rather than inferring it from probe verdicts.
+          - name: check-http-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-http-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "LATENCY_OK"
+              source:
+                image: auto
+                imagePullPolicy: Always
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 8s
+              interval: 5s
+              retry: 2
+
+          # ── Rust cmdProbe: DNS resolve latency (Continuous) ────────
+          # Times Kubernetes service-name resolution. CoreDNS sits on the
+          # control plane but is sensitive to node pressure when workers
+          # are starved (colocate/adversarial). Independent signal from
+          # the application-layer HTTP probes.
+          - name: check-dns-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-dns-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "DNS_OK"
+              source:
+                image: auto
+                imagePullPolicy: Always
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 2
+
+          # ── Rust cmdProbe: TCP connect latency (Edge) ──────────────
+          # Pre/post sample of TCP three-way handshake time. Distinguishes
+          # connection-setup degradation (kube-proxy, conntrack saturation)
+          # from application-layer slowness.
+          - name: check-tcp-connect
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-tcp-connect
+              comparator:
+                type: string
+                criteria: contains
+                value: "TCP_OK"
+              source:
+                image: auto
+                imagePullPolicy: Always
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 8s
+              interval: 5s
+              retry: 2
+
+          # ── Rust cmdProbe: Cart-flow user journey (Edge) ───────────
+          # Multi-route walk: homepage → product → cart → healthz. Fails
+          # if any route returns non-200 or exceeds its budget. Catches
+          # cascade failures where one downstream is degraded but single-
+          # route probes still pass. Edge mode keeps the per-tick cost
+          # bounded (4 sequential GETs) — pre/post chaos sampling only.
+          - name: check-cart-flow
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-cart-flow
+              comparator:
+                type: string
+                criteria: contains
+                value: "FLOW_OK"
+              source:
+                image: auto
+                imagePullPolicy: Always
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 15s
               interval: 5s
               retry: 2

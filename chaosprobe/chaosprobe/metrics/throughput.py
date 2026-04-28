@@ -190,8 +190,10 @@ class ThroughputResult:
 class ThroughputProber:
     """Measures database and disk throughput within Kubernetes pods.
 
-    For Redis: Uses redis-cli PING, SET/GET benchmarks executed from
-    the cartservice pod (or any pod with network access to redis).
+    For Redis: Uses ``redis-benchmark`` (SET/GET) executed inside the
+    redis-cart pod via ``kubectl exec``. The benchmark uses default
+    concurrency to saturate the server so node-level CPU contention
+    shows up as a throughput drop.
 
     For Disk: Uses dd commands inside target pods to measure sequential
     read/write speed.
@@ -223,14 +225,17 @@ class ThroughputProber:
     ) -> List[ThroughputResult]:
         """Measure Redis read/write throughput from a pod.
 
-        Executes redis-benchmark style operations by running SET/GET
-        commands in a loop from inside the redis pod.
+        Runs ``redis-benchmark -t set`` and ``redis-benchmark -t get``
+        inside the redis pod for each sample. Reports ops/s parsed from
+        redis-benchmark's quiet-mode output and the p50 latency it emits.
 
         Args:
             redis_host: Redis service hostname.
             redis_port: Redis service port.
             samples: Number of benchmark rounds.
-            ops_per_sample: Operations per round.
+            ops_per_sample: Operations per round (passed as ``-n``).
+                Default 1000 finishes in <100ms once the spawn-overhead
+                bug is gone — bump to 10k+ for stable signal.
 
         Returns:
             List of ThroughputResult for write and read operations.
@@ -455,36 +460,28 @@ class ThroughputProber:
     ) -> ThroughputSample:
         """Run a Redis SET or GET benchmark inside the redis pod.
 
-        Uses 'redis-cli TIME' for microsecond-precision timing since
-        Alpine busybox date lacks nanosecond support.
+        Uses ``redis-benchmark`` (ships with the redis image) so the
+        measurement reflects actual Redis throughput. The previous
+        implementation looped ``redis-cli`` per op, which measured
+        process-fork + connection-setup overhead (~25ms each → an
+        artificial 40 ops/s ceiling) and masked chaos-induced
+        degradation entirely.
         """
         now = datetime.now(timezone.utc).isoformat()
 
-        # redis-cli TIME returns two lines: seconds and microseconds.
-        # We read them inline to get a single microsecond timestamp.
-        time_cmd = f"redis-cli -h {host} -p {port} TIME 2>/dev/null " "| tr '\\n' ' '"
-        if operation == "write":
-            cmd = [
-                "sh",
-                "-c",
-                f"TSTART=$({time_cmd}); "
-                f"for i in $(seq 1 {count}); do "
-                f"redis-cli -h {host} -p {port} SET chaosprobe:bench:$i value_$i > /dev/null 2>&1; "
-                f"done; "
-                f"TEND=$({time_cmd}); "
-                f'echo "$TSTART $TEND"',
-            ]
-        else:
-            cmd = [
-                "sh",
-                "-c",
-                f"TSTART=$({time_cmd}); "
-                f"for i in $(seq 1 {count}); do "
-                f"redis-cli -h {host} -p {port} GET chaosprobe:bench:$i > /dev/null 2>&1; "
-                f"done; "
-                f"TEND=$({time_cmd}); "
-                f'echo "$TSTART $TEND"',
-            ]
+        # Map our op name to redis-benchmark's -t flag.
+        bench_op = "set" if operation == "write" else "get"
+
+        # Default concurrency (-c 50) saturates the server so node-level
+        # CPU contention shows up as a throughput drop. -n is total ops,
+        # -q gives one-line summary, -e exits non-zero on connect failure.
+        # 2>&1 folds connect errors (stderr) into stdout for parsing.
+        cmd = [
+            "sh",
+            "-c",
+            f"redis-benchmark -h {host} -p {port} -t {bench_op} "
+            f"-n {count} -q -e 2>&1",
+        ]
 
         resp = self._exec_in_pod(pod_name, cmd)
 
@@ -499,35 +496,38 @@ class ThroughputProber:
                 error=resp[:200],
             )
 
-        try:
-            parts = resp.strip().split()
-            # Output format: start_s start_us end_s end_us
-            if len(parts) >= 4:
-                start_us = int(parts[0]) * 1_000_000 + int(parts[1])
-                end_us = int(parts[2]) * 1_000_000 + int(parts[3])
-                if start_us > 0 and end_us > start_us:
-                    elapsed_ms = (end_us - start_us) / 1_000
-                    ops_per_sec = (count / elapsed_ms) * 1000
-                    avg_latency = elapsed_ms / count
-                    return ThroughputSample(
-                        operation=operation,
-                        target="redis",
-                        ops_per_second=round(ops_per_sec, 2),
-                        latency_ms=round(avg_latency, 4),
-                        status="ok",
-                        timestamp=now,
-                    )
-        except (ValueError, ZeroDivisionError):
-            pass
+        # Output (all redis-benchmark versions emit "requests per second"):
+        #   "SET: 87412.59 requests per second, p50=0.015 msec"
+        #   "GET: 91743.12 requests per second"
+        m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s+requests per second", resp)
+        if not m:
+            return ThroughputSample(
+                operation=operation,
+                target="redis",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp=now,
+                error=f"unparseable: {resp.strip()[:200]}",
+            )
+
+        ops_per_sec = float(m.group(1))
+
+        # Prefer p50 latency from -q output when present; otherwise derive
+        # from ops/s as 1000ms / throughput.
+        p50 = re.search(r"p50=([0-9]+(?:\.[0-9]+)?)\s*msec", resp)
+        if p50:
+            avg_latency = float(p50.group(1))
+        else:
+            avg_latency = (1000.0 / ops_per_sec) if ops_per_sec > 0 else 0.0
 
         return ThroughputSample(
             operation=operation,
             target="redis",
-            ops_per_second=0,
-            latency_ms=0,
-            status="error",
+            ops_per_second=round(ops_per_sec, 2),
+            latency_ms=round(avg_latency, 4),
+            status="ok",
             timestamp=now,
-            error=f"Parse failed: {resp[:100]}",
         )
 
     def _disk_benchmark(

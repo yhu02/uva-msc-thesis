@@ -1137,13 +1137,13 @@ def _generate_html_summary(
             <summary>A.6 — I/O Throughput</summary>
             <p>Two I/O subsystems are probed independently:</p>
 
-            <p><strong>Redis throughput</strong> (via <code>redis-cli</code>):</p>
+            <p><strong>Redis throughput</strong> (via <code>redis-benchmark</code>):</p>
             <div class="formula">
-                ops_per_sec = (operation_count / elapsed_ms) &times; 1000<br>
-                avg_latency_ms = elapsed_ms / operation_count
+                ops_per_sec = parse(&quot;X requests per second&quot; from <code>redis-benchmark -q</code>)<br>
+                avg_latency_ms = p50 from <code>-q</code> output (else 1000 / ops_per_sec)
             </div>
-            <p>Timing uses <code>redis-cli TIME</code> for microsecond precision.
-            Operations measured: SET and GET.</p>
+            <p>Default concurrency saturates the server so node-level CPU contention
+            shows up as a throughput drop. Operations measured: SET and GET.</p>
 
             <p><strong>Disk throughput</strong> (via <code>dd</code>):</p>
             <div class="formula">
