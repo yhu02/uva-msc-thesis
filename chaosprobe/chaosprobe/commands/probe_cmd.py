@@ -114,16 +114,11 @@ def probe_init(name: str, scenario: str, single_file: bool):
     ),
 )
 @click.option(
-    "--kind-load",
-    is_flag=True,
-    help="Load built images into local kind cluster",
-)
-@click.option(
     "--push",
     is_flag=True,
     help="Push built images to the container registry",
 )
-def probe_build(scenario: str, registry: str, kind_load: bool, push: bool):
+def probe_build(scenario: str, registry: str, push: bool):
     """Compile Rust probes and build container images.
 
     Discovers .rs files and Cargo projects in SCENARIO/probes/,
@@ -138,7 +133,7 @@ def probe_build(scenario: str, registry: str, kind_load: bool, push: bool):
     from chaosprobe.probes.builder import ProbeBuilderError, RustProbeBuilder
 
     scenario_path = str(Path(scenario).resolve())
-    builder = RustProbeBuilder(registry=registry, load_kind=kind_load, push=push)
+    builder = RustProbeBuilder(registry=registry, push=push)
 
     probes = builder.discover_probes(scenario_path)
     if not probes:

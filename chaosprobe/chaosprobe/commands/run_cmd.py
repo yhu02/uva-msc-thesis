@@ -171,12 +171,13 @@ def _load_and_prepare_scenario(
     else:
         click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
 
-    # Auto-build Rust cmdProbes if probes/ directory exists
+    # Auto-build Rust cmdProbes if probes/ directory exists.
+    # Always pushes to the configured registry — cluster nodes can only pull
+    # the image via `docker pull`, so push is unconditionally required.
     if shared_scenario.get("probes"):
         click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
         try:
             import os
-            import shutil
 
             from chaosprobe.probes.builder import (
                 DEFAULT_REGISTRY,
@@ -186,20 +187,13 @@ def _load_and_prepare_scenario(
             )
 
             registry = os.environ.get("CHAOSPROBE_REGISTRY", DEFAULT_REGISTRY)
-            use_kind = shutil.which("kind") is not None
-            builder = RustProbeBuilder(
-                registry=registry,
-                load_kind=use_kind,
-                push=not use_kind,
-            )
+            builder = RustProbeBuilder(registry=registry, push=True)
             built_images = builder.build_all(shared_scenario["path"])
             if built_images:
                 n = patch_probe_images(shared_scenario["experiments"], built_images)
                 click.echo(f"  Built and patched {n} cmdProbe image(s)")
-                # Ensure cluster can pull private images
-                if builder.push:
-                    if ensure_image_pull_secret(namespace, registry):
-                        click.echo("  Registry credentials synced to cluster")
+                if ensure_image_pull_secret(namespace, registry):
+                    click.echo("  Registry credentials synced to cluster")
         except Exception as e:
             click.echo(f"Warning: Rust probe build failed: {e}", err=True)
             click.echo("  Continuing without auto-built probes...", err=True)

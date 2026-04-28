@@ -45,7 +45,6 @@ class RustProbeBuilder:
             path (but still used for ``docker login``).
         user: Registry namespace and login user (e.g. ``yhu02``). Falls
             back to the ``CHAOSPROBE_REGISTRY_USER`` env var.
-        load_kind: If True, load the built image into the local kind cluster.
         push: If True, push the built image to the remote registry.
     """
 
@@ -53,12 +52,10 @@ class RustProbeBuilder:
         self,
         registry: str = DEFAULT_REGISTRY,
         user: Optional[str] = None,
-        load_kind: bool = False,
         push: bool = False,
     ):
         self.registry = registry.rstrip("/")
         self.user = user if user is not None else os.environ.get("CHAOSPROBE_REGISTRY_USER", "")
-        self.load_kind = load_kind
         self.push = push
         self._login_done = False
 
@@ -235,23 +232,12 @@ class RustProbeBuilder:
             ]
             _run_cmd(cmd, f"Failed to build Docker image for probe '{probe_name}'")
 
-        # Optionally load into kind
-        if self.load_kind:
-            self._kind_load(image_tag)
-
         # Optionally push to remote registry
         if self.push:
             self._push_image(image_tag)
             self._push_image(f"{image_name}:latest")
 
         return image_tag
-
-    def _kind_load(self, image_tag: str) -> None:
-        """Load an image into the local kind cluster."""
-        _run_cmd(
-            ["kind", "load", "docker-image", image_tag],
-            f"Failed to load image {image_tag} into kind cluster",
-        )
 
     def _push_image(self, image_tag: str) -> None:
         """Push an image to the remote container registry."""

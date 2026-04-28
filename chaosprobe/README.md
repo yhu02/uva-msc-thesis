@@ -280,11 +280,8 @@ uv run chaosprobe probe init <name> --scenario <path>
 # Scaffold a single-file probe (no Cargo.toml)
 uv run chaosprobe probe init <name> --single-file --scenario <path>
 
-# Build all probes in a scenario (local Docker)
+# Build all probes in a scenario (local Docker only)
 uv run chaosprobe probe build <scenario>
-
-# Build and load into local kind cluster
-uv run chaosprobe probe build <scenario> --kind-load
 
 # Build and push to GHCR (or any OCI registry)
 uv run chaosprobe probe build <scenario> -r ghcr.io/<user> --push

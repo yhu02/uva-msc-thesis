@@ -202,19 +202,6 @@ class TestImageBuilding:
         assert "docker" in cmd
         assert "build" in cmd
 
-    @patch("chaosprobe.probes.builder._run_cmd")
-    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/docker")
-    def test_build_image_kind_load(self, mock_which, mock_run, tmp_path):
-        binary = tmp_path / "probe"
-        binary.write_bytes(b"binary")
-
-        builder = RustProbeBuilder(load_kind=True)
-
-        # Mock _kind_load separately
-        with patch.object(builder, "_kind_load") as mock_load:
-            tag = builder.build_image("probe", str(binary))
-            mock_load.assert_called_once_with(tag)
-
     @patch("chaosprobe.probes.builder.shutil.which", return_value=None)
     def test_build_image_fails_without_docker(self, mock_which, tmp_path):
         binary = tmp_path / "x"
