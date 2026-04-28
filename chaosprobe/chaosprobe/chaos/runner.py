@@ -11,8 +11,6 @@ import uuid
 from copy import deepcopy
 from typing import Any, Dict, List
 
-import yaml
-
 from chaosprobe.chaos.manifest import build_workflow_manifest
 from chaosprobe.provisioner.setup import LitmusSetup
 
@@ -308,12 +306,12 @@ class ChaosRunner:
                 or (phase == "Completed_With_Error" and resiliency in (None, 0, 0.0))
             )
             if is_execution_error and attempt < _MAX_TARGET_RETRIES and target_deployment:
-                print(f"    Execution error detected, waiting for target pod to recover...")
+                print("    Execution error detected, waiting for target pod to recover...")
                 if self._wait_for_target_recovery(target_deployment, timeout=90):
-                    print(f"    Target pod recovered, re-triggering experiment...")
+                    print("    Target pod recovered, re-triggering experiment...")
                     continue
                 else:
-                    print(f"    Target pod did not recover, giving up.")
+                    print("    Target pod did not recover, giving up.")
 
             result["startTime"] = start_time
             return result

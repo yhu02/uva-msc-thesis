@@ -51,11 +51,13 @@ class TestAlignTimeSeries:
 
     def test_anomaly_label_during_chaos(self):
         metrics = _make_metrics()
-        labels = [{
-            "faultType": "pod-delete",
-            "startTime": "2026-04-02T01:35:05+00:00",
-            "endTime": "2026-04-02T01:35:25+00:00",
-        }]
+        labels = [
+            {
+                "faultType": "pod-delete",
+                "startTime": "2026-04-02T01:35:05+00:00",
+                "endTime": "2026-04-02T01:35:25+00:00",
+            }
+        ]
         rows = align_time_series(metrics, anomaly_labels=labels, resolution_s=5.0)
 
         phases = [row["phase"] for row in rows]
@@ -131,9 +133,19 @@ class TestAlignTimeSeries:
 
     def test_event_timeline_counted(self):
         events = [
-            {"time": "2026-04-02T01:35:05+00:00", "type": "DELETED", "pod": "a", "phase": "Running"},
+            {
+                "time": "2026-04-02T01:35:05+00:00",
+                "type": "DELETED",
+                "pod": "a",
+                "phase": "Running",
+            },
             {"time": "2026-04-02T01:35:05+00:00", "type": "ADDED", "pod": "b", "phase": "Pending"},
-            {"time": "2026-04-02T01:35:06+00:00", "type": "MODIFIED", "pod": "b", "phase": "Running"},
+            {
+                "time": "2026-04-02T01:35:06+00:00",
+                "type": "MODIFIED",
+                "pod": "b",
+                "phase": "Running",
+            },
         ]
         metrics = _make_metrics(event_timeline=events)
         rows = align_time_series(metrics, resolution_s=5.0)
@@ -149,8 +161,12 @@ class TestAlignTimeSeries:
             {
                 "timestamp": "2026-04-02T01:35:05+00:00",
                 "phase": "pre-chaos",
-                "usedNode": {"cpu_percent": 25.0, "cpu_millicores": 1000,
-                             "memory_bytes": 0, "memory_percent": 0},
+                "usedNode": {
+                    "cpu_percent": 25.0,
+                    "cpu_millicores": 1000,
+                    "memory_bytes": 0,
+                    "memory_percent": 0,
+                },
                 "podAggregate": {},
             }
         ]
@@ -169,11 +185,13 @@ class TestExportAlignedCsv:
 
     def test_csv_output(self):
         metrics = _make_metrics(
-            latency_entries=[{
-                "timestamp": "2026-04-02T01:35:05+00:00",
-                "phase": "during-chaos",
-                "routes": {"/": {"latency_ms": 50, "status": "ok"}},
-            }]
+            latency_entries=[
+                {
+                    "timestamp": "2026-04-02T01:35:05+00:00",
+                    "phase": "during-chaos",
+                    "routes": {"/": {"latency_ms": 50, "status": "ok"}},
+                }
+            ]
         )
         rows = align_time_series(metrics, resolution_s=5.0)
         csv_text = export_aligned_csv(rows)

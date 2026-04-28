@@ -4,9 +4,9 @@ import pytest
 
 from chaosprobe.config.loader import load_scenario
 from chaosprobe.config.validator import (
-    validate_scenario,
     ValidationError,
     _validate_cluster_config,
+    validate_scenario,
 )
 
 
@@ -17,8 +17,7 @@ class TestConfigLoader:
         """Test loading a scenario from a directory with manifests + ChaosEngine."""
         # Create deployment.yaml
         deployment = tmp_path / "deployment.yaml"
-        deployment.write_text(
-            """
+        deployment.write_text("""
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -36,13 +35,11 @@ spec:
       containers:
         - name: nginx
           image: nginx:1.21
-"""
-        )
+""")
 
         # Create experiment.yaml (ChaosEngine)
         experiment = tmp_path / "experiment.yaml"
-        experiment.write_text(
-            """
+        experiment.write_text("""
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:
@@ -56,8 +53,7 @@ spec:
   chaosServiceAccount: litmus-admin
   experiments:
     - name: pod-delete
-"""
-        )
+""")
 
         scenario = load_scenario(str(tmp_path))
 
@@ -70,8 +66,7 @@ spec:
     def test_load_scenario_single_file(self, tmp_path):
         """Test loading a single ChaosEngine file."""
         engine_file = tmp_path / "experiment.yaml"
-        engine_file.write_text(
-            """
+        engine_file.write_text("""
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:
@@ -85,8 +80,7 @@ spec:
   chaosServiceAccount: litmus-admin
   experiments:
     - name: pod-delete
-"""
-        )
+""")
 
         scenario = load_scenario(str(engine_file))
 
@@ -97,8 +91,7 @@ spec:
     def test_load_scenario_detects_namespace(self, tmp_path):
         """Test that namespace is extracted from ChaosEngine appinfo."""
         experiment = tmp_path / "experiment.yaml"
-        experiment.write_text(
-            """
+        experiment.write_text("""
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:
@@ -112,8 +105,7 @@ spec:
   chaosServiceAccount: litmus-admin
   experiments:
     - name: pod-delete
-"""
-        )
+""")
 
         scenario = load_scenario(str(tmp_path))
         assert scenario["namespace"] == "my-namespace"
@@ -127,6 +119,7 @@ spec:
         """Test loading from an empty directory raises ValueError."""
         with pytest.raises(ValueError, match="No YAML files found"):
             load_scenario(str(tmp_path))
+
 
 class TestConfigValidator:
     """Tests for scenario validation."""
@@ -239,17 +232,13 @@ class TestClusterConfig:
 
     def test_validate_invalid_provider(self):
         """Test validation fails for unknown provider."""
-        errors = _validate_cluster_config(
-            {"workers": {"count": 2}, "provider": "invalid"}
-        )
+        errors = _validate_cluster_config({"workers": {"count": 2}, "provider": "invalid"})
         assert any("provider" in e for e in errors)
 
     def test_validate_valid_provider(self):
         """Test validation passes for valid providers."""
         for provider in ("vagrant", "kubespray"):
-            errors = _validate_cluster_config(
-                {"workers": {"count": 2}, "provider": provider}
-            )
+            errors = _validate_cluster_config({"workers": {"count": 2}, "provider": provider})
             assert errors == []
 
     def test_load_scenario_with_cluster_config(self, tmp_path):
@@ -315,9 +304,7 @@ spec:
 
     def test_validate_scenario_with_valid_cluster(self, sample_scenario):
         """Test that validation passes with a valid cluster config."""
-        sample_scenario["cluster"] = {
-            "workers": {"count": 2, "cpu": 2, "memory": 2048}
-        }
+        sample_scenario["cluster"] = {"workers": {"count": 2, "cpu": 2, "memory": 2048}}
         assert validate_scenario(sample_scenario) is True
 
     def test_validate_scenario_with_invalid_cluster(self, sample_scenario):
@@ -328,6 +315,7 @@ spec:
 
 
 # ── Helpers for probe validation tests ──────────────────────
+
 
 def _make_engine_scenario(probes):
     """Build a minimal valid scenario with given probes on a pod-delete experiment."""
@@ -465,7 +453,7 @@ def _valid_prom_probe():
         "mode": "Continuous",
         "promProbe/inputs": {
             "endpoint": "http://prometheus:9090",
-            "query": 'sum(rate(container_cpu_usage_seconds_total[1m]))',
+            "query": "sum(rate(container_cpu_usage_seconds_total[1m]))",
             "comparator": {"type": "float", "criteria": "<=", "value": "0.8"},
         },
         "runProperties": {"probeTimeout": "5s", "interval": "10s", "retry": 1},
@@ -826,14 +814,16 @@ class TestProbeValidation:
 
     def test_sample_scenario_with_http_probe_passes(self, sample_scenario):
         """Adding a valid httpProbe to the sample scenario still passes."""
-        sample_scenario["experiments"][0]["spec"]["spec"]["experiments"][0].setdefault("spec", {})["probe"] = [
-            _valid_http_probe_get()
-        ]
+        sample_scenario["experiments"][0]["spec"]["spec"]["experiments"][0].setdefault("spec", {})[
+            "probe"
+        ] = [_valid_http_probe_get()]
         assert validate_scenario(sample_scenario) is True
 
     def test_sample_scenario_with_all_probe_types(self, sample_scenario):
         """Adding all probe types to the sample scenario passes."""
-        sample_scenario["experiments"][0]["spec"]["spec"]["experiments"][0].setdefault("spec", {})["probe"] = [
+        sample_scenario["experiments"][0]["spec"]["spec"]["experiments"][0].setdefault("spec", {})[
+            "probe"
+        ] = [
             _valid_http_probe_get(),
             _valid_cmd_probe_inline(),
             _valid_k8s_probe_present(),

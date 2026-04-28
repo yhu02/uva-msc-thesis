@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import copy
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import click
@@ -16,17 +16,15 @@ from chaosprobe.chaos.runner import ChaosRunner
 from chaosprobe.collector.result_collector import ResultCollector
 from chaosprobe.loadgen.runner import LoadProfile, LocustRunner
 from chaosprobe.metrics.collector import MetricsCollector
+from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.preflight import (
-    LITMUS_INFRA_DEPLOYMENTS,
     wait_for_healthy_deployments,
 )
 from chaosprobe.orchestrator.probers import (
     create_and_start_probers,
     stop_and_collect_probers,
 )
-from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.run_phases import (
-    LOAD_TARGET_LOCAL_PORT,
     _clean_stale_resources,
     _restart_unhealthy_infra,
     aggregate_iterations,
@@ -35,10 +33,10 @@ from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
 
-
 # ---------------------------------------------------------------------------
 # Timeout helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_probe_timeout(s: str) -> int:
     """Parse a Go-style duration string (e.g. ``'15s'``) to integer seconds."""
@@ -138,7 +136,8 @@ def _swap_to_trivial_fault(scenario: Dict[str, Any]) -> None:
 
 
 def _extract_http_routes(
-    scenario: Dict[str, Any], namespace: str,
+    scenario: Dict[str, Any],
+    namespace: str,
 ) -> List[tuple]:
     """Extract HTTP routes from scenario httpProbes for latency measurement.
 
@@ -183,7 +182,10 @@ def _extract_http_routes(
 
 
 def _wait_for_target_pod(
-    namespace: str, deployment_name: str, timeout: int = 60, stable_secs: int = 10,
+    namespace: str,
+    deployment_name: str,
+    timeout: int = 60,
+    stable_secs: int = 10,
 ) -> None:
     """Wait until the target deployment has a pod that stays Running.
 
@@ -202,15 +204,15 @@ def _wait_for_target_pod(
 
     while time.time() < deadline:
         pods = core.list_namespaced_pod(
-            namespace, label_selector=f"app={deployment_name}",
+            namespace,
+            label_selector=f"app={deployment_name}",
         )
         running = [
-            p for p in pods.items
-            if p.status and p.status.phase == "Running"
-            and all(
-                cs.ready
-                for cs in (p.status.container_statuses or [])
-            )
+            p
+            for p in pods.items
+            if p.status
+            and p.status.phase == "Running"
+            and all(cs.ready for cs in (p.status.container_statuses or []))
         ]
         if running:
             if stable_since is None:
@@ -245,13 +247,15 @@ def _wait_for_app_ready(
     iterations from starting with a degraded system (cascading
     poisoning from a previous iteration's post-chaos damage).
     """
-    from chaosprobe.metrics.base import exec_in_pod, find_probe_pod
-
     from kubernetes import client as k8s_client
+
+    from chaosprobe.metrics.base import exec_in_pod, find_probe_pod
 
     core = k8s_client.CoreV1Api()
     pod = find_probe_pod(
-        core, namespace, require_python3=False,
+        core,
+        namespace,
+        require_python3=False,
         exclude_prefixes=[target_deployment],
     )
     if not pod:
@@ -278,8 +282,14 @@ def _wait_for_app_ready(
         all_ok = True
         for path, url in urls_to_check:
             out = exec_in_pod(
-                core, namespace, pod,
-                ["sh", "-c", f"wget -q -O /dev/null --timeout=5 '{url}' 2>&1 && echo OK || echo FAIL"],
+                core,
+                namespace,
+                pod,
+                [
+                    "sh",
+                    "-c",
+                    f"wget -q -O /dev/null --timeout=5 '{url}' 2>&1 && echo OK || echo FAIL",
+                ],
             )
             if "OK" not in out:
                 all_ok = False
@@ -307,6 +317,7 @@ def _wait_for_app_ready(
 
 
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class RunContext:
@@ -352,6 +363,7 @@ class RunContext:
 # ---------------------------------------------------------------------------
 # Public entry-point
 # ---------------------------------------------------------------------------
+
 
 def execute_strategy(
     ctx: RunContext,
@@ -404,8 +416,11 @@ def execute_strategy(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _apply_placement(
-    ctx: RunContext, strategy_name: str, strategy_result: Dict[str, Any],
+    ctx: RunContext,
+    strategy_name: str,
+    strategy_result: Dict[str, Any],
 ) -> None:
     click.echo("\n  Step 1: Clearing existing placement...")
     ctx.mutator.clear_placement(wait=True, timeout=120)
@@ -415,19 +430,25 @@ def _apply_placement(
         click.echo(f"\n  Step 2: {strategy_name.capitalize()} — using default scheduling")
         strategy_result["placement"] = {
             "strategy": strategy_name,
-            "description": "No-fault control — no chaos injected" if strategy_name == "baseline" else "Default Kubernetes scheduling",
+            "description": (
+                "No-fault control — no chaos injected"
+                if strategy_name == "baseline"
+                else "Default Kubernetes scheduling"
+            ),
         }
     else:
         click.echo(f"\n  Step 2: Applying {strategy_name} placement...")
         strat = PlacementStrategy(strategy_name)
         _infra_prefixes = (
-            "chaos-exporter", "chaos-operator", "event-tracker",
-            "subscriber", "workflow-controller",
+            "chaos-exporter",
+            "chaos-operator",
+            "event-tracker",
+            "subscriber",
+            "workflow-controller",
         )
         all_deps = ctx.mutator.get_deployments()
         app_deps = [
-            d.name for d in all_deps
-            if not d.name.startswith(_infra_prefixes) and d.replicas > 0
+            d.name for d in all_deps if not d.name.startswith(_infra_prefixes) and d.replicas > 0
         ]
         # Heavy placement strategies (adversarial, colocate) pack many
         # services onto few nodes, causing long rollout times due to
@@ -506,8 +527,10 @@ def _run_single_iteration(
     # previous iteration's post-chaos damage leaks into the next
     # iteration's pre-chaos baseline.
     _wait_for_app_ready(
-        ctx.namespace, ctx.target_deployment,
-        timeout=180, http_routes=http_routes or None,
+        ctx.namespace,
+        ctx.target_deployment,
+        timeout=180,
+        http_routes=http_routes or None,
     )
 
     # Start probers + optional load generation
@@ -530,8 +553,7 @@ def _run_single_iteration(
         ctx.baseline_duration if ctx.baseline_duration > 0 else min(ctx.settle_time, 15)
     )
     has_probers = any(
-        probers.get(k)
-        for k in ("latency", "redis", "disk", "resource", "prometheus")
+        probers.get(k) for k in ("latency", "redis", "disk", "resource", "prometheus")
     )
     post_chaos_window = min(ctx.settle_time, 15)
 
@@ -541,8 +563,11 @@ def _run_single_iteration(
         # have restarted the target pod, killing the kubectl tunnel).
         if ctx.frontend_pf_port and ctx.target_url and "localhost" in ctx.target_url:
             pf.ensure(
-                ctx.load_service, ctx.namespace,
-                [f"{ctx.frontend_pf_port}:80"], "localhost", ctx.frontend_pf_port,
+                ctx.load_service,
+                ctx.namespace,
+                [f"{ctx.frontend_pf_port}:80"],
+                "localhost",
+                ctx.frontend_pf_port,
             )
         base_profile = LoadProfile.from_name(ctx.load_profile)
         # Compute Locust run duration to span the full experiment window:
@@ -576,7 +601,9 @@ def _run_single_iteration(
 
         effective_timeout = _compute_effective_timeout(scenario, ctx.timeout)
         runner = ChaosRunner(
-            ctx.namespace, timeout=effective_timeout, chaoscenter=ctx.chaoscenter_config,
+            ctx.namespace,
+            timeout=effective_timeout,
+            chaoscenter=ctx.chaoscenter_config,
         )
         runner.run_experiments(scenario.get("experiments", []))
 
@@ -618,13 +645,15 @@ def _run_single_iteration(
         "assignments": {},
     }
     generator = OutputGenerator(
-        scenario, results, metrics=recovery,
-        placement=placement_info, service_routes=ctx.service_routes,
+        scenario,
+        results,
+        metrics=recovery,
+        placement=placement_info,
+        service_routes=ctx.service_routes,
     )
     output_data = generator.generate()
     output_data["placement"] = placement_info
     output_data["sessionId"] = ctx.ts
-
 
     if prober_results.get("load_stats"):
         output_data["loadGeneration"] = {
@@ -681,9 +710,7 @@ def _run_single_iteration(
             # First try phaseVerdicts (already parsed by result_collector)
             phase_v = probe.get("phaseVerdicts", {})
             if phase_v:
-                pverdict = "Pass" if all(
-                    v == "Pass" for v in phase_v.values()
-                ) else "Fail"
+                pverdict = "Pass" if all(v == "Pass" for v in phase_v.values()) else "Fail"
             else:
                 # Fallback: parse the raw status map directly
                 pstatus = probe.get("status", {})
@@ -693,13 +720,9 @@ def _run_single_iteration(
                         if key in ("verdict", "description"):
                             continue
                         if isinstance(val, str):
-                            phase_results.append(
-                                "Pass" if "Passed" in val else "Fail"
-                            )
+                            phase_results.append("Pass" if "Passed" in val else "Fail")
                     if phase_results:
-                        pverdict = "Pass" if all(
-                            v == "Pass" for v in phase_results
-                        ) else "Fail"
+                        pverdict = "Pass" if all(v == "Pass" for v in phase_results) else "Fail"
 
             if pname:
                 probe_verdicts[pname] = pverdict
@@ -783,27 +806,39 @@ def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
     try:
         deps = apps_api.list_namespaced_deployment(namespace)
         infra_prefixes = (
-            "chaos-exporter", "chaos-operator", "event-tracker",
-            "subscriber", "workflow-controller",
+            "chaos-exporter",
+            "chaos-operator",
+            "event-tracker",
+            "subscriber",
+            "workflow-controller",
         )
         app_deps = [
-            d.metadata.name for d in deps.items
-            if not d.metadata.name.startswith(infra_prefixes)
-            and (d.spec.replicas or 0) > 0
+            d.metadata.name
+            for d in deps.items
+            if not d.metadata.name.startswith(infra_prefixes) and (d.spec.replicas or 0) > 0
         ]
         if not app_deps:
             return
 
         from datetime import datetime, timezone
+
         now = datetime.now(timezone.utc).isoformat()
         patch_failures = 0
         for dep_name in app_deps:
             try:
                 apps_api.patch_namespaced_deployment(
-                    dep_name, namespace, {
-                        "spec": {"template": {"metadata": {"annotations": {
-                            "chaosprobe.io/restartedAt": now,
-                        }}}},
+                    dep_name,
+                    namespace,
+                    {
+                        "spec": {
+                            "template": {
+                                "metadata": {
+                                    "annotations": {
+                                        "chaosprobe.io/restartedAt": now,
+                                    }
+                                }
+                            }
+                        },
                     },
                 )
             except Exception as exc:
@@ -853,9 +888,7 @@ def _aggregate_strategy(
             f"Mean Score: {agg['meanResilienceScore']:.1f}{taint_str}"
         )
         if tainted > 0:
-            click.echo(
-                f"    Healthy-only Mean Score: {agg['meanResilienceScore_healthyOnly']:.1f}"
-            )
+            click.echo(f"    Healthy-only Mean Score: {agg['meanResilienceScore_healthyOnly']:.1f}")
         if agg.get("meanRecoveryTime_ms") is not None:
             click.echo(
                 f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
@@ -896,14 +929,18 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> None:
                     pass
                 try:
                     from chaosprobe.storage.neo4j_store import Neo4jStore
+
                     ctx.graph_store = Neo4jStore(
-                        ctx.neo4j_uri, ctx.neo4j_user, ctx.neo4j_password,
+                        ctx.neo4j_uri,
+                        ctx.neo4j_user,
+                        ctx.neo4j_password,
                     )
                 except Exception:
                     time.sleep(5)
                     continue
             else:
                 import traceback
+
                 click.echo(
                     f"    Warning: Neo4j sync failed after 3 attempts: {e}",
                     err=True,

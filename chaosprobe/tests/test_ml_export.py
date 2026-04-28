@@ -1,7 +1,8 @@
 """Tests for ML-ready export pipeline."""
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from chaosprobe.output.ml_export import (
     export_run_to_rows,

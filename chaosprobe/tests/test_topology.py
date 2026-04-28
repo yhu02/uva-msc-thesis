@@ -51,7 +51,10 @@ class TestExtractDependencies:
                             {
                                 "name": "server",
                                 "env": [
-                                    {"name": "PRODUCT_CATALOG_SERVICE_ADDR", "value": "productcatalogservice:3550"},
+                                    {
+                                        "name": "PRODUCT_CATALOG_SERVICE_ADDR",
+                                        "value": "productcatalogservice:3550",
+                                    },
                                     {"name": "CART_SERVICE_ADDR", "value": "cartservice:7070"},
                                     {"name": "PORT", "value": "8080"},
                                 ],
@@ -63,7 +66,13 @@ class TestExtractDependencies:
         }
         routes = _extract_dependencies_from_deployment(deployment)
         assert len(routes) == 2
-        assert routes[0] == ("frontend", "productcatalogservice", "productcatalogservice:3550", "grpc", "Product Catalog")
+        assert routes[0] == (
+            "frontend",
+            "productcatalogservice",
+            "productcatalogservice:3550",
+            "grpc",
+            "Product Catalog",
+        )
         assert routes[1] == ("frontend", "cartservice", "cartservice:7070", "grpc", "Cart")
 
     def test_redis_addr(self):
@@ -135,13 +144,7 @@ class TestExtractDependencies:
     def test_no_env(self):
         deployment = {
             "metadata": {"name": "redis"},
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [{"name": "redis"}]
-                    }
-                }
-            },
+            "spec": {"template": {"spec": {"containers": [{"name": "redis"}]}}},
         }
         routes = _extract_dependencies_from_deployment(deployment)
         assert len(routes) == 0
@@ -232,7 +235,12 @@ class TestParseTopologyFromScenario:
     def test_with_deploy_subdir(self):
         """Parse topology from a scenario with a deploy/ sibling directory."""
         scenario = {
-            "path": str(Path(__file__).parent.parent / "scenarios" / "online-boutique" / "contention-checkout-latency"),
+            "path": str(
+                Path(__file__).parent.parent
+                / "scenarios"
+                / "online-boutique"
+                / "contention-checkout-latency"
+            ),
         }
         routes = parse_topology_from_scenario(scenario)
         # deploy/ is a sibling, so it finds it via the parent

@@ -231,7 +231,9 @@ class TestGetChaoscenterStatus:
 
         # get_dashboard_url
         svc = _mock_service(
-            LitmusSetup.CHAOSCENTER_FRONTEND_SVC, svc_type="NodePort", node_port=30091,
+            LitmusSetup.CHAOSCENTER_FRONTEND_SVC,
+            svc_type="NodePort",
+            node_port=30091,
         )
         setup.core_api.read_namespaced_service.return_value = svc
         node_list = MagicMock()
@@ -261,7 +263,8 @@ class TestInstallChaoscenter:
         assert result is True
         # Verify helm upgrade --install was called
         helm_calls = [
-            c for c in mock_run.call_args_list
+            c
+            for c in mock_run.call_args_list
             if any("upgrade" in str(a) for a in c.args + tuple(c.kwargs.values()))
         ]
         assert len(helm_calls) >= 1
@@ -316,8 +319,11 @@ class TestChaoscenterApiRequest:
         import urllib.error
 
         mock_urlopen.side_effect = urllib.error.HTTPError(
-            url="http://localhost", code=401, msg="Unauthorized",
-            hdrs=None, fp=None,
+            url="http://localhost",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=None,
         )
         setup = _make_setup()
         with pytest.raises(RuntimeError, match="ChaosCenter API error 401"):
@@ -358,7 +364,9 @@ class TestChaoscenterAuthenticate:
             return_value=resp,
         ):
             result = setup._chaoscenter_authenticate(
-                "http://localhost:9003", "admin", "litmus",
+                "http://localhost:9003",
+                "admin",
+                "litmus",
             )
         assert result == resp
 
@@ -370,7 +378,9 @@ class TestChaoscenterAuthenticate:
             return_value={"accessToken": "tok"},
         ) as mock_req:
             setup._chaoscenter_authenticate(
-                "http://localhost:9003", "admin", "litmus",
+                "http://localhost:9003",
+                "admin",
+                "litmus",
             )
         mock_req.assert_called_once()
         url = mock_req.call_args[0][0]
@@ -385,7 +395,9 @@ class TestChaoscenterAuthenticate:
         ):
             with pytest.raises(RuntimeError, match="Failed to obtain"):
                 setup._chaoscenter_authenticate(
-                    "http://localhost:9003", "admin", "wrong",
+                    "http://localhost:9003",
+                    "admin",
+                    "wrong",
                 )
 
 
@@ -433,19 +445,21 @@ class TestCheckPrerequisitesIncludesChaoscenter:
     def test_keys_present(self):
         setup = _make_setup()
         # Stub everything so check_prerequisites doesn't hit real system
-        with patch.object(setup, "_check_kubectl", return_value=True), \
-             patch.object(setup, "_check_helm", return_value=True), \
-             patch.object(setup, "_check_ansible", return_value=False), \
-             patch.object(setup, "_check_python_venv", return_value=True), \
-             patch.object(setup, "_check_git", return_value=True), \
-             patch.object(setup, "_check_ssh", return_value=True), \
-             patch.object(setup, "_check_vagrant", return_value=False), \
-             patch.object(setup, "_check_libvirt", return_value={"all_ready": False}), \
-             patch.object(setup, "_check_cluster_access", return_value=True), \
-             patch.object(setup, "is_litmus_installed", return_value=True), \
-             patch.object(setup, "is_litmus_ready", return_value=True), \
-             patch.object(setup, "is_chaoscenter_installed", return_value=False), \
-             patch.object(setup, "is_chaoscenter_ready", return_value=False):
+        with (
+            patch.object(setup, "_check_kubectl", return_value=True),
+            patch.object(setup, "_check_helm", return_value=True),
+            patch.object(setup, "_check_ansible", return_value=False),
+            patch.object(setup, "_check_python_venv", return_value=True),
+            patch.object(setup, "_check_git", return_value=True),
+            patch.object(setup, "_check_ssh", return_value=True),
+            patch.object(setup, "_check_vagrant", return_value=False),
+            patch.object(setup, "_check_libvirt", return_value={"all_ready": False}),
+            patch.object(setup, "_check_cluster_access", return_value=True),
+            patch.object(setup, "is_litmus_installed", return_value=True),
+            patch.object(setup, "is_litmus_ready", return_value=True),
+            patch.object(setup, "is_chaoscenter_installed", return_value=False),
+            patch.object(setup, "is_chaoscenter_ready", return_value=False),
+        ):
             prereqs = setup.check_prerequisites()
 
         assert "chaoscenter_installed" in prereqs
@@ -489,14 +503,25 @@ class TestDashboardCLI:
     def test_dashboard_status_not_installed(self):
         from chaosprobe.cli import main
 
-        with patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=False), \
-             patch.object(LitmusSetup, "get_chaoscenter_status", return_value={
-                 "installed": False, "ready": False, "pods": [], "frontend_url": None,
-             }):
+        with (
+            patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=False),
+            patch.object(
+                LitmusSetup,
+                "get_chaoscenter_status",
+                return_value={
+                    "installed": False,
+                    "ready": False,
+                    "pods": [],
+                    "frontend_url": None,
+                },
+            ),
+        ):
             # Patch _k8s_initialized and required K8s APIs
-            with patch.object(LitmusSetup, "_k8s_initialized", True, create=True), \
-                 patch.object(LitmusSetup, "core_api", MagicMock(), create=True), \
-                 patch.object(LitmusSetup, "apps_api", MagicMock(), create=True):
+            with (
+                patch.object(LitmusSetup, "_k8s_initialized", True, create=True),
+                patch.object(LitmusSetup, "core_api", MagicMock(), create=True),
+                patch.object(LitmusSetup, "apps_api", MagicMock(), create=True),
+            ):
                 result = self._runner().invoke(main, ["dashboard", "status"])
         assert result.exit_code == 0
         assert "not installed" in result.output.lower()
@@ -514,10 +539,12 @@ class TestDashboardCLI:
     def test_dashboard_open_not_installed(self):
         from chaosprobe.cli import main
 
-        with patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=False), \
-             patch.object(LitmusSetup, "_k8s_initialized", True, create=True), \
-             patch.object(LitmusSetup, "core_api", MagicMock(), create=True), \
-             patch.object(LitmusSetup, "apps_api", MagicMock(), create=True):
+        with (
+            patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=False),
+            patch.object(LitmusSetup, "_k8s_initialized", True, create=True),
+            patch.object(LitmusSetup, "core_api", MagicMock(), create=True),
+            patch.object(LitmusSetup, "apps_api", MagicMock(), create=True),
+        ):
             result = self._runner().invoke(main, ["dashboard", "open"])
         assert result.exit_code != 0
         assert "not installed" in result.output.lower()
@@ -526,11 +553,13 @@ class TestDashboardCLI:
     def test_dashboard_open_with_url(self):
         from chaosprobe.cli import main
 
-        with patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=True), \
-             patch.object(LitmusSetup, "get_dashboard_url", return_value="http://10.0.0.1:30091"), \
-             patch.object(LitmusSetup, "_k8s_initialized", True, create=True), \
-             patch.object(LitmusSetup, "core_api", MagicMock(), create=True), \
-             patch.object(LitmusSetup, "apps_api", MagicMock(), create=True):
+        with (
+            patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=True),
+            patch.object(LitmusSetup, "get_dashboard_url", return_value="http://10.0.0.1:30091"),
+            patch.object(LitmusSetup, "_k8s_initialized", True, create=True),
+            patch.object(LitmusSetup, "core_api", MagicMock(), create=True),
+            patch.object(LitmusSetup, "apps_api", MagicMock(), create=True),
+        ):
             result = self._runner().invoke(main, ["dashboard", "open"])
         assert result.exit_code == 0
         assert "http://10.0.0.1:30091" in result.output
@@ -539,11 +568,13 @@ class TestDashboardCLI:
     def test_dashboard_install_already_installed(self):
         from chaosprobe.cli import main
 
-        with patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=True), \
-             patch.object(LitmusSetup, "get_dashboard_url", return_value="http://10.0.0.1:30091"), \
-             patch.object(LitmusSetup, "_k8s_initialized", True, create=True), \
-             patch.object(LitmusSetup, "core_api", MagicMock(), create=True), \
-             patch.object(LitmusSetup, "apps_api", MagicMock(), create=True):
+        with (
+            patch.object(LitmusSetup, "is_chaoscenter_installed", return_value=True),
+            patch.object(LitmusSetup, "get_dashboard_url", return_value="http://10.0.0.1:30091"),
+            patch.object(LitmusSetup, "_k8s_initialized", True, create=True),
+            patch.object(LitmusSetup, "core_api", MagicMock(), create=True),
+            patch.object(LitmusSetup, "apps_api", MagicMock(), create=True),
+        ):
             result = self._runner().invoke(main, ["dashboard", "install"])
         assert result.exit_code == 0
         assert "already installed" in result.output.lower()
@@ -563,7 +594,8 @@ class TestChaoscenterLogin:
             return_value={"accessToken": "tok", "projectID": "p1"},
         ):
             token, pid = setup._chaoscenter_login(
-                "http://localhost:9003", password="custom",
+                "http://localhost:9003",
+                password="custom",
             )
         assert token == "tok"
         assert pid == "p1"
@@ -633,7 +665,9 @@ class TestChaoscenterListHelpers:
             },
         ):
             envs = setup._chaoscenter_list_environments(
-                "http://localhost:9002/query", "pid", "tok",
+                "http://localhost:9002/query",
+                "pid",
+                "tok",
             )
         assert len(envs) == 1
         assert envs[0]["environmentID"] == "env1"
@@ -661,7 +695,9 @@ class TestChaoscenterListHelpers:
             },
         ):
             infras = setup._chaoscenter_list_infras(
-                "http://localhost:9002/query", "pid", "tok",
+                "http://localhost:9002/query",
+                "pid",
+                "tok",
             )
         assert len(infras) == 1
         assert infras[0]["infraID"] == "i1"
@@ -678,12 +714,13 @@ class TestChaoscenterMutationHelpers:
         with patch.object(
             setup,
             "_chaoscenter_api_request",
-            return_value={
-                "data": {"createEnvironment": {"environmentID": "my-env"}}
-            },
+            return_value={"data": {"createEnvironment": {"environmentID": "my-env"}}},
         ):
             eid = setup._chaoscenter_create_environment(
-                "http://localhost:9002/query", "pid", "my-env", "tok",
+                "http://localhost:9002/query",
+                "pid",
+                "my-env",
+                "tok",
             )
         assert eid == "my-env"
 
@@ -703,7 +740,11 @@ class TestChaoscenterMutationHelpers:
             },
         ):
             result = setup._chaoscenter_register_infra(
-                "http://localhost:9002/query", "pid", "env1", "ns", "tok",
+                "http://localhost:9002/query",
+                "pid",
+                "env1",
+                "ns",
+                "tok",
             )
         assert result["infraID"] == "inf1"
         assert result["manifest"] == "yaml-content"
@@ -717,7 +758,11 @@ class TestChaoscenterMutationHelpers:
         ):
             with pytest.raises(RuntimeError, match="Failed to register"):
                 setup._chaoscenter_register_infra(
-                    "http://localhost:9002/query", "pid", "env1", "ns", "tok",
+                    "http://localhost:9002/query",
+                    "pid",
+                    "env1",
+                    "ns",
+                    "tok",
                 )
 
 
@@ -734,36 +779,45 @@ class TestEnsureChaoscenterConfigured:
         pod_list.items = [pod]
         setup.core_api.list_namespaced_pod.return_value = pod_list
 
-        with patch.object(
-            setup,
-            "_chaoscenter_login",
-            return_value=("tok", "pid"),
-        ), patch.object(
-            setup,
-            "_chaoscenter_list_environments",
-            return_value=[],
-        ), patch.object(
-            setup,
-            "_chaoscenter_create_environment",
-            return_value="chaosprobe-myns",
-        ) as mock_create_env, patch.object(
-            setup,
-            "_chaoscenter_list_infras",
-            return_value=[],
-        ), patch.object(
-            setup,
-            "_chaoscenter_register_infra",
-            return_value={"infraID": "i1", "manifest": "yaml"},
-        ) as mock_reg, patch.object(
-            setup,
-            "_apply_manifest",
-        ) as mock_apply, patch.object(
-            setup,
-            "_wait_for_infra_active",
-            return_value=True,
+        with (
+            patch.object(
+                setup,
+                "_chaoscenter_login",
+                return_value=("tok", "pid"),
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_list_environments",
+                return_value=[],
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_create_environment",
+                return_value="chaosprobe-myns",
+            ) as mock_create_env,
+            patch.object(
+                setup,
+                "_chaoscenter_list_infras",
+                return_value=[],
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_register_infra",
+                return_value={"infraID": "i1", "manifest": "yaml"},
+            ) as mock_reg,
+            patch.object(
+                setup,
+                "_apply_manifest",
+            ) as mock_apply,
+            patch.object(
+                setup,
+                "_wait_for_infra_active",
+                return_value=True,
+            ),
         ):
             result = setup.ensure_chaoscenter_configured(
-                namespace="myns", base_host="http://localhost",
+                namespace="myns",
+                base_host="http://localhost",
             )
 
         assert result["infra_id"] == "i1"
@@ -774,31 +828,37 @@ class TestEnsureChaoscenterConfigured:
 
     def test_skips_existing_active_infra(self):
         setup = _make_setup()
-        with patch.object(
-            setup,
-            "_chaoscenter_login",
-            return_value=("tok", "pid"),
-        ), patch.object(
-            setup,
-            "_chaoscenter_list_environments",
-            return_value=[{"environmentID": "chaosprobe-ns", "name": "chaosprobe-ns"}],
-        ), patch.object(
-            setup,
-            "_chaoscenter_list_infras",
-            return_value=[
-                {
-                    "infraID": "existing",
-                    "infraNamespace": "ns",
-                    "environmentID": "chaosprobe-ns",
-                    "isActive": True,
-                }
-            ],
-        ), patch.object(
-            setup,
-            "_chaoscenter_register_infra",
-        ) as mock_reg:
+        with (
+            patch.object(
+                setup,
+                "_chaoscenter_login",
+                return_value=("tok", "pid"),
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_list_environments",
+                return_value=[{"environmentID": "chaosprobe-ns", "name": "chaosprobe-ns"}],
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_list_infras",
+                return_value=[
+                    {
+                        "infraID": "existing",
+                        "infraNamespace": "ns",
+                        "environmentID": "chaosprobe-ns",
+                        "isActive": True,
+                    }
+                ],
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_register_infra",
+            ) as mock_reg,
+        ):
             result = setup.ensure_chaoscenter_configured(
-                namespace="ns", base_host="http://localhost",
+                namespace="ns",
+                base_host="http://localhost",
             )
 
         assert result["infra_id"] == "existing"
@@ -818,39 +878,48 @@ class TestEnsureChaoscenterConfigured:
         pod_list_ready = MagicMock()
         pod_list_ready.items = [pod_ready]
         setup.core_api.list_namespaced_pod.side_effect = [
-            pod_list_not_ready, pod_list_ready,
+            pod_list_not_ready,
+            pod_list_ready,
         ]
 
-        with patch.object(
-            setup,
-            "_chaoscenter_login",
-            return_value=("tok", "pid"),
-        ), patch.object(
-            setup,
-            "_chaoscenter_list_environments",
-            return_value=[{"environmentID": "chaosprobe-ns", "name": "chaosprobe-ns"}],
-        ), patch.object(
-            setup,
-            "_chaoscenter_list_infras",
-            return_value=[
-                {
-                    "infraID": "existing-inactive",
-                    "infraNamespace": "ns",
-                    "environmentID": "chaosprobe-ns",
-                    "isActive": False,
-                    "isInfraConfirmed": False,
-                }
-            ],
-        ), patch.object(
-            setup,
-            "_chaoscenter_register_infra",
-        ) as mock_reg, patch.object(
-            setup,
-            "_wait_for_infra_active",
-            return_value=True,
-        ), patch("time.sleep"):
+        with (
+            patch.object(
+                setup,
+                "_chaoscenter_login",
+                return_value=("tok", "pid"),
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_list_environments",
+                return_value=[{"environmentID": "chaosprobe-ns", "name": "chaosprobe-ns"}],
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_list_infras",
+                return_value=[
+                    {
+                        "infraID": "existing-inactive",
+                        "infraNamespace": "ns",
+                        "environmentID": "chaosprobe-ns",
+                        "isActive": False,
+                        "isInfraConfirmed": False,
+                    }
+                ],
+            ),
+            patch.object(
+                setup,
+                "_chaoscenter_register_infra",
+            ) as mock_reg,
+            patch.object(
+                setup,
+                "_wait_for_infra_active",
+                return_value=True,
+            ),
+            patch("time.sleep"),
+        ):
             result = setup.ensure_chaoscenter_configured(
-                namespace="ns", base_host="http://localhost",
+                namespace="ns",
+                base_host="http://localhost",
             )
 
         assert result["infra_id"] == "existing-inactive"
@@ -865,7 +934,8 @@ class TestEnsureChaoscenterConfigured:
         ):
             with pytest.raises(RuntimeError, match="projectID"):
                 setup.ensure_chaoscenter_configured(
-                    namespace="ns", base_host="http://localhost",
+                    namespace="ns",
+                    base_host="http://localhost",
                 )
 
 
@@ -877,13 +947,17 @@ class TestEnsureChaoscenterConfigured:
 class TestChaoscenterUrlHelpers:
     def test_gql_url(self):
         setup = _make_setup()
-        assert setup._chaoscenter_gql_url("http://localhost") == \
-            f"http://localhost:{LitmusSetup.CHAOSCENTER_SERVER_PORT}/query"
+        assert (
+            setup._chaoscenter_gql_url("http://localhost")
+            == f"http://localhost:{LitmusSetup.CHAOSCENTER_SERVER_PORT}/query"
+        )
 
     def test_auth_url(self):
         setup = _make_setup()
-        assert setup._chaoscenter_auth_url("http://localhost") == \
-            f"http://localhost:{LitmusSetup.CHAOSCENTER_AUTH_PORT}"
+        assert (
+            setup._chaoscenter_auth_url("http://localhost")
+            == f"http://localhost:{LitmusSetup.CHAOSCENTER_AUTH_PORT}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -915,9 +989,7 @@ class TestChaoscenterSaveExperiment:
 
     @patch.object(LitmusSetup, "_chaoscenter_api_request")
     def test_run_experiment_returns_notify_id(self, mock_req):
-        mock_req.return_value = {
-            "data": {"runChaosExperiment": {"notifyID": "notify-abc"}}
-        }
+        mock_req.return_value = {"data": {"runChaosExperiment": {"notifyID": "notify-abc"}}}
         setup = _make_setup()
         result = setup.chaoscenter_run_experiment(
             gql_url="http://localhost:9002/query",
@@ -1016,7 +1088,9 @@ class TestChaosRunnerBuildManifest:
         import json as _json
 
         runner = _make_runner(cc={**_CC_CONFIG, "infra_id": "test-infra-id"})
-        manifest, wf_name = runner._build_workflow_manifest(_ENGINE_SPEC, "pod-delete-engine", "inst-123")
+        manifest, wf_name = runner._build_workflow_manifest(
+            _ENGINE_SPEC, "pod-delete-engine", "inst-123"
+        )
         # Must be valid JSON (not YAML) for ChaosCenter
         parsed = _json.loads(manifest)
         assert len(wf_name) <= 38
@@ -1028,12 +1102,15 @@ class TestChaosRunnerBuildManifest:
         assert parsed["spec"]["serviceAccountName"] == "litmus-admin"
         assert len(parsed["spec"]["templates"]) == 4
         # Verify install-chaos-faults template exists for ChaosCenter UI
-        install_templates = [t for t in parsed["spec"]["templates"] if t["name"] == "install-chaos-faults"]
+        install_templates = [
+            t for t in parsed["spec"]["templates"] if t["name"] == "install-chaos-faults"
+        ]
         assert len(install_templates) == 1
         assert "artifacts" in install_templates[0]["inputs"]
 
     def test_engine_uses_generate_name(self):
         import json as _json
+
         import yaml as _yaml
 
         runner = _make_runner()
@@ -1048,6 +1125,7 @@ class TestChaosRunnerBuildManifest:
 
     def test_engine_has_probe_ref_annotation(self):
         import json as _json
+
         import yaml as _yaml
 
         runner = _make_runner()
@@ -1140,8 +1218,13 @@ class TestChaosRunnerRunExperiments:
         runner._setup.chaoscenter_run_experiment.return_value = "nid"
         runner._setup.chaoscenter_get_experiment_run.side_effect = [
             RuntimeError("transient"),
-            {"phase": "Completed", "resiliencyScore": 80.0,
-             "faultsPassed": 1, "faultsFailed": 0, "totalFaults": 1},
+            {
+                "phase": "Completed",
+                "resiliencyScore": 80.0,
+                "faultsPassed": 1,
+                "faultsFailed": 0,
+                "totalFaults": 1,
+            },
         ]
 
         with patch("chaosprobe.chaos.runner.time") as mock_time:
@@ -1149,10 +1232,15 @@ class TestChaosRunnerRunExperiments:
             # _poll_experiment_run uses it for while check, elapsed,
             # heartbeat, etc.  Supply enough values.
             mock_time.time.side_effect = [
-                0,                  # _run_and_poll: start_time
-                0, 0,               # poll loop iter 1: while check, elapsed
-                5, 5,               # poll loop iter 2: while check, elapsed
-                10, 10, 10, 10,     # final elapsed + endTime + extra
+                0,  # _run_and_poll: start_time
+                0,
+                0,  # poll loop iter 1: while check, elapsed
+                5,
+                5,  # poll loop iter 2: while check, elapsed
+                10,
+                10,
+                10,
+                10,  # final elapsed + endTime + extra
             ]
             mock_time.sleep = MagicMock()
             results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
@@ -1167,8 +1255,11 @@ class TestChaosRunnerRunExperiments:
         runner._setup.chaoscenter_save_experiment.return_value = "eid"
         runner._setup.chaoscenter_run_experiment.return_value = "nid"
         runner._setup.chaoscenter_get_experiment_run.return_value = {
-            "phase": "Completed", "resiliencyScore": 100.0,
-            "faultsPassed": 1, "faultsFailed": 0, "totalFaults": 1,
+            "phase": "Completed",
+            "resiliencyScore": 100.0,
+            "faultsPassed": 1,
+            "faultsFailed": 0,
+            "totalFaults": 1,
         }
         runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
         assert len(runner.get_executed_experiments()) == 1
@@ -1225,7 +1316,10 @@ class TestChaosRunnerProbeRegistration:
     def test_register_probes_returns_probe_refs(self):
         """Registered probes should produce probeRef entries."""
         runner = _make_runner()
-        runner._setup.chaoscenter_add_probe.return_value = {"name": "http-probe-1", "type": "httpProbe"}
+        runner._setup.chaoscenter_add_probe.return_value = {
+            "name": "http-probe-1",
+            "type": "httpProbe",
+        }
         spec = deepcopy(_ENGINE_SPEC_WITH_PROBES)
 
         refs = runner._register_and_extract_probes(spec)
@@ -1247,6 +1341,7 @@ class TestChaosRunnerProbeRegistration:
     def test_manifest_has_probe_ref_entries(self):
         """When probes are registered, the engine probeRef annotation should list them."""
         import json as _json
+
         import yaml as _yaml
 
         runner = _make_runner()
@@ -1254,7 +1349,9 @@ class TestChaosRunnerProbeRegistration:
         spec = deepcopy(_ENGINE_SPEC_WITH_PROBES)
         probe_ref = runner._register_and_extract_probes(spec)
 
-        manifest, _ = runner._build_workflow_manifest(spec, "test-probes", "inst-1", probe_ref=probe_ref)
+        manifest, _ = runner._build_workflow_manifest(
+            spec, "test-probes", "inst-1", probe_ref=probe_ref
+        )
         parsed = _json.loads(manifest)
         run_template = [t for t in parsed["spec"]["templates"] if t["name"].startswith("run-")][0]
         engine_yaml = run_template["inputs"]["artifacts"][0]["raw"]["data"]
@@ -1324,8 +1421,9 @@ class TestExtractProbeVerdictsFromExecutionData:
 
     def test_json_string_input(self):
         """Accept JSON string as well as dict."""
-        from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
         import json
+
+        from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
 
         data = {
             "nodes": {
@@ -1347,11 +1445,13 @@ class TestExtractProbeVerdictsFromExecutionData:
 
     def test_empty_input(self):
         from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
+
         assert _extract_probe_verdicts_from_execution_data(None) == {}
         assert _extract_probe_verdicts_from_execution_data("") == {}
         assert _extract_probe_verdicts_from_execution_data({}) == {}
 
     def test_no_chaos_data_nodes(self):
         from chaosprobe.chaos.runner import _extract_probe_verdicts_from_execution_data
+
         data = {"nodes": {"n1": {"name": "steps", "type": "Steps"}}}
         assert _extract_probe_verdicts_from_execution_data(data) == {}

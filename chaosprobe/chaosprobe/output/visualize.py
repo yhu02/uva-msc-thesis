@@ -6,14 +6,12 @@ Uses matplotlib for chart generation and exports to PNG/HTML.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 try:
     import matplotlib
 
     matplotlib.use("Agg")  # Non-interactive backend
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as ticker
 
     HAS_MATPLOTLIB = True
 except ImportError:
@@ -118,9 +116,18 @@ def generate_from_dict(
         iter_scores = [it.get("resilienceScore", 0) for it in sdata.get("iterations", [])]
         if iter_scores and len(iter_scores) > 1:
             import statistics as _stats
+
             stddev = agg.get("stddevResilienceScore") or round(_stats.stdev(iter_scores), 1)
-            min_s = agg.get("minResilienceScore") if agg.get("minResilienceScore") is not None else min(iter_scores)
-            max_s = agg.get("maxResilienceScore") if agg.get("maxResilienceScore") is not None else max(iter_scores)
+            min_s = (
+                agg.get("minResilienceScore")
+                if agg.get("minResilienceScore") is not None
+                else min(iter_scores)
+            )
+            max_s = (
+                agg.get("maxResilienceScore")
+                if agg.get("maxResilienceScore") is not None
+                else max(iter_scores)
+            )
         else:
             stddev = agg.get("stddevResilienceScore", 0.0)
             min_s = agg.get("minResilienceScore")
@@ -130,7 +137,10 @@ def generate_from_dict(
         tainted = agg.get("taintedIterations", 0)
         all_tainted = agg.get("allIterationsTainted", False)
         if tainted > 0 and not all_tainted:
-            avg_score = agg.get("meanResilienceScore_healthyOnly", exp.get("meanResilienceScore", exp.get("resilienceScore", 0)))
+            avg_score = agg.get(
+                "meanResilienceScore_healthyOnly",
+                exp.get("meanResilienceScore", exp.get("resilienceScore", 0)),
+            )
             stddev = agg.get("stddevResilienceScore_healthyOnly") or stddev
         else:
             avg_score = exp.get("meanResilienceScore", exp.get("resilienceScore", 0))
@@ -149,9 +159,11 @@ def generate_from_dict(
             "avgP95Recovery_ms": (
                 exp.get("p95RecoveryTime_ms")
                 if exp.get("p95RecoveryTime_ms") is not None
-                else rec_summary.get("p95Recovery_ms")
-                if rec_summary.get("p95Recovery_ms") is not None
-                else exp.get("maxRecoveryTime_ms")
+                else (
+                    rec_summary.get("p95Recovery_ms")
+                    if rec_summary.get("p95Recovery_ms") is not None
+                    else exp.get("maxRecoveryTime_ms")
+                )
             ),
             "medianRecovery_ms": exp.get("medianRecoveryTime_ms")
             or rec_summary.get("medianRecovery_ms"),
@@ -224,7 +236,8 @@ def generate_from_dict(
 
     # Strategy comparison heatmap — all thesis dimensions in one chart
     path = chart_strategy_comparison_heatmap(
-        strategies, output_path,
+        strategies,
+        output_path,
         latency_data=latency_by_strategy,
         throughput_data=throughput_by_strategy,
         resource_data=resource_by_strategy,
@@ -254,8 +267,6 @@ def _build_hypothesis_evaluation(
     resource_data: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> str:
     """Build HTML section evaluating H1, H2, H3 against actual data."""
-    evals = []
-
     # H3: Baseline == 100?
     baseline = strategies.get("baseline", {})
     baseline_score = baseline.get("avgResilienceScore", 0)
@@ -293,9 +304,7 @@ def _build_hypothesis_evaluation(
         # Check CPU contention (used nodes only)
         colocate_cpu = ""
         if resource_data and "colocate" in resource_data:
-            during_phase = resource_data["colocate"].get("phases", {}).get(
-                "during-chaos", {}
-            )
+            during_phase = resource_data["colocate"].get("phases", {}).get("during-chaos", {})
             cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
             if cpu is not None:
                 other_cpus = []
@@ -375,15 +384,18 @@ def _build_hypothesis_evaluation(
     <div class="dimension">
         <div class="hypothesis h1" style="border-left-color: {h1_color};">
             <span class="label" style="color:{h1_color}">H1</span>
-            <span><strong style="color:{h1_color}">{h1_status.upper()}</strong> &mdash; {h1_detail}</span>
+            <span><strong style="color:{h1_color}">{h1_status.upper()}</strong>
+              &mdash; {h1_detail}</span>
         </div>
         <div class="hypothesis h2" style="border-left-color: {h2_color};">
             <span class="label" style="color:{h2_color}">H2</span>
-            <span><strong style="color:{h2_color}">{h2_status.upper()}</strong> &mdash; {h2_detail}</span>
+            <span><strong style="color:{h2_color}">{h2_status.upper()}</strong>
+              &mdash; {h2_detail}</span>
         </div>
         <div class="hypothesis h3" style="border-left-color: {h3_color};">
             <span class="label" style="color:{h3_color}">H3</span>
-            <span><strong style="color:{h3_color}">{h3_status.upper()}</strong> &mdash; {h3_detail}</span>
+            <span><strong style="color:{h3_color}">{h3_status.upper()}</strong>
+              &mdash; {h3_detail}</span>
         </div>
     </div>"""
 
@@ -413,11 +425,17 @@ def _build_iteration_table(
                 bg = "#f8d7da"
             duration = (it.get("metrics") or {}).get("timeWindow", {}).get("duration_s")
             dur_str = f"{duration:.1f}s" if isinstance(duration, (int, float)) else "—"
-            taint_marker = ' <span title="Pre-chaos baseline was degraded" style="color:#E74C3C; cursor:help;">&#x26A0;</span>' if tainted else ""
+            taint_marker = (
+                ' <span title="Pre-chaos baseline was degraded"'
+                ' style="color:#E74C3C; cursor:help;">&#x26A0;</span>'
+                if tainted
+                else ""
+            )
             cells += (
                 f'<td style="background:{bg}; text-align:center;">'
-                f'{s:.0f}{taint_marker}<br><span style="color:#555; font-size:0.8em;">{dur_str}</span>'
-                f'</td>'
+                f"{s:.0f}{taint_marker}<br>"
+                f'<span style="color:#555; font-size:0.8em;">{dur_str}</span>'
+                f"</td>"
             )
         # Pad if fewer iterations
         for _ in range(iterations - len(iters)):
@@ -466,8 +484,16 @@ def _build_placement_table(raw_strategies: Dict[str, Any]) -> str:
     for assigns in strategy_placements.values():
         all_nodes.update(assigns.values())
     node_list = sorted(all_nodes)
-    node_colors = ["#E3F2FD", "#FFF3E0", "#E8F5E9", "#F3E5F5", "#FBE9E7",
-                    "#E0F7FA", "#FFF9C4", "#F1F8E9"]
+    node_colors = [
+        "#E3F2FD",
+        "#FFF3E0",
+        "#E8F5E9",
+        "#F3E5F5",
+        "#FBE9E7",
+        "#E0F7FA",
+        "#FFF9C4",
+        "#F1F8E9",
+    ]
 
     header = "".join(f"<th>{s}</th>" for s in strat_names)
     rows = ""
@@ -489,7 +515,6 @@ def _build_placement_table(raw_strategies: Dict[str, Any]) -> str:
             {rows}
         </table>
     </div>"""
-
 
 
 def _generate_html_summary(
@@ -520,7 +545,9 @@ def _generate_html_summary(
         stddev_str = f"{stddev:.1f}" if stddev else "0.0"
         min_s = data.get("minResilienceScore")
         max_s = data.get("maxResilienceScore")
-        range_str = f"{min_s:.0f}&ndash;{max_s:.0f}" if min_s is not None and max_s is not None else "n/a"
+        range_str = (
+            f"{min_s:.0f}&ndash;{max_s:.0f}" if min_s is not None and max_s is not None else "n/a"
+        )
         rows += f"""
         <tr>
             <td>{name}</td>
@@ -596,8 +623,10 @@ def _generate_html_summary(
             <th>Pre-Chaos Mean (ms)</th>
             <th>During Chaos Mean (ms)</th>
             <th>During Chaos P95 (ms)</th>
-            <th title="Mean cross-pod stddev during chaos — higher means vantage points disagreed more, a placement-sensitivity signal">During Chaos Cross-Pod Stddev (ms)</th>
-            <th title="Highest single-pod mean latency observed during chaos">Worst Vantage Point (ms)</th>
+            <th title="Mean cross-pod stddev during chaos — higher means vantage points disagreed more,
+ a placement-sensitivity signal">During Chaos Cross-Pod Stddev (ms)</th>
+            <th title="Highest single-pod mean latency observed during chaos">
+              Worst Vantage Point (ms)</th>
             <th>Post-Chaos Mean (ms)</th>
             <th>Errors During Chaos</th>
         </tr>
@@ -628,9 +657,7 @@ def _generate_html_summary(
                     during_xnode = (
                         during.get(target, {}).get(op, {}).get("meanCrossNodeStddevOpsPerSecond")
                     )
-                    during_worst = (
-                        during.get(target, {}).get(op, {}).get("worstMinOpsPerSecond")
-                    )
+                    during_worst = during.get(target, {}).get(op, {}).get("worstMinOpsPerSecond")
 
                     pre_str = f"{pre_ops:.1f}" if pre_ops is not None else "n/a"
                     during_str = f"{during_ops:.1f}" if during_ops is not None else "n/a"
@@ -670,8 +697,11 @@ def _generate_html_summary(
             <th>During Chaos Ops/s</th>
             <th>During Chaos Latency (ms)</th>
             <th>During Chaos Bandwidth</th>
-            <th title="Mean cross-node stddev of ops/s during chaos — higher means nodes diverged, a placement-sensitivity signal (disk only; redis is a single service)">During Chaos Cross-Node Stddev (ops/s)</th>
-            <th title="Worst single-node min ops/s observed during chaos">Worst Node Min (ops/s)</th>
+            <th title="Mean cross-node stddev of ops/s during chaos — higher means nodes diverged,
+ a placement-sensitivity signal (disk only; redis is a single service)">
+              During Chaos Cross-Node Stddev (ops/s)</th>
+            <th title="Worst single-node min ops/s observed during chaos">
+              Worst Node Min (ops/s)</th>
             <th>Post-Chaos Ops/s</th>
         </tr>
         {throughput_rows}
@@ -720,7 +750,8 @@ def _generate_html_summary(
             <th>Strategy</th>
             <th>Phase</th>
             <th>Mean CPU (%)</th>
-            <th title="Stddev of CPU% across used nodes — higher means load concentrated on fewer nodes (colocate-like); lower means even spread">CPU Stddev (%)</th>
+            <th title="Stddev of CPU% across used nodes — higher means load concentrated on fewer nodes
+ (colocate-like); lower means even spread">CPU Stddev (%)</th>
             <th title="Hottest used node CPU% observed during the phase">Peak Node CPU (%)</th>
             <th>Mean Memory (%)</th>
             <th title="Stddev of Memory% across used nodes">Mem Stddev (%)</th>
@@ -780,7 +811,6 @@ def _generate_html_summary(
         {prom_rows}
     </table>"""
 
-    img_tags = ""
     # Group charts by thesis section for structured display
     chart_sections: Dict[str, List[str]] = {
         "overview": [],

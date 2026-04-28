@@ -9,8 +9,6 @@ from chaosprobe.placement.strategy import (
     PlacementStrategy,
     compute_assignments,
 )
-from chaosprobe.placement.mutator import PlacementMutator
-
 
 # ── Fixtures ──────────────────────────────────────────────────
 
@@ -23,7 +21,7 @@ def two_nodes():
             name="worker1",
             labels={},
             allocatable_cpu_millicores=4000,
-            allocatable_memory_bytes=8 * 1024 ** 3,
+            allocatable_memory_bytes=8 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -31,7 +29,7 @@ def two_nodes():
             name="worker2",
             labels={},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -46,7 +44,7 @@ def three_nodes():
             name="worker1",
             labels={},
             allocatable_cpu_millicores=4000,
-            allocatable_memory_bytes=8 * 1024 ** 3,
+            allocatable_memory_bytes=8 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -54,7 +52,7 @@ def three_nodes():
             name="worker2",
             labels={},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -62,7 +60,7 @@ def three_nodes():
             name="worker3",
             labels={},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -77,17 +75,21 @@ def control_plane_and_workers():
             name="cp1",
             labels={"node-role.kubernetes.io/control-plane": ""},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[
-                {"key": "node-role.kubernetes.io/control-plane", "value": "", "effect": "NoSchedule"}
+                {
+                    "key": "node-role.kubernetes.io/control-plane",
+                    "value": "",
+                    "effect": "NoSchedule",
+                }
             ],
         ),
         NodeInfo(
             name="worker1",
             labels={},
             allocatable_cpu_millicores=4000,
-            allocatable_memory_bytes=8 * 1024 ** 3,
+            allocatable_memory_bytes=8 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -95,7 +97,7 @@ def control_plane_and_workers():
             name="worker2",
             labels={},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -114,7 +116,7 @@ def schedulable_cp_and_workers():
             name="cp1",
             labels={"node-role.kubernetes.io/control-plane": ""},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],  # No NoSchedule taint!
         ),
@@ -122,7 +124,7 @@ def schedulable_cp_and_workers():
             name="worker1",
             labels={},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -130,7 +132,7 @@ def schedulable_cp_and_workers():
             name="worker2",
             labels={},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],
         ),
@@ -141,18 +143,78 @@ def schedulable_cp_and_workers():
 def sample_deployments():
     """Deployments resembling online-boutique resource profiles."""
     return [
-        DeploymentInfo(name="adservice", replicas=1, cpu_request_millicores=200, memory_request_bytes=180 * 1024 ** 2),
-        DeploymentInfo(name="cartservice", replicas=1, cpu_request_millicores=200, memory_request_bytes=64 * 1024 ** 2),
-        DeploymentInfo(name="checkoutservice", replicas=1, cpu_request_millicores=100, memory_request_bytes=64 * 1024 ** 2),
-        DeploymentInfo(name="currencyservice", replicas=1, cpu_request_millicores=100, memory_request_bytes=64 * 1024 ** 2),
-        DeploymentInfo(name="emailservice", replicas=1, cpu_request_millicores=100, memory_request_bytes=64 * 1024 ** 2),
-        DeploymentInfo(name="frontend", replicas=1, cpu_request_millicores=100, memory_request_bytes=64 * 1024 ** 2),
-        DeploymentInfo(name="loadgenerator", replicas=1, cpu_request_millicores=300, memory_request_bytes=256 * 1024 ** 2),
-        DeploymentInfo(name="paymentservice", replicas=1, cpu_request_millicores=100, memory_request_bytes=64 * 1024 ** 2),
-        DeploymentInfo(name="productcatalogservice", replicas=1, cpu_request_millicores=100, memory_request_bytes=64 * 1024 ** 2),
-        DeploymentInfo(name="recommendationservice", replicas=1, cpu_request_millicores=100, memory_request_bytes=220 * 1024 ** 2),
-        DeploymentInfo(name="redis-cart", replicas=1, cpu_request_millicores=70, memory_request_bytes=200 * 1024 ** 2),
-        DeploymentInfo(name="shippingservice", replicas=1, cpu_request_millicores=100, memory_request_bytes=64 * 1024 ** 2),
+        DeploymentInfo(
+            name="adservice",
+            replicas=1,
+            cpu_request_millicores=200,
+            memory_request_bytes=180 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="cartservice",
+            replicas=1,
+            cpu_request_millicores=200,
+            memory_request_bytes=64 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="checkoutservice",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=64 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="currencyservice",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=64 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="emailservice",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=64 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="frontend",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=64 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="loadgenerator",
+            replicas=1,
+            cpu_request_millicores=300,
+            memory_request_bytes=256 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="paymentservice",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=64 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="productcatalogservice",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=64 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="recommendationservice",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=220 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="redis-cart",
+            replicas=1,
+            cpu_request_millicores=70,
+            memory_request_bytes=200 * 1024**2,
+        ),
+        DeploymentInfo(
+            name="shippingservice",
+            replicas=1,
+            cpu_request_millicores=100,
+            memory_request_bytes=64 * 1024**2,
+        ),
     ]
 
 
@@ -197,7 +259,7 @@ class TestNodeInfo:
             name="master1",
             labels={"node-role.kubernetes.io/master": ""},
             allocatable_cpu_millicores=2000,
-            allocatable_memory_bytes=4 * 1024 ** 3,
+            allocatable_memory_bytes=4 * 1024**3,
             conditions_ready=True,
             taints=[],
         )
@@ -211,23 +273,21 @@ class TestColocateStrategy:
     """Tests for the colocate placement strategy."""
 
     def test_all_pods_on_same_node(self, two_nodes, sample_deployments):
-        assignment = compute_assignments(
-            PlacementStrategy.COLOCATE, sample_deployments, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.COLOCATE, sample_deployments, two_nodes)
         nodes_used = set(assignment.assignments.values())
         assert len(nodes_used) == 1
         assert assignment.strategy == PlacementStrategy.COLOCATE
 
     def test_picks_biggest_node_by_default(self, two_nodes, sample_deployments):
-        assignment = compute_assignments(
-            PlacementStrategy.COLOCATE, sample_deployments, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.COLOCATE, sample_deployments, two_nodes)
         # worker1 has 4000m CPU, should be chosen
         assert all(n == "worker1" for n in assignment.assignments.values())
 
     def test_respects_target_node(self, two_nodes, sample_deployments):
         assignment = compute_assignments(
-            PlacementStrategy.COLOCATE, sample_deployments, two_nodes,
+            PlacementStrategy.COLOCATE,
+            sample_deployments,
+            two_nodes,
             target_node="worker2",
         )
         assert all(n == "worker2" for n in assignment.assignments.values())
@@ -235,7 +295,9 @@ class TestColocateStrategy:
     def test_target_node_not_found_raises(self, two_nodes, sample_deployments):
         with pytest.raises(ValueError, match="not found"):
             compute_assignments(
-                PlacementStrategy.COLOCATE, sample_deployments, two_nodes,
+                PlacementStrategy.COLOCATE,
+                sample_deployments,
+                two_nodes,
                 target_node="nonexistent",
             )
 
@@ -246,12 +308,12 @@ class TestColocateStrategy:
         assert "cp1" not in assignment.assignments.values()
 
     def test_all_deployments_assigned(self, two_nodes, sample_deployments):
-        assignment = compute_assignments(
-            PlacementStrategy.COLOCATE, sample_deployments, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.COLOCATE, sample_deployments, two_nodes)
         assert len(assignment.assignments) == len(sample_deployments)
 
-    def test_prefers_worker_over_schedulable_cp(self, schedulable_cp_and_workers, sample_deployments):
+    def test_prefers_worker_over_schedulable_cp(
+        self, schedulable_cp_and_workers, sample_deployments
+    ):
         """When CP is schedulable and all nodes have equal CPU, a worker should be picked."""
         assignment = compute_assignments(
             PlacementStrategy.COLOCATE, sample_deployments, schedulable_cp_and_workers
@@ -268,16 +330,12 @@ class TestSpreadStrategy:
     """Tests for the spread placement strategy."""
 
     def test_distributes_across_nodes(self, two_nodes, sample_deployments):
-        assignment = compute_assignments(
-            PlacementStrategy.SPREAD, sample_deployments, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.SPREAD, sample_deployments, two_nodes)
         nodes_used = set(assignment.assignments.values())
         assert len(nodes_used) == 2
 
     def test_round_robin_balance(self, two_nodes, sample_deployments):
-        assignment = compute_assignments(
-            PlacementStrategy.SPREAD, sample_deployments, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.SPREAD, sample_deployments, two_nodes)
         per_node = {}
         for node in assignment.assignments.values():
             per_node[node] = per_node.get(node, 0) + 1
@@ -287,9 +345,7 @@ class TestSpreadStrategy:
         assert per_node["worker2"] == 6
 
     def test_three_node_distribution(self, three_nodes, sample_deployments):
-        assignment = compute_assignments(
-            PlacementStrategy.SPREAD, sample_deployments, three_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.SPREAD, sample_deployments, three_nodes)
         per_node = {}
         for node in assignment.assignments.values():
             per_node[node] = per_node.get(node, 0) + 1
@@ -320,21 +376,13 @@ class TestRandomStrategy:
     """Tests for the random placement strategy."""
 
     def test_reproducible_with_seed(self, two_nodes, sample_deployments):
-        a1 = compute_assignments(
-            PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=42
-        )
-        a2 = compute_assignments(
-            PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=42
-        )
+        a1 = compute_assignments(PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=42)
+        a2 = compute_assignments(PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=42)
         assert a1.assignments == a2.assignments
 
     def test_different_seeds_differ(self, two_nodes, sample_deployments):
-        a1 = compute_assignments(
-            PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=1
-        )
-        a2 = compute_assignments(
-            PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=2
-        )
+        a1 = compute_assignments(PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=1)
+        a2 = compute_assignments(PlacementStrategy.RANDOM, sample_deployments, two_nodes, seed=2)
         # With 12 deployments and 2 nodes, different seeds should produce
         # different assignments (extremely unlikely to be identical)
         assert a1.assignments != a2.assignments
@@ -396,7 +444,7 @@ class TestAdversarialStrategy:
             NodeInfo(
                 name="only-node",
                 allocatable_cpu_millicores=8000,
-                allocatable_memory_bytes=16 * 1024 ** 3,
+                allocatable_memory_bytes=16 * 1024**3,
                 conditions_ready=True,
                 taints=[],
             )
@@ -414,8 +462,10 @@ class TestAdversarialStrategy:
         # worker1 has 4000m, should be the heavy node
         assert assignment.metadata["heavy_node"] == "worker1"
 
-    def test_prefers_worker_over_schedulable_cp(self, schedulable_cp_and_workers, sample_deployments):
-        """When CP is schedulable and all nodes have equal CPU, a worker should be the heavy node."""
+    def test_prefers_worker_over_schedulable_cp(
+        self, schedulable_cp_and_workers, sample_deployments
+    ):
+        """CP schedulable + equal-CPU nodes: a worker should be the heavy node."""
         assignment = compute_assignments(
             PlacementStrategy.ADVERSARIAL, sample_deployments, schedulable_cp_and_workers
         )
@@ -437,12 +487,8 @@ class TestBestFitStrategy:
 
     def test_packs_into_fewer_nodes_than_spread(self, three_nodes, sample_deployments):
         """Best-fit should concentrate pods on fewer nodes than spread does."""
-        best_fit = compute_assignments(
-            PlacementStrategy.BEST_FIT, sample_deployments, three_nodes
-        )
-        spread = compute_assignments(
-            PlacementStrategy.SPREAD, sample_deployments, three_nodes
-        )
+        best_fit = compute_assignments(PlacementStrategy.BEST_FIT, sample_deployments, three_nodes)
+        spread = compute_assignments(PlacementStrategy.SPREAD, sample_deployments, three_nodes)
         best_fit_nodes = len(set(best_fit.assignments.values()))
         spread_nodes = len(set(spread.assignments.values()))
         # Given the sample fits comfortably on 1-2 nodes of 2000m/4Gi,
@@ -450,12 +496,8 @@ class TestBestFitStrategy:
         assert best_fit_nodes <= spread_nodes
 
     def test_deterministic(self, three_nodes, sample_deployments):
-        a1 = compute_assignments(
-            PlacementStrategy.BEST_FIT, sample_deployments, three_nodes
-        )
-        a2 = compute_assignments(
-            PlacementStrategy.BEST_FIT, sample_deployments, three_nodes
-        )
+        a1 = compute_assignments(PlacementStrategy.BEST_FIT, sample_deployments, three_nodes)
+        a2 = compute_assignments(PlacementStrategy.BEST_FIT, sample_deployments, three_nodes)
         assert a1.assignments == a2.assignments
 
     def test_excludes_control_plane(self, control_plane_and_workers, sample_deployments):
@@ -474,13 +516,12 @@ class TestBestFitStrategy:
     def test_single_heavy_deployment_gets_best_node(self, two_nodes):
         deps = [
             DeploymentInfo(
-                name="heavy", cpu_request_millicores=1500,
-                memory_request_bytes=2 * 1024 ** 3,
+                name="heavy",
+                cpu_request_millicores=1500,
+                memory_request_bytes=2 * 1024**3,
             ),
         ]
-        assignment = compute_assignments(
-            PlacementStrategy.BEST_FIT, deps, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.BEST_FIT, deps, two_nodes)
         # worker1 (4000m/8Gi) fits; worker2 (2000m/4Gi) also fits but has
         # less slack after placement, so best-fit should pick worker2.
         assert assignment.assignments["heavy"] == "worker2"
@@ -512,7 +553,9 @@ class TestDependencyAwareStrategy:
 
     def test_all_deployments_assigned(self, three_nodes, sample_deployments, boutique_edges):
         assignment = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=boutique_edges,
         )
         assert len(assignment.assignments) == len(sample_deployments)
@@ -520,16 +563,21 @@ class TestDependencyAwareStrategy:
     def test_preserves_most_edges(self, three_nodes, sample_deployments, boutique_edges):
         """Dependency-aware should co-locate more dependent pairs than spread."""
         dep_aware = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=boutique_edges,
         )
         spread = compute_assignments(
-            PlacementStrategy.SPREAD, sample_deployments, three_nodes,
+            PlacementStrategy.SPREAD,
+            sample_deployments,
+            three_nodes,
         )
 
         def edges_preserved(assignment):
             return sum(
-                1 for s, t in boutique_edges
+                1
+                for s, t in boutique_edges
                 if assignment.assignments.get(s) == assignment.assignments.get(t)
             )
 
@@ -537,25 +585,33 @@ class TestDependencyAwareStrategy:
 
     def test_uses_frontend_as_root(self, three_nodes, sample_deployments, boutique_edges):
         assignment = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=boutique_edges,
         )
         assert assignment.metadata["root"] == "frontend"
 
     def test_deterministic(self, three_nodes, sample_deployments, boutique_edges):
         a1 = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=boutique_edges,
         )
         a2 = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=boutique_edges,
         )
         assert a1.assignments == a2.assignments
 
     def test_reports_edge_quality(self, three_nodes, sample_deployments, boutique_edges):
         assignment = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=boutique_edges,
         )
         meta = assignment.metadata
@@ -565,7 +621,9 @@ class TestDependencyAwareStrategy:
     def test_no_dependencies_still_assigns_all(self, three_nodes, sample_deployments):
         """With an empty dependency graph, every deployment must still be placed."""
         assignment = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=[],
         )
         assert len(assignment.assignments) == len(sample_deployments)
@@ -581,14 +639,20 @@ class TestDependencyAwareStrategy:
         ]
         edges = [("a", "b"), ("a", "c"), ("a", "d"), ("b", "c")]  # a has degree 3
         assignment = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, deps, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            deps,
+            three_nodes,
             dependencies=edges,
         )
         assert assignment.metadata["root"] == "a"
 
-    def test_excludes_control_plane(self, control_plane_and_workers, sample_deployments, boutique_edges):
+    def test_excludes_control_plane(
+        self, control_plane_and_workers, sample_deployments, boutique_edges
+    ):
         assignment = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, control_plane_and_workers,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            control_plane_and_workers,
             dependencies=boutique_edges,
         )
         assert "cp1" not in assignment.assignments.values()
@@ -597,11 +661,13 @@ class TestDependencyAwareStrategy:
         """Edges referring to non-deployed services are silently skipped."""
         edges = [
             ("frontend", "productcatalogservice"),
-            ("frontend", "nonexistent-service"),   # should be filtered out
-            ("ghost", "another-ghost"),            # should be filtered out
+            ("frontend", "nonexistent-service"),  # should be filtered out
+            ("ghost", "another-ghost"),  # should be filtered out
         ]
         assignment = compute_assignments(
-            PlacementStrategy.DEPENDENCY_AWARE, sample_deployments, three_nodes,
+            PlacementStrategy.DEPENDENCY_AWARE,
+            sample_deployments,
+            three_nodes,
             dependencies=edges,
         )
         assert assignment.metadata["edges_total"] == 1
@@ -625,9 +691,7 @@ class TestNodeAssignment:
         assert restored.seed == original.seed
 
     def test_to_dict_structure(self, two_nodes, sample_deployments):
-        assignment = compute_assignments(
-            PlacementStrategy.COLOCATE, sample_deployments, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.COLOCATE, sample_deployments, two_nodes)
         data = assignment.to_dict()
 
         assert data["strategy"] == "colocate"
@@ -647,7 +711,11 @@ class TestEdgeCases:
                 name="cp1",
                 conditions_ready=True,
                 taints=[
-                    {"key": "node-role.kubernetes.io/control-plane", "value": "", "effect": "NoSchedule"}
+                    {
+                        "key": "node-role.kubernetes.io/control-plane",
+                        "value": "",
+                        "effect": "NoSchedule",
+                    }
                 ],
             )
         ]
@@ -658,15 +726,11 @@ class TestEdgeCases:
 
     def test_single_deployment(self, two_nodes):
         deps = [DeploymentInfo(name="solo")]
-        assignment = compute_assignments(
-            PlacementStrategy.SPREAD, deps, two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.SPREAD, deps, two_nodes)
         assert len(assignment.assignments) == 1
 
     def test_empty_deployments_list(self, two_nodes):
-        assignment = compute_assignments(
-            PlacementStrategy.COLOCATE, [], two_nodes
-        )
+        assignment = compute_assignments(PlacementStrategy.COLOCATE, [], two_nodes)
         assert len(assignment.assignments) == 0
 
     def test_single_node_cluster_falls_back_to_cp(self):
@@ -676,7 +740,7 @@ class TestEdgeCases:
                 name="cp1",
                 labels={"node-role.kubernetes.io/control-plane": ""},
                 allocatable_cpu_millicores=4000,
-                allocatable_memory_bytes=8 * 1024 ** 3,
+                allocatable_memory_bytes=8 * 1024**3,
                 conditions_ready=True,
                 taints=[],
             ),
@@ -713,12 +777,12 @@ class TestResourceParsing:
     def test_parse_memory_mi(self):
         from chaosprobe.metrics.resources import parse_memory_quantity
 
-        assert parse_memory_quantity("128Mi") == 128 * 1024 ** 2
+        assert parse_memory_quantity("128Mi") == 128 * 1024**2
 
     def test_parse_memory_gi(self):
         from chaosprobe.metrics.resources import parse_memory_quantity
 
-        assert parse_memory_quantity("2Gi") == 2 * 1024 ** 3
+        assert parse_memory_quantity("2Gi") == 2 * 1024**3
 
     def test_parse_memory_ki(self):
         from chaosprobe.metrics.resources import parse_memory_quantity

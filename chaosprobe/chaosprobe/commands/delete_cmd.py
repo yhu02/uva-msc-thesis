@@ -52,14 +52,14 @@ def delete(namespace: str, keep_app: bool):
 
     # 1. Kill lingering port-forwards
     click.echo("Stopping port-forwards...")
-    _del_sp.run(["pkill", "-f", "kubectl port-forward"],
-                capture_output=True, timeout=10)
+    _del_sp.run(["pkill", "-f", "kubectl port-forward"], capture_output=True, timeout=10)
     pf.cleanup()
 
     # 2. Clear placement constraints
     click.echo(f"Clearing placement constraints in {namespace}...")
     try:
         from chaosprobe.placement.mutator import PlacementMutator
+
         mutator = PlacementMutator(namespace)
         cleared = mutator.clear_placement(wait=True, timeout=120)
         if cleared:
@@ -72,14 +72,17 @@ def delete(namespace: str, keep_app: bool):
     # 3. Remove Litmus infra deployments from target namespace (before ns deletion)
     click.echo(f"Removing Litmus infra from {namespace}...")
     infra_deps = [
-        "chaos-exporter", "chaos-operator-ce", "event-tracker",
-        "subscriber", "workflow-controller",
+        "chaos-exporter",
+        "chaos-operator-ce",
+        "event-tracker",
+        "subscriber",
+        "workflow-controller",
     ]
     for dep in infra_deps:
         _del_sp.run(
-            ["kubectl", "delete", "deployment", dep,
-             "-n", namespace, "--ignore-not-found"],
-            capture_output=True, timeout=30,
+            ["kubectl", "delete", "deployment", dep, "-n", namespace, "--ignore-not-found"],
+            capture_output=True,
+            timeout=30,
         )
     click.echo(f"  Litmus infra deployments removed from {namespace}")
 
@@ -87,16 +90,32 @@ def delete(namespace: str, keep_app: bool):
     click.echo(f"Cleaning chaos resources in {namespace}...")
     for resource in ["chaosengines", "chaosresults"]:
         _del_sp.run(
-            ["kubectl", "delete", resource, "--all",
-             "-n", namespace, "--ignore-not-found", "--timeout=120s"],
-            capture_output=True, timeout=180,
+            [
+                "kubectl",
+                "delete",
+                resource,
+                "--all",
+                "-n",
+                namespace,
+                "--ignore-not-found",
+                "--timeout=120s",
+            ],
+            capture_output=True,
+            timeout=180,
         )
     for phase in ["Succeeded", "Failed", "Completed"]:
         _del_sp.run(
-            ["kubectl", "delete", "pods",
-             f"--field-selector=status.phase=={phase}",
-             "-n", namespace, "--ignore-not-found"],
-            capture_output=True, timeout=30,
+            [
+                "kubectl",
+                "delete",
+                "pods",
+                f"--field-selector=status.phase=={phase}",
+                "-n",
+                namespace,
+                "--ignore-not-found",
+            ],
+            capture_output=True,
+            timeout=30,
         )
     click.echo("  Chaos resources cleaned")
 
@@ -105,7 +124,9 @@ def delete(namespace: str, keep_app: bool):
         """Delete a namespace and return a status message."""
         result = _del_sp.run(
             ["kubectl", "delete", "namespace", ns, "--timeout=120s"],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True,
+            text=True,
+            timeout=180,
         )
         if result.returncode == 0:
             return f"  {label}: deleted"
@@ -116,19 +137,36 @@ def delete(namespace: str, keep_app: bool):
     def _delete_metrics_server() -> str:
         """Delete metrics-server components and return a status message."""
         _del_sp.run(
-            ["kubectl", "delete", "deployment", "metrics-server",
-             "-n", "kube-system", "--ignore-not-found"],
-            capture_output=True, text=True, timeout=30,
+            [
+                "kubectl",
+                "delete",
+                "deployment",
+                "metrics-server",
+                "-n",
+                "kube-system",
+                "--ignore-not-found",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         _del_sp.run(
-            ["kubectl", "delete", "service", "metrics-server",
-             "-n", "kube-system", "--ignore-not-found"],
-            capture_output=True, timeout=30,
+            [
+                "kubectl",
+                "delete",
+                "service",
+                "metrics-server",
+                "-n",
+                "kube-system",
+                "--ignore-not-found",
+            ],
+            capture_output=True,
+            timeout=30,
         )
         _del_sp.run(
-            ["kubectl", "delete", "apiservice", "v1beta1.metrics.k8s.io",
-             "--ignore-not-found"],
-            capture_output=True, timeout=30,
+            ["kubectl", "delete", "apiservice", "v1beta1.metrics.k8s.io", "--ignore-not-found"],
+            capture_output=True,
+            timeout=30,
         )
         return "  metrics-server: deleted"
 
@@ -136,9 +174,15 @@ def delete(namespace: str, keep_app: bool):
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {
             executor.submit(_delete_namespace, "litmus", "ChaosCenter (litmus)"): "litmus",
-            executor.submit(_delete_namespace, "prometheus", "Prometheus (prometheus)"): "prometheus",
+            executor.submit(
+                _delete_namespace, "prometheus", "Prometheus (prometheus)"
+            ): "prometheus",
             executor.submit(_delete_namespace, "neo4j", "Neo4j (neo4j)"): "neo4j",
-            executor.submit(_delete_namespace, "local-path-storage", "local-path-provisioner (local-path-storage)"): "local-path-storage",
+            executor.submit(
+                _delete_namespace,
+                "local-path-storage",
+                "local-path-provisioner (local-path-storage)",
+            ): "local-path-storage",
             executor.submit(_delete_metrics_server): "metrics-server",
         }
         for future in as_completed(futures):

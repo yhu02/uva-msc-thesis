@@ -16,7 +16,6 @@ from chaosprobe.orchestrator.preflight import (
     extract_experiment_types,
     extract_load_service,
     extract_target_deployment,
-    wait_for_healthy_deployments,
 )
 from chaosprobe.orchestrator.run_phases import (
     init_graph_store,
@@ -114,6 +113,7 @@ def _ensure_litmus_setup(
 # Helpers extracted from run() to keep the main command manageable
 # ------------------------------------------------------------------
 
+
 def _load_and_prepare_scenario(
     experiment: str,
     namespace: Optional[str],
@@ -147,11 +147,14 @@ def _load_and_prepare_scenario(
             click.echo(f"  Deploying {len(yamls)} manifest(s) from {deploy_dir.name}/...")
             _sp.run(
                 ["kubectl", "create", "namespace", namespace],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             result = _sp.run(
                 ["kubectl", "apply", "-f", str(deploy_dir), "-n", namespace],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             if result.returncode != 0:
                 click.echo(f"  Warning: kubectl apply failed: {result.stderr.strip()}", err=True)
@@ -163,8 +166,7 @@ def _load_and_prepare_scenario(
     service_routes = parse_topology_from_scenario(shared_scenario) or None
     if service_routes:
         click.echo(
-            f"  Topology:   {len(service_routes)} service dependencies"
-            " discovered from manifests"
+            f"  Topology:   {len(service_routes)} service dependencies" " discovered from manifests"
         )
     else:
         click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
@@ -200,6 +202,7 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
             if _attempt < 2:
                 click.echo(f"  Retry clearing placement ({_e})...", err=True)
                 import time as _time
+
                 _time.sleep(5)
             else:
                 click.echo(f"  WARNING: could not clear placement ({_e})", err=True)
@@ -271,6 +274,7 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
         # pods (with cold caches, JVM warm-up, etc.) are fully serving
         # traffic before the first experiment starts.
         import time as _time_mod
+
         _restart_deadline = _time_mod.time() + 180
         click.echo(f"  Waiting for {len(_restart_names)} rollout(s) to complete (timeout: 180s)...")
         _pending = list(_restart_names)
@@ -370,53 +374,139 @@ def _print_run_banner(
 
 @click.command()
 @click.option(
-    "--namespace", "-n", default=None,
+    "--namespace",
+    "-n",
+    default=None,
     help="Namespace containing the application (default: read from experiment YAML)",
 )
 @click.option(
-    "--output-dir", "-o", default="results",
+    "--output-dir",
+    "-o",
+    default="results",
     help="Base directory for results (a timestamped subdirectory is created)",
 )
 @click.option(
-    "--strategies", "-s",
+    "--strategies",
+    "-s",
     default="baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware",
     help="Comma-separated strategies to test (default: all)",
 )
 @click.option("--timeout", "-t", default=300, type=int, help="Timeout per experiment in seconds")
 @click.option("--seed", default=42, type=int, help="Seed for the random strategy")
 @click.option(
-    "--settle-time", default=30, type=int,
+    "--settle-time",
+    default=30,
+    type=int,
     help="Seconds to wait after placement before running experiment",
 )
 @click.option(
-    "--experiment", "-e", default="scenarios/online-boutique/placement-experiment.yaml",
+    "--experiment",
+    "-e",
+    default="scenarios/online-boutique/placement-experiment.yaml",
     help="Path to the placement experiment YAML file",
 )
 @click.option(
-    "--iterations", "-i", default=1, type=int,
+    "--iterations",
+    "-i",
+    default=1,
+    type=int,
     help="Number of iterations per strategy (default: 1)",
 )
 @click.option(
-    "--load-profile", type=click.Choice(["steady", "ramp", "spike"]), default="steady",
+    "--load-profile",
+    type=click.Choice(["steady", "ramp", "spike"]),
+    default="steady",
     help="Locust load profile during each experiment (default: steady)",
 )
-@click.option("--locustfile", type=click.Path(exists=True), default=None, help="Custom Locust file for load generation")
 @click.option(
-    "--target-url", default=None,
+    "--locustfile",
+    type=click.Path(exists=True),
+    default=None,
+    help="Custom Locust file for load generation",
+)
+@click.option(
+    "--target-url",
+    default=None,
     help="Target URL for load generation (default: auto port-forward)",
 )
-@click.option("--visualize/--no-visualize", "do_visualize", default=True, show_default=True, help="Generate visualization charts after experiments complete")
-@click.option("--measure-latency/--no-measure-latency", "measure_latency", default=True, show_default=True, help="Measure inter-service latency during each experiment")
-@click.option("--measure-redis/--no-measure-redis", "measure_redis", default=True, show_default=True, help="Measure Redis throughput during each experiment")
-@click.option("--measure-disk/--no-measure-disk", "measure_disk", default=True, show_default=True, help="Measure disk I/O throughput during each experiment")
-@click.option("--measure-resources/--no-measure-resources", "measure_resources", default=True, show_default=True, help="Measure node/pod resource utilization during each experiment")
-@click.option("--collect-logs/--no-collect-logs", "collect_logs", default=True, show_default=True, help="Collect container logs from target deployment after each experiment")
-@click.option("--measure-prometheus/--no-measure-prometheus", "measure_prometheus", default=True, show_default=True, help="Query Prometheus for cluster metrics during each experiment")
-@click.option("--prometheus-url", multiple=True, help="Prometheus server URL(s); repeat for multiple instances (auto-discovered if omitted)")
-@click.option("--baseline-duration", type=int, default=0, help="Seconds to collect steady-state 'normal' metrics before chaos (default: 0 = use settle time)")
-@click.option("--neo4j-uri", default="bolt://localhost:7687", envvar="NEO4J_URI", help="Neo4j connection URI (default: bolt://localhost:7687). Enables graph storage.")
-@click.option("--neo4j-user", default="neo4j", envvar="NEO4J_USER", help="Neo4j username (default: neo4j)")
-@click.option("--neo4j-password", default="chaosprobe", envvar="NEO4J_PASSWORD", help="Neo4j password (default: chaosprobe)")
+@click.option(
+    "--visualize/--no-visualize",
+    "do_visualize",
+    default=True,
+    show_default=True,
+    help="Generate visualization charts after experiments complete",
+)
+@click.option(
+    "--measure-latency/--no-measure-latency",
+    "measure_latency",
+    default=True,
+    show_default=True,
+    help="Measure inter-service latency during each experiment",
+)
+@click.option(
+    "--measure-redis/--no-measure-redis",
+    "measure_redis",
+    default=True,
+    show_default=True,
+    help="Measure Redis throughput during each experiment",
+)
+@click.option(
+    "--measure-disk/--no-measure-disk",
+    "measure_disk",
+    default=True,
+    show_default=True,
+    help="Measure disk I/O throughput during each experiment",
+)
+@click.option(
+    "--measure-resources/--no-measure-resources",
+    "measure_resources",
+    default=True,
+    show_default=True,
+    help="Measure node/pod resource utilization during each experiment",
+)
+@click.option(
+    "--collect-logs/--no-collect-logs",
+    "collect_logs",
+    default=True,
+    show_default=True,
+    help="Collect container logs from target deployment after each experiment",
+)
+@click.option(
+    "--measure-prometheus/--no-measure-prometheus",
+    "measure_prometheus",
+    default=True,
+    show_default=True,
+    help="Query Prometheus for cluster metrics during each experiment",
+)
+@click.option(
+    "--prometheus-url",
+    multiple=True,
+    help="Prometheus server URL(s); repeat for multiple instances (auto-discovered if omitted)",
+)
+@click.option(
+    "--baseline-duration",
+    type=int,
+    default=0,
+    help=(
+        "Seconds to collect steady-state 'normal' metrics before chaos"
+        " (default: 0 = use settle time)"
+    ),
+)
+@click.option(
+    "--neo4j-uri",
+    default="bolt://localhost:7687",
+    envvar="NEO4J_URI",
+    help="Neo4j connection URI (default: bolt://localhost:7687). Enables graph storage.",
+)
+@click.option(
+    "--neo4j-user", default="neo4j", envvar="NEO4J_USER", help="Neo4j username (default: neo4j)"
+)
+@click.option(
+    "--neo4j-password",
+    default="chaosprobe",
+    envvar="NEO4J_PASSWORD",
+    help="Neo4j password (default: chaosprobe)",
+)
 def run(
     namespace: Optional[str],
     output_dir: Optional[str],
@@ -488,8 +578,8 @@ def run(
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # Load scenario, deploy manifests, discover topology, build probes
-    shared_scenario, namespace, experiment_file, service_routes = (
-        _load_and_prepare_scenario(experiment, namespace)
+    shared_scenario, namespace, experiment_file, service_routes = _load_and_prepare_scenario(
+        experiment, namespace
     )
 
     # Ensure LitmusChaos is ready once
@@ -506,12 +596,21 @@ def run(
     metrics_collector = MetricsCollector(namespace)
 
     _print_run_banner(
-        namespace, experiment_file, strategy_list, iterations,
-        results_dir, timeout, settle_time,
-        measure_latency=measure_latency, measure_redis=measure_redis,
-        measure_disk=measure_disk, measure_resources=measure_resources,
-        measure_prometheus=measure_prometheus, prometheus_url=prometheus_url,
-        collect_logs=collect_logs, baseline_duration=baseline_duration,
+        namespace,
+        experiment_file,
+        strategy_list,
+        iterations,
+        results_dir,
+        timeout,
+        settle_time,
+        measure_latency=measure_latency,
+        measure_redis=measure_redis,
+        measure_disk=measure_disk,
+        measure_resources=measure_resources,
+        measure_prometheus=measure_prometheus,
+        prometheus_url=prometheus_url,
+        collect_logs=collect_logs,
+        baseline_duration=baseline_duration,
     )
 
     # ── Fresh-start: clear stale placement before pre-flight ──
@@ -558,13 +657,17 @@ def run(
         click.echo("Connecting to Neo4j graph store...")
         try:
             graph_store = init_graph_store(
-                neo4j_uri, neo4j_user, neo4j_password,
-                namespace, service_routes=service_routes,
+                neo4j_uri,
+                neo4j_user,
+                neo4j_password,
+                namespace,
+                service_routes=service_routes,
             )
             click.echo("  Neo4j: connected and schema ready")
         except ImportError:
             click.echo(
-                "Error: Neo4j driver not installed (install with: uv pip install chaosprobe[graph])",
+                "Error: Neo4j driver not installed"
+                " (install with: uv pip install chaosprobe[graph])",
                 err=True,
             )
             sys.exit(1)
@@ -612,7 +715,10 @@ def run(
     for idx, strategy_name in enumerate(strategy_list, 1):
         try:
             strategy_result, strategy_passed = execute_strategy(
-                run_ctx, strategy_name, idx, total,
+                run_ctx,
+                strategy_name,
+                idx,
+                total,
             )
         except Exception as e:
             click.echo(

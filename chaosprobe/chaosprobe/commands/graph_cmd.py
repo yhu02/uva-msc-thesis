@@ -147,16 +147,19 @@ def graph_details(run_id, neo4j_uri, neo4j_user, neo4j_password, json_output):
             click.echo(f"    Max:    {exp.get('max_recovery_ms')}ms")
             click.echo(f"    P95:    {exp.get('p95_recovery_ms')}ms")
             click.echo(
-                f"    Cycles: {exp.get('completed_cycles')} completed, {exp.get('incomplete_cycles')} incomplete"
+                f"    Cycles: {exp.get('completed_cycles')} completed,"
+                f" {exp.get('incomplete_cycles')} incomplete"
             )
 
         if exp.get("load_profile"):
             click.echo(f"\n  Load Generation: {exp.get('load_profile')}")
             click.echo(
-                f"    Requests: {exp.get('load_total_requests')} ({exp.get('load_total_failures')} failures)"
+                f"    Requests: {exp.get('load_total_requests')}"
+                f" ({exp.get('load_total_failures')} failures)"
             )
             click.echo(
-                f"    Avg Response: {exp.get('load_avg_response_ms')}ms  P95: {exp.get('load_p95_response_ms')}ms"
+                f"    Avg Response: {exp.get('load_avg_response_ms')}ms"
+                f"  P95: {exp.get('load_p95_response_ms')}ms"
             )
 
         cycles = details.get("recoveryCycles", [])

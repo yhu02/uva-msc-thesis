@@ -161,7 +161,7 @@ def cluster_kubeconfig(host: str, user: str, output: Optional[str], ssh_key: Opt
             ssh_key=key_path,
         )
         click.echo(f"Kubeconfig saved to: {kubeconfig_path}")
-        click.echo(f"\nTo use this cluster:")
+        click.echo("\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)
@@ -519,7 +519,7 @@ def vagrant_kubeconfig(name: str, vagrant_dir: Optional[str], output: Optional[s
     try:
         kubeconfig_path = setup.vagrant_fetch_kubeconfig(vdir, output_path=output_path)
         click.echo(f"Kubeconfig saved to: {kubeconfig_path}")
-        click.echo(f"\nTo use this cluster:")
+        click.echo("\nTo use this cluster:")
         click.echo(f"  export KUBECONFIG={kubeconfig_path}")
     except Exception as e:
         click.echo(f"Error fetching kubeconfig: {e}", err=True)

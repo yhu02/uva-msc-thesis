@@ -20,7 +20,6 @@ from chaosprobe.probes.templates import (
     generate_single_file_rs,
 )
 
-
 # ── Template generation tests ────────────────────────────────
 
 

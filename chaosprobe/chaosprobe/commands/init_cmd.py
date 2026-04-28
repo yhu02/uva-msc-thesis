@@ -50,7 +50,11 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     click.echo(f"  helm: {'OK' if prereqs['helm'] else 'MISSING'}")
     click.echo(f"  git: {'OK' if prereqs['git'] else 'MISSING'}")
     click.echo(f"  ssh: {'OK' if prereqs['ssh'] else 'MISSING'}")
-    click.echo(f"  ansible: {'OK' if prereqs['ansible'] else 'Not found (bundled with Kubespray on first cluster create)'}")
+    ansible_status = (
+        "OK" if prereqs["ansible"]
+        else "Not found (bundled with Kubespray on first cluster create)"
+    )
+    click.echo(f"  ansible: {ansible_status}")
 
     if not prereqs["kubectl"]:
         click.echo("\nError: kubectl is required. Please install it first.", err=True)
@@ -62,12 +66,21 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
         click.echo(f"  Error: {message}", err=True)
         click.echo("\nNo cluster configured. Options:")
         click.echo("  Option A — Local libvirt/Vagrant cluster:")
-        click.echo("    1. chaosprobe cluster vagrant init        (first time only — generates Vagrantfile)")
-        click.echo("    2. chaosprobe cluster vagrant setup       (first time only — installs libvirt/KVM)")
+        click.echo(
+            "    1. chaosprobe cluster vagrant init"
+            "        (first time only — generates Vagrantfile)"
+        )
+        click.echo(
+            "    2. chaosprobe cluster vagrant setup       (first time only — installs libvirt/KVM)"
+        )
         click.echo("    3. chaosprobe cluster vagrant up          (start VMs)")
-        click.echo("    4. chaosprobe cluster vagrant deploy      (install Kubernetes via Kubespray)")
+        click.echo(
+            "    4. chaosprobe cluster vagrant deploy      (install Kubernetes via Kubespray)"
+        )
         click.echo("    5. chaosprobe cluster vagrant kubeconfig  (fetch kubeconfig)")
-        click.echo("    6. chaosprobe init                        (install ChaosProbe infrastructure)")
+        click.echo(
+            "    6. chaosprobe init                        (install ChaosProbe infrastructure)"
+        )
         click.echo("  Option B — Bare metal/cloud VMs with Kubespray:")
         click.echo("    1. chaosprobe cluster create")
         click.echo("    2. chaosprobe init")
@@ -137,9 +150,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
         if setup.is_metrics_server_installed():
             # Verify --kubelet-insecure-tls is present
             try:
-                dep = setup.apps_api.read_namespaced_deployment(
-                    "metrics-server", "kube-system"
-                )
+                dep = setup.apps_api.read_namespaced_deployment("metrics-server", "kube-system")
                 containers = dep.spec.template.spec.containers or []
                 args = containers[0].args or [] if containers else []
                 if "--kubelet-insecure-tls" not in args:
@@ -211,17 +222,21 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
                         _cc_server_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
                         _cc_server_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
                         if not _pf_ensure(
-                            _cc_auth_svc, "litmus",
+                            _cc_auth_svc,
+                            "litmus",
                             [f"{_cc_auth_port}:{_cc_auth_port}"],
-                            "localhost", _cc_auth_port,
+                            "localhost",
+                            _cc_auth_port,
                         ):
                             raise RuntimeError(
                                 f"Port-forward to auth server (:{_cc_auth_port}) not reachable"
                             )
                         if not _pf_ensure(
-                            _cc_server_svc, "litmus",
+                            _cc_server_svc,
+                            "litmus",
                             [f"{_cc_server_port}:{_cc_server_port}"],
-                            "localhost", _cc_server_port,
+                            "localhost",
+                            _cc_server_port,
                         ):
                             raise RuntimeError(
                                 f"Port-forward to GraphQL server (:{_cc_server_port}) not reachable"
@@ -291,7 +306,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
         if pf.check_port("localhost", _cc_f_port):
             click.echo(f"  ChaosCenter:   http://localhost:{_cc_f_port}")
         else:
-            click.echo(f"  ChaosCenter:   WARNING - frontend port-forward failed", err=True)
+            click.echo("  ChaosCenter:   WARNING - frontend port-forward failed", err=True)
 
     click.echo("\nPort-forwards are running in the background.")
     click.echo("You can now run scenarios with:")

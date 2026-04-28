@@ -10,7 +10,6 @@ each label says "anomaly type X happened at time T affecting service S."
 
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # Mapping of LitmusChaos experiment names to anomaly categories
 EXPERIMENT_TO_ANOMALY = {
     "pod-delete": {"category": "availability", "resource": "pod", "severity": "critical"},

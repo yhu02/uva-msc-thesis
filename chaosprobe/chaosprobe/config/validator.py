@@ -7,7 +7,6 @@ validation of all LitmusChaos resilience probe types.
 
 from typing import Any, Dict, List, Optional
 
-
 # All supported LitmusChaos resilience probe types
 VALID_PROBE_TYPES = {"httpProbe", "cmdProbe", "k8sProbe", "promProbe"}
 
@@ -19,7 +18,14 @@ VALID_K8S_OPERATIONS = {"create", "delete", "present", "absent"}
 
 # Comparator criteria for cmdProbe / promProbe
 VALID_COMPARATOR_CRITERIA_INT = {">=", "<=", ">", "<", "==", "!=", "oneOf", "between"}
-VALID_COMPARATOR_CRITERIA_STRING = {"equal", "notEqual", "contains", "matches", "notMatches", "oneOf"}
+VALID_COMPARATOR_CRITERIA_STRING = {
+    "equal",
+    "notEqual",
+    "contains",
+    "matches",
+    "notMatches",
+    "oneOf",
+}
 
 # httpProbe criteria
 VALID_HTTP_CRITERIA = {"==", "!=", "oneOf"}
@@ -153,8 +159,7 @@ def _validate_probe(probe: Dict[str, Any], filepath: str, exp_name: str) -> List
         errors.append(f"{prefix}: probe missing 'mode'")
     elif mode not in VALID_PROBE_MODES:
         errors.append(
-            f"{prefix}: invalid probe mode '{mode}', "
-            f"must be one of {sorted(VALID_PROBE_MODES)}"
+            f"{prefix}: invalid probe mode '{mode}', " f"must be one of {sorted(VALID_PROBE_MODES)}"
         )
 
     # runProperties is required
@@ -224,7 +229,10 @@ def _validate_http_probe(probe: Dict[str, Any], prefix: str) -> List[str]:
         if not post_cfg.get("body") and not post_cfg.get("bodyPath"):
             errors.append(f"{prefix}: httpProbe/inputs.method.post requires 'body' or 'bodyPath'")
         if post_cfg.get("body") and post_cfg.get("bodyPath"):
-            errors.append(f"{prefix}: httpProbe/inputs.method.post 'body' and 'bodyPath' are mutually exclusive")
+            errors.append(
+                f"{prefix}: httpProbe/inputs.method.post 'body' and 'bodyPath'"
+                f" are mutually exclusive"
+            )
         if not post_cfg.get("criteria"):
             errors.append(f"{prefix}: httpProbe/inputs.method.post.criteria is required")
         if not post_cfg.get("responseCode"):
@@ -256,7 +264,9 @@ def _validate_cmd_probe(probe: Dict[str, Any], prefix: str) -> List[str]:
     source = inputs.get("source")
     if source and isinstance(source, dict):
         if not source.get("image"):
-            errors.append(f"{prefix}: cmdProbe/inputs.source.image is required when source is specified")
+            errors.append(
+                f"{prefix}: cmdProbe/inputs.source.image is required when source is specified"
+            )
 
     return errors
 
@@ -332,13 +342,9 @@ def _validate_comparator(comparator: Dict[str, Any], prefix: str) -> List[str]:
     if not criteria:
         errors.append(f"{prefix}: comparator.criteria is required")
     elif comp_type in ("int", "float") and criteria not in VALID_COMPARATOR_CRITERIA_INT:
-        errors.append(
-            f"{prefix}: invalid comparator criteria '{criteria}' for type '{comp_type}'"
-        )
+        errors.append(f"{prefix}: invalid comparator criteria '{criteria}' for type '{comp_type}'")
     elif comp_type == "string" and criteria not in VALID_COMPARATOR_CRITERIA_STRING:
-        errors.append(
-            f"{prefix}: invalid comparator criteria '{criteria}' for type 'string'"
-        )
+        errors.append(f"{prefix}: invalid comparator criteria '{criteria}' for type 'string'")
 
     if comparator.get("value") is None:
         errors.append(f"{prefix}: comparator.value is required")

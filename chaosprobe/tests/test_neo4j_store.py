@@ -15,10 +15,10 @@ from chaosprobe.graph.analysis import (
     topology_comparison,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_store():
     """Create a Neo4jStore-like mock with a working session context manager."""
@@ -44,6 +44,7 @@ def _make_store_with_tx():
         driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
         from chaosprobe.storage.neo4j_store import Neo4jStore
+
         store = Neo4jStore("bolt://fake", "u", "p")
         return store, tx
 
@@ -129,15 +130,22 @@ def _make_run_data(**overrides):
                 "capacity": {"cpu": "2", "memory": "4128928Ki"},
             },
             "eventTimeline": [
-                {"time": "2026-03-29T12:01:00Z", "type": "DELETED",
-                 "pod": "checkoutservice-old", "phase": "Running"},
+                {
+                    "time": "2026-03-29T12:01:00Z",
+                    "type": "DELETED",
+                    "pod": "checkoutservice-old",
+                    "phase": "Running",
+                },
             ],
             "containerLogs": {
                 "pods": {
                     "checkoutservice-abc123": {
                         "containers": {
                             "server": {
-                                "current": "INFO starting server on :8080\nERROR connection refused",
+                                "current": (
+                                    "INFO starting server on :8080\n"
+                                    "ERROR connection refused"
+                                ),
                                 "previous": "FATAL out of memory",
                             },
                         },
@@ -170,17 +178,29 @@ def _make_full_run_data(**overrides):
         "phases": {
             "pre-chaos": {
                 "sampleCount": 5,
-                "node": {"meanCpu_millicores": 200, "maxCpu_millicores": 300,
-                         "meanMemory_bytes": 1000000, "maxMemory_bytes": 1200000,
-                         "meanCpu_percent": 10.0, "maxCpu_percent": 15.0,
-                         "meanMemory_percent": 50.0, "maxMemory_percent": 60.0},
+                "node": {
+                    "meanCpu_millicores": 200,
+                    "maxCpu_millicores": 300,
+                    "meanMemory_bytes": 1000000,
+                    "maxMemory_bytes": 1200000,
+                    "meanCpu_percent": 10.0,
+                    "maxCpu_percent": 15.0,
+                    "meanMemory_percent": 50.0,
+                    "maxMemory_percent": 60.0,
+                },
             },
             "during-chaos": {
                 "sampleCount": 10,
-                "node": {"meanCpu_millicores": 500, "maxCpu_millicores": 900,
-                         "meanMemory_bytes": 1500000, "maxMemory_bytes": 1800000,
-                         "meanCpu_percent": 25.0, "maxCpu_percent": 45.0,
-                         "meanMemory_percent": 75.0, "maxMemory_percent": 90.0},
+                "node": {
+                    "meanCpu_millicores": 500,
+                    "maxCpu_millicores": 900,
+                    "meanMemory_bytes": 1500000,
+                    "maxMemory_bytes": 1800000,
+                    "meanCpu_percent": 25.0,
+                    "maxCpu_percent": 45.0,
+                    "meanMemory_percent": 75.0,
+                    "maxMemory_percent": 90.0,
+                },
             },
             "post-chaos": {"sampleCount": 0},
         },
@@ -239,6 +259,7 @@ class TestRequireNeo4j:
     def test_import_error_message(self):
         with patch.dict("sys.modules", {"neo4j": None}):
             from chaosprobe.storage.neo4j_store import _require_neo4j
+
             with pytest.raises(ImportError, match="uv pip install chaosprobe"):
                 _require_neo4j()
 
@@ -260,6 +281,7 @@ class TestSyncTopology:
             driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
             from chaosprobe.storage.neo4j_store import Neo4jStore
+
             store = Neo4jStore("bolt://fake", "u", "p")
 
             nodes = [
@@ -287,6 +309,7 @@ class TestSyncServiceDependencies:
             driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
             from chaosprobe.storage.neo4j_store import Neo4jStore
+
             store = Neo4jStore("bolt://fake", "u", "p")
 
             test_routes = [
@@ -309,6 +332,7 @@ class TestSyncServiceDependencies:
             driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
             from chaosprobe.storage.neo4j_store import Neo4jStore
+
             store = Neo4jStore("bolt://fake", "u", "p")
             store.sync_service_dependencies()  # No routes
 
@@ -441,8 +465,7 @@ class TestSyncRun:
 
         # The ExperimentResult CREATE should not contain a 'probes:' property
         result_creates = [
-            c for c in tx.run.call_args_list
-            if "CREATE (r:ExperimentResult" in str(c)
+            c for c in tx.run.call_args_list if "CREATE (r:ExperimentResult" in str(c)
         ]
         for call in result_creates:
             cypher = str(call)
@@ -538,15 +561,16 @@ class TestEnsureSchema:
             driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
             from chaosprobe.storage.neo4j_store import Neo4jStore
+
             store = Neo4jStore("bolt://fake", "u", "p")
             store.ensure_schema()
 
             # 5 constraints + 11 indexes = 16 calls
             assert session.run.call_count == 16
-            constraint_calls = [c for c in session.run.call_args_list
-                                if "CREATE CONSTRAINT" in c[0][0]]
-            index_calls = [c for c in session.run.call_args_list
-                           if "CREATE INDEX" in c[0][0]]
+            constraint_calls = [
+                c for c in session.run.call_args_list if "CREATE CONSTRAINT" in c[0][0]
+            ]
+            index_calls = [c for c in session.run.call_args_list if "CREATE INDEX" in c[0][0]]
             assert len(constraint_calls) == 5
             assert len(index_calls) == 11
 
@@ -569,6 +593,7 @@ class TestStatus:
             session.run.return_value.single.return_value = {"c": 0}
 
             from chaosprobe.storage.neo4j_store import Neo4jStore
+
             store = Neo4jStore("bolt://fake", "u", "p")
             result = store.status()
 
@@ -603,7 +628,8 @@ class TestBlastRadiusReport:
         assert report["totalAffected"] == 2
         assert len(report["affectedServices"]) == 2
         store.get_blast_radius.assert_called_once_with(
-            "productcatalogservice", max_hops=3,
+            "productcatalogservice",
+            max_hops=3,
         )
 
     def test_empty_blast_radius(self):
@@ -678,9 +704,24 @@ class TestStrategySummary:
     def test_aggregates_by_strategy(self):
         store = MagicMock()
         store.compare_strategies_graph.return_value = [
-            {"strategy": "colocate", "run_id": "r1", "resilience_score": 80.0, "mean_recovery_ms": 1000.0},
-            {"strategy": "colocate", "run_id": "r2", "resilience_score": 90.0, "mean_recovery_ms": 1200.0},
-            {"strategy": "spread", "run_id": "r3", "resilience_score": 95.0, "mean_recovery_ms": None},
+            {
+                "strategy": "colocate",
+                "run_id": "r1",
+                "resilience_score": 80.0,
+                "mean_recovery_ms": 1000.0,
+            },
+            {
+                "strategy": "colocate",
+                "run_id": "r2",
+                "resilience_score": 90.0,
+                "mean_recovery_ms": 1200.0,
+            },
+            {
+                "strategy": "spread",
+                "run_id": "r3",
+                "resilience_score": 95.0,
+                "mean_recovery_ms": None,
+            },
         ]
 
         result = strategy_summary(store, run_ids=["r1", "r2", "r3"])
@@ -727,8 +768,7 @@ class TestSyncCascadeTimeline:
         data["cascadeTimeline"] = []
         store.sync_run(data)
 
-        create_cascade = [c for c in tx.run.call_args_list
-                          if "CREATE (c:CascadeEvent" in str(c)]
+        create_cascade = [c for c in tx.run.call_args_list if "CREATE (c:CascadeEvent" in str(c)]
         assert len(create_cascade) == 0
 
 

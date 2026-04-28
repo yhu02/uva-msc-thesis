@@ -11,7 +11,6 @@ from kubernetes.client.rest import ApiException
 
 from chaosprobe.k8s import ensure_k8s_config
 
-
 # Map LitmusChaos probe type identifiers to canonical names
 PROBE_TYPE_MAP = {
     "HTTPProbe": "httpProbe",

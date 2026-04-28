@@ -6,7 +6,20 @@ from pathlib import Path
 from typing import Optional
 
 import click
+from dotenv import find_dotenv, load_dotenv
 
+from chaosprobe.commands.shared import (
+    get_graph_store as _get_graph_store,
+)
+from chaosprobe.commands.shared import (
+    neo4j_password_option as _neo4j_password_option,
+)
+from chaosprobe.commands.shared import (
+    neo4j_uri_option as _neo4j_uri_option,
+)
+from chaosprobe.commands.shared import (
+    neo4j_user_option as _neo4j_user_option,
+)
 from chaosprobe.config.loader import load_scenario
 from chaosprobe.config.validator import validate_scenario
 from chaosprobe.output.comparison import compare_runs
@@ -22,7 +35,8 @@ def main():
     Deploys Kubernetes manifests, runs native LitmusChaos experiments,
     Scenarios are directories containing K8s manifests and ChaosEngine YAML.
     """
-    pass
+    # Load .env from CWD or any parent directory. Shell-exported vars win.
+    load_dotenv(find_dotenv(usecwd=True), override=False)
 
 
 @main.command()
@@ -80,12 +94,16 @@ def status(json_output: bool):
         if not prereqs["cluster_access"]:
             click.echo("\nNo cluster configured. Options:")
             click.echo("  Option A — Local libvirt/Vagrant cluster:")
-            click.echo("    1. chaosprobe cluster vagrant init        (first time only — generates Vagrantfile)")
-            click.echo("    2. chaosprobe cluster vagrant setup       (first time only — installs libvirt/KVM)")
+            click.echo("    1. chaosprobe cluster vagrant init"
+                       "        (first time only — generates Vagrantfile)")
+            click.echo("    2. chaosprobe cluster vagrant setup"
+                       "       (first time only — installs libvirt/KVM)")
             click.echo("    3. chaosprobe cluster vagrant up          (start VMs)")
-            click.echo("    4. chaosprobe cluster vagrant deploy      (install Kubernetes via Kubespray)")
+            click.echo("    4. chaosprobe cluster vagrant deploy"
+                       "      (install Kubernetes via Kubespray)")
             click.echo("    5. chaosprobe cluster vagrant kubeconfig  (fetch kubeconfig)")
-            click.echo("    6. chaosprobe init                        (install ChaosProbe infrastructure)")
+            click.echo("    6. chaosprobe init"
+                       "                        (install ChaosProbe infrastructure)")
             click.echo("  Option B — Bare metal/cloud VMs with Kubespray:")
             click.echo("    1. chaosprobe cluster create")
             click.echo("    2. chaosprobe init")
@@ -133,18 +151,6 @@ def provision(scenario_path: str, namespace: Optional[str]):
     except Exception as e:
         click.echo(f"Error deploying manifests: {e}", err=True)
         sys.exit(1)
-
-
-# ─────────────────────────────────────────────────────────────
-# Neo4j option decorators (imported from commands.shared)
-# ─────────────────────────────────────────────────────────────
-
-from chaosprobe.commands.shared import (
-    get_graph_store as _get_graph_store,
-    neo4j_password_option as _neo4j_password_option,
-    neo4j_uri_option as _neo4j_uri_option,
-    neo4j_user_option as _neo4j_user_option,
-)
 
 
 @main.command()

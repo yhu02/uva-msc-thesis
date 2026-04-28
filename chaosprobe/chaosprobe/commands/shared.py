@@ -4,7 +4,6 @@ import sys
 
 import click
 
-
 neo4j_uri_option = click.option(
     "--neo4j-uri",
     default="bolt://localhost:7687",

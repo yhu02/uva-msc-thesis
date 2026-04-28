@@ -10,6 +10,11 @@ build/
 venv/
 env/
 
+# Environment variables (local secrets)
+.env
+.env.local
+!.env.example
+
 # Python cache
 __pycache__/
 *.py[cod]

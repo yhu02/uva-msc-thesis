@@ -9,7 +9,6 @@ from typing import Any, Dict, Tuple
 
 import click
 
-
 # ---------------------------------------------------------------------------
 # Create & start
 # ---------------------------------------------------------------------------
@@ -88,7 +87,7 @@ def create_and_start_probers(
         ]
         if p is not None
     ]
-    labels = [l for l, _ in probers_to_start if l != "recovery watcher"]
+    labels = [label for label, _ in probers_to_start if label != "recovery watcher"]
     if labels:
         click.echo(f"    Starting {', '.join(labels)}...")
 

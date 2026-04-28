@@ -15,14 +15,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 
 from chaosprobe.orchestrator import portforward as pf
-
-LOAD_TARGET_LOCAL_PORT = 8089
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
     wait_for_healthy_deployments,
 )
 from chaosprobe.provisioner.setup import LitmusSetup
 
+LOAD_TARGET_LOCAL_PORT = 8089
 
 # ---------------------------------------------------------------------------
 # 1.  Pre-flight sub-steps
@@ -465,7 +464,6 @@ from chaosprobe.orchestrator.probers import (  # noqa: E402, F401
     stop_and_collect_probers,
 )
 
-
 # ---------------------------------------------------------------------------
 # 4.  Final summary output
 # ---------------------------------------------------------------------------
@@ -578,7 +576,7 @@ def write_run_results(
     # Per-iteration score breakdown (only for multi-iteration runs)
     has_iters = any(len(r.get("perIterationScores", [])) > 1 for r in comparison_table)
     if has_iters:
-        click.echo(f"\n  Per-Iteration Scores:")
+        click.echo("\n  Per-Iteration Scores:")
         for row in comparison_table:
             scores = row.get("perIterationScores", [])
             if scores:

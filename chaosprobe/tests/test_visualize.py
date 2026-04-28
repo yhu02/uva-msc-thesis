@@ -2,27 +2,27 @@
 
 import json
 import os
+
 import pytest
 
-from chaosprobe.output.visualize import (
-    generate_from_summary,
-    _generate_html_summary,
-)
 from chaosprobe.output.charts import (
-    strategy_colors,
-    chart_resilience_scores,
-    chart_recovery_times,
     chart_latency_by_strategy,
     chart_latency_degradation,
-    extract_latency_data,
+    chart_prometheus_by_phase,
+    chart_recovery_times,
+    chart_resilience_scores,
     chart_strategy_comparison_heatmap,
     chart_throughput_by_strategy,
     chart_throughput_degradation,
-    extract_throughput_data,
+    extract_latency_data,
     extract_prometheus_data,
-    chart_prometheus_by_phase,
+    extract_throughput_data,
+    strategy_colors,
 )
-
+from chaosprobe.output.visualize import (
+    _generate_html_summary,
+    generate_from_summary,
+)
 
 # Skip all tests if matplotlib is not installed
 pytest.importorskip("matplotlib")
@@ -86,15 +86,11 @@ class TestChartGeneration:
         assert os.path.exists(path)
 
     def test_resilience_scores_empty(self, tmp_path):
-        path = chart_resilience_scores(
-            {"baseline": {"avgResilienceScore": 0}}, tmp_path
-        )
+        path = chart_resilience_scores({"baseline": {"avgResilienceScore": 0}}, tmp_path)
         assert path is None
 
     def test_recovery_times_no_data(self, tmp_path):
-        path = chart_recovery_times(
-            {"baseline": {"avgMeanRecovery_ms": None}}, tmp_path
-        )
+        path = chart_recovery_times({"baseline": {"avgMeanRecovery_ms": None}}, tmp_path)
         assert path is None
 
     def test_html_summary(self, strategies, tmp_path):
@@ -190,26 +186,61 @@ class TestLatencyCharts:
                     "pre-chaos": {
                         "sampleCount": 5,
                         "routes": {
-                            "/": {"mean_ms": 50.0, "median_ms": 48.0, "p95_ms": 65.0,
-                                  "min_ms": 40.0, "max_ms": 70.0, "sampleCount": 5, "errorCount": 0},
-                            "/product/OLJCESPC7Z": {"mean_ms": 80.0, "median_ms": 75.0, "p95_ms": 100.0,
-                                                     "min_ms": 60.0, "max_ms": 110.0, "sampleCount": 5, "errorCount": 0},
+                            "/": {
+                                "mean_ms": 50.0,
+                                "median_ms": 48.0,
+                                "p95_ms": 65.0,
+                                "min_ms": 40.0,
+                                "max_ms": 70.0,
+                                "sampleCount": 5,
+                                "errorCount": 0,
+                            },
+                            "/product/OLJCESPC7Z": {
+                                "mean_ms": 80.0,
+                                "median_ms": 75.0,
+                                "p95_ms": 100.0,
+                                "min_ms": 60.0,
+                                "max_ms": 110.0,
+                                "sampleCount": 5,
+                                "errorCount": 0,
+                            },
                         },
                     },
                     "during-chaos": {
                         "sampleCount": 10,
                         "routes": {
-                            "/": {"mean_ms": 120.0, "median_ms": 110.0, "p95_ms": 200.0,
-                                  "min_ms": 80.0, "max_ms": 250.0, "sampleCount": 10, "errorCount": 2},
-                            "/product/OLJCESPC7Z": {"mean_ms": 350.0, "median_ms": 300.0, "p95_ms": 500.0,
-                                                     "min_ms": 150.0, "max_ms": 600.0, "sampleCount": 10, "errorCount": 3},
+                            "/": {
+                                "mean_ms": 120.0,
+                                "median_ms": 110.0,
+                                "p95_ms": 200.0,
+                                "min_ms": 80.0,
+                                "max_ms": 250.0,
+                                "sampleCount": 10,
+                                "errorCount": 2,
+                            },
+                            "/product/OLJCESPC7Z": {
+                                "mean_ms": 350.0,
+                                "median_ms": 300.0,
+                                "p95_ms": 500.0,
+                                "min_ms": 150.0,
+                                "max_ms": 600.0,
+                                "sampleCount": 10,
+                                "errorCount": 3,
+                            },
                         },
                     },
                     "post-chaos": {
                         "sampleCount": 3,
                         "routes": {
-                            "/": {"mean_ms": 55.0, "median_ms": 52.0, "p95_ms": 68.0,
-                                  "min_ms": 42.0, "max_ms": 72.0, "sampleCount": 3, "errorCount": 0},
+                            "/": {
+                                "mean_ms": 55.0,
+                                "median_ms": 52.0,
+                                "p95_ms": 68.0,
+                                "min_ms": 42.0,
+                                "max_ms": 72.0,
+                                "sampleCount": 3,
+                                "errorCount": 0,
+                            },
                         },
                     },
                 },
@@ -219,15 +250,29 @@ class TestLatencyCharts:
                     "pre-chaos": {
                         "sampleCount": 5,
                         "routes": {
-                            "/": {"mean_ms": 30.0, "median_ms": 28.0, "p95_ms": 40.0,
-                                  "min_ms": 20.0, "max_ms": 45.0, "sampleCount": 5, "errorCount": 0},
+                            "/": {
+                                "mean_ms": 30.0,
+                                "median_ms": 28.0,
+                                "p95_ms": 40.0,
+                                "min_ms": 20.0,
+                                "max_ms": 45.0,
+                                "sampleCount": 5,
+                                "errorCount": 0,
+                            },
                         },
                     },
                     "during-chaos": {
                         "sampleCount": 10,
                         "routes": {
-                            "/": {"mean_ms": 250.0, "median_ms": 230.0, "p95_ms": 400.0,
-                                  "min_ms": 100.0, "max_ms": 500.0, "sampleCount": 10, "errorCount": 4},
+                            "/": {
+                                "mean_ms": 250.0,
+                                "median_ms": 230.0,
+                                "p95_ms": 400.0,
+                                "min_ms": 100.0,
+                                "max_ms": 500.0,
+                                "sampleCount": 10,
+                                "errorCount": 4,
+                            },
                         },
                     },
                     "post-chaos": {"sampleCount": 0, "routes": {}},
@@ -270,14 +315,18 @@ class TestLatencyCharts:
         open(fake_chart, "w").close()
 
         strategies = {
-            "baseline": {"avgResilienceScore": 80.0, "passRate": 0.8,
-                         "avgMeanRecovery_ms": 1200.0, "avgP95Recovery_ms": 2000.0,
-                         "medianRecovery_ms": 1100.0, "runCount": 1},
+            "baseline": {
+                "avgResilienceScore": 80.0,
+                "passRate": 0.8,
+                "avgMeanRecovery_ms": 1200.0,
+                "avgP95Recovery_ms": 2000.0,
+                "medianRecovery_ms": 1100.0,
+                "runCount": 1,
+            },
         }
 
         path = _generate_html_summary(
-            [fake_chart], strategies, tmp_path,
-            latency_data=latency_by_strategy
+            [fake_chart], strategies, tmp_path, latency_data=latency_by_strategy
         )
         assert path is not None
         with open(path) as f:
@@ -330,8 +379,12 @@ class TestThroughputCharts:
                             "read": {"meanOpsPerSecond": 8000, "sampleCount": 3, "errorCount": 0},
                         },
                         "disk": {
-                            "write": {"meanOpsPerSecond": 100, "meanBytesPerSecond": 100000000,
-                                      "sampleCount": 3, "errorCount": 0},
+                            "write": {
+                                "meanOpsPerSecond": 100,
+                                "meanBytesPerSecond": 100000000,
+                                "sampleCount": 3,
+                                "errorCount": 0,
+                            },
                         },
                     },
                     "during-chaos": {
@@ -341,8 +394,12 @@ class TestThroughputCharts:
                             "read": {"meanOpsPerSecond": 3500, "sampleCount": 5, "errorCount": 0},
                         },
                         "disk": {
-                            "write": {"meanOpsPerSecond": 30, "meanBytesPerSecond": 30000000,
-                                      "sampleCount": 5, "errorCount": 2},
+                            "write": {
+                                "meanOpsPerSecond": 30,
+                                "meanBytesPerSecond": 30000000,
+                                "sampleCount": 5,
+                                "errorCount": 2,
+                            },
                         },
                     },
                     "post-chaos": {
@@ -410,13 +467,20 @@ class TestThroughputCharts:
         open(fake_chart, "w").close()
 
         strategies = {
-            "baseline": {"avgResilienceScore": 80.0, "passRate": 0.8,
-                         "avgMeanRecovery_ms": 1200.0, "avgP95Recovery_ms": 2000.0,
-                         "medianRecovery_ms": 1100.0, "runCount": 1},
+            "baseline": {
+                "avgResilienceScore": 80.0,
+                "passRate": 0.8,
+                "avgMeanRecovery_ms": 1200.0,
+                "avgP95Recovery_ms": 2000.0,
+                "medianRecovery_ms": 1100.0,
+                "runCount": 1,
+            },
         }
 
         path = _generate_html_summary(
-            [fake_chart], strategies, tmp_path,
+            [fake_chart],
+            strategies,
+            tmp_path,
             throughput_data=throughput_by_strategy,
         )
         assert path is not None
@@ -430,7 +494,9 @@ class TestThroughputCharts:
             "baseline": {
                 "metrics": {
                     "throughput": {
-                        "phases": {"during-chaos": {"redis": {"write": {"meanOpsPerSecond": 2000}}}},
+                        "phases": {
+                            "during-chaos": {"redis": {"write": {"meanOpsPerSecond": 2000}}}
+                        },
                     },
                 },
             },
@@ -481,10 +547,14 @@ class TestPrometheusVisualization:
             "colocate": {
                 "iterations": [
                     {"metrics": {}},
-                    {"metrics": {"prometheus": {
-                        "available": True,
-                        "phases": {"during-chaos": {"sampleCount": 3, "metrics": {}}},
-                    }}},
+                    {
+                        "metrics": {
+                            "prometheus": {
+                                "available": True,
+                                "phases": {"during-chaos": {"sampleCount": 3, "metrics": {}}},
+                            }
+                        }
+                    },
                 ],
             },
         }
@@ -554,7 +624,9 @@ class TestPrometheusVisualization:
             },
         }
         path = _generate_html_summary(
-            [str(chart)], strategies, tmp_path,
+            [str(chart)],
+            strategies,
+            tmp_path,
             prometheus_data=prometheus_data,
         )
         assert path is not None
@@ -633,7 +705,8 @@ class TestStrategyComparisonHeatmap:
             },
         }
         path = chart_strategy_comparison_heatmap(
-            strategies, tmp_path,
+            strategies,
+            tmp_path,
             latency_data=latency_data,
             throughput_data=throughput_data,
             resource_data=resource_data,
@@ -642,9 +715,7 @@ class TestStrategyComparisonHeatmap:
         assert os.path.exists(path)
 
     def test_heatmap_single_strategy_returns_none(self, tmp_path):
-        path = chart_strategy_comparison_heatmap(
-            {"colocate": {"avgResilienceScore": 50}}, tmp_path
-        )
+        path = chart_strategy_comparison_heatmap({"colocate": {"avgResilienceScore": 50}}, tmp_path)
         assert path is None
 
     def test_heatmap_no_data_returns_none(self, tmp_path):

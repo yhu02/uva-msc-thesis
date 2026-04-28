@@ -76,7 +76,10 @@ class _ChaosCenterMixin:
         try:
             subprocess.run(
                 [
-                    "helm", "repo", "add", "litmuschaos",
+                    "helm",
+                    "repo",
+                    "add",
+                    "litmuschaos",
                     "https://litmuschaos.github.io/litmus-helm/",
                 ],
                 check=True,
@@ -94,25 +97,42 @@ class _ChaosCenterMixin:
         try:
             subprocess.run(
                 [
-                    "helm", "upgrade", "--install",
+                    "helm",
+                    "upgrade",
+                    "--install",
                     self.CHAOSCENTER_RELEASE_NAME,
                     self.CHAOSCENTER_HELM_CHART,
-                    "--namespace", self.LITMUS_NAMESPACE,
-                    "--set", f"portal.frontend.service.type={service_type}",
-                    "--set", f"portal.server.service.type={service_type}",
+                    "--namespace",
+                    self.LITMUS_NAMESPACE,
+                    "--set",
+                    f"portal.frontend.service.type={service_type}",
+                    "--set",
+                    f"portal.server.service.type={service_type}",
                     # Pin all ChaosCenter components to control plane
-                    "--set", "portal.frontend.nodeSelector.node-role\\.kubernetes\\.io/control-plane=",
-                    "--set", "portal.frontend.tolerations[0].key=node-role.kubernetes.io/control-plane",
-                    "--set", "portal.frontend.tolerations[0].operator=Exists",
-                    "--set", "portal.frontend.tolerations[0].effect=NoSchedule",
-                    "--set", "portal.server.nodeSelector.node-role\\.kubernetes\\.io/control-plane=",
-                    "--set", "portal.server.tolerations[0].key=node-role.kubernetes.io/control-plane",
-                    "--set", "portal.server.tolerations[0].operator=Exists",
-                    "--set", "portal.server.tolerations[0].effect=NoSchedule",
-                    "--set", "mongodb.nodeSelector.node-role\\.kubernetes\\.io/control-plane=",
-                    "--set", "mongodb.tolerations[0].key=node-role.kubernetes.io/control-plane",
-                    "--set", "mongodb.tolerations[0].operator=Exists",
-                    "--set", "mongodb.tolerations[0].effect=NoSchedule",
+                    "--set",
+                    "portal.frontend.nodeSelector.node-role\\.kubernetes\\.io/control-plane=",
+                    "--set",
+                    "portal.frontend.tolerations[0].key=node-role.kubernetes.io/control-plane",
+                    "--set",
+                    "portal.frontend.tolerations[0].operator=Exists",
+                    "--set",
+                    "portal.frontend.tolerations[0].effect=NoSchedule",
+                    "--set",
+                    "portal.server.nodeSelector.node-role\\.kubernetes\\.io/control-plane=",
+                    "--set",
+                    "portal.server.tolerations[0].key=node-role.kubernetes.io/control-plane",
+                    "--set",
+                    "portal.server.tolerations[0].operator=Exists",
+                    "--set",
+                    "portal.server.tolerations[0].effect=NoSchedule",
+                    "--set",
+                    "mongodb.nodeSelector.node-role\\.kubernetes\\.io/control-plane=",
+                    "--set",
+                    "mongodb.tolerations[0].key=node-role.kubernetes.io/control-plane",
+                    "--set",
+                    "mongodb.tolerations[0].operator=Exists",
+                    "--set",
+                    "mongodb.tolerations[0].effect=NoSchedule",
                 ],
                 check=True,
             )
@@ -204,7 +224,8 @@ class _ChaosCenterMixin:
             return None
         try:
             svc = self.core_api.read_namespaced_service(
-                self.CHAOSCENTER_FRONTEND_SVC, self.LITMUS_NAMESPACE,
+                self.CHAOSCENTER_FRONTEND_SVC,
+                self.LITMUS_NAMESPACE,
             )
         except Exception:
             return None
@@ -241,7 +262,6 @@ class _ChaosCenterMixin:
             pass
         return None
 
-
     def ensure_chaoscenter_configured(
         self,
         namespace: str,
@@ -273,7 +293,9 @@ class _ChaosCenterMixin:
 
         # --- authenticate ------------------------------------------------
         token, project_id = self._chaoscenter_login(
-            auth_url, username=username, password=password,
+            auth_url,
+            username=username,
+            password=password,
         )
         if not project_id:
             raise RuntimeError("ChaosCenter login did not return a projectID")
@@ -295,15 +317,19 @@ class _ChaosCenterMixin:
         # Clean up infra components from OTHER namespaces to avoid
         # duplicate chaos-operator / subscriber / etc. hogging resources.
         other_infras = [
-            i for i in infras
+            i
+            for i in infras
             if i.get("infraNamespace") != namespace
             and i.get("infraNamespace")  # skip entries without a namespace
         ]
         for other in other_infras:
             other_ns = other["infraNamespace"]
             infra_deployments = [
-                "chaos-exporter", "chaos-operator-ce", "event-tracker",
-                "subscriber", "workflow-controller",
+                "chaos-exporter",
+                "chaos-operator-ce",
+                "event-tracker",
+                "subscriber",
+                "workflow-controller",
             ]
             has_infra = False
             for dep_name in infra_deployments:
@@ -321,15 +347,16 @@ class _ChaosCenterMixin:
                 for dep_name in infra_deployments:
                     try:
                         self.apps_api.delete_namespaced_deployment(
-                            dep_name, other_ns,
+                            dep_name,
+                            other_ns,
                         )
                     except ApiException:
                         pass
 
         existing = [
-            i for i in infras
-            if i.get("infraNamespace") == namespace
-            and i.get("environmentID") == env_name
+            i
+            for i in infras
+            if i.get("infraNamespace") == namespace and i.get("environmentID") == env_name
         ]
 
         if existing and existing[0].get("isActive"):
@@ -350,7 +377,8 @@ class _ChaosCenterMixin:
             subscriber_exists = False
             try:
                 self.apps_api.read_namespaced_deployment(
-                    "subscriber", namespace,
+                    "subscriber",
+                    namespace,
                 )
                 subscriber_exists = True
             except ApiException as exc:
@@ -384,10 +412,7 @@ class _ChaosCenterMixin:
                             "Referer": self._chaoscenter_server_internal_url(),
                         },
                     )
-                    manifest = (
-                        manifest_resp.get("data", {})
-                        .get("getInfraManifest", "")
-                    )
+                    manifest = manifest_resp.get("data", {}).get("getInfraManifest", "")
                     if manifest:
                         self._apply_manifest(manifest, namespace)
                     else:
@@ -404,9 +429,7 @@ class _ChaosCenterMixin:
                         label_selector="app=subscriber",
                     )
                     if pods.items and all(
-                        c.ready
-                        for p in pods.items
-                        for c in (p.status.container_statuses or [])
+                        c.ready for p in pods.items for c in (p.status.container_statuses or [])
                     ):
                         print("  ChaosCenter: subscriber pod ready")
                         break
@@ -416,13 +439,15 @@ class _ChaosCenterMixin:
             else:
                 # Collect diagnostic info
                 diag = self._subscriber_diagnostics(namespace)
-                raise RuntimeError(
-                    f"Subscriber pod not ready after {timeout}s.\n{diag}"
-                )
+                raise RuntimeError(f"Subscriber pod not ready after {timeout}s.\n{diag}")
         else:
             # No infra exists — register a new one
             result = self._chaoscenter_register_infra(
-                gql_url, project_id, env_name, namespace, token,
+                gql_url,
+                project_id,
+                env_name,
+                namespace,
+                token,
             )
             infra_id = result["infraID"]
             manifest = result.get("manifest", "")
@@ -439,9 +464,7 @@ class _ChaosCenterMixin:
                         label_selector="app=subscriber",
                     )
                     if pods.items and all(
-                        c.ready
-                        for p in pods.items
-                        for c in (p.status.container_statuses or [])
+                        c.ready for p in pods.items for c in (p.status.container_statuses or [])
                     ):
                         print("  ChaosCenter: subscriber pod ready")
                         break
@@ -450,9 +473,7 @@ class _ChaosCenterMixin:
                 time.sleep(5)
             else:
                 diag = self._subscriber_diagnostics(namespace)
-                raise RuntimeError(
-                    f"Subscriber pod not ready after {timeout}s.\n{diag}"
-                )
+                raise RuntimeError(f"Subscriber pod not ready after {timeout}s.\n{diag}")
 
         # --- wait for infrastructure to become active --------------------
         # The subscriber pod can be Running+Ready before its WebSocket
@@ -461,7 +482,11 @@ class _ChaosCenterMixin:
             print("  ChaosCenter: waiting for infrastructure to become active...")
             active_timeout = min(timeout, 120)
             if self._wait_for_infra_active(
-                gql_url, project_id, token, infra_id, timeout=active_timeout,
+                gql_url,
+                project_id,
+                token,
+                infra_id,
+                timeout=active_timeout,
             ):
                 print(f"  ChaosCenter: infrastructure active ({infra_id})")
             else:
@@ -503,9 +528,7 @@ class _ChaosCenterMixin:
         """
         base_url = dashboard_url or self.get_dashboard_url()
         if not base_url:
-            raise RuntimeError(
-                "Cannot detect ChaosCenter URL. Is it installed and ready?"
-            )
+            raise RuntimeError("Cannot detect ChaosCenter URL. Is it installed and ready?")
 
         # Derive scheme + host (strip port)
         base_host = base_url.rsplit(":", 1)[0]
@@ -517,4 +540,3 @@ class _ChaosCenterMixin:
             password=password,
         )
         return {"infra_id": result["infra_id"], "manifest": ""}
-

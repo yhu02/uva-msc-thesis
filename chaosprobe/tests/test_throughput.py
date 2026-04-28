@@ -15,18 +15,26 @@ from chaosprobe.metrics.throughput import (
 
 def _mk_disk_sample(status="ok", ops=1000, lat=1.0, bps=262_144_000, err=None):
     return ThroughputSample(
-        operation="write", target="disk",
-        ops_per_second=ops, latency_ms=lat, bytes_per_second=bps,
-        status=status, timestamp="2026-04-22T18:00:00+00:00", error=err,
+        operation="write",
+        target="disk",
+        ops_per_second=ops,
+        latency_ms=lat,
+        bytes_per_second=bps,
+        status=status,
+        timestamp="2026-04-22T18:00:00+00:00",
+        error=err,
     )
 
 
 class TestThroughputSample:
     def test_create_ok_sample(self):
         sample = ThroughputSample(
-            operation="write", target="redis",
-            ops_per_second=5000.0, latency_ms=0.2,
-            status="ok", timestamp="2026-03-24T12:00:00+00:00",
+            operation="write",
+            target="redis",
+            ops_per_second=5000.0,
+            latency_ms=0.2,
+            status="ok",
+            timestamp="2026-03-24T12:00:00+00:00",
         )
         assert sample.status == "ok"
         assert sample.ops_per_second == 5000.0
@@ -34,18 +42,24 @@ class TestThroughputSample:
 
     def test_create_disk_sample_with_bytes(self):
         sample = ThroughputSample(
-            operation="write", target="disk",
-            ops_per_second=100.0, latency_ms=10.0,
+            operation="write",
+            target="disk",
+            ops_per_second=100.0,
+            latency_ms=10.0,
             bytes_per_second=104857600.0,
-            status="ok", timestamp="2026-03-24T12:00:00+00:00",
+            status="ok",
+            timestamp="2026-03-24T12:00:00+00:00",
         )
         assert sample.bytes_per_second == 104857600.0
 
     def test_create_error_sample(self):
         sample = ThroughputSample(
-            operation="read", target="redis",
-            ops_per_second=0, latency_ms=0,
-            status="error", timestamp="2026-03-24T12:00:00+00:00",
+            operation="read",
+            target="redis",
+            ops_per_second=0,
+            latency_ms=0,
+            status="error",
+            timestamp="2026-03-24T12:00:00+00:00",
             error="Connection refused",
         )
         assert sample.status == "error"
@@ -54,15 +68,21 @@ class TestThroughputSample:
 class TestThroughputResult:
     def test_summary_with_samples(self):
         result = ThroughputResult(
-            target="redis", operation="write",
+            target="redis",
+            operation="write",
             description="Redis SET benchmark",
         )
         for ops in [4000.0, 5000.0, 6000.0, 4500.0, 5500.0]:
-            result.samples.append(ThroughputSample(
-                operation="write", target="redis",
-                ops_per_second=ops, latency_ms=1000 / ops,
-                status="ok", timestamp="2026-03-24T12:00:00+00:00",
-            ))
+            result.samples.append(
+                ThroughputSample(
+                    operation="write",
+                    target="redis",
+                    ops_per_second=ops,
+                    latency_ms=1000 / ops,
+                    status="ok",
+                    timestamp="2026-03-24T12:00:00+00:00",
+                )
+            )
 
         summary = result.summary()
         assert summary["sampleCount"] == 5
@@ -75,21 +95,32 @@ class TestThroughputResult:
 
     def test_summary_with_errors(self):
         result = ThroughputResult(
-            target="disk", operation="read",
+            target="disk",
+            operation="read",
             description="Disk read benchmark",
         )
-        result.samples.append(ThroughputSample(
-            operation="read", target="disk",
-            ops_per_second=100.0, latency_ms=10.0,
-            bytes_per_second=50000000.0,
-            status="ok", timestamp="2026-03-24T12:00:00+00:00",
-        ))
-        result.samples.append(ThroughputSample(
-            operation="read", target="disk",
-            ops_per_second=0, latency_ms=0,
-            status="error", timestamp="2026-03-24T12:00:01+00:00",
-            error="timeout",
-        ))
+        result.samples.append(
+            ThroughputSample(
+                operation="read",
+                target="disk",
+                ops_per_second=100.0,
+                latency_ms=10.0,
+                bytes_per_second=50000000.0,
+                status="ok",
+                timestamp="2026-03-24T12:00:00+00:00",
+            )
+        )
+        result.samples.append(
+            ThroughputSample(
+                operation="read",
+                target="disk",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp="2026-03-24T12:00:01+00:00",
+                error="timeout",
+            )
+        )
 
         summary = result.summary()
         assert summary["sampleCount"] == 2
@@ -99,14 +130,20 @@ class TestThroughputResult:
 
     def test_summary_all_errors(self):
         result = ThroughputResult(
-            target="redis", operation="write",
+            target="redis",
+            operation="write",
             description="test",
         )
-        result.samples.append(ThroughputSample(
-            operation="write", target="redis",
-            ops_per_second=0, latency_ms=0,
-            status="error", timestamp="2026-03-24T12:00:00+00:00",
-        ))
+        result.samples.append(
+            ThroughputSample(
+                operation="write",
+                target="redis",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp="2026-03-24T12:00:00+00:00",
+            )
+        )
 
         summary = result.summary()
         assert summary["meanOpsPerSecond"] is None
@@ -114,7 +151,8 @@ class TestThroughputResult:
 
     def test_summary_empty(self):
         result = ThroughputResult(
-            target="redis", operation="write",
+            target="redis",
+            operation="write",
             description="test",
         )
         summary = result.summary()
@@ -123,16 +161,22 @@ class TestThroughputResult:
 
     def test_summary_disk_with_bytes(self):
         result = ThroughputResult(
-            target="disk", operation="write",
+            target="disk",
+            operation="write",
             description="Sequential write",
         )
         for ops, bps in [(100, 100_000_000), (120, 120_000_000)]:
-            result.samples.append(ThroughputSample(
-                operation="write", target="disk",
-                ops_per_second=float(ops), latency_ms=10.0,
-                bytes_per_second=float(bps),
-                status="ok", timestamp="2026-03-24T12:00:00+00:00",
-            ))
+            result.samples.append(
+                ThroughputSample(
+                    operation="write",
+                    target="disk",
+                    ops_per_second=float(ops),
+                    latency_ms=10.0,
+                    bytes_per_second=float(bps),
+                    status="ok",
+                    timestamp="2026-03-24T12:00:00+00:00",
+                )
+            )
 
         summary = result.summary()
         assert summary["meanBytesPerSecond"] == 110_000_000.0
@@ -201,13 +245,23 @@ class TestContinuousDiskProber:
             {
                 "phase": "pre-chaos",
                 "disk": {
-                    "write": {"ops_per_second": 100, "latency_ms": 10.0, "bytes_per_second": 100000000, "status": "ok"},
+                    "write": {
+                        "ops_per_second": 100,
+                        "latency_ms": 10.0,
+                        "bytes_per_second": 100000000,
+                        "status": "ok",
+                    },
                 },
             },
             {
                 "phase": "during-chaos",
                 "disk": {
-                    "write": {"ops_per_second": 30, "latency_ms": 33.0, "bytes_per_second": 30000000, "status": "ok"},
+                    "write": {
+                        "ops_per_second": 30,
+                        "latency_ms": 33.0,
+                        "bytes_per_second": 30000000,
+                        "status": "ok",
+                    },
                 },
             },
         ]
@@ -283,11 +337,15 @@ class TestContinuousDiskProberSerializesError:
         # error samples carrying a populated error field.
         def _fake_benchmark(pod, op, bsz, count, path):
             return ThroughputSample(
-                operation=op, target="disk",
-                ops_per_second=0, latency_ms=0,
-                status="error", timestamp="2026-04-22T18:00:00+00:00",
+                operation=op,
+                target="disk",
+                ops_per_second=0,
+                latency_ms=0,
+                status="error",
+                timestamp="2026-04-22T18:00:00+00:00",
                 error=f"dd elapsed<=0 ({op} at {path})",
             )
+
         fake_prober = MagicMock()
         fake_prober._disk_benchmark.side_effect = _fake_benchmark
         prober._prober = fake_prober
@@ -295,6 +353,7 @@ class TestContinuousDiskProberSerializesError:
         def _wait_then_stop(timeout):
             prober._stop_event.set()
             return True
+
         monkeypatch.setattr(prober._stop_event, "wait", _wait_then_stop)
 
         prober._probe_loop()
@@ -369,6 +428,7 @@ class TestAggregateDiskSamples:
 class TestContinuousProberBase:
     def test_current_phase_transitions(self):
         import time
+
         prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
         prober._lock = threading.Lock()
         prober._chaos_start_time = None
@@ -388,6 +448,7 @@ class TestContinuousProberBase:
     def test_current_phase_uses_now_parameter(self):
         """now parameter must drive the phase decision, not just timestamp presence."""
         import time
+
         prober = ContinuousRedisProber.__new__(ContinuousRedisProber)
         prober._lock = threading.Lock()
         prober._expected_chaos_duration = None

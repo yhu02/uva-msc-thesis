@@ -11,7 +11,6 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-
 # Module-level state — tracks all active port-forward processes
 _procs: Dict[tuple, Any] = {}
 _specs: Dict[tuple, list[str]] = {}  # (svc, ns) -> ports list for auto-restart

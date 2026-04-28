@@ -251,7 +251,8 @@ class KubernetesProvisioner:
             return
 
         print(
-            f"  Waiting for {len(deployments)} deployment(s) to become ready (timeout: {timeout}s)..."
+            f"  Waiting for {len(deployments)} deployment(s) to become ready"
+            f" (timeout: {timeout}s)..."
         )
         start = time.time()
         for dep in deployments:

@@ -26,6 +26,7 @@ dependencies = [
     "matplotlib>=3.7.0",
     "neo4j>=5.0.0",
     "pyarrow>=12.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.scripts]
@@ -60,6 +61,11 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# HTML-template-heavy file: long lines are inside f-string HTML templates
+# where breaking them either pollutes the rendered output or fights black.
+"chaosprobe/output/visualize.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.9"

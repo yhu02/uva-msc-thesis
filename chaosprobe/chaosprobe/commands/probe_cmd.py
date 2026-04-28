@@ -123,7 +123,7 @@ def probe_build(scenario: str, registry: str, kind_load: bool):
       chaosprobe probe build scenarios/online-boutique
       chaosprobe probe build scenarios/nginx -r docker.io/myuser
     """
-    from chaosprobe.probes.builder import RustProbeBuilder, ProbeBuilderError
+    from chaosprobe.probes.builder import ProbeBuilderError, RustProbeBuilder
 
     scenario_path = str(Path(scenario).resolve())
     builder = RustProbeBuilder(registry=registry, load_kind=kind_load)

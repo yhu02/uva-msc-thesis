@@ -9,13 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chaosprobe.metrics.prometheus import (
-    ContinuousPrometheusProber,
     DEFAULT_QUERIES,
+    ContinuousPrometheusProber,
     _find_prometheus_service,
     _query_prometheus,
     discover_prometheus_urls,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

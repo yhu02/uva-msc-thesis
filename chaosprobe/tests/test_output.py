@@ -1,8 +1,8 @@
 """Tests for output generation and comparison."""
 
 
-from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.output.comparison import compare_runs
+from chaosprobe.output.generator import OutputGenerator
 
 
 class TestOutputGenerator:

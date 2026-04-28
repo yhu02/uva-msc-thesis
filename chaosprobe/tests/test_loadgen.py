@@ -1,13 +1,14 @@
 """Tests for the load generation module."""
 
 import os
+
 import pytest
 
 from chaosprobe.loadgen.runner import (
+    DEFAULT_LOCUSTFILE,
     LoadProfile,
     LoadStats,
     LocustRunner,
-    DEFAULT_LOCUSTFILE,
 )
 
 
