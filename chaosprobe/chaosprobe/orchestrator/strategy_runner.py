@@ -746,6 +746,8 @@ def _run_single_iteration(
         "metrics": recovery,
         "runId": output_data.get("runId", ""),
         "preChaosHealthy": not pre_chaos_tainted,
+        "anomalyLabels": output_data.get("anomalyLabels"),
+        "cascadeTimeline": output_data.get("cascadeTimeline"),
     }
 
 
@@ -878,6 +880,8 @@ def _aggregate_strategy(
         )
         median_iter = sorted_iters[(len(sorted_iters) - 1) // 2]
         strategy_result["metrics"] = median_iter.get("metrics")
+        strategy_result["anomalyLabels"] = median_iter.get("anomalyLabels")
+        strategy_result["cascadeTimeline"] = median_iter.get("cascadeTimeline")
 
         agg = strategy_result["aggregated"]
         iter_passed = sum(1 for ir in iteration_results if ir["verdict"] == "PASS")
@@ -906,6 +910,8 @@ def _aggregate_strategy(
         }
         strategy_result["probeVerdicts"] = ir.get("probeVerdicts", {})
         strategy_result["metrics"] = ir["metrics"]
+        strategy_result["anomalyLabels"] = ir.get("anomalyLabels")
+        strategy_result["cascadeTimeline"] = ir.get("cascadeTimeline")
         strategy_result["status"] = "completed"
         strategy_result["runId"] = ir["runId"]
         return ir["verdict"] == "PASS"

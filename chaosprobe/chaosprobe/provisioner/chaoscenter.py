@@ -262,6 +262,105 @@ class _ChaosCenterMixin:
             pass
         return None
 
+    def _ensure_litmus_crds(self) -> bool:
+        """Check and install CRDs required by LitmusChaos infrastructure.
+
+        Returns True if any CRDs were installed (components may need restart).
+        """
+        from kubernetes import client as k8s_client_mod
+
+        ext_api = k8s_client_mod.ApiextensionsV1Api()
+        existing_crds = set()
+        try:
+            crd_list = ext_api.list_custom_resource_definition()
+            existing_crds = {c.metadata.name for c in crd_list.items}
+        except Exception:
+            return False
+
+        required_crds = {
+            "workflows.argoproj.io": (
+                "https://raw.githubusercontent.com/argoproj/argo-workflows/"
+                "v3.3.1/manifests/base/crds/minimal/argoproj.io_workflows.yaml"
+            ),
+            "cronworkflows.argoproj.io": (
+                "https://raw.githubusercontent.com/argoproj/argo-workflows/"
+                "v3.3.1/manifests/base/crds/minimal/argoproj.io_cronworkflows.yaml"
+            ),
+            "workflowtemplates.argoproj.io": (
+                "https://raw.githubusercontent.com/argoproj/argo-workflows/"
+                "v3.3.1/manifests/base/crds/minimal/argoproj.io_workflowtemplates.yaml"
+            ),
+            "workflowtasksets.argoproj.io": (
+                "https://raw.githubusercontent.com/argoproj/argo-workflows/"
+                "v3.3.1/manifests/base/crds/minimal/argoproj.io_workflowtasksets.yaml"
+            ),
+            "workflowtaskresults.argoproj.io": (
+                "https://raw.githubusercontent.com/argoproj/argo-workflows/"
+                "v3.3.1/manifests/base/crds/minimal/argoproj.io_workflowtaskresults.yaml"
+            ),
+        }
+
+        # EventTrackerPolicy CRD (inline — no upstream URL available)
+        etp_crd_name = "eventtrackerpolicies.eventtracker.litmuschaos.io"
+
+        installed_any = False
+        for crd_name, url in required_crds.items():
+            if crd_name not in existing_crds:
+                print(f"  Installing missing CRD: {crd_name}")
+                try:
+                    subprocess.run(
+                        ["kubectl", "apply", "-f", url],
+                        check=True, capture_output=True,
+                    )
+                    installed_any = True
+                except subprocess.CalledProcessError as e:
+                    print(f"  WARNING: failed to install CRD {crd_name}: {e}")
+
+        if etp_crd_name not in existing_crds:
+            print(f"  Installing missing CRD: {etp_crd_name}")
+            import tempfile, os
+            etp_manifest = """\
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: eventtrackerpolicies.eventtracker.litmuschaos.io
+spec:
+  group: eventtracker.litmuschaos.io
+  names:
+    kind: EventTrackerPolicy
+    listKind: EventTrackerPolicyList
+    plural: eventtrackerpolicies
+    singular: eventtrackerpolicy
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+      subresources:
+        status: {}
+"""
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yaml", delete=False,
+            ) as f:
+                f.write(etp_manifest)
+                f.flush()
+                try:
+                    subprocess.run(
+                        ["kubectl", "apply", "-f", f.name],
+                        check=True, capture_output=True,
+                    )
+                    installed_any = True
+                except subprocess.CalledProcessError as e:
+                    print(f"  WARNING: failed to install CRD {etp_crd_name}: {e}")
+                finally:
+                    os.unlink(f.name)
+
+        return installed_any
+
     def ensure_chaoscenter_configured(
         self,
         namespace: str,
@@ -371,6 +470,28 @@ class _ChaosCenterMixin:
                 f"  ChaosCenter: infrastructure registered, "
                 f"awaiting subscriber connection ({infra_id})"
             )
+            # Ensure required CRDs exist — they may have been removed
+            # (e.g. cluster rebuild) while the infra registration persists
+            # in ChaosCenter's database.  Missing CRDs cause
+            # workflow-controller and event-tracker to CrashLoopBackOff.
+            if self._ensure_litmus_crds():
+                print("  ChaosCenter: installed missing CRDs, restarting infra pods")
+                for dep_name in ("workflow-controller", "event-tracker", "subscriber"):
+                    try:
+                        from datetime import datetime, timezone
+                        self.apps_api.patch_namespaced_deployment(
+                            dep_name, namespace, {
+                                "spec": {"template": {"metadata": {"annotations": {
+                                    "chaosprobe.io/crdRepair": datetime.now(
+                                        timezone.utc
+                                    ).isoformat(),
+                                }}}},
+                            },
+                        )
+                    except Exception:
+                        pass
+                # Brief pause for new pods to start
+                time.sleep(10)
             # Ensure subscriber deployment exists — it may have been
             # evicted, deleted, or never applied (e.g. namespace was
             # recreated).  Always check regardless of isInfraConfirmed.
@@ -442,6 +563,7 @@ class _ChaosCenterMixin:
                 raise RuntimeError(f"Subscriber pod not ready after {timeout}s.\n{diag}")
         else:
             # No infra exists — register a new one
+            self._ensure_litmus_crds()
             result = self._chaoscenter_register_infra(
                 gql_url,
                 project_id,

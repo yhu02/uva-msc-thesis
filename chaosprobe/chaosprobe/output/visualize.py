@@ -24,6 +24,7 @@ from chaosprobe.output.charts import (  # noqa: E402
     chart_recovery_times,
     chart_resilience_scores,
     chart_resource_by_phase,
+    chart_resource_per_node,
     chart_resource_utilization,
     chart_strategy_comparison_heatmap,
     chart_throughput_by_strategy,
@@ -227,6 +228,10 @@ def generate_from_dict(
         if path:
             generated.append(path)
 
+        path = chart_resource_per_node(resource_by_strategy, output_path)
+        if path:
+            generated.append(path)
+
     # Generate Prometheus metrics charts from per-strategy data
     prometheus_by_strategy = extract_prometheus_data(raw_strategies)
     if prometheus_by_strategy:
@@ -301,23 +306,27 @@ def _build_hypothesis_evaluation(
         # Overlap margin: mean of both stddevs (at least 5 to handle zero-variance)
         margin = max(5.0, (colocate_sd + worst_sd) / 2)
 
-        # Check CPU contention (used nodes only)
+        # Check CPU contention (peak node — avoids dilution across idle workers)
         colocate_cpu = ""
         if resource_data and "colocate" in resource_data:
             during_phase = resource_data["colocate"].get("phases", {}).get("during-chaos", {})
-            cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
+            cpu = during_phase.get("usedNode", {}).get("peakNodeCpu_percent")
+            if cpu is None:
+                cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
             if cpu is not None:
                 other_cpus = []
                 for s, rd in resource_data.items():
                     if s not in ("colocate", "baseline"):
                         od = rd.get("phases", {}).get("during-chaos", {})
-                        oc = od.get("usedNode", {}).get("meanCpu_percent")
+                        oc = od.get("usedNode", {}).get("peakNodeCpu_percent")
+                        if oc is None:
+                            oc = od.get("usedNode", {}).get("meanCpu_percent")
                         if oc is not None:
                             other_cpus.append(oc)
                 avg_other = sum(other_cpus) / len(other_cpus) if other_cpus else 0
                 colocate_cpu = (
-                    f" Colocate CPU during chaos: {cpu:.1f}% vs "
-                    f"other strategies avg: {avg_other:.1f}%."
+                    f" Colocate peak-node CPU during chaos: {cpu:.1f}% vs "
+                    f"other strategies avg peak: {avg_other:.1f}%."
                 )
 
         if worst_name == "colocate":
@@ -368,11 +377,20 @@ def _build_hypothesis_evaluation(
         else:
             h2_status = "refuted"
             h2_color = "#E74C3C"
+            # Build a ranking snippet for context
+            ranked = sorted(
+                non_baseline.items(),
+                key=lambda kv: kv[1].get("avgResilienceScore", 0),
+                reverse=True,
+            )
+            top3 = ", ".join(
+                f"{n} ({v.get('avgResilienceScore', 0):.0f})" for n, v in ranked[:3]
+            )
             h2_detail = (
                 f"Spread scored {spread_score:.1f}, but {best_name} scored "
-                f"{best_score:.1f} (best). Score variance (stddev="
-                f"{spread.get('stddevResilienceScore', 0):.1f}) suggests probe-timing "
-                f"noise exceeds the placement signal."
+                f"{best_score:.1f} (best). Ranking: {top3}. "
+                f"Heterogeneous node resources or chaos-target alignment "
+                f"may explain why distribution did not improve resilience."
             )
     else:
         h2_status = "inconclusive"
@@ -764,6 +782,56 @@ def _generate_html_summary(
         <strong>Note:</strong> Metrics are computed only for nodes that host at least one
         namespace pod. Idle nodes are excluded so placement strategies (colocate vs spread)
         produce visibly different resource profiles.
+    </p>"""
+
+        # Per-node breakdown table (during-chaos only)
+        per_node_rows = ""
+        all_worker_nodes: set = set()
+        for sdata in resource_data.values():
+            per_node = sdata.get("phases", {}).get("during-chaos", {}).get("perNode", {})
+            for node_name in per_node:
+                if not node_name.startswith("cp"):
+                    all_worker_nodes.add(node_name)
+
+        if all_worker_nodes:
+            worker_nodes = sorted(all_worker_nodes)
+            for strat_name in sorted(resource_data.keys()):
+                per_node = resource_data[strat_name].get("phases", {}).get(
+                    "during-chaos", {}
+                ).get("perNode", {})
+                for node_name in worker_nodes:
+                    nd = per_node.get(node_name, {})
+                    cpu = nd.get("meanCpu_percent")
+                    max_cpu = nd.get("maxCpu_percent")
+                    mem = nd.get("meanMemory_percent")
+                    cpu_str = f"{cpu:.1f}" if cpu is not None else "n/a"
+                    max_cpu_str = f"{max_cpu:.1f}" if max_cpu is not None else "n/a"
+                    mem_str = f"{mem:.1f}" if mem is not None else "n/a"
+                    per_node_rows += f"""
+            <tr>
+                <td>{strat_name}</td>
+                <td>{node_name}</td>
+                <td>{cpu_str}</td>
+                <td>{max_cpu_str}</td>
+                <td>{mem_str}</td>
+            </tr>"""
+
+            resource_section += f"""
+    <h3>Per-Worker Node CPU During Chaos</h3>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Worker Node</th>
+            <th>Mean CPU (%)</th>
+            <th>Max CPU (%)</th>
+            <th>Mean Memory (%)</th>
+        </tr>
+        {per_node_rows}
+    </table>
+    <p style="color:#666; font-size:0.85em; margin-top:8px;">
+        <strong>Key insight:</strong> Under colocate, one worker absorbs all application
+        CPU while others remain idle. The cluster-wide mean hides this hot-node effect.
+        Under spread, load distributes more evenly across workers.
     </p>"""
 
     prometheus_section = ""

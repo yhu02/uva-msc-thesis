@@ -632,7 +632,11 @@ def chart_resource_utilization(
     resource_by_strategy: Dict[str, Dict[str, Any]],
     output_path: Path,
 ) -> Optional[str]:
-    """Generate line chart of CPU% and memory% over time for used nodes only."""
+    """Generate line chart of CPU% and memory% over time for used nodes only.
+
+    Shows both mean (solid) and peak-node (dashed) lines per strategy so
+    that colocate's hot-node signal is not diluted by idle workers.
+    """
     if not resource_by_strategy:
         return None
 
@@ -654,27 +658,54 @@ def chart_resource_utilization(
             e.get("usedNode", {}).get("memory_percent", 0)
             for e in series
         ]
+        # Peak-node CPU/memory per tick (hottest individual node)
+        peak_cpu = [
+            e.get("usedNodeStats", {}).get("maxCpu_percent", 0)
+            for e in series
+        ]
+        peak_mem = [
+            e.get("usedNodeStats", {}).get("maxMemory_percent", 0)
+            for e in series
+        ]
 
         ax_cpu.plot(
             elapsed,
             cpu_pct,
-            label=strat,
+            label=f"{strat} (mean)",
+            color=colors[idx],
+            linewidth=1.5,
+            alpha=0.8,
+        )
+        ax_cpu.plot(
+            elapsed,
+            peak_cpu,
+            label=f"{strat} (peak node)",
+            color=colors[idx],
+            linewidth=1.0,
+            alpha=0.5,
+            linestyle="--",
+        )
+        ax_mem.plot(
+            elapsed,
+            mem_pct,
+            label=f"{strat} (mean)",
             color=colors[idx],
             linewidth=1.5,
             alpha=0.8,
         )
         ax_mem.plot(
             elapsed,
-            mem_pct,
-            label=strat,
+            peak_mem,
+            label=f"{strat} (peak node)",
             color=colors[idx],
-            linewidth=1.5,
-            alpha=0.8,
+            linewidth=1.0,
+            alpha=0.5,
+            linestyle="--",
         )
 
     ax_cpu.set_ylabel("CPU Utilization (%)")
     ax_cpu.set_title("Node Resource Utilization During Experiment (used nodes only)")
-    ax_cpu.legend()
+    ax_cpu.legend(fontsize=7, ncol=2)
     ax_cpu.grid(alpha=0.3)
     ax_cpu.set_ylim(0, 105)
 
@@ -696,14 +727,15 @@ def chart_resource_by_phase(
     resource_by_strategy: Dict[str, Dict[str, Any]],
     output_path: Path,
 ) -> Optional[str]:
-    """Generate bar chart showing mean CPU and memory per phase for used nodes only."""
+    """Generate bar chart showing mean and peak-node CPU/memory per phase."""
     if not resource_by_strategy:
         return None
 
     strategy_names = sorted(resource_by_strategy.keys())
     phase_names = ["pre-chaos", "during-chaos", "post-chaos"]
 
-    fig, (ax_cpu, ax_mem) = plt.subplots(1, 2, figsize=(14, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    ax_cpu, ax_mem = axes
     width = 0.8 / max(len(strategy_names), 1)
     colors = strategy_colors(strategy_names)
 
@@ -712,11 +744,13 @@ def chart_resource_by_phase(
 
         cpu_vals = []
         mem_vals = []
+        peak_cpu_vals = []
         for phase in phase_names:
             phase_data = phases.get(phase, {})
             nd = phase_data.get("usedNode", {})
             cpu_vals.append(nd.get("meanCpu_percent") or 0)
             mem_vals.append(nd.get("meanMemory_percent") or 0)
+            peak_cpu_vals.append(nd.get("peakNodeCpu_percent") or 0)
 
         x = [j + i * width for j in range(len(phase_names))]
         ax_cpu.bar(
@@ -729,6 +763,13 @@ def chart_resource_by_phase(
             linewidth=0.5,
             alpha=0.7,
         )
+        # Peak-node marker on top of each bar
+        for xi, peak in zip(x, peak_cpu_vals):
+            if peak > 0:
+                ax_cpu.plot(xi + width / 2, peak, "v", color=colors[i],
+                            markersize=5, markeredgecolor="black",
+                            markeredgewidth=0.5)
+
         ax_mem.bar(
             x,
             mem_vals,
@@ -741,19 +782,98 @@ def chart_resource_by_phase(
         )
 
     for ax, title, ylabel in [
-        (ax_cpu, "CPU Utilization by Phase (used nodes)", "Mean CPU (%)"),
+        (ax_cpu, "CPU Utilization by Phase (bars=mean, ▾=peak node)", "CPU (%)"),
         (ax_mem, "Memory Utilization by Phase (used nodes)", "Mean Memory (%)"),
     ]:
         ax.set_title(title)
         ax.set_ylabel(ylabel)
         ax.set_xticks([j + width * (len(strategy_names) - 1) / 2 for j in range(len(phase_names))])
         ax.set_xticklabels(phase_names, fontsize=9)
-        ax.legend()
+        ax.legend(fontsize=7)
         ax.grid(axis="y", alpha=0.3)
         ax.set_ylim(0, 105)
 
     plt.tight_layout()
     filepath = str(output_path / "resource_by_phase.png")
+    fig.savefig(filepath, dpi=150)
+    plt.close(fig)
+    return filepath
+
+
+def chart_resource_per_node(
+    resource_by_strategy: Dict[str, Dict[str, Any]],
+    output_path: Path,
+) -> Optional[str]:
+    """Generate per-worker-node CPU comparison during chaos.
+
+    Shows mean CPU per individual worker node for each strategy during
+    the chaos phase.  This reveals the hot-node effect under colocate
+    and the even distribution under spread that the cluster-wide mean
+    hides.
+    """
+    if not resource_by_strategy:
+        return None
+
+    # Collect all worker node names across strategies (exclude cp*)
+    all_nodes: set = set()
+    for sdata in resource_by_strategy.values():
+        during = sdata.get("phases", {}).get("during-chaos", {})
+        per_node = during.get("perNode", {})
+        for node_name in per_node:
+            if not node_name.startswith("cp"):
+                all_nodes.add(node_name)
+
+    if not all_nodes:
+        return None
+
+    node_names = sorted(all_nodes)
+    strategy_names = sorted(resource_by_strategy.keys())
+    colors = strategy_colors(strategy_names)
+    width = 0.8 / max(len(strategy_names), 1)
+
+    fig, ax = plt.subplots(figsize=(max(10, len(node_names) * 2.5), 6))
+
+    for i, strat in enumerate(strategy_names):
+        during = resource_by_strategy[strat].get("phases", {}).get("during-chaos", {})
+        per_node = during.get("perNode", {})
+
+        cpu_vals = []
+        for node in node_names:
+            nd = per_node.get(node, {})
+            cpu_vals.append(nd.get("meanCpu_percent") or 0)
+
+        x = [j + i * width for j in range(len(node_names))]
+        bars = ax.bar(
+            x,
+            cpu_vals,
+            width,
+            label=strat,
+            color=colors[i],
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.7,
+        )
+        for bar, val in zip(bars, cpu_vals):
+            if val > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.5,
+                    f"{val:.0f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                )
+
+    ax.set_ylabel("Mean CPU Utilization (%)")
+    ax.set_title("Per-Worker Node CPU During Chaos by Strategy")
+    ax.set_xticks([j + width * (len(strategy_names) - 1) / 2 for j in range(len(node_names))])
+    ax.set_xticklabels(node_names, fontsize=9)
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_ylim(0, 105)
+
+    plt.tight_layout()
+    filepath = str(output_path / "resource_per_node.png")
     fig.savefig(filepath, dpi=150)
     plt.close(fig)
     return filepath
@@ -876,7 +996,7 @@ def chart_strategy_comparison_heatmap(
         "Resilience\nScore",
         "Recovery\nTime",
         "Latency\nDegradation",
-        "CPU Util.\n(during chaos)",
+        "Peak Node\nCPU (chaos)",
         "Throughput\nImpact",
     ]
 
@@ -905,10 +1025,12 @@ def chart_strategy_comparison_heatmap(
             if pcts:
                 row[2] = sum(pcts) / len(pcts)
 
-        # CPU during chaos (used nodes only)
+        # CPU during chaos (peak node — avoids dilution across idle workers)
         if resource_data and name in resource_data:
             during_phase = resource_data[name].get("phases", {}).get("during-chaos", {})
-            cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
+            cpu = during_phase.get("usedNode", {}).get("peakNodeCpu_percent")
+            if cpu is None:
+                cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
             row[3] = cpu
 
         # Throughput impact: mean % decrease pre → during across ops
