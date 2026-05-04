@@ -82,7 +82,39 @@ def _monitor_loop(stop_event: threading.Event):
                         start_new_session=True,
                     )
                     _procs[key] = new_proc
-        stop_event.wait(10)  # check every 10 seconds
+        stop_event.wait(5)  # check every 5 seconds
+
+
+def ensure_all() -> None:
+    """Re-ensure every tracked port-forward is alive and reachable.
+
+    Call this between strategies to recover from infrastructure
+    disruptions (resource-starved nodes killing kubectl tunnels).
+    """
+    for key, ports in list(_specs.items()):
+        svc, ns = key
+        proc = _procs.get(key)
+        if not proc or proc.poll() is not None:
+            start(svc, ns, ports)
+        # Extract the local port from the first port spec (e.g. "9090:80" -> 9090)
+        local_port_str = ports[0].split(":")[0] if ports else ""
+        if local_port_str.isdigit():
+            local_port = int(local_port_str)
+            if not check_port("localhost", local_port):
+                # Kill stale process and restart
+                proc = _procs.get(key)
+                if proc and proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                start(svc, ns, ports)
+                # Wait for port to become reachable
+                for _ in range(10):
+                    if check_port("localhost", local_port):
+                        break
+                    time.sleep(2)
 
 
 def monitor_start():

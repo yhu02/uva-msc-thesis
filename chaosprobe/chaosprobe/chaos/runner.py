@@ -137,6 +137,35 @@ class ChaosRunner:
     # Public API
     # ------------------------------------------------------------------
 
+    def _ensure_chaoscenter_reachable(self) -> None:
+        """Verify the ChaosCenter GQL endpoint is reachable.
+
+        If the port-forward died (common after heavy placement strategies
+        that starve nodes), re-establish all port-forwards and wait for
+        the endpoint to come back.
+        """
+        from urllib.parse import urlparse
+
+        from chaosprobe.orchestrator import portforward as _pf
+
+        gql_url = self._cc.get("gql_url", "")
+        parsed = urlparse(gql_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 9091
+
+        if _pf.check_port(host, port):
+            return
+
+        print("    ChaosCenter port-forward lost, re-establishing...")
+        _pf.ensure_all()
+        # Wait up to 30s for port to come back
+        for _ in range(15):
+            if _pf.check_port(host, port):
+                print("    ChaosCenter: reconnected")
+                return
+            time.sleep(2)
+        print("    WARNING: ChaosCenter still unreachable after recovery attempt")
+
     def run_experiments(self, experiments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Run all ChaosEngine experiments via ChaosCenter.
 
@@ -173,6 +202,9 @@ class ChaosRunner:
         ``_MAX_TARGET_RETRIES`` times after waiting for the target pod
         to recover.
         """
+        # Ensure ChaosCenter is reachable before attempting API calls.
+        # Port-forwards can die during heavy placement strategies.
+        self._ensure_chaoscenter_reachable()
         metadata = engine_spec.setdefault("metadata", {})
         original_name = metadata.get("name", "unnamed")
 

@@ -397,6 +397,12 @@ def execute_strategy(
         click.echo("\n  Cleaning cluster state from previous strategy...")
         _clean_stale_resources(ctx.namespace)
         _restart_unhealthy_infra(ctx.namespace)
+
+        # Re-establish infrastructure port-forwards that may have died
+        # during the previous strategy (especially after heavy packing
+        # strategies like colocate/best-fit that starve nodes).
+        pf.ensure_all()
+
         click.echo("  Waiting for all deployments to be ready...")
         wait_for_healthy_deployments(ctx.namespace, timeout=120)
 
@@ -933,6 +939,24 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> None:
                     ctx.graph_store.close()
                 except Exception:
                     pass
+
+                # Ensure Neo4j port-forward is alive before reconnecting.
+                # Heavy strategies (colocate/best-fit) can starve nodes and
+                # kill kubectl tunnels; without this the driver reconnect
+                # will also fail with "Connection refused".
+                neo4j_host, neo4j_port = "localhost", 7687
+                try:
+                    parsed = (ctx.neo4j_uri or "").replace("bolt://", "").replace("neo4j://", "")
+                    if ":" in parsed:
+                        neo4j_host, neo4j_port = parsed.split(":", 1)
+                        neo4j_port = int(neo4j_port)
+                except (ValueError, AttributeError):
+                    pass
+                if not pf.check_port(neo4j_host, neo4j_port):
+                    pf.ensure_all()
+                    # Give port-forwards a moment to stabilise
+                    time.sleep(3)
+
                 try:
                     from chaosprobe.storage.neo4j_store import Neo4jStore
 
