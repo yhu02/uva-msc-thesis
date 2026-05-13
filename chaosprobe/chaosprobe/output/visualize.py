@@ -485,7 +485,7 @@ def _build_placement_table(raw_strategies: Dict[str, Any]) -> str:
     strategy_placements: Dict[str, Dict[str, str]] = {}
 
     for name, sdata in raw_strategies.items():
-        placement = sdata.get("placement", {})
+        placement = sdata.get("placement") or {}
         assignments = placement.get("assignments", {})
         if assignments:
             strategy_placements[name] = assignments

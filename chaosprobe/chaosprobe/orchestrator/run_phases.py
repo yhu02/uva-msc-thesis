@@ -186,13 +186,13 @@ def _setup_prometheus_pf(measure_prometheus: bool) -> None:
     else:
         click.echo(
             "  Prometheus:  WARNING - localhost:9090 still not reachable. "
-            "Run 'chaosprobe init' to set up port-forwards.",
+            "Check that Prometheus is deployed.",
             err=True,
         )
 
 
 def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
-    """Verify Neo4j is reachable (port-forwarded by init)."""
+    """Verify Neo4j is reachable; auto-establish port-forward if needed."""
     if not neo4j_uri:
         return
     host, port = "localhost", 7687
@@ -208,7 +208,7 @@ def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
     else:
         click.echo(
             f"  Neo4j bolt:  WARNING - {host}:{port} not reachable. "
-            "Run 'chaosprobe init' to set up port-forwards.",
+            "Check that Neo4j is deployed.",
             err=True,
         )
 
@@ -244,28 +244,31 @@ def _clean_stale_chaoscenter_experiments(
 
 
 def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
-    """Verify ChaosCenter port-forwards are active (set up by init) and auto-configure."""
+    """Verify ChaosCenter port-forwards are active, auto-establishing them if
+    needed (port-forwards from a previous ``init`` may have died), then
+    auto-configure the ChaosCenter environment/infrastructure."""
+    cc_frontend_svc = LitmusSetup.CHAOSCENTER_FRONTEND_SVC
     cc_frontend_port = LitmusSetup.CHAOSCENTER_FRONTEND_PORT
+    cc_auth_svc = LitmusSetup.CHAOSCENTER_AUTH_SVC
     cc_auth_port = LitmusSetup.CHAOSCENTER_AUTH_PORT
+    cc_server_svc = LitmusSetup.CHAOSCENTER_SERVER_SVC
     cc_server_port = LitmusSetup.CHAOSCENTER_SERVER_PORT
 
-    if not pf.check_port("localhost", cc_frontend_port):
-        raise click.ClickException(
-            f"ChaosCenter frontend not reachable at localhost:{cc_frontend_port}.\n"
-            "  Run 'chaosprobe init' to install infrastructure and set up port-forwards."
-        )
-    click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port}")
+    _cc_pf_specs = [
+        (cc_frontend_svc, cc_frontend_port, "frontend"),
+        (cc_auth_svc, cc_auth_port, "auth server"),
+        (cc_server_svc, cc_server_port, "GraphQL server"),
+    ]
+    for svc_name, port, label in _cc_pf_specs:
+        if not pf.check_port("localhost", port):
+            pf.start(svc_name, "litmus", [f"{port}:{port}"])
+        if not pf.check_port("localhost", port):
+            raise click.ClickException(
+                f"ChaosCenter {label} not reachable at localhost:{port}.\n"
+                "  Ensure ChaosCenter is deployed and its pods are running."
+            )
 
-    if not pf.check_port("localhost", cc_auth_port):
-        raise click.ClickException(
-            f"ChaosCenter auth server not reachable at localhost:{cc_auth_port}.\n"
-            "  Run 'chaosprobe init' to set up port-forwards."
-        )
-    if not pf.check_port("localhost", cc_server_port):
-        raise click.ClickException(
-            f"ChaosCenter GraphQL server not reachable at localhost:{cc_server_port}.\n"
-            "  Run 'chaosprobe init' to set up port-forwards."
-        )
+    click.echo(f"  ChaosCenter: http://localhost:{cc_frontend_port}")
 
     # Auto-configure
     try:
@@ -494,6 +497,60 @@ def _regenerate_presentation() -> None:
         click.echo(f"  Warning: could not regenerate presentation: {e}")
 
 
+def _strip_iteration_metrics(overall_results: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of *overall_results* with bulky per-iteration metrics removed.
+
+    Per-strategy JSON files already contain the full per-iteration data.
+    Stripping metrics from the summary reduces file size by ~60-70%.
+    """
+    import copy
+
+    slim = copy.deepcopy(overall_results)
+    for strat_data in slim.get("strategies", {}).values():
+        for it in strat_data.get("iterations", []):
+            it.pop("metrics", None)
+            it.pop("anomalyLabels", None)
+            it.pop("cascadeTimeline", None)
+    return slim
+
+
+def _print_probe_failure_analysis(strategies: Dict[str, Any]) -> None:
+    """Print per-probe failure analysis across strategies.
+
+    Shows which probes consistently fail to help diagnose score variance.
+    """
+    # Collect probe tallies across all strategies
+    has_tallies = False
+    for sdata in strategies.values():
+        agg = sdata.get("aggregated", {})
+        if agg.get("probeVerdictTally"):
+            has_tallies = True
+            break
+
+    if not has_tallies:
+        return
+
+    click.echo("\n  Probe Failure Analysis:")
+    for strat_name, sdata in strategies.items():
+        agg = sdata.get("aggregated", {})
+        tally = agg.get("probeVerdictTally", {})
+        if not tally:
+            continue
+        failing_probes = [
+            (name, counts)
+            for name, counts in tally.items()
+            if counts.get("Fail", 0) > 0
+        ]
+        if not failing_probes:
+            click.echo(f"    {strat_name:<16s} all probes passed in all iterations")
+            continue
+        n_iters = agg.get("totalExperiments", 5)
+        parts = []
+        for pname, counts in sorted(failing_probes, key=lambda x: -x[1].get("Fail", 0)):
+            parts.append(f"{pname}({counts['Fail']}/{n_iters})")
+        click.echo(f"    {strat_name:<16s} {', '.join(parts)}")
+
+
 def write_run_results(
     overall_results: Dict[str, Any],
     results_dir: Any,
@@ -523,13 +580,16 @@ def write_run_results(
     # Remediation log
     overall_results["remediationLog"] = generate_remediation_log(overall_results)
 
-    # Write per-strategy JSON files
+    # Write per-strategy JSON files (full data including per-iteration metrics)
     for strat_name, strat_data in overall_results.get("strategies", {}).items():
         strat_path = results_dir / f"{strat_name}.json"
         strat_path.write_text(_json_mod.dumps(strat_data, indent=2, default=str))
 
+    # Write summary.json with per-iteration metrics stripped to reduce size.
+    # Full per-iteration data is already in the per-strategy JSON files.
+    summary_slim = _strip_iteration_metrics(overall_results)
     summary_path = results_dir / "summary.json"
-    summary_path.write_text(_json_mod.dumps(overall_results, indent=2, default=str))
+    summary_path.write_text(_json_mod.dumps(summary_slim, indent=2, default=str))
 
     # Print final summary
     click.echo(f"\n{'=' * 60}")
@@ -582,6 +642,9 @@ def write_run_results(
             if scores:
                 scores_str = ", ".join(f"{s:.0f}" for s in scores)
                 click.echo(f"    {row['strategy']:<16s} [{scores_str}]")
+
+    # Per-probe failure analysis (helps diagnose which probes drive score variance)
+    _print_probe_failure_analysis(overall_results.get("strategies", {}))
 
     # Generate visualizations if requested
     if do_visualize:

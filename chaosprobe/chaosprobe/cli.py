@@ -104,14 +104,19 @@ def status(json_output: bool):
             click.echo("    5. chaosprobe cluster vagrant kubeconfig  (fetch kubeconfig)")
             click.echo("    6. chaosprobe init"
                        "                        (install ChaosProbe infrastructure)")
+            click.echo("    7. chaosprobe run"
+                       "                         (run experiments)")
             click.echo("  Option B — Bare metal/cloud VMs with Kubespray:")
             click.echo("    1. chaosprobe cluster create")
             click.echo("    2. chaosprobe init")
+            click.echo("    3. chaosprobe run")
             click.echo("  Option C — Existing cluster:")
             click.echo("    1. Configure kubectl to connect to your cluster")
             click.echo("    2. chaosprobe init")
+            click.echo("    3. chaosprobe run")
         else:
-            click.echo("\nRun 'chaosprobe init' to complete setup.")
+            click.echo("\nRun 'chaosprobe init' to set up infrastructure,")
+            click.echo("or 'chaosprobe run' to auto-install and run experiments.")
 
 
 # ─────────────────────────────────────────────────────────────

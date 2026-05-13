@@ -385,9 +385,17 @@ class ChaosRunner:
     def _poll_experiment_run(
         self, notify_id: str, start_time: float
     ) -> Dict[str, Any]:
-        """Poll ``getExperimentRun`` until a terminal phase or timeout."""
+        """Poll ``getExperimentRun`` until a terminal phase or timeout.
+
+        Includes a circuit breaker: if the ChaosCenter / K8s API is
+        unreachable for ``_MAX_CONSECUTIVE_POLL_FAILURES`` consecutive
+        attempts, the poll loop aborts early with a ``timeout`` result
+        instead of flooding the log for the remaining timeout budget.
+        """
+        _MAX_CONSECUTIVE_POLL_FAILURES = 20  # ~100s at 5s interval
         last_phase = None
         last_heartbeat = start_time
+        consecutive_failures = 0
         while time.time() - start_time < self.timeout:
             elapsed = int(time.time() - start_time)
             try:
@@ -397,8 +405,22 @@ class ChaosRunner:
                     token=self._cc["token"],
                     notify_id=notify_id,
                 )
+                consecutive_failures = 0
             except Exception as exc:
+                consecutive_failures += 1
                 print(f"    [{elapsed}s] WARNING: poll failed: {exc}")
+                if consecutive_failures >= _MAX_CONSECUTIVE_POLL_FAILURES:
+                    print(
+                        f"    API unreachable for {consecutive_failures} "
+                        f"consecutive polls — aborting early"
+                    )
+                    return {
+                        "phase": "timeout",
+                        "error": (
+                            f"API unreachable ({consecutive_failures} "
+                            f"consecutive failures)"
+                        ),
+                    }
                 time.sleep(5)
                 continue
 

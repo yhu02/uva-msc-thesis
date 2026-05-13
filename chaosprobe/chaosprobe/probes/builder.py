@@ -219,9 +219,12 @@ class RustProbeBuilder:
             shutil.copy2(binary_path, str(dest_binary))
             dest_binary.chmod(0o755)
 
-            # Write Dockerfile
+            # Write Dockerfile.  CHAOSPROBE_SOURCE_REPO (if set) is written
+            # as the OCI image source label so GHCR auto-links the package
+            # to that repo on the package's GitHub page.
+            source_repo = os.environ.get("CHAOSPROBE_SOURCE_REPO", "")
             dockerfile = build_dir / "Dockerfile"
-            dockerfile.write_text(generate_dockerfile(probe_name))
+            dockerfile.write_text(generate_dockerfile(probe_name, source_repo))
 
             # Build
             cmd = [
@@ -236,16 +239,79 @@ class RustProbeBuilder:
         if self.push:
             self._push_image(image_tag)
             self._push_image(f"{image_name}:latest")
+            self._print_visibility_hint(image_name)
 
         return image_tag
 
-    def _push_image(self, image_tag: str) -> None:
-        """Push an image to the remote container registry."""
+    def _push_image(self, image_tag: str, retries: int = 3) -> None:
+        """Push an image to the remote container registry with retries."""
+        import time as _time
+
         self._ensure_login()
-        _run_cmd(
-            ["docker", "push", image_tag],
-            f"Failed to push image {image_tag}",
+        for attempt in range(retries):
+            try:
+                _run_cmd(
+                    ["docker", "push", image_tag],
+                    f"Failed to push image {image_tag}",
+                )
+                return
+            except ProbeBuilderError:
+                if attempt < retries - 1:
+                    wait = 5 * (attempt + 1)
+                    print(f"    Push failed (attempt {attempt + 1}/{retries}), retrying in {wait}s...")
+                    _time.sleep(wait)
+                else:
+                    raise
+
+    def _print_visibility_hint(self, image_name: str) -> None:
+        """Print the GHCR settings URL when a pushed package is still private.
+
+        GitHub does not expose package visibility changes via REST for
+        user-owned container packages -- it must be flipped once via the
+        web UI (Settings -> Change visibility -> Public).  We GET the
+        package's current visibility and print the settings URL only
+        when it's still private, so the hint disappears after the
+        one-time manual flip.
+        """
+        if self._registry_host() != "ghcr.io":
+            return
+        token = os.environ.get("CHAOSPROBE_REGISTRY_PASSWORD")
+        if not token:
+            return
+
+        parts = image_name.split("/", 2)
+        if len(parts) < 3:
+            return
+        owner, package_name = parts[1], parts[2]
+
+        import json
+        import urllib.parse
+        import urllib.request
+
+        encoded = urllib.parse.quote(package_name, safe="")
+        get_url = f"https://api.github.com/user/packages/container/{encoded}"
+        req = urllib.request.Request(
+            get_url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
         )
+        visibility = None
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                visibility = json.loads(resp.read()).get("visibility")
+        except Exception:
+            pass  # Lookup is best-effort; fall through and show the hint.
+
+        if visibility == "public":
+            return
+
+        settings_url = (
+            f"https://github.com/users/{owner}/packages/container/{encoded}/settings"
+        )
+        print(f"    Set visibility to Public: {settings_url}")
 
     def _registry_host(self) -> str:
         """Return the registry hostname (e.g. ``ghcr.io``).
@@ -332,11 +398,13 @@ class RustProbeBuilder:
                 name = probe["name"]
                 print(f"  Building Rust probe '{name}' ({probe['kind']})...")
 
-                binary_path = self.compile_probe(probe, tmp)
-                image_tag = self.build_image(name, binary_path, scenario_name)
-
-                built_images[name] = image_tag
-                print(f"    → {image_tag}")
+                try:
+                    binary_path = self.compile_probe(probe, tmp)
+                    image_tag = self.build_image(name, binary_path, scenario_name)
+                    built_images[name] = image_tag
+                    print(f"    → {image_tag}")
+                except (ProbeBuilderError, Exception) as exc:
+                    print(f"    WARNING: probe '{name}' failed: {exc}")
 
         return built_images
 

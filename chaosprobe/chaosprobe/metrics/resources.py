@@ -291,8 +291,16 @@ class ContinuousResourceProber(ContinuousProberBase):
         Only nodes hosting namespace pods are included (``usedNode`` key),
         so idle nodes don't dilute the mean.
         """
-        cpu_values = [e["usedNode"]["cpu_millicores"] for e in entries if "usedNode" in e]
-        mem_values = [e["usedNode"]["memory_bytes"] for e in entries if "usedNode" in e]
+        cpu_values = [
+            e["usedNode"]["cpu_millicores"]
+            for e in entries
+            if e.get("usedNode") and "cpu_millicores" in e["usedNode"]
+        ]
+        mem_values = [
+            e["usedNode"]["memory_bytes"]
+            for e in entries
+            if e.get("usedNode") and "memory_bytes" in e["usedNode"]
+        ]
         cpu_pct = [
             e["usedNode"]["cpu_percent"]
             for e in entries

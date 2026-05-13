@@ -229,6 +229,60 @@ def _wait_for_target_pod(
     )
 
 
+def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
+    """Wait until the K8s API server is reachable.
+
+    Heavy placement strategies can indirectly overwhelm the control plane
+    through cascading pressure: worker-node resource starvation triggers
+    pod evictions, rescheduling storms, and elevated etcd/API-server
+    churn — all of which share the control plane's limited memory.
+    Rather than immediately failing all subsequent strategies when the
+    API is unreachable, wait for it to recover.
+
+    Re-establishes port-forwards after the API comes back, since the
+    kubectl tunnels will have died during the outage.
+    """
+    from kubernetes import client as k8s_client
+    from kubernetes.client.rest import ApiException
+    from urllib3.exceptions import MaxRetryError, NewConnectionError
+
+    try:
+        api = k8s_client.CoreV1Api()
+        api.list_namespace(limit=1)
+        return  # API is reachable, proceed immediately
+    except (ApiException, MaxRetryError, NewConnectionError,
+            ConnectionError, OSError):
+        pass
+
+    click.echo("  K8s API server unreachable — waiting for recovery...")
+    deadline = time.time() + timeout
+    recovered = False
+    while time.time() < deadline:
+        time.sleep(10)
+        try:
+            api = k8s_client.CoreV1Api()
+            api.list_namespace(limit=1)
+            recovered = True
+            break
+        except (ApiException, MaxRetryError, NewConnectionError,
+                ConnectionError, OSError):
+            remaining = int(deadline - time.time())
+            if remaining > 0 and remaining % 30 < 10:
+                click.echo(f"    Still waiting ({remaining}s remaining)...")
+
+    if recovered:
+        click.echo("  K8s API server recovered.")
+        # Re-establish port-forwards that died during the outage
+        pf.ensure_all()
+        # Brief stabilisation period for kube-proxy/endpoints to sync
+        time.sleep(10)
+    else:
+        raise click.ClickException(
+            f"K8s API server unreachable for {timeout}s. "
+            "The cluster may need manual intervention."
+        )
+
+
 def _wait_for_app_ready(
     namespace: str,
     target_deployment: str,
@@ -390,6 +444,13 @@ def execute_strategy(
     }
 
     try:
+        # ── K8s API recovery gate ──
+        # If the API server became unreachable during a previous strategy
+        # (control plane overload from cascading evictions/rescheduling),
+        # wait for it to recover before attempting cleanup.  Without this,
+        # every subsequent strategy fails immediately with "Connection refused".
+        _wait_for_k8s_api(ctx.namespace, timeout=300)
+
         # ── Inter-strategy cleanup ──
         # Between back-to-back strategies, lingering ChaosEngines, helper pods,
         # and completed jobs accumulate and degrade service routing (conntrack
@@ -669,8 +730,10 @@ def _run_single_iteration(
 
     # Sync to Neo4j
     if ctx.graph_store:
-        _sync_neo4j(ctx, output_data)
-        click.echo(f"\n    Results synced to Neo4j (run: {output_data.get('runId', '')})")
+        if _sync_neo4j(ctx, output_data):
+            click.echo(f"\n    Results synced to Neo4j (run: {output_data.get('runId', '')})")
+        else:
+            click.echo("\n    Warning: Neo4j sync failed — results saved to disk only", err=True)
 
     verdict = output_data.get("summary", {}).get("overallVerdict", "UNKNOWN")
     score = output_data.get("summary", {}).get("resilienceScore", 0)
@@ -797,6 +860,23 @@ def _run_iterations(
         # Restart between iterations to prevent cascading damage.
         # Skip restart after the last iteration (cleanup happens at strategy level).
         if i < ctx.iterations:
+            # If the previous iteration ended with a K8s API error (e.g.
+            # Connection refused), the API server may still be down.
+            # Wait for it to recover before attempting the restart / next
+            # iteration, otherwise the restart and the whole next
+            # iteration will fail immediately.
+            if ir.get("verdict") == "ERROR":
+                click.echo("    Waiting for K8s API to recover before next iteration...")
+                try:
+                    _wait_for_k8s_api(ctx.namespace, timeout=300)
+                except click.ClickException:
+                    click.echo(
+                        "    K8s API still unreachable — skipping remaining iterations",
+                        err=True,
+                    )
+                    break
+                # Re-clean stale resources that accumulated during the outage
+                _clean_stale_resources(ctx.namespace)
             click.echo("    Restarting app deployments for clean next iteration...")
             _restart_app_deployments(ctx.namespace, ctx.target_deployment)
     return results
@@ -859,6 +939,12 @@ def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
         # Wait for all rollouts to complete
         wait_for_healthy_deployments(namespace, timeout=180)
         click.echo("    All rollouts complete.")
+
+        # Brief cooldown after rollout — K8s reports pods Ready before
+        # connection pools and service endpoints are fully propagated.
+        # Without this, the next iteration's app-ready check may fail
+        # on transient connection errors.
+        time.sleep(5)
     except Exception as e:
         click.echo(f"    Warning: deployment restart failed: {e}")
 
@@ -923,12 +1009,12 @@ def _aggregate_strategy(
         return ir["verdict"] == "PASS"
 
 
-def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> None:
-    """Sync run data to Neo4j with retry logic."""
+def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
+    """Sync run data to Neo4j with retry logic. Returns True on success."""
     for attempt in range(3):
         try:
             ctx.graph_store.sync_run(output_data)
-            return
+            return True
         except Exception as e:
             if attempt < 2:
                 click.echo(
@@ -976,3 +1062,4 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> None:
                     err=True,
                 )
                 click.echo(traceback.format_exc(), err=True)
+    return False

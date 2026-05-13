@@ -32,11 +32,12 @@ def _ensure_litmus_setup(
     namespace: str,
     experiment_types: list[str],
 ) -> bool:
-    """Pre-flight check that all infrastructure is installed.
+    """Ensure all infrastructure is installed and healthy.
 
-    Verifies that LitmusChaos, metrics-server, Prometheus, Neo4j, and
-    ChaosCenter are available.  Does NOT install anything — run
-    'chaosprobe init' first to set up the infrastructure.
+    Automatically installs missing components (Helm, LitmusChaos,
+    local-path-provisioner, metrics-server, Prometheus, Neo4j,
+    ChaosCenter) and repairs degraded ones (metrics-server flags,
+    lost PVCs).  No separate ``init`` step required.
     """
     setup = LitmusSetup(skip_k8s_init=True)
     prereqs = setup.check_prerequisites()
@@ -55,12 +56,37 @@ def _ensure_litmus_setup(
     setup._init_k8s_client()
     prereqs = setup.check_prerequisites()
 
+    # ── Ensure Helm is available (needed for LitmusChaos install) ──
+    if not prereqs["helm"]:
+        click.echo("  Helm not found, installing...")
+        try:
+            setup.ensure_helm()
+            click.echo("  Helm: installed")
+        except Exception as e:
+            click.echo(f"Error installing Helm: {e}", err=True)
+            return False
+
+    # ── Ensure local-path-provisioner (needed for PVCs) ──
+    if not setup.is_local_path_provisioner_running():
+        click.echo("  local-path-provisioner not found, installing...")
+        if setup.ensure_local_path_provisioner():
+            click.echo("  local-path-provisioner: installed")
+        else:
+            click.echo("  WARNING: local-path-provisioner may not be ready yet", err=True)
+    else:
+        click.echo("  local-path-provisioner: available")
+
+    # ── Ensure LitmusChaos is installed ──
     if not prereqs["litmus_installed"]:
-        click.echo(
-            f"Error: LitmusChaos not installed. Run 'chaosprobe init -n {namespace}' first.",
-            err=True,
-        )
-        return False
+        click.echo("  LitmusChaos not found, installing...")
+        try:
+            setup.install_litmus(wait=True)
+            click.echo("  LitmusChaos: installed")
+        except Exception as e:
+            click.echo(f"Error installing LitmusChaos: {e}", err=True)
+            return False
+    else:
+        click.echo("  LitmusChaos: available")
 
     click.echo("Setting up RBAC for namespace...")
     try:
@@ -75,43 +101,108 @@ def _ensure_litmus_setup(
         if not setup.install_experiment(exp_type, namespace):
             click.echo(f"  WARNING: Failed to install experiment '{exp_type}'", err=True)
 
-    # ── Pre-flight checks: verify infrastructure is available ──
-    ok = True
+    # ── Ensure infrastructure components (install or repair, parallel) ──
 
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    def _check_component(check_fn, name):
-        return name, check_fn()
+    def _deployment_has_pvc(name: str, ns: str) -> bool:
+        try:
+            dep = setup.apps_api.read_namespaced_deployment(name, ns)
+            volumes = dep.spec.template.spec.volumes or []
+            return any(v.persistent_volume_claim is not None for v in volumes)
+        except Exception:
+            return True
 
-    checks = [
-        (setup.is_local_path_provisioner_running, "local-path-provisioner"),
-        (setup.is_metrics_server_installed, "metrics-server"),
-        (setup.is_prometheus_installed, "Prometheus"),
-        (setup.is_neo4j_installed, "Neo4j"),
-        (setup.is_chaoscenter_installed, "ChaosCenter"),
-    ]
+    def _ensure_metrics_server():
+        if setup.is_metrics_server_installed():
+            try:
+                dep = setup.apps_api.read_namespaced_deployment("metrics-server", "kube-system")
+                containers = dep.spec.template.spec.containers or []
+                args = containers[0].args or [] if containers else []
+                if "--kubelet-insecure-tls" not in args:
+                    setup.install_metrics_server(wait=True)
+                    return "metrics-server", "repaired (added --kubelet-insecure-tls)"
+            except Exception:
+                pass
+            return "metrics-server", "available"
+        if setup.install_metrics_server(wait=True):
+            return "metrics-server", "installed"
+        return "metrics-server", "installed (not yet ready)"
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(_check_component, fn, name) for fn, name in checks]
-        for future in futures:
-            name, available = future.result()
-            if not available:
-                click.echo(f"  {name}: NOT FOUND — run 'chaosprobe init' first", err=True)
-                ok = False
-            else:
-                click.echo(f"  {name}: available")
+    def _ensure_prometheus():
+        if setup.is_prometheus_installed():
+            if not _deployment_has_pvc("prometheus-server", "prometheus"):
+                setup.install_prometheus(wait=True)
+                return "Prometheus", "repaired (restored persistent storage)"
+            return "Prometheus", "available"
+        if setup.install_prometheus(wait=True):
+            return "Prometheus", "installed"
+        return "Prometheus", "installed (not yet ready)"
 
-    if not ok:
-        click.echo(
-            f"\nError: Missing infrastructure. Run 'chaosprobe init -n {namespace}' to install.",
-            err=True,
-        )
-    return ok
+    def _ensure_neo4j():
+        if setup.is_neo4j_installed():
+            if not _deployment_has_pvc("neo4j", "neo4j"):
+                setup.install_neo4j(wait=True)
+                return "Neo4j", "repaired (restored persistent storage)"
+            return "Neo4j", "available"
+        if setup.install_neo4j(wait=True):
+            return "Neo4j", "installed"
+        return "Neo4j", "installed (not yet ready)"
+
+    def _ensure_chaoscenter():
+        if setup.is_chaoscenter_installed():
+            return "ChaosCenter", "available"
+        if setup.install_chaoscenter(wait=True):
+            return "ChaosCenter", "installed"
+        return "ChaosCenter", "installed (not yet ready)"
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(_ensure_metrics_server): "metrics-server",
+            executor.submit(_ensure_prometheus): "Prometheus",
+            executor.submit(_ensure_neo4j): "Neo4j",
+            executor.submit(_ensure_chaoscenter): "ChaosCenter",
+        }
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                name, status = future.result()
+                click.echo(f"  {name}: {status}")
+            except Exception as e:
+                click.echo(f"  WARNING: {label} setup failed: {e}", err=True)
+
+    return True
 
 
 # ------------------------------------------------------------------
 # Helpers extracted from run() to keep the main command manageable
 # ------------------------------------------------------------------
+
+
+def _strip_unbuilt_cmdprobes(experiments: List[Dict[str, Any]]) -> None:
+    """Remove cmdProbes whose source image is still the placeholder 'auto'.
+
+    These probes were never built/pushed, so leaving them in the
+    experiment spec causes LitmusChaos to error trying to pull
+    a non-existent image.
+    """
+    stripped = []
+    for exp_entry in experiments:
+        engine_spec = exp_entry.get("spec", {}).get("spec", {})
+        for exp in engine_spec.get("experiments", []):
+            probes = exp.get("spec", {}).get("probe", [])
+            to_remove = []
+            for probe in probes:
+                if probe.get("type") != "cmdProbe":
+                    continue
+                source = probe.get("cmdProbe/inputs", {}).get("source", {})
+                if source.get("image") in ("auto", "", None):
+                    to_remove.append(probe)
+            for p in to_remove:
+                probes.remove(p)
+                stripped.append(p.get("name", "unknown"))
+    if stripped:
+        click.echo(f"  Stripped {len(stripped)} unbuilt cmdProbe(s): {', '.join(stripped)}")
 
 
 def _load_and_prepare_scenario(
@@ -149,16 +240,25 @@ def _load_and_prepare_scenario(
                 ["kubectl", "create", "namespace", namespace],
                 capture_output=True,
                 text=True,
+                timeout=120,
             )
-            result = _sp.run(
-                ["kubectl", "apply", "-f", str(deploy_dir), "-n", namespace],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode != 0:
+            try:
+                result = _sp.run(
+                    ["kubectl", "apply", "-f", str(deploy_dir), "-n", namespace],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+            except _sp.TimeoutExpired:
+                click.echo(
+                    "  Warning: kubectl apply timed out after 300s — "
+                    "the K8s API server may be overloaded or unreachable.",
+                    err=True,
+                )
+                result = None
+            if result is not None and result.returncode != 0:
                 click.echo(f"  Warning: kubectl apply failed: {result.stderr.strip()}", err=True)
-            else:
+            elif result is not None:
                 applied = sum(1 for line in result.stdout.strip().split("\n") if line.strip())
                 click.echo(f"  Applied {applied} resource(s) to {namespace}")
 
@@ -189,6 +289,13 @@ def _load_and_prepare_scenario(
             registry = os.environ.get("CHAOSPROBE_REGISTRY", DEFAULT_REGISTRY)
             builder = RustProbeBuilder(registry=registry, push=True)
             built_images = builder.build_all(shared_scenario["path"])
+            expected = {p["name"] for p in shared_scenario["probes"]}
+            missing = expected - set(built_images.keys())
+            if missing:
+                click.echo(
+                    f"  WARNING: {len(missing)} probe(s) failed to build: {', '.join(sorted(missing))}",
+                    err=True,
+                )
             if built_images:
                 n = patch_probe_images(shared_scenario["experiments"], built_images)
                 click.echo(f"  Built and patched {n} cmdProbe image(s)")
@@ -196,7 +303,9 @@ def _load_and_prepare_scenario(
                     click.echo("  Registry credentials synced to cluster")
         except Exception as e:
             click.echo(f"Warning: Rust probe build failed: {e}", err=True)
-            click.echo("  Continuing without auto-built probes...", err=True)
+
+        # Strip cmdProbes that still have placeholder image (not built/patched)
+        _strip_unbuilt_cmdprobes(shared_scenario["experiments"])
 
     return shared_scenario, namespace, experiment_file, service_routes
 
@@ -327,12 +436,15 @@ def _save_partial_results(overall_results: Dict[str, Any], results_dir: Path) ->
     Writes a ``partial_summary.json`` so that if a later strategy (or
     the final summary step) crashes, all data collected so far is
     recoverable from disk.
+
+    Uses compact JSON (no indentation) to keep the file size manageable
+    (~36MB vs ~102MB with indent=2 for a full 8-strategy run).
     """
     import json as _json_mod
 
     try:
         partial_path = results_dir / "partial_summary.json"
-        partial_path.write_text(_json_mod.dumps(overall_results, indent=2, default=str))
+        partial_path.write_text(_json_mod.dumps(overall_results, separators=(',', ':'), default=str))
     except Exception:
         pass  # best-effort — don't crash the run for a save failure
 
