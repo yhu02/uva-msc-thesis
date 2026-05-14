@@ -656,17 +656,22 @@ Microservice resilience under chaos varies with pod placement strategy due to di
 
 ### Probes
 
-7 probes across 4 sensitivity tiers for granular scoring (0/14/28/42/57/71/85/100%):
+12 probes (7 httpProbes across 4 sensitivity tiers + 5 Rust cmdProbes for orthogonal signals) → resilience scores step in 8.3% increments (100/12 ≈ 8.3%):
 
 | Probe | Type | Mode | Tolerance | Purpose |
 |---|---|---|---|---|
-| `frontend-product-strict` | httpProbe | Continuous (2s) | 3s timeout, 1 retry (≈6s) | Strict: confirms disruption via product page |
-| `frontend-homepage-strict` | httpProbe | Continuous (2s) | 3s timeout, 1 retry (≈6s) | Strict: confirms disruption via homepage |
-| `frontend-homepage-moderate` | httpProbe | Continuous (3s) | 3s timeout, 2 retries (≈9s) | Moderate-tight: passes only with fast (<3s) recovery |
-| `frontend-product-moderate` | httpProbe | Continuous (3s) | 3s timeout, 2 retries (≈9s) | Moderate-tight: same tier, different route |
-| `frontend-cart` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Moderate-loose: detects node contention (cart is independent) |
-| `frontend-homepage-loose` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Moderate-loose: catches only the slowest recovery strategies |
-| `frontend-healthz` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Control: detects node-level resource pressure |
+| `frontend-product-strict` | httpProbe | Continuous (2s) | 3s timeout, 1 retry (≈6s) | Tier 1 strict: confirms disruption via product page |
+| `frontend-homepage-strict` | httpProbe | Continuous (2s) | 3s timeout, 1 retry (≈6s) | Tier 1 strict: confirms disruption via homepage |
+| `frontend-homepage-moderate` | httpProbe | Continuous (3s) | 3s timeout, 2 retries (≈9s) | Tier 2 moderate-tight: passes only with fast (<3s) recovery |
+| `frontend-product-moderate` | httpProbe | Continuous (3s) | 3s timeout, 2 retries (≈9s) | Tier 2 moderate-tight: same tier, different route |
+| `frontend-cart` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Tier 3 moderate-loose: detects node contention (cart is independent) |
+| `frontend-homepage-loose` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Tier 3 moderate-loose: catches only the slowest recovery strategies |
+| `frontend-healthz` | httpProbe | Continuous (4s) | 5s timeout, 3 retries (≈20s) | Tier 4 control: detects node-level resource pressure |
+| `check-redis` | Rust cmdProbe | Edge (5s) | 10s timeout, 2 retries | Redis collateral damage (TCP `PING` to `redis-cart:6379`) |
+| `check-http-latency` | Rust cmdProbe | Continuous (5s) | 8s timeout, 2 retries | Threshold-aware HTTP GET (fails if latency > `PROBE_LATENCY_MS_MAX`, default 1000ms) |
+| `check-dns-latency` | Rust cmdProbe | Continuous (6s) | 5s timeout, 2 retries | CoreDNS resolve time (independent of app-layer HTTP) |
+| `check-tcp-connect` | Rust cmdProbe | Edge (5s) | 8s timeout, 2 retries | TCP handshake time (kube-proxy / conntrack saturation signal) |
+| `check-cart-flow` | Rust cmdProbe | Edge (5s) | 15s timeout, 2 retries | Multi-route user journey: homepage → product → cart → healthz |
 
 ### Strategy Configurations
 
@@ -851,7 +856,10 @@ chaosprobe/
 | `HAS_CASCADE_EVENT` | `ChaosRun` | `CascadeEvent` | — | Failure propagation |
 | `HAS_CONTAINER_LOG` | `PodSnapshot` or `ChaosRun` | `ContainerLog` | — | Container logs |
 | `RUNNING_ON` | `PodSnapshot` | `K8sNode` | — | Pod-to-node assignment |
-| `AFFECTS` | `AnomalyLabel` | `Service` | — | Services affected by fault |
+| `AFFECTS` | `AnomalyLabel` | `Service` | — | Services affected by fault (via dependency graph) |
+| `TARGETS` | `AnomalyLabel` | `Service` | — | Direct fault target service |
+| `TARGETED_BY` | `Deployment` | `ChaosRun` | — | Deployments targeted by chaos in this run |
+| `BELONGS_TO` | `PodSnapshot` | `Deployment` | — | Pod-to-deployment ownership |
 
 ### Schema Constraints & Indexes
 
@@ -950,7 +958,8 @@ Run this **separately** before all queries below. Change the run_id to the one y
 #### Step 2 — What probes passed/failed? (explains the score)
 
 ```cypher
-// Each probe has a different tolerance: strict ≈6s, moderate ≈9s, edge ≈75s.
+// Each probe has a different tolerance: strict ≈6s, moderate-tight ≈9s,
+// moderate-loose ≈20s. cmdProbes (Edge mode) sample at chaos start/end.
 // Failed probes tell you how long the service was degraded.
 // The description shows the actual HTTP status code received.
 MATCH (r:ChaosRun {run_id: $rid})-[:HAS_RESULT]->(e:ExperimentResult)
@@ -959,18 +968,17 @@ RETURN p.probe_name, p.verdict, p.description
 ORDER BY p.probe_name
 ```
 
-**Score interpretation** (7 probes → 8 possible scores):
+**Score interpretation** (12 probes → 13 possible scores in 8.3% increments). Common landmarks:
 
-| Score | Meaning |
-|---|---|
-| 100% | All probes passed — no visible disruption |
-| 85% | 6/7 — one strict failed, recovery ~6–9s |
-| 71% | 5/7 — both strict failed, recovery ~9s+ |
-| 57% | 4/7 — moderate-tight also failed |
-| 42% | 3/7 — only moderate-loose + control passed |
-| 28% | 2/7 — only cart + healthz passed |
-| 14% | 1/7 — only healthz passed (node alive, service down) |
-| 0% | Total disruption |
+| Score | Probes passing | Meaning |
+|---|---|---|
+| 100% | 12/12 | All probes passed — no visible disruption |
+| ~92% | 11/12 | One strict probe failed, recovery ~6–9s |
+| ~83% | 10/12 | Both strict probes failed, recovery ~9s+ |
+| ~67% | 8/12 | Strict + one moderate-tight failed |
+| ~42% | 5/12 | Only moderate-loose tier + cmdProbes survived |
+| ~17% | 2/12 | Only healthz + one cmdProbe survived |
+| 0% | 0/12 | Total disruption |
 
 #### Step 3 — What fault was injected, when exactly?
 
@@ -1364,7 +1372,7 @@ The analysis prompt (`ANALYSIS_PROMPT.md`) instructs the model to perform 9 anal
 │  │  3. IMPACT ASSESSMENT (multi-signal fusion)                     │    │
 │  │                                                                  │    │
 │  │  Primary:   Load generator metrics (RPS, error rate, P95/P99)   │    │
-│  │  Secondary: Probe verdicts (6 probes at different sensitivities) │    │
+│  │  Secondary: Probe verdicts (12 probes: 7 http + 5 cmd, layered) │    │
 │  │  Tertiary:  Cascade error counts per route                      │    │
 │  │  Control:   Redis/Disk stability confirms blast radius is       │    │
 │  │             limited to target service dependency chain           │    │
@@ -1387,8 +1395,9 @@ The analysis prompt (`ANALYSIS_PROMPT.md`) instructs the model to perform 9 anal
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │  5. PROBE ANALYSIS                                              │    │
 │  │     ─ Per-probe verdict table across all strategies             │    │
-│  │     ─ Score interpretation: 14% = only healthz survived         │    │
-│  │       71% = moderate-tight+loose+cart+healthz passed            │    │
+│  │     ─ Score interpretation (12 probes, 8.3% steps):             │    │
+│  │       ~17% = only healthz + 1 cmdProbe survived                 │    │
+│  │       ~67% = both strict failed, moderate+ tiers passed         │    │
 │  │     ─ What differentiates strategy scores                       │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                          │                                              │
@@ -1531,17 +1540,20 @@ Returns the full JSON document (~5-20KB) with all sections.
 > "Load generator: 2,418 requests, 19.9% error rate, avg response 2,341ms, P99 30,001ms.
 > This indicates significant user-facing degradation — 1 in 5 requests failed.
 >
-> Probe verdicts: frontend-healthz=Pass, frontend-homepage-strict=Fail,
+> Probe verdicts (httpProbes): frontend-healthz=Pass, frontend-homepage-strict=Fail,
 > frontend-product-strict=Fail, frontend-cart=Pass, frontend-homepage-moderate=Pass,
-> frontend-product-moderate=Pass, frontend-homepage-loose=Pass. Score: 71%.
+> frontend-product-moderate=Pass, frontend-homepage-loose=Pass.
+> cmdProbes: check-redis=Pass, check-http-latency=Fail (P99 spike >1000ms),
+> check-dns-latency=Pass, check-tcp-connect=Pass, check-cart-flow=Pass.
+> Score: 9/12 = 75%.
 >
 > Redis: 67 ops/s write, 70 ops/s read, 0 errors — stable across phases. Blast radius
 > limited to productcatalogservice dependency chain, not data layer."
 
 **4. AI compares strategies from the session:**
-> "colocate: 71% / 1529ms mean recovery / 19.9% error rate
->  spread:  71% / 1332ms mean recovery / 17.2% error rate
->  default: 14% / 1219ms mean recovery / 87.3% error rate ← dramatically worse
+> "colocate: 75% / 1529ms mean recovery / 19.9% error rate
+>  spread:  83% / 1332ms mean recovery / 17.2% error rate
+>  default: 17% / 1219ms mean recovery / 87.3% error rate ← dramatically worse
 >
 > Spread achieves equal resilience with lowest error rate. Default has fastest raw recovery
 > but worst user impact — likely due to K8s scheduling decisions under contention."

@@ -196,7 +196,11 @@ The `probes/` directory contains custom Rust cmdProbes that test service health 
 
 | Probe | Type | Target | Output |
 |---|---|---|---|
-| `check-redis` | Cargo project | `redis-cart:6379` | `REDIS_OK` or `REDIS_FAIL: <reason>` |
+| `check-redis` | Cargo project | `redis-cart:6379` (TCP `PING`) | `REDIS_OK` or `REDIS_FAIL: <reason>` |
+| `check-http-latency` | Single-file `.rs` | `frontend/` (HTTP GET, latency budget) | `LATENCY_OK <ms>` or `LATENCY_FAIL: <reason>` |
+| `check-dns-latency` | Single-file `.rs` | `frontend` (DNS resolve time) | `DNS_OK <ms>` or `DNS_FAIL: <reason>` |
+| `check-tcp-connect` | Single-file `.rs` | `frontend:80` (TCP handshake time) | `TCP_OK <ms>` or `TCP_FAIL: <reason>` |
+| `check-cart-flow` | Single-file `.rs` | `frontend` (multi-route user journey) | `FLOW_OK` or `FLOW_FAIL: <reason>` |
 
 **Build probes manually:**
 

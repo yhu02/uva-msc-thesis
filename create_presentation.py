@@ -606,7 +606,7 @@ exp_data = [
     ["Target", "productcatalogservice", "currencyservice"],
     ["Duration", "120s (5s interval)", "60s"],
     ["Parameters", "FORCE=true, 100% pods", "1 core, 100% load"],
-    ["Probes", "6 httpProbes", "1 httpProbe"],
+    ["Probes", "7 httpProbes + 5 cmdProbes", "1 httpProbe"],
 ]
 add_table(slide, 0.7, 5.55, 5.6, 1.6, 5, 3, exp_data,
           font_size=9, header_color=CLR_CHAOS)
@@ -779,12 +779,17 @@ probe_summary = [
     ["frontend-product-strict", "Continuous (2s)", "3s, 1 retry"],
     ["frontend-homepage-strict", "Continuous (2s)", "3s, 1 retry"],
     ["frontend-homepage-moderate", "Continuous (3s)", "3s, 2 retries"],
-    ["frontend-cart", "Continuous (4s)", "5s, 2 retries"],
-    ["frontend-homepage-edge", "Edge (5s)", "15s, 5 retries"],
-    ["frontend-healthz", "Continuous (4s)", "5s, 2 retries"],
+    ["frontend-product-moderate", "Continuous (3s)", "3s, 2 retries"],
+    ["frontend-cart", "Continuous (4s)", "5s, 3 retries"],
+    ["frontend-homepage-loose", "Continuous (4s)", "5s, 3 retries"],
+    ["frontend-healthz", "Continuous (4s)", "5s, 3 retries"],
 ]
-add_table(slide, 8.2, 2.8, 4.8, 2.4, 7, 3, probe_summary,
+add_table(slide, 8.2, 2.8, 4.8, 2.1, 8, 3, probe_summary,
           font_size=9, header_color=ACCENT_ORANGE)
+add_text_box(slide, 8.2, 4.95, 4.8, 0.4,
+    "+ 5 Rust cmdProbes: check-redis, check-http-latency,\n"
+    "  check-dns-latency, check-tcp-connect, check-cart-flow",
+    font_size=9, color=LIGHT_GRAY)
 
 # Scoring — bottom
 add_text_box(slide, 0.5, 5.5, 12, 0.3, "Resilience Scoring",
@@ -815,7 +820,7 @@ add_bullet_frame(slide, 0.5, 6.6, 6.0, 0.8, [
     "• Phase-aware: measurements tagged PreChaos / DuringChaos / PostChaos",
 ], font_size=11, color=LIGHT_GRAY)
 add_bullet_frame(slide, 6.8, 6.6, 6.0, 0.8, [
-    "• Strict → Moderate → Edge: layered sensitivity",
+    "• Strict → Moderate-tight → Moderate-loose: layered sensitivity",
     "• Control probes (healthz, cart): detect node-level contention",
 ], font_size=11, color=LIGHT_GRAY)
 
