@@ -511,6 +511,7 @@ def _strip_iteration_metrics(overall_results: Dict[str, Any]) -> Dict[str, Any]:
             it.pop("metrics", None)
             it.pop("anomalyLabels", None)
             it.pop("cascadeTimeline", None)
+            it.pop("unknownDiagnostics", None)
     return slim
 
 

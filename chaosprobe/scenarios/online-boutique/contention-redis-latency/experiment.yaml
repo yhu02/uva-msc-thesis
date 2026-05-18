@@ -63,10 +63,9 @@ spec:
                 value: "REDIS_OK"
               source:
                 image: auto  # patched by ChaosProbe build
-                imagePullPolicy: Always
                 imagePullSecrets:
                   - name: chaosprobe-registry
             runProperties:
-              probeTimeout: 10s
+              probeTimeout: 3s
               interval: 5s
-              retry: 2
+              retry: 0

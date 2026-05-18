@@ -30,20 +30,22 @@ _TERMINAL_PHASES = frozenset({
 _MAX_TARGET_RETRIES = 2
 
 
-def _extract_probe_verdicts_from_execution_data(
-    execution_data: Any,
-) -> Dict[str, str]:
-    """Parse per-probe verdicts from ChaosCenter executionData JSON.
+def _parse_execution_data(execution_data: Any) -> Dict[str, Any]:
+    """Parse ChaosCenter executionData into both verdicts and raw probe statuses.
 
     The ``executionData`` field is a JSON string containing an Argo
     workflow-style structure with a ``nodes`` dict keyed by node-id.
     ChaosEngine nodes contain ``chaosData.chaosResult.status.probeStatuses``
     — a list of per-probe entries with ``status.verdict`` = "Passed"/"Failed".
 
-    Returns a dict mapping probe name → "Pass" | "Fail" | "Unknown".
+    Returns a dict with two keys:
+        verdicts: probe name → "Pass" | "Fail" | "Unknown"
+        rawProbeStatuses: probe name → raw ps dict (as captured in
+            executionData), for diagnostic dumps when verdicts disagree
+            with the ChaosResult CRD.
     """
     if not execution_data:
-        return {}
+        return {"verdicts": {}, "rawProbeStatuses": {}}
     try:
         if isinstance(execution_data, str):
             data = _json.loads(execution_data)
@@ -51,16 +53,15 @@ def _extract_probe_verdicts_from_execution_data(
             data = execution_data
 
         verdicts: Dict[str, str] = {}
+        raw_statuses: Dict[str, Any] = {}
 
-        # nodes is a dict keyed by node-id
         nodes = data.get("nodes", {})
         if not isinstance(nodes, dict):
-            return {}
+            return {"verdicts": {}, "rawProbeStatuses": {}}
 
         for node in nodes.values():
             if not isinstance(node, dict):
                 continue
-            # Probe statuses live under chaosData.chaosResult.status.probeStatuses
             chaos_data = node.get("chaosData", {})
             if not chaos_data:
                 continue
@@ -73,6 +74,7 @@ def _extract_probe_verdicts_from_execution_data(
                 name = ps.get("name", "")
                 if not name:
                     continue
+                raw_statuses[name] = ps
                 status = ps.get("status", {})
                 if isinstance(status, dict):
                     verdict_str = status.get("verdict", "")
@@ -85,9 +87,16 @@ def _extract_probe_verdicts_from_execution_data(
                 elif isinstance(status, str):
                     verdicts[name] = "Pass" if "Pass" in status else "Fail"
 
-        return verdicts
+        return {"verdicts": verdicts, "rawProbeStatuses": raw_statuses}
     except Exception:
-        return {}
+        return {"verdicts": {}, "rawProbeStatuses": {}}
+
+
+def _extract_probe_verdicts_from_execution_data(
+    execution_data: Any,
+) -> Dict[str, str]:
+    """Backwards-compatible verdicts-only accessor."""
+    return _parse_execution_data(execution_data)["verdicts"]
 
 
 class ChaosRunner:
@@ -275,10 +284,10 @@ class ChaosRunner:
             "faultsPassed": result.get("faultsPassed"),
             "faultsFailed": result.get("faultsFailed"),
             "totalFaults": result.get("totalFaults"),
-            "probeVerdicts": _extract_probe_verdicts_from_execution_data(
-                result.get("executionData")
-            ),
         }
+        _parsed_exec = _parse_execution_data(result.get("executionData"))
+        entry["probeVerdicts"] = _parsed_exec["verdicts"]
+        entry["chaosCenterRawProbeStatuses"] = _parsed_exec["rawProbeStatuses"]
         if "error" in result:
             entry["error"] = result["error"]
         self._executed_experiments.append(entry)

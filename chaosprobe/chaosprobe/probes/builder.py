@@ -444,8 +444,15 @@ def patch_probe_images(
                 source = inputs.setdefault("source", {})
                 source["image"] = built_images[probe_name]
 
-                # Ensure the probe pod can pull private images
-                source.setdefault("imagePullPolicy", "Always")
+                # IfNotPresent so probe pods don't hit the registry on
+                # every tick — the image is pre-pulled onto each worker
+                # node at run start (see ``prepull_probe_images``).  The
+                # image tag is content-hashed, so a rebuild produces a
+                # new tag and the cache miss forces a fresh pull anyway.
+                # Overwrite any scenario-level value: builder owns this
+                # policy, and a stray ``Always`` in the YAML defeats the
+                # prepull and reintroduces Unknown verdicts under chaos.
+                source["imagePullPolicy"] = "IfNotPresent"
 
                 # Set default command to the binary path if not customised
                 if not inputs.get("command") or inputs["command"] == probe_name:
@@ -541,3 +548,163 @@ def ensure_image_pull_secret(
             pass  # SA may not exist in this namespace
 
     return True
+
+
+def extract_cmdprobe_images(experiments: List[Dict[str, Any]]) -> List[str]:
+    """Return the unique set of cmdProbe ``source.image`` values."""
+    seen: List[str] = []
+    for exp_entry in experiments:
+        engine_spec = exp_entry.get("spec", {}).get("spec", {})
+        for exp in engine_spec.get("experiments", []):
+            for probe in exp.get("spec", {}).get("probe", []):
+                if probe.get("type") != "cmdProbe":
+                    continue
+                image = (
+                    probe.get("cmdProbe/inputs", {})
+                    .get("source", {})
+                    .get("image", "")
+                )
+                if image and image != "auto" and image not in seen:
+                    seen.append(image)
+    return seen
+
+
+def prepull_probe_images(
+    namespace: str,
+    images: List[str],
+    worker_nodes: List[str],
+    timeout: int = 300,
+    secret_name: str = "chaosprobe-registry",
+) -> int:
+    """Pre-pull probe images onto each worker node's local cache.
+
+    Creates one short-lived Pod per worker node with every probe image
+    listed as an init container (each running ``true``).  The kubelet
+    pulls the image before starting the init container; once the pod
+    completes, the image layers stay cached on the node.  Combined
+    with ``imagePullPolicy: IfNotPresent`` on the probe specs, this
+    eliminates per-tick registry round-trips — the dominant source
+    of cmdProbe Unknown verdicts under chaos.
+
+    The pre-pull is best-effort: a pod that fails to schedule or
+    times out is logged and skipped; remaining nodes continue.
+
+    Args:
+        namespace: Namespace to create the pre-pull pods in (must have
+            the registry imagePullSecret attached to its default SA).
+        images: Probe images to pull (typically from
+            :func:`extract_cmdprobe_images`).
+        worker_nodes: Node names to pull onto — usually the schedulable
+            worker nodes from the placement mutator.
+        timeout: Per-pod timeout in seconds.
+        secret_name: Name of the docker-registry imagePullSecret.
+
+    Returns:
+        Number of (node, image) pulls successfully completed.
+    """
+    if not images or not worker_nodes:
+        return 0
+
+    import time as _time
+
+    import click as _click
+    from kubernetes import client as _k8s_client
+    from kubernetes.client.rest import ApiException as _ApiException
+
+    from chaosprobe.k8s import ensure_k8s_config
+
+    ensure_k8s_config()
+    core_api = _k8s_client.CoreV1Api()
+
+    init_containers = [
+        {
+            "name": f"pull-{i}",
+            "image": img,
+            "imagePullPolicy": "IfNotPresent",
+            "command": ["true"],
+        }
+        for i, img in enumerate(images)
+    ]
+    pod_spec_template = {
+        "restartPolicy": "Never",
+        "imagePullSecrets": [{"name": secret_name}],
+        # Tolerate everything so we can pre-pull even on tainted nodes
+        # (e.g. control-plane during single-node debugging).
+        "tolerations": [{"operator": "Exists"}],
+        "initContainers": init_containers,
+        # Main container must exist; reuse first probe image so we
+        # don't pull an extra base image just to satisfy this slot.
+        "containers": [
+            {
+                "name": "done",
+                "image": images[0],
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["true"],
+            }
+        ],
+    }
+
+    ts = int(_time.time())
+    pod_names: List[str] = []
+    for node_name in worker_nodes:
+        # K8s pod names limited to 63 chars; truncate aggressively.
+        short_node = node_name.replace(".", "-")[:20]
+        pod_name = f"chaosprobe-prepull-{short_node}-{ts}"[:63]
+        body = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": pod_name,
+                "namespace": namespace,
+                "labels": {"chaosprobe.io/prepull": "true"},
+            },
+            "spec": {"nodeName": node_name, **pod_spec_template},
+        }
+        try:
+            core_api.create_namespaced_pod(namespace, body)
+            pod_names.append(pod_name)
+        except _ApiException as e:
+            _click.echo(
+                f"  WARNING: pre-pull pod create failed on {node_name}: {e.reason}",
+                err=True,
+            )
+
+    pending = set(pod_names)
+    succeeded: set = set()
+    start = _time.time()
+    while pending and (_time.time() - start) < timeout:
+        for name in list(pending):
+            try:
+                pod = core_api.read_namespaced_pod_status(name, namespace)
+            except _ApiException:
+                continue
+            phase = (pod.status.phase or "").lower()
+            if phase == "succeeded":
+                succeeded.add(name)
+                pending.discard(name)
+            elif phase == "failed":
+                pending.discard(name)
+                _click.echo(
+                    f"  WARNING: pre-pull pod {name} failed; some images may not be cached",
+                    err=True,
+                )
+        if pending:
+            _time.sleep(2)
+
+    if pending:
+        _click.echo(
+            f"  WARNING: pre-pull timed out for {len(pending)} pod(s); "
+            f"those nodes will pull on first probe tick",
+            err=True,
+        )
+
+    # Cleanup all created pods (succeeded + still-pending)
+    for name in pod_names:
+        try:
+            core_api.delete_namespaced_pod(
+                name, namespace, body=_k8s_client.V1DeleteOptions(grace_period_seconds=0)
+            )
+        except _ApiException:
+            pass
+
+    return len(succeeded) * len(images)

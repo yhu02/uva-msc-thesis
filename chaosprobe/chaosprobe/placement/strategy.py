@@ -118,7 +118,14 @@ class NodeInfo:
 
 @dataclass
 class NodeAssignment:
-    """A mapping from deployment names to target node names."""
+    """A mapping from deployment names to target node names.
+
+    Records the *intended* placement (deployment → node) chosen by the
+    strategy.  The *actual* per-pod placement under which each chaos
+    iteration ran is recorded separately on the iteration result
+    (``podPlacements``), because pod names change every iteration due
+    to the rolling restart between iterations.
+    """
 
     strategy: PlacementStrategy
     assignments: Dict[str, str] = field(default_factory=dict)

@@ -802,6 +802,65 @@ def run(
             )
             sys.exit(1)
 
+    # Snapshot node pod-request usage ONCE per run.  Reused for every
+    # best-fit invocation so its computed topology is reproducible across
+    # strategies (otherwise lingering chaos infra / monitoring pods from
+    # earlier strategies silently shift best-fit's bin capacity, making
+    # results non-comparable between strategies in the same run).
+    #
+    # CRITICAL: exclude the app deployments' own pods from the snapshot.
+    # Best-fit is about to repack those pods; their current footprint is
+    # not "already used" capacity it has to work around.  If we left them
+    # in, best-fit would see nodes as far fuller than reality and
+    # over-spread to dodge imagined collisions.  The snapshot should
+    # represent only the *immovable* baseline: kube-system, monitoring,
+    # chaos infra, loadgen, etc.
+    click.echo("Snapshotting node pod-request usage for reproducible best-fit...")
+    app_dep_names = [d.name for d in mutator.get_deployments() if d.replicas > 0]
+    app_pods_by_node = mutator.observe_pod_placements(app_dep_names)
+    app_pod_keys = {(namespace, pod_name) for pod_name in app_pods_by_node}
+    node_usage_snapshot = mutator.get_node_pod_usage(exclude_pods=app_pod_keys)
+    mutator.usage_snapshot = node_usage_snapshot
+    click.echo(
+        f"  Excluded {len(app_pod_keys)} app-deployment pod(s) from "
+        f"snapshot (they are about to be repacked)"
+    )
+    for node_name in sorted(node_usage_snapshot):
+        cpu_m, mem_b = node_usage_snapshot[node_name]
+        click.echo(f"  {node_name}: {cpu_m}m CPU, {mem_b // (1024 * 1024)}MiB memory in use")
+
+    # Persist the exact view best-fit was placed against so analysis can
+    # reproduce its decisions from the results JSON alone.
+    overall_results["nodeUsageSnapshot"] = {
+        node: {"cpu_millicores": cpu_m, "memory_bytes": mem_b}
+        for node, (cpu_m, mem_b) in node_usage_snapshot.items()
+    }
+
+    # Pre-pull cmdProbe images onto every worker node BEFORE iterations
+    # start.  Combined with imagePullPolicy: IfNotPresent on the probe
+    # specs, this eliminates the per-tick registry round-trips that were
+    # the dominant source of "Unknown" probe verdicts under chaos (cmdProbe
+    # pods couldn't pull in time when the chaos pod was bursting CPU/network
+    # on the same node, dragging the score down by ~8 points per missed
+    # probe even though the SUT was healthy).
+    from chaosprobe.probes.builder import (
+        extract_cmdprobe_images,
+        prepull_probe_images,
+    )
+
+    probe_images = extract_cmdprobe_images(shared_scenario.get("experiments", []))
+    worker_node_names = [
+        n.name for n in mutator.get_nodes()
+        if n.is_schedulable and not n.is_control_plane
+    ]
+    if probe_images and worker_node_names:
+        click.echo(
+            f"Pre-pulling {len(probe_images)} probe image(s) onto "
+            f"{len(worker_node_names)} worker node(s)..."
+        )
+        pulled = prepull_probe_images(namespace, probe_images, worker_node_names)
+        click.echo(f"  Pre-pulled {pulled} (node x image) combinations")
+
     # Build shared context for strategy execution
     run_ctx = RunContext(
         namespace=namespace,

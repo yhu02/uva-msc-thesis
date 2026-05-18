@@ -6,6 +6,10 @@
 //! that single-route probes miss — e.g. cart works but product fails,
 //! or homepage works but checkout times out.
 //!
+//! Always exits 0 with a comparator-parseable line.  Errors on any
+//! route map to `FLOW_FAIL ...` so LitmusChaos records a clean Fail
+//! verdict instead of dropping the tick into the retry/timeout path.
+//!
 //! Routes (each must return 200 within PROBE_ROUTE_MS_MAX):
 //!   GET /                       — frontend + recommendation + ad + currency
 //!   GET /product/OLJCESPC7Z     — frontend + productcatalog + currency
@@ -15,33 +19,28 @@
 //! Environment:
 //!   PROBE_HOST           — host:port (default frontend.online-boutique.svc.cluster.local:80)
 //!   PROBE_ROUTE_MS_MAX   — per-route budget in ms (default 1500)
-//!   PROBE_TIMEOUT_MS     — TCP timeout in ms (default 5000)
+//!   PROBE_TIMEOUT_MS     — per-route TCP/DNS bound in ms (default 2000)
 //!   PROBE_ROUTES         — comma-separated path override (rarely needed)
 //!
 //! Output:
 //!   FLOW_OK <total_ms>           every route OK and within budget
 //!   FLOW_SLOW <route> <ms>       first route over budget (still 200)
-//!   FLOW_FAIL <route> <status>   first route with bad status / error
+//!   FLOW_FAIL <route> <reason>   first route with bad status / error
 
 use std::env;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::process;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_ROUTES: &[&str] = &["/", "/product/OLJCESPC7Z", "/cart", "/_healthz"];
 
 fn main() {
-    match run_check() {
-        Ok(output) => print!("{}", output),
-        Err(e) => {
-            eprintln!("probe check-cart-flow error: {}", e);
-            process::exit(1);
-        }
-    }
+    print!("{}", run_check());
 }
 
-fn run_check() -> Result<String, String> {
+fn run_check() -> String {
     let host_port = env::var("PROBE_HOST")
         .unwrap_or_else(|_| "frontend.online-boutique.svc.cluster.local:80".to_string());
     let route_max_ms: u128 = env::var("PROBE_ROUTE_MS_MAX")
@@ -51,7 +50,7 @@ fn run_check() -> Result<String, String> {
     let timeout_ms: u64 = env::var("PROBE_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(5000);
+        .unwrap_or(2000);
 
     let routes_owned: Vec<String>;
     let routes: Vec<&str> = match env::var("PROBE_ROUTES") {
@@ -62,7 +61,10 @@ fn run_check() -> Result<String, String> {
         Err(_) => DEFAULT_ROUTES.to_vec(),
     };
 
-    let (host, port) = split_host_port(&host_port)?;
+    let (host, port) = match split_host_port(&host_port) {
+        Ok(v) => v,
+        Err(e) => return format!("FLOW_FAIL parse {}", e),
+    };
     let timeout = Duration::from_millis(timeout_ms);
 
     let started = Instant::now();
@@ -70,22 +72,22 @@ fn run_check() -> Result<String, String> {
         let route_start = Instant::now();
         let status = match http_get(&host, port, route, timeout) {
             Ok(s) => s,
-            Err(e) => return Ok(format!("FLOW_FAIL {} {}", route, e)),
+            Err(e) => return format!("FLOW_FAIL {} {}", route, e),
         };
         let route_ms = route_start.elapsed().as_millis();
 
         if status != 200 {
-            return Ok(format!("FLOW_FAIL {} status={}", route, status));
+            return format!("FLOW_FAIL {} status={}", route, status);
         }
         if route_ms > route_max_ms {
-            return Ok(format!(
+            return format!(
                 "FLOW_SLOW {} {} (max={})",
                 route, route_ms, route_max_ms
-            ));
+            );
         }
     }
 
-    Ok(format!("FLOW_OK {}", started.elapsed().as_millis()))
+    format!("FLOW_OK {}", started.elapsed().as_millis())
 }
 
 fn split_host_port(s: &str) -> Result<(String, u16), String> {
@@ -96,12 +98,26 @@ fn split_host_port(s: &str) -> Result<(String, u16), String> {
     Ok((s[..i].to_string(), port))
 }
 
+fn bounded_resolve(host: &str, port: u16, timeout: Duration) -> Result<SocketAddr, String> {
+    let host_port = format!("{}:{}", host, port);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = host_port
+            .to_socket_addrs()
+            .map_err(|e| format!("dns: {}", e))
+            .and_then(|mut addrs| {
+                addrs.next().ok_or_else(|| "dns: no addresses".to_string())
+            });
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(r) => r,
+        Err(_) => Err(format!("dns: timeout after {}ms", timeout.as_millis())),
+    }
+}
+
 fn http_get(host: &str, port: u16, path: &str, timeout: Duration) -> Result<u16, String> {
-    let sock_addr = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("dns: {}", e))?
-        .next()
-        .ok_or_else(|| "dns: no addresses".to_string())?;
+    let sock_addr = bounded_resolve(host, port, timeout)?;
 
     let mut stream =
         TcpStream::connect_timeout(&sock_addr, timeout).map_err(|e| format!("connect: {}", e))?;

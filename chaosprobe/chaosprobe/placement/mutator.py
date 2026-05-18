@@ -47,6 +47,13 @@ class PlacementMutator:
         self.core_api = client.CoreV1Api()
         self.apps_api = client.AppsV1Api()
 
+        # Optional cached snapshot of node pod-request usage.  Set by the
+        # run pipeline once at start so best-fit's bin capacity is
+        # reproducible across strategies in the same run.  When unset
+        # (e.g. standalone `placement apply` invocations), best-fit
+        # falls back to a live query.
+        self.usage_snapshot: Optional[Dict[str, Tuple[int, int]]] = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -151,7 +158,10 @@ class PlacementMutator:
 
         return result
 
-    def get_node_pod_usage(self) -> Dict[str, Tuple[int, int]]:
+    def get_node_pod_usage(
+        self,
+        exclude_pods: Optional[set] = None,
+    ) -> Dict[str, Tuple[int, int]]:
         """Sum pod resource **requests** currently scheduled on each node.
 
         Returns ``{node_name: (cpu_millicores, memory_bytes)}``.  Used by
@@ -162,7 +172,16 @@ class PlacementMutator:
         Only pods with a ``node_name`` assigned and a non-terminal phase
         are counted.  Pods without explicit requests contribute 0 — the
         same convention the kube scheduler uses.
+
+        Args:
+            exclude_pods: Optional set of ``(namespace, pod_name)`` tuples
+                to skip.  Used by the run-time snapshot to exclude the
+                very app pods best-fit is about to repack — those pods'
+                requests should not count as "already used" capacity,
+                otherwise best-fit sees nodes as fuller than they are
+                and over-spreads to avoid imagined collisions.
         """
+        exclude_pods = exclude_pods or set()
         usage: Dict[str, Tuple[int, int]] = {}
         try:
             pods = self.core_api.list_pod_for_all_namespaces().items
@@ -170,6 +189,8 @@ class PlacementMutator:
             return usage
 
         for pod in pods:
+            if (pod.metadata.namespace, pod.metadata.name) in exclude_pods:
+                continue
             node = getattr(pod.spec, "node_name", None)
             if not node:
                 continue
@@ -223,6 +244,7 @@ class PlacementMutator:
         dependencies: Optional[List[Tuple[str, str]]] = None,
         wait: bool = True,
         timeout: int = 300,
+        node_existing_usage: Optional[Dict[str, Tuple[int, int]]] = None,
     ) -> NodeAssignment:
         """Compute and apply a placement strategy to all deployments.
 
@@ -260,10 +282,12 @@ class PlacementMutator:
         # Best-fit needs realistic free capacity — otherwise it packs
         # everything onto alphabetically-first nodes and the resulting
         # pods go Pending because kube-system / chaos / monitoring pods
-        # already consumed much of the allocatable.
-        node_existing_usage: Optional[Dict[str, Tuple[int, int]]] = None
-        if strategy == PlacementStrategy.BEST_FIT:
-            node_existing_usage = self.get_node_pod_usage()
+        # already consumed much of the allocatable.  Resolution order:
+        # explicit argument > cached snapshot (set by the run pipeline
+        # for cross-strategy reproducibility) > live query (fallback
+        # for standalone `placement apply` callers).
+        if strategy == PlacementStrategy.BEST_FIT and node_existing_usage is None:
+            node_existing_usage = self.usage_snapshot or self.get_node_pod_usage()
 
         assignment = compute_assignments(
             strategy=strategy,
@@ -452,6 +476,45 @@ class PlacementMutator:
             click.echo(f"  Pinned '{deployment_name}' -> node '{node_name}'")
         except ApiException as e:
             click.echo(f"  WARNING: Failed to patch '{deployment_name}': {e.reason}")
+
+    def observe_pod_placements(
+        self, deployment_names: List[str]
+    ) -> Dict[str, str]:
+        """Return ``{pod_name: node_name}`` for the given deployments.
+
+        Uses each deployment's own ``spec.selector.matchLabels`` rather
+        than assuming an ``app=<name>`` convention, so it works for
+        scenarios (Online Boutique, custom microservices) whose pod
+        labels do not match the deployment name.  Pods without an
+        assigned node, or in a terminal phase, are skipped.
+        """
+        placements: Dict[str, str] = {}
+        for dep_name in deployment_names:
+            try:
+                dep = self.apps_api.read_namespaced_deployment(dep_name, self.namespace)
+            except ApiException:
+                continue
+            match_labels = (
+                (dep.spec.selector.match_labels or {}) if dep.spec.selector else {}
+            )
+            if not match_labels:
+                continue
+            selector = ",".join(f"{k}={v}" for k, v in match_labels.items())
+            try:
+                pods = self.core_api.list_namespaced_pod(
+                    self.namespace, label_selector=selector
+                )
+            except ApiException:
+                continue
+            for pod in pods.items:
+                node = getattr(pod.spec, "node_name", None)
+                if not node:
+                    continue
+                phase = (pod.status.phase or "").lower()
+                if phase in ("succeeded", "failed"):
+                    continue
+                placements[pod.metadata.name] = node
+        return placements
 
     def _get_pod_node(self, deployment_name: str) -> Optional[str]:
         """Get the node name where a deployment's pod is running."""

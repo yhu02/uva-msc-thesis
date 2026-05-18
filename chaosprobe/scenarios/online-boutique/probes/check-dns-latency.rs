@@ -17,20 +17,15 @@
 
 use std::env;
 use std::net::ToSocketAddrs;
-use std::process;
 use std::time::Instant;
 
 fn main() {
-    match run_check() {
-        Ok(output) => print!("{}", output),
-        Err(e) => {
-            eprintln!("probe check-dns-latency error: {}", e);
-            process::exit(1);
-        }
-    }
+    // Always exit 0 with a comparator-parseable line.  See check-http-latency
+    // for the reasoning (LitmusChaos cmdProbe post-chaos abort cascade).
+    print!("{}", run_check());
 }
 
-fn run_check() -> Result<String, String> {
+fn run_check() -> String {
     let host = env::var("PROBE_HOST")
         .unwrap_or_else(|_| "frontend.online-boutique.svc.cluster.local:80".to_string());
     let max_ms: u128 = env::var("PROBE_DNS_MS_MAX")
@@ -46,14 +41,14 @@ fn run_check() -> Result<String, String> {
         Ok(mut addrs) => {
             let first = match addrs.next() {
                 Some(a) => a.to_string(),
-                None => return Ok("DNS_FAIL no_addresses".to_string()),
+                None => return "DNS_FAIL no_addresses".to_string(),
             };
             if elapsed_ms > max_ms {
-                Ok(format!("DNS_SLOW {} {} (max={})", elapsed_ms, first, max_ms))
+                format!("DNS_SLOW {} {} (max={})", elapsed_ms, first, max_ms)
             } else {
-                Ok(format!("DNS_OK {} {}", elapsed_ms, first))
+                format!("DNS_OK {} {}", elapsed_ms, first)
             }
         }
-        Err(e) => Ok(format!("DNS_FAIL {}", e)),
+        Err(e) => format!("DNS_FAIL {}", e),
     }
 }

@@ -18,21 +18,21 @@
 
 use std::env;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::process;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 fn main() {
-    match run_check() {
-        Ok(output) => print!("{}", output),
-        Err(e) => {
-            eprintln!("probe check-http-latency error: {}", e);
-            process::exit(1);
-        }
-    }
+    // Always exit 0 with a comparator-parseable line.  Any errors are
+    // formatted as LATENCY_FAIL so the LitmusChaos cmdProbe comparator
+    // records a clean Fail verdict instead of dropping the tick into
+    // the retry/timeout path (which can trigger the post-chaos abort
+    // cascade described in litmus-go pkg/probe/probe.go).
+    print!("{}", run_check());
 }
 
-fn run_check() -> Result<String, String> {
+fn run_check() -> String {
     let url = env::var("PROBE_URL").unwrap_or_else(|_| {
         "http://frontend.online-boutique.svc.cluster.local/".to_string()
     });
@@ -47,26 +47,35 @@ fn run_check() -> Result<String, String> {
     let timeout_ms: u64 = env::var("PROBE_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(5000);
+        .unwrap_or(2000);
 
-    let (host, port, path) = parse_url(&url)?;
+    let (host, port, path) = match parse_url(&url) {
+        Ok(v) => v,
+        Err(e) => return format!("LATENCY_FAIL parse: {}", e),
+    };
     let timeout = Duration::from_millis(timeout_ms);
 
     let started = Instant::now();
-    let status = http_get(&host, port, &path, timeout)?;
+    let status = match http_get(&host, port, &path, timeout) {
+        Ok(s) => s,
+        Err(e) => {
+            let elapsed_ms = started.elapsed().as_millis();
+            return format!("LATENCY_FAIL {} elapsed_ms={}", e, elapsed_ms);
+        }
+    };
     let elapsed_ms = started.elapsed().as_millis();
 
     if status != expect_status {
-        return Ok(format!(
+        return format!(
             "LATENCY_FAIL status={} expected={} elapsed_ms={}",
             status, expect_status, elapsed_ms
-        ));
+        );
     }
 
     if elapsed_ms > max_ms {
-        Ok(format!("LATENCY_SLOW {} (max={})", elapsed_ms, max_ms))
+        format!("LATENCY_SLOW {} (max={})", elapsed_ms, max_ms)
     } else {
-        Ok(format!("LATENCY_OK {}", elapsed_ms))
+        format!("LATENCY_OK {}", elapsed_ms)
     }
 }
 
@@ -90,12 +99,29 @@ fn parse_url(url: &str) -> Result<(String, u16, String), String> {
     Ok((host, port, path.to_string()))
 }
 
+// std::net::ToSocketAddrs has no per-call timeout — under DNS pressure
+// it can hang past LitmusChaos's probeTimeout, killing the tick.  Bound
+// the resolve manually with a thread + recv_timeout.
+fn bounded_resolve(host: &str, port: u16, timeout: Duration) -> Result<SocketAddr, String> {
+    let host_port = format!("{}:{}", host, port);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = host_port
+            .to_socket_addrs()
+            .map_err(|e| format!("dns: {}", e))
+            .and_then(|mut addrs| {
+                addrs.next().ok_or_else(|| "dns: no addresses".to_string())
+            });
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(r) => r,
+        Err(_) => Err(format!("dns: timeout after {}ms", timeout.as_millis())),
+    }
+}
+
 fn http_get(host: &str, port: u16, path: &str, timeout: Duration) -> Result<u16, String> {
-    let sock_addr = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("DNS resolve {}:{}: {}", host, port, e))?
-        .next()
-        .ok_or_else(|| format!("DNS resolve {}:{}: no addresses", host, port))?;
+    let sock_addr = bounded_resolve(host, port, timeout)?;
 
     let mut stream = TcpStream::connect_timeout(&sock_addr, timeout)
         .map_err(|e| format!("connect: {}", e))?;
@@ -111,14 +137,12 @@ fn http_get(host: &str, port: u16, path: &str, timeout: Duration) -> Result<u16,
         .write_all(req.as_bytes())
         .map_err(|e| format!("write: {}", e))?;
 
-    let mut buf = Vec::with_capacity(256);
     let mut chunk = [0u8; 256];
     let n = stream
         .read(&mut chunk)
         .map_err(|e| format!("read: {}", e))?;
-    buf.extend_from_slice(&chunk[..n]);
 
-    parse_status_line(&buf)
+    parse_status_line(&chunk[..n])
 }
 
 fn parse_status_line(buf: &[u8]) -> Result<u16, String> {

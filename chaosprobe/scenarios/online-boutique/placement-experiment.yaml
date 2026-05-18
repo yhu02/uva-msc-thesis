@@ -216,13 +216,17 @@ spec:
                 value: "REDIS_OK"
               source:
                 image: auto  # patched by ChaosProbe build
-                imagePullPolicy: Always
                 imagePullSecrets:
                   - name: chaosprobe-registry
+            # The binary always exits 0 with a parseable comparator line
+            # (REDIS_OK / REDIS_FAIL) and is bounded to ~PROBE_TIMEOUT_MS
+            # (default 2s).  retry=0 keeps each tick bounded to probeTimeout
+            # so the post-chaos cmdProbe cancel cascade in litmus-go
+            # pkg/probe/probe.go cannot fire.
             runProperties:
-              probeTimeout: 10s
+              probeTimeout: 3s
               interval: 5s
-              retry: 2
+              retry: 0
 
           # ── Rust cmdProbe: HTTP latency (Continuous) ───────────────
           # Threshold-aware GET on the frontend homepage. Fails when the
@@ -241,13 +245,17 @@ spec:
                 value: "LATENCY_OK"
               source:
                 image: auto
-                imagePullPolicy: Always
                 imagePullSecrets:
                   - name: chaosprobe-registry
+            # Continuous cmdProbe: this is the cascade-trigger position
+            # in litmus-go's post-chaos dispatcher (any error here aborts
+            # the Edge probes' post-chaos samples).  Binary is now
+            # bounded to ~PROBE_TIMEOUT_MS=2s with retry=0, so a tick
+            # never returns FailureTypeProbeTimeout.
             runProperties:
-              probeTimeout: 8s
+              probeTimeout: 3s
               interval: 5s
-              retry: 2
+              retry: 0
 
           # ── Rust cmdProbe: DNS resolve latency (Continuous) ────────
           # Times Kubernetes service-name resolution. CoreDNS sits on the
@@ -265,13 +273,12 @@ spec:
                 value: "DNS_OK"
               source:
                 image: auto
-                imagePullPolicy: Always
                 imagePullSecrets:
                   - name: chaosprobe-registry
             runProperties:
-              probeTimeout: 5s
-              interval: 6s
-              retry: 2
+              probeTimeout: 3s
+              interval: 5s
+              retry: 0
 
           # ── Rust cmdProbe: TCP connect latency (Edge) ──────────────
           # Pre/post sample of TCP three-way handshake time. Distinguishes
@@ -288,13 +295,12 @@ spec:
                 value: "TCP_OK"
               source:
                 image: auto
-                imagePullPolicy: Always
                 imagePullSecrets:
                   - name: chaosprobe-registry
             runProperties:
-              probeTimeout: 8s
+              probeTimeout: 3s
               interval: 5s
-              retry: 2
+              retry: 0
 
           # ── Rust cmdProbe: Cart-flow user journey (Edge) ───────────
           # Multi-route walk: homepage → product → cart → healthz. Fails
@@ -313,10 +319,11 @@ spec:
                 value: "FLOW_OK"
               source:
                 image: auto
-                imagePullPolicy: Always
                 imagePullSecrets:
                   - name: chaosprobe-registry
+            # 4 sequential GETs at PROBE_TIMEOUT_MS=2s each = ~8s worst
+            # case; 10s probeTimeout leaves slack for kubelet/exec overhead.
             runProperties:
-              probeTimeout: 15s
+              probeTimeout: 10s
               interval: 5s
-              retry: 2
+              retry: 0
