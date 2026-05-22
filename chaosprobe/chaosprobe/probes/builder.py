@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from chaosprobe.probes.templates import (
     generate_dockerfile,
@@ -392,6 +392,7 @@ class RustProbeBuilder:
             scenario_name = Path(scenario_path).name
 
         built_images: Dict[str, str] = {}
+        failures: List[Tuple[str, str]] = []
 
         with tempfile.TemporaryDirectory(prefix="chaosprobe-build-") as tmp:
             for probe in probes:
@@ -404,7 +405,18 @@ class RustProbeBuilder:
                     built_images[name] = image_tag
                     print(f"    → {image_tag}")
                 except (ProbeBuilderError, Exception) as exc:
-                    print(f"    WARNING: probe '{name}' failed: {exc}")
+                    print(f"    ERROR: probe '{name}' failed: {exc}")
+                    failures.append((name, str(exc)))
+
+        if failures:
+            # Fail-fast: silent drops produce experiments that *look* complete
+            # but are missing probes (results/20260519-130102: 2 of 5 probes
+            # had no verdict because the build swallowed transient push errors,
+            # masking the loss).  An aborted run is a clearer signal.
+            details = "\n".join(f"    - {n}: {e}" for n, e in failures)
+            raise ProbeBuilderError(
+                f"{len(failures)} of {len(probes)} probes failed to build:\n{details}"
+            )
 
         return built_images
 

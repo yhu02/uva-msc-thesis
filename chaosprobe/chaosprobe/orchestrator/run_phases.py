@@ -205,9 +205,14 @@ def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
         pass
     if pf.check_port(host, port):
         click.echo(f"  Neo4j bolt:  {host}:{port} reachable")
+        return
+    # Port not reachable — attempt to establish port-forward
+    click.echo(f"  Neo4j bolt:  {host}:{port} not reachable, establishing port-forward...")
+    if pf.ensure("neo4j", "neo4j", ["7687:7687", "7474:7474"], host, port):
+        click.echo(f"  Neo4j bolt:  {host}:{port} reachable")
     else:
         click.echo(
-            f"  Neo4j bolt:  WARNING - {host}:{port} not reachable. "
+            f"  Neo4j bolt:  WARNING - {host}:{port} not reachable after port-forward. "
             "Check that Neo4j is deployed.",
             err=True,
         )
@@ -781,13 +786,21 @@ def aggregate_iterations(
     verdicts = [ir["verdict"] for ir in iteration_results]
     pass_count = sum(1 for v in verdicts if v == "PASS")
 
+    # Exclude ERROR iterations (infra failures, all-Unknown probes) from
+    # score statistics.  These are not valid measurements — including
+    # their 0.0 scores would drag down the mean and inflate stddev
+    # without reflecting actual strategy resilience.
+    valid_iters = [ir for ir in iteration_results if ir["verdict"] != "ERROR"]
+    error_count = len(iteration_results) - len(valid_iters)
+    valid_scores = [ir["resilienceScore"] for ir in valid_iters] if valid_iters else scores
+
     # Track how many iterations had a healthy pre-chaos baseline.
     # Tainted iterations (pre-chaos already degraded) produce unreliable
     # scores because they reflect accumulated damage, not strategy resilience.
-    healthy_iters = [ir for ir in iteration_results if ir.get("preChaosHealthy", True)]
-    tainted_count = len(iteration_results) - len(healthy_iters)
+    healthy_iters = [ir for ir in valid_iters if ir.get("preChaosHealthy", True)]
+    tainted_count = len(valid_iters) - len(healthy_iters)
     all_tainted = len(healthy_iters) == 0 and tainted_count > 0
-    healthy_scores = [ir["resilienceScore"] for ir in healthy_iters] if healthy_iters else scores
+    healthy_scores = [ir["resilienceScore"] for ir in healthy_iters] if healthy_iters else valid_scores
 
     healthy_stddev = (
         round(statistics.stdev(healthy_scores), 1) if len(healthy_scores) > 1 else 0.0
@@ -795,15 +808,16 @@ def aggregate_iterations(
     agg: Dict[str, Any] = {
         "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
         "passRate": round(pass_count / len(verdicts), 2),
-        "meanResilienceScore": round(statistics.mean(scores), 1),
+        "meanResilienceScore": round(statistics.mean(valid_scores), 1),
         "meanResilienceScore_healthyOnly": round(statistics.mean(healthy_scores), 1),
-        "stddevResilienceScore": round(statistics.stdev(scores), 1) if len(scores) > 1 else 0.0,
+        "stddevResilienceScore": round(statistics.stdev(valid_scores), 1) if len(valid_scores) > 1 else 0.0,
         "stddevResilienceScore_healthyOnly": healthy_stddev,
-        "minResilienceScore": min(scores),
-        "maxResilienceScore": max(scores),
+        "minResilienceScore": min(valid_scores),
+        "maxResilienceScore": max(valid_scores),
         "totalExperiments": len(iteration_results),
         "passed": pass_count,
-        "failed": len(verdicts) - pass_count,
+        "failed": len(verdicts) - pass_count - error_count,
+        "errors": error_count,
         "taintedIterations": tainted_count,
         "allIterationsTainted": all_tainted,
         "perIterationScores": scores,

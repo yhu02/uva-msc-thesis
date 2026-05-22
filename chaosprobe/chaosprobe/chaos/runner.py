@@ -173,7 +173,16 @@ class ChaosRunner:
                 print("    ChaosCenter: reconnected")
                 return
             time.sleep(2)
-        print("    WARNING: ChaosCenter still unreachable after recovery attempt")
+        # Don't silently proceed — the iteration would otherwise run with
+        # zero probes registered, save no experiment, and report a fake
+        # 0.0 score (see results/20260520-220937 colocate iterations after
+        # the cluster control-plane crashed during best-fit iter6).
+        # Raising here lets the iteration-loop record an ERROR verdict
+        # and try to recover the API before the next iteration.
+        raise RuntimeError(
+            f"ChaosCenter unreachable at {host}:{port} after re-establishing "
+            f"port-forwards.  Cluster API may be down; skipping this iteration."
+        )
 
     def run_experiments(self, experiments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Run all ChaosEngine experiments via ChaosCenter.
@@ -261,14 +270,22 @@ class ChaosRunner:
             )
             print(f"    ChaosCenter: experiment saved ({experiment_id[:8]}...)")
         except Exception as exc:
-            print(f"    ERROR: Failed to save experiment: {exc}")
+            # Save-experiment failure means no chaos will run.  Previously
+            # this was logged and the function returned silently, leaving
+            # the iteration to proceed through probers + post-chaos sampling
+            # with no actual chaos injection, producing a misleading 0.0
+            # score that downstream analysis cannot distinguish from a
+            # real catastrophic-resilience result.  Raising lets the
+            # iteration loop record an ERROR verdict and recover.
             self._executed_experiments.append({
                 "engineName": engine_name,
                 "experimentNames": exp_names,
                 "status": "error",
                 "error": str(exc),
             })
-            return
+            raise RuntimeError(
+                f"ChaosCenter failed to save experiment '{engine_name}': {exc}"
+            ) from exc
 
         # -- run + poll (with retry on TARGET_SELECTION_ERROR) -----------
         result = self._run_and_poll(experiment_id, exp_names, engine_name, engine_spec)
@@ -327,8 +344,15 @@ class ChaosRunner:
                 suffix = f" (attempt {attempt + 1})" if attempt > 0 else ""
                 print(f"    ChaosCenter: run triggered (notify={notify_id[:8]}...){suffix}")
             except Exception as exc:
-                print(f"    ERROR: Failed to trigger run: {exc}")
-                return {"phase": "error", "error": str(exc)}
+                # Trigger failure means no chaos was actually injected.
+                # Previously this returned {"phase": "error"} silently;
+                # the caller treated that as a completed iteration and
+                # recorded a misleading 0-probe result.  Raise so the
+                # iteration loop marks this as ERROR and recovers.
+                raise RuntimeError(
+                    f"ChaosCenter failed to trigger run for "
+                    f"experiment_id={experiment_id[:8]}...: {exc}"
+                ) from exc
 
             start_time = time.time()
             print(f"    Waiting for experiment to complete (timeout: {self.timeout}s)...")

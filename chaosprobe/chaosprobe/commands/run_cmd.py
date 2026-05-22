@@ -180,29 +180,37 @@ def _ensure_litmus_setup(
 
 
 def _strip_unbuilt_cmdprobes(experiments: List[Dict[str, Any]]) -> None:
-    """Remove cmdProbes whose source image is still the placeholder 'auto'.
+    """Abort if any cmdProbe still has the placeholder ``image: auto``.
 
-    These probes were never built/pushed, so leaving them in the
-    experiment spec causes LitmusChaos to error trying to pull
-    a non-existent image.
+    Earlier this silently dropped unbuilt cmdProbes; we now raise
+    instead.  Missing probes are invisible in the final report (the
+    rest of the experiment looks normal) but skew every probe-count-
+    based metric — see results/20260519-130102, where 2 of 5 cmdProbes
+    were stripped without any failure indication in the summary.
+
+    A probe with ``image: auto`` at this point means a cmdProbe is
+    declared in the experiment YAML but no matching Rust source exists
+    in the scenario's ``probes/`` directory — that's a scenario-level
+    misconfiguration, not a transient build issue.  Either add the
+    source or remove the probe from the YAML.
     """
-    stripped = []
+    unbuilt = []
     for exp_entry in experiments:
         engine_spec = exp_entry.get("spec", {}).get("spec", {})
         for exp in engine_spec.get("experiments", []):
-            probes = exp.get("spec", {}).get("probe", [])
-            to_remove = []
-            for probe in probes:
+            for probe in exp.get("spec", {}).get("probe", []):
                 if probe.get("type") != "cmdProbe":
                     continue
                 source = probe.get("cmdProbe/inputs", {}).get("source", {})
                 if source.get("image") in ("auto", "", None):
-                    to_remove.append(probe)
-            for p in to_remove:
-                probes.remove(p)
-                stripped.append(p.get("name", "unknown"))
-    if stripped:
-        click.echo(f"  Stripped {len(stripped)} unbuilt cmdProbe(s): {', '.join(stripped)}")
+                    unbuilt.append(probe.get("name", "unknown"))
+    if unbuilt:
+        raise click.ClickException(
+            f"{len(unbuilt)} cmdProbe(s) have no built image and would be "
+            f"dropped from the experiment: {', '.join(unbuilt)}.  Add the "
+            f"matching Rust probe source to the scenario's probes/ directory, "
+            f"or remove the probe from the experiment YAML."
+        )
 
 
 def _load_and_prepare_scenario(
@@ -276,35 +284,42 @@ def _load_and_prepare_scenario(
     # the image via `docker pull`, so push is unconditionally required.
     if shared_scenario.get("probes"):
         click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
-        try:
-            import os
+        import os
 
-            from chaosprobe.probes.builder import (
-                DEFAULT_REGISTRY,
-                RustProbeBuilder,
-                ensure_image_pull_secret,
-                patch_probe_images,
+        from chaosprobe.probes.builder import (
+            DEFAULT_REGISTRY,
+            RustProbeBuilder,
+            ensure_image_pull_secret,
+            patch_probe_images,
+        )
+
+        registry = os.environ.get("CHAOSPROBE_REGISTRY", DEFAULT_REGISTRY)
+        builder = RustProbeBuilder(registry=registry, push=True)
+
+        # Build failures must abort the run.  Silently swallowing them
+        # (the previous behaviour) produced experiments missing 1-2
+        # cmdProbes that downstream analysis would never have caught
+        # without manual probe-count audit — see
+        # results/20260519-130102, where 2 of 5 cmdProbes never reached
+        # LitmusChaos because a transient registry push failed.
+        built_images = builder.build_all(shared_scenario["path"])
+        expected = {p["name"] for p in shared_scenario["probes"]}
+        missing = expected - set(built_images.keys())
+        if missing:
+            raise click.ClickException(
+                f"Rust probe build was missing {len(missing)} probe(s): "
+                f"{', '.join(sorted(missing))}.  Re-run after resolving "
+                f"the build failure."
             )
+        n = patch_probe_images(shared_scenario["experiments"], built_images)
+        click.echo(f"  Built and patched {n} cmdProbe image(s)")
+        if ensure_image_pull_secret(namespace, registry):
+            click.echo("  Registry credentials synced to cluster")
 
-            registry = os.environ.get("CHAOSPROBE_REGISTRY", DEFAULT_REGISTRY)
-            builder = RustProbeBuilder(registry=registry, push=True)
-            built_images = builder.build_all(shared_scenario["path"])
-            expected = {p["name"] for p in shared_scenario["probes"]}
-            missing = expected - set(built_images.keys())
-            if missing:
-                click.echo(
-                    f"  WARNING: {len(missing)} probe(s) failed to build: {', '.join(sorted(missing))}",
-                    err=True,
-                )
-            if built_images:
-                n = patch_probe_images(shared_scenario["experiments"], built_images)
-                click.echo(f"  Built and patched {n} cmdProbe image(s)")
-                if ensure_image_pull_secret(namespace, registry):
-                    click.echo("  Registry credentials synced to cluster")
-        except Exception as e:
-            click.echo(f"Warning: Rust probe build failed: {e}", err=True)
-
-        # Strip cmdProbes that still have placeholder image (not built/patched)
+        # Defensive belt: if any cmdProbe in the spec still has the
+        # placeholder image (shouldn't happen given the strictness above,
+        # but covers a probe defined in YAML without a matching binary),
+        # abort rather than silently dropping it from the experiment.
         _strip_unbuilt_cmdprobes(shared_scenario["experiments"])
 
     return shared_scenario, namespace, experiment_file, service_routes
@@ -477,7 +492,7 @@ def _print_run_banner(
     click.echo(f"  Iterations: {iterations}")
     click.echo(f"  Output:     {results_dir}")
     click.echo(f"  Timeout:    {timeout}s per experiment")
-    click.echo(f"  Settle:     {settle_time}s between placement and experiment")
+    click.echo(f"  Settle:     dynamic gates + {settle_time}s pre/post sample window")
     if measure_latency:
         click.echo("  Latency:    Measuring inter-service latency during experiments")
     if measure_redis:
@@ -519,9 +534,18 @@ def _print_run_banner(
 @click.option("--seed", default=42, type=int, help="Seed for the random strategy")
 @click.option(
     "--settle-time",
-    default=30,
+    default=60,
     type=int,
-    help="Seconds to wait after placement before running experiment",
+    help=(
+        "Length (in seconds) of the pre/post-chaos prober sample "
+        "windows.  Was previously capped at 15s by a hardcoded min(), "
+        "which created bimodal scores because chaos-induced recovery "
+        "often took 20-60s and the 15s cap caught only the error "
+        "phase.  60s default gives the cluster enough time to recover "
+        "post-chaos so the sample window captures actual resilience, "
+        "not just transient damage.  Adds no fixed sleep — the dynamic "
+        "readiness gates handle pre-iteration waiting."
+    ),
 )
 @click.option(
     "--experiment",

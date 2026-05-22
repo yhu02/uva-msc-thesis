@@ -387,13 +387,25 @@ class ContinuousProberBase:
             return "pre-chaos"
         if chaos_end is not None and now >= chaos_end:
             return "post-chaos"
-        # Cap: if expected duration is set and exceeded, treat as post-chaos.
-        # Use a dynamic buffer that scales with the expected chaos duration
-        # (at least 15s, at most 30s) to account for variable recovery times.
+        # Safety-net cap: if expected duration is set and we're WELL past
+        # it (chaos engine likely stuck or crashed), treat as post-chaos.
+        #
+        # Previously the cap was ``expected + max(15, 0.15*expected, 30)``
+        # which fired at chaos_start + 138s for a 120s TOTAL_CHAOS_DURATION.
+        # But LitmusChaos's workflow wrapper (Argo setup, helper-pod
+        # scheduling, cycle execution, cleanup, status reporting) typically
+        # adds 2-3x overhead — in results/20260520-191703 a 120s-configured
+        # chaos took 335s wall-clock to complete.  Samples between t+138s
+        # and t+335s were being mislabeled "post-chaos" while pod-delete
+        # cycles were still firing, inflating apparent post-chaos error
+        # rates and biasing cascade analysis.
+        #
+        # New cap is 5x expected_duration — enough headroom for any
+        # reasonable LitmusChaos workflow overhead, while still bounding
+        # the case where mark_chaos_end never gets called.
         if self._expected_chaos_duration is not None:
-            buffer = max(self._post_chaos_buffer, self._expected_chaos_duration * 0.15)
-            buffer = min(buffer, 30.0)
-            if now >= chaos_start + self._expected_chaos_duration + buffer:
+            cap_s = self._expected_chaos_duration * 5.0
+            if now >= chaos_start + cap_s:
                 return "post-chaos"
         return "during-chaos"
 

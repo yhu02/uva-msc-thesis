@@ -211,7 +211,15 @@ class TestContinuousLatencyProber:
         assert prober._current_phase(now) == "post-chaos"
 
     def test_current_phase_chaos_duration_cap(self):
-        """during-chaos is capped at expected_chaos_duration + dynamic buffer."""
+        """during-chaos is capped at 5x expected_chaos_duration as a safety net.
+
+        Previously this cap was ``expected + ~18s`` which fired far too
+        early — LitmusChaos's workflow wrapper typically takes 2-3x the
+        configured chaos duration to fully complete (helper-pod
+        scheduling + cleanup), so the old cap mislabeled the tail of
+        actual chaos cycles as post-chaos.  See the trace from
+        results/20260520-191703 documented at metrics/base.py:_current_phase.
+        """
         import time
         prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
         prober._lock = threading.Lock()
@@ -220,11 +228,12 @@ class TestContinuousLatencyProber:
         prober._post_chaos_buffer = 15.0
 
         now = time.time()
-        # Dynamic buffer for 120s chaos: max(15, 120*0.15)=18s, clamped to 18s
-        prober._chaos_start_time = now - 130  # 130s ago, within 120+18 buffer
+        # 5x cap for 120s chaos = 600s.  Well within → during-chaos.
+        prober._chaos_start_time = now - 500
         assert prober._current_phase(now) == "during-chaos"
 
-        prober._chaos_start_time = now - 140  # 140s ago, exceeds 120+18=138s cap
+        # Past the 5x cap → post-chaos as safety net.
+        prober._chaos_start_time = now - 700
         assert prober._current_phase(now) == "post-chaos"
 
 

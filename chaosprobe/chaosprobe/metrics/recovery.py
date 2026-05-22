@@ -231,7 +231,16 @@ class RecoveryWatcher:
 
     @staticmethod
     def _finalize_cycle(cycle: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert a raw cycle into the output format with durations."""
+        """Convert a raw cycle into the output format with durations.
+
+        Note: scheduledTime comes from the K8s PodScheduled condition which
+        has only second-level precision (truncated, not rounded). deletionTime
+        and readyTime use the local clock with ms precision. This mismatch
+        can produce negative deletionToScheduled_ms values (up to -999ms)
+        when the scheduling happens within the same second as deletion.
+        We clamp deletionToScheduled_ms to 0 minimum since negative scheduling
+        time is physically impossible — it's a clock-precision artifact.
+        """
         deletion = cycle["deletionTime"]
         scheduled = cycle.get("scheduledTime")
         ready = cycle.get("readyTime")
@@ -241,10 +250,16 @@ class RecoveryWatcher:
         total_recovery = None
 
         if deletion and scheduled:
-            deletion_to_scheduled = int((scheduled - deletion).total_seconds() * 1000)
+            raw_d2s = int((scheduled - deletion).total_seconds() * 1000)
+            # Clamp to 0: K8s scheduledTime has second-level precision
+            # (always truncated to :00.000), so it can appear to be
+            # "before" the ms-precision deletionTime within the same second.
+            deletion_to_scheduled = max(0, raw_d2s)
 
         if scheduled and ready:
-            scheduled_to_ready = int((ready - scheduled).total_seconds() * 1000)
+            raw_s2r = int((ready - scheduled).total_seconds() * 1000)
+            # Same clock-precision issue: clamp to 0.
+            scheduled_to_ready = max(0, raw_s2r)
 
         if deletion and ready:
             total_recovery = int((ready - deletion).total_seconds() * 1000)

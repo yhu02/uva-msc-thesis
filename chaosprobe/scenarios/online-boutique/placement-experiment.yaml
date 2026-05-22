@@ -35,11 +35,14 @@
 #   Tier 1 — Strict (2 probes): 3s timeout, 1 retry ≈ 6s window.
 #     Expected to fail under pod-delete; confirm chaos has impact.
 #
-#   Tier 2 — Moderate-tight (2 probes): 3s timeout, 2 retries ≈ 9s window.
-#     Pass only when recovery is fast (<3s per check window).
+#   Tier 2 — Moderate-tight (2 probes): 3s timeout, 4 retries ≈ 15s window.
+#     Pass only when recovery is fast (<5s). Window of 15s spans ≥1.5
+#     chaos cycles (10s each), reliably catching a recovery window.
+#     Interval 5s gives 24 checks over 120s — sufficient sensitivity.
 #
-#   Tier 3 — Moderate-loose (2 probes): 5s timeout, 3 retries ≈ 20s window.
-#     Pass when recovery is moderate (<5s); catches slow strategies.
+#   Tier 3 — Moderate-loose (2 probes): 5s timeout, 4 retries ≈ 25s window.
+#     Pass when recovery is moderate. Window spans 2.5 chaos cycles;
+#     only fails if degradation persists across multiple kill cycles.
 #
 #   Tier 4 — Control (1 probe): healthz endpoint, 5s timeout, 3 retries.
 #     Detects node-level contention that affects even local endpoints.
@@ -49,9 +52,11 @@
 #
 #   The Rust cmdProbes (check-redis, check-http-latency, check-dns-latency,
 #   check-tcp-connect, check-cart-flow) capture orthogonal signals that
-#   the httpProbes miss: Redis collateral damage, raw HTTP latency
+#   the httpProbes miss: Redis collateral damage, post-chaos HTTP latency
 #   thresholds, CoreDNS resolve time, TCP connect time, and a
-#   multi-route user journey.
+#   multi-route user journey. check-http-latency uses Edge mode
+#   (pre/post only) because Continuous mode with retry:0 inevitably
+#   fails during active pod-delete chaos, providing zero differentiation.
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:
@@ -71,7 +76,7 @@ spec:
             - name: TOTAL_CHAOS_DURATION
               value: "120"
             - name: CHAOS_INTERVAL
-              value: "5"
+              value: "10"
             - name: FORCE
               value: "true"
             - name: PODS_AFFECTED_PERC
@@ -110,11 +115,17 @@ spec:
               interval: 2s
               retry: 1
 
-          # ── Tier 2: Moderate-tight probes (3s timeout, 2 retries ≈ 9s) ─
-          # Pass only when recovery is fast (<3s). This tier differentiates
+          # ── Tier 2: Moderate-tight probes (3s timeout, 4 retries ≈ 15s) ─
+          # Pass only when recovery is fast (<5s). This tier differentiates
           # fast-recovering strategies (spread, dependency-aware) from slow ones.
 
           # Probe 3: Homepage (moderate-tight)
+          # retry:4 gives a 15s evaluation window (3s × 5 attempts).
+          # With CHAOS_INTERVAL=10s and avg recovery ~2s, each 10s cycle
+          # has ~8s of uptime. A 15s window spans 1.5 cycles, reliably
+          # catching a recovery window and eliminating timing races.
+          # Previous retry:3/interval:3s (40 checks, 12s window) produced
+          # cascade-dependent bimodality when recovery was slow.
           - name: frontend-homepage-moderate
             type: httpProbe
             mode: Continuous
@@ -126,10 +137,11 @@ spec:
                   responseCode: "200"
             runProperties:
               probeTimeout: 3s
-              interval: 3s
-              retry: 2
+              interval: 5s
+              retry: 4
 
           # Probe 4: Product page (moderate-tight) — same tier, different route.
+          # Same retry:4/interval:5s as homepage-moderate (see above).
           - name: frontend-product-moderate
             type: httpProbe
             mode: Continuous
@@ -141,8 +153,8 @@ spec:
                   responseCode: "200"
             runProperties:
               probeTimeout: 3s
-              interval: 3s
-              retry: 2
+              interval: 5s
+              retry: 4
 
           # ── Tier 3: Moderate-loose probes (5s timeout, 3 retries ≈ 20s) ─
           # Pass when recovery is moderate. Catches strategies with slow
@@ -162,8 +174,8 @@ spec:
                   responseCode: "200"
             runProperties:
               probeTimeout: 5s
-              interval: 4s
-              retry: 3
+              interval: 6s
+              retry: 4
 
           # Probe 6: Homepage (moderate-loose) — generous tolerance catches
           # only the slowest recovery strategies.
@@ -178,8 +190,8 @@ spec:
                   responseCode: "200"
             runProperties:
               probeTimeout: 5s
-              interval: 4s
-              retry: 3
+              interval: 6s
+              retry: 4
 
           # ── Tier 4: Control probe ──────────────────────────────────
           # The /_healthz endpoint is served locally by the frontend and
@@ -228,15 +240,27 @@ spec:
               interval: 5s
               retry: 0
 
-          # ── Rust cmdProbe: HTTP latency (Continuous) ───────────────
+          # ── Rust cmdProbe: HTTP latency (Edge) ────────────────────
           # Threshold-aware GET on the frontend homepage. Fails when the
           # response body returns OK status but the wall-clock latency
           # exceeds PROBE_LATENCY_MS_MAX (default 1000ms in the binary).
           # Captures the latency-preservation component of the resilience
           # score directly, rather than inferring it from probe verdicts.
+          #
+          # Changed from Continuous→Edge: in Continuous mode with retry:0,
+          # a single latency spike during 120s of pod-delete chaos
+          # (inevitable when productcatalog is killed every 5s) causes
+          # permanent failure. This gave 0/4 pass across ALL strategies
+          # and ALL iterations — providing zero differentiation signal.
+          # Edge mode samples pre-chaos and post-chaos latency, measuring
+          # whether the strategy PRESERVES low latency after recovery
+          # rather than during active chaos. This differentiates strategies
+          # by their residual impact: colocate leaves lasting resource
+          # pressure that inflates post-chaos latency; spread recovers
+          # cleanly.
           - name: check-http-latency
             type: cmdProbe
-            mode: Continuous
+            mode: Edge
             cmdProbe/inputs:
               command: /probe/check-http-latency
               comparator:
@@ -247,15 +271,15 @@ spec:
                 image: auto
                 imagePullSecrets:
                   - name: chaosprobe-registry
-            # Continuous cmdProbe: this is the cascade-trigger position
-            # in litmus-go's post-chaos dispatcher (any error here aborts
-            # the Edge probes' post-chaos samples).  Binary is now
-            # bounded to ~PROBE_TIMEOUT_MS=2s with retry=0, so a tick
-            # never returns FailureTypeProbeTimeout.
+            # Edge mode: pre-chaos sample validates clean baseline, post-
+            # chaos sample validates full recovery. Binary is bounded to
+            # PROBE_TIMEOUT_MS=5s; 8s probeTimeout gives slack for kubelet
+            # exec overhead.  retry:1 tolerates a single transient spike
+            # in the post-chaos sample without masking persistent damage.
             runProperties:
-              probeTimeout: 3s
-              interval: 5s
-              retry: 0
+              probeTimeout: 8s
+              interval: 10s
+              retry: 1
 
           # ── Rust cmdProbe: DNS resolve latency (Continuous) ────────
           # Times Kubernetes service-name resolution. CoreDNS sits on the
@@ -275,10 +299,13 @@ spec:
                 image: auto
                 imagePullSecrets:
                   - name: chaosprobe-registry
+            # retry:2 gives 3 attempts (9s window) so a single transient
+            # DNS delay doesn't fail the entire probe. Previous retry:0
+            # was too sensitive — any momentary spike caused failure.
             runProperties:
               probeTimeout: 3s
               interval: 5s
-              retry: 0
+              retry: 2
 
           # ── Rust cmdProbe: TCP connect latency (Edge) ──────────────
           # Pre/post sample of TCP three-way handshake time. Distinguishes
@@ -323,7 +350,9 @@ spec:
                   - name: chaosprobe-registry
             # 4 sequential GETs at PROBE_TIMEOUT_MS=2s each = ~8s worst
             # case; 10s probeTimeout leaves slack for kubelet/exec overhead.
+            # retry:1 gives the EOT check a second attempt if it races
+            # against the final chaos interval's recovery.
             runProperties:
               probeTimeout: 10s
               interval: 5s
-              retry: 0
+              retry: 1

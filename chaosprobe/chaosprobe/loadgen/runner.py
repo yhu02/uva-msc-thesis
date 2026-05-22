@@ -84,7 +84,25 @@ class LoadStats:
         }
 
 
-DEFAULT_LOCUSTFILE = '''\"\"\"Default Locust load test for a web frontend.\"\"\"
+DEFAULT_LOCUSTFILE = '''\"\"\"Default Locust load test for a web frontend.
+
+Seeded for reproducible per-iteration load patterns.  Locust has no
+``--seed`` CLI flag, so we seed the ``random`` module that
+``between(...)``, ``constant_pacing``, and task selection draw from.
+
+The seed runs at locustfile import time, before any user spawns.  Each
+chaos iteration starts a fresh Locust process, so the seed re-applies
+and request timing reproduces across iterations.  Note: gevent
+greenlet scheduling adds some non-determinism on top, but the
+dominant variance source (wait_time + task choice) is now fixed.
+
+Override the seed by setting LOCUST_RANDOM_SEED in the environment.
+\"\"\"
+
+import os
+import random
+
+random.seed(int(os.environ.get(\"LOCUST_RANDOM_SEED\", \"42\")))
 
 from locust import HttpUser, task, between
 

@@ -1146,8 +1146,9 @@ class TestChaosRunnerBuildManifest:
         assert run_template["metadata"]["labels"]["weight"] == "10"
 
 
+@patch("chaosprobe.orchestrator.portforward.check_port", return_value=True)
 class TestChaosRunnerRunExperiments:
-    def test_save_run_poll_cycle(self):
+    def test_save_run_poll_cycle(self, _mock_port):
         runner = _make_runner()
         runner._setup.chaoscenter_save_experiment.return_value = "exp-id"
         runner._setup.chaoscenter_run_experiment.return_value = "notify-id"
@@ -1168,30 +1169,45 @@ class TestChaosRunnerRunExperiments:
         runner._setup.chaoscenter_run_experiment.assert_called_once()
         runner._setup.chaoscenter_get_experiment_run.assert_called_once()
 
-    def test_save_failure_records_error(self):
+    def test_save_failure_raises_and_records_error(self, _mock_port):
+        """Save failure raises so the iteration loop marks ERROR cleanly.
+
+        Previously this returned silently with status='error' and let the
+        iteration proceed to post-chaos sampling with no actual chaos run,
+        producing a misleading 0-probe result that downstream analysis
+        couldn't distinguish from a real catastrophic-resilience outcome.
+        Now it raises; the error entry is still appended before raising
+        so the iteration's executed_experiments list reflects what was
+        attempted.
+        """
+        import pytest as _pytest
+
         runner = _make_runner()
         runner._setup.chaoscenter_save_experiment.side_effect = RuntimeError("API down")
 
-        results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
+        with _pytest.raises(RuntimeError, match="API down"):
+            runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
 
-        assert len(results) == 1
-        assert results[0]["status"] == "error"
-        assert "API down" in results[0]["error"]
+        # The error entry should still be recorded before raising.
+        executed = runner.get_executed_experiments()
+        assert len(executed) == 1
+        assert executed[0]["status"] == "error"
+        assert "API down" in executed[0]["error"]
         runner._setup.chaoscenter_run_experiment.assert_not_called()
 
-    def test_run_failure_records_error(self):
+    def test_run_failure_raises(self, _mock_port):
+        """Trigger failure also raises (same reasoning as save)."""
+        import pytest as _pytest
+
         runner = _make_runner()
         runner._setup.chaoscenter_save_experiment.return_value = "eid"
         runner._setup.chaoscenter_run_experiment.side_effect = RuntimeError("trigger fail")
 
-        results = runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
-
-        assert len(results) == 1
-        assert results[0]["status"] == "error"
-        assert "trigger fail" in results[0]["error"]
+        with _pytest.raises(RuntimeError, match="trigger fail"):
+            runner.run_experiments([{"file": "t.yaml", "spec": _ENGINE_SPEC}])
 
     @patch("chaosprobe.chaos.runner.time")
-    def test_poll_timeout(self, mock_time):
+    def test_poll_timeout(self, mock_time, _mock_port):
         """Runner should return timeout status when phase never becomes terminal."""
         # time.time() is called many times: start_time, while-condition,
         # elapsed, end_time, etc.  Supply enough values then jump past timeout.
@@ -1211,7 +1227,7 @@ class TestChaosRunnerRunExperiments:
         assert len(results) == 1
         assert results[0]["status"] == "timeout"
 
-    def test_poll_transient_error_retries(self):
+    def test_poll_transient_error_retries(self, _mock_port):
         """Transient errors during polling should be retried."""
         runner = _make_runner()
         runner._setup.chaoscenter_save_experiment.return_value = "eid"
@@ -1248,7 +1264,7 @@ class TestChaosRunnerRunExperiments:
         assert results[0]["status"] == "Completed"
         assert runner._setup.chaoscenter_get_experiment_run.call_count == 2
 
-    def test_get_executed_experiments(self):
+    def test_get_executed_experiments(self, _mock_port):
         runner = _make_runner()
         assert runner.get_executed_experiments() == []
 

@@ -7,7 +7,7 @@
 //! Environment:
 //!   PROBE_URL              — full URL (default frontend homepage in online-boutique)
 //!   PROBE_EXPECT_STATUS    — expected HTTP status code (default 200)
-//!   PROBE_LATENCY_MS_MAX   — fail threshold in ms (default 1000)
+//!   PROBE_LATENCY_MS_MAX   — fail threshold in ms (default 4000)
 //!   PROBE_TIMEOUT_MS       — TCP read/connect timeout in ms (default 5000)
 //!
 //! Output (matched by ChaosEngine cmdProbe comparator):
@@ -40,14 +40,26 @@ fn run_check() -> String {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(200);
+    // 4000ms default: even at 2000ms the probe fired on baseline runs
+    // (results/20260519-184332: baseline iter1 saw /product max 1887ms
+    // pre-chaos, and the homepage prober sample window typically
+    // misses occasional 2-3s tail spikes that the cmdProbe catches).
+    // 4000ms threshold means the probe only fires on genuine chaos
+    // degradation — under real cascade, frontend latency hits 5-10s+.
+    // The frontend-homepage-loose httpProbe already covers a 5s timeout
+    // "did it respond at all" check, so this probe sits one tier tighter.
     let max_ms: u128 = env::var("PROBE_LATENCY_MS_MAX")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+        .unwrap_or(4000);
+    // TCP read/connect timeout: must be ≥ PROBE_LATENCY_MS_MAX or the
+    // binary times out and reports LATENCY_FAIL before being able to
+    // distinguish OK-but-slow from SLOW.  5000ms gives 1s slack above
+    // the threshold for binary processing + bookkeeping.
     let timeout_ms: u64 = env::var("PROBE_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(2000);
+        .unwrap_or(5000);
 
     let (host, port, path) = match parse_url(&url) {
         Ok(v) => v,

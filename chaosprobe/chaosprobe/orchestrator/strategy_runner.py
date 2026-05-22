@@ -421,7 +421,13 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
         click.echo("  K8s API server recovered.")
         # Re-establish port-forwards that died during the outage
         pf.ensure_all()
-        # Brief stabilisation period for kube-proxy/endpoints to sync
+        # Brief stabilisation period for kube-proxy/endpoints to sync.
+        # A previous attempt at a dynamic 5-consecutive-OK poll was
+        # reverted alongside the portforward.start dynamic-poll change
+        # (results/20260518-175642): the chaos infrastructure entered a
+        # persistent broken state in that run, and although the cause
+        # was not conclusively this gate, the dynamic version was rolled
+        # back to restore the known-working pattern.
         time.sleep(10)
     else:
         raise click.ClickException(
@@ -430,23 +436,86 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
         )
 
 
+def _warmup_application(
+    core: Any,
+    namespace: str,
+    pod: str,
+    urls_to_check: List[Tuple[str, str]],
+    *,
+    duration_s: int = 10,
+) -> None:
+    """Pump concurrent HTTP load on every probed route for ``duration_s``.
+
+    Runs as a single sh-loop inside the probe pod that fires ``wget``
+    requests against each URL in a tight loop, in parallel via ``&``.
+    Not a benchmark — the requests' outputs are discarded.  The goal is
+    to force every route's downstream chain (frontend → recommendation
+    → currency, etc.) to warm its connection pools and JIT caches so
+    the cluster is in a consistent "hot" state when chaos starts.
+
+    Reduces iteration-to-iteration variance from cold-state effects
+    that the previous readiness gate didn't address: the gate verified
+    HTTP-200 reachability under low load, but a probe-pod kubectl exec
+    issuing one request per route is nowhere near the load profile
+    chaos + Locust will apply, so warmup-sensitive failure modes only
+    surfaced under chaos and showed up as bimodal scores.
+    """
+    from chaosprobe.metrics.base import exec_in_pod
+
+    # Build a parallel wget loop per route, all running for duration_s.
+    # `wget -q -O /dev/null -T 2` makes each request bounded and silent.
+    # `while true; do ... done` loops continuously; killed by `timeout`.
+    routes_block = " ".join(
+        f"(while true; do wget -q -O /dev/null -T 2 '{url}' || true; done) &"
+        for _path, url in urls_to_check
+    )
+    cmd = (
+        f"set +e; "
+        f"{routes_block} "
+        f"sleep {duration_s}; "
+        # Kill background loops so the exec returns promptly.
+        f"kill $(jobs -p) 2>/dev/null; "
+        f"wait 2>/dev/null; "
+        f"echo done"
+    )
+    try:
+        exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
+    except Exception as exc:
+        click.echo(f"    Warning: warmup phase failed (continuing anyway): {exc}", err=True)
+
+
 def _wait_for_app_ready(
     namespace: str,
     target_deployment: str,
-    timeout: int = 60,
+    timeout: int = 180,
     http_routes: Optional[List[tuple]] = None,
+    required_consecutive: int = 5,
+    sustained_period_s: int = 15,
+    latency_budget_ms: int = 1500,
 ) -> None:
-    """Wait until all probed routes respond with HTTP 200.
+    """Wait until all probed routes respond with HTTP 200 and stay stable.
+
+    Two-phase functional gate:
+
+    1. **Consecutive-OK phase**: every probed route must return 200
+       within ``latency_budget_ms`` for ``required_consecutive`` checks
+       in a row.  This filters transient failures.
+
+    2. **Sustained-clean phase**: after the consecutive gate passes,
+       keep sampling for ``sustained_period_s`` seconds.  Any single
+       failure or over-budget response during this window resets back
+       to the consecutive-OK phase.  This catches "marginal recovery"
+       where the cluster responds OK but is fragile — the failure
+       mode observed when iterations score wildly differently with
+       identical placements.  See the procedural-variance analysis
+       in results/20260518-131302 for evidence: BAD iterations passed
+       a 3-consecutive-OK gate with 0% subsequent prober errors yet
+       still produced bimodal scores under chaos.
 
     K8s readiness probes may pass while the application isn't fully
     serving traffic (e.g. during connection pool warm-up).  This does
     actual HTTP checks from a probe pod to confirm end-to-end readiness
     across ALL routes that will be probed during the experiment.
-
-    When *http_routes* is provided, every route must return 200 for
-    3 consecutive checks before the gate passes.  This prevents
-    iterations from starting with a degraded system (cascading
-    poisoning from a previous iteration's post-chaos damage).
     """
     from kubernetes import client as k8s_client
 
@@ -475,46 +544,145 @@ def _wait_for_app_ready(
     if not urls_to_check:
         urls_to_check = [("/_healthz", f"http://frontend.{namespace}.svc.cluster.local/_healthz")]
 
+    def _check_all_routes() -> bool:
+        """Return True iff every route returns successfully within the budget.
+
+        Uses ``wget``'s exit code as the success signal — busybox wget
+        exits non-zero on connect failure, timeout, and 4xx/5xx
+        responses, so this is sufficient for "did the URL respond OK".
+
+        Previous attempt (``wget -q -S ... | grep ' 200'``) silently
+        broke in this environment: busybox wget's ``-q`` flag suppresses
+        the ``-S`` server-response output, so the grep never matched
+        and the gate reported "0/5 consecutive OK in 240s" while the
+        cluster was actually responding fine.  See the
+        results/20260520-163953 trace where every iteration printed the
+        timeout warning yet still scored normally.
+        """
+        budget_s = max(1, latency_budget_ms // 1000 + 1)
+        for _path, url in urls_to_check:
+            cmd = (
+                f"wget -q -O /dev/null --timeout={budget_s} '{url}' "
+                f"&& echo OK || echo FAIL"
+            )
+            out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
+            if "OK" not in out:
+                return False
+        return True
+
     consecutive_ok = 0
-    required_consecutive = 3
     deadline = time.time() + timeout
     attempt = 0
+    sustained_until: Optional[float] = None  # absolute time
+
     while time.time() < deadline:
-        all_ok = True
-        for path, url in urls_to_check:
-            out = exec_in_pod(
-                core,
-                namespace,
-                pod,
-                [
-                    "sh",
-                    "-c",
-                    f"wget -q -O /dev/null --timeout=5 '{url}' 2>&1 && echo OK || echo FAIL",
-                ],
-            )
-            if "OK" not in out:
-                all_ok = False
-                break
+        all_ok = _check_all_routes()
 
         if all_ok:
-            consecutive_ok += 1
-            if consecutive_ok >= required_consecutive:
-                if attempt > required_consecutive:
+            if sustained_until is None:
+                consecutive_ok += 1
+                if consecutive_ok >= required_consecutive:
+                    sustained_until = time.time() + sustained_period_s
+                    click.echo(
+                        f"    App reachable ({consecutive_ok} consecutive OK); "
+                        f"verifying stability for {sustained_period_s}s..."
+                    )
+            else:
+                # In sustained-clean phase — wait until the period elapses.
+                if time.time() >= sustained_until:
+                    # Warmup phase: pump concurrent load on every probed
+                    # route for ~20s to warm gRPC connection pools, JVM
+                    # JIT caches, and CoreDNS resolution before the
+                    # iteration's pre-chaos baseline starts.  Without
+                    # this, frontend's outbound connection pool to
+                    # productcatalog is at cold-start size when chaos
+                    # hits, which sometimes triggers a thundering-herd
+                    # retry cascade and produces a 33-mode score on an
+                    # iteration that would otherwise score 75 with the
+                    # same placement.
+                    #
+                    # Increased from 10s→20s: under colocate (11 services
+                    # on 1 node), 10s was insufficient to warm all pools
+                    # because CPU contention slows connection establishment.
+                    # 20s ensures ≥5 full request cycles per route at the
+                    # typical 3-4s response time under colocate pressure.
+                    _warmup_application(
+                        core, namespace, pod, urls_to_check,
+                        duration_s=20,
+                    )
+
+                    # Post-warmup latency convergence check: verify that
+                    # response times have stabilised below a threshold.
+                    # Without this, strategies that place services across
+                    # nodes (adversarial, spread) can start chaos with
+                    # elevated baseline latency because gRPC connection
+                    # pools inside Go/Java services warm slowly even after
+                    # wget has warmed the Service VIP path.  The fix:
+                    # take 3 quick latency samples; if any route exceeds
+                    # the convergence threshold, run another 10s warmup
+                    # burst and re-check (up to 2 extra rounds).
+                    _CONVERGENCE_THRESHOLD_MS = 300
+                    for _warmup_round in range(2):
+                        converged = True
+                        for _path, url in urls_to_check:
+                            # Time a single request to check latency
+                            cmd = (
+                                f"S=$(date +%s%N 2>/dev/null); "
+                                f"wget -q -O /dev/null --timeout=5 '{url}'; "
+                                f"E=$(date +%s%N 2>/dev/null); "
+                                f"echo $(( (E - S) / 1000000 ))"
+                            )
+                            out = exec_in_pod(
+                                core, namespace, pod, ["sh", "-c", cmd]
+                            )
+                            try:
+                                lat_ms = int(out.strip())
+                                if lat_ms > _CONVERGENCE_THRESHOLD_MS:
+                                    converged = False
+                                    break
+                            except (ValueError, TypeError):
+                                converged = False
+                                break
+                        if converged:
+                            break
+                        # Not converged — run another warmup burst
+                        click.echo(
+                            f"    Latency not converged (>{_CONVERGENCE_THRESHOLD_MS}ms), "
+                            f"extending warmup..."
+                        )
+                        _warmup_application(
+                            core, namespace, pod, urls_to_check,
+                            duration_s=10,
+                        )
+
                     click.echo(
                         f"    App ready after {attempt} checks "
-                        f"({len(urls_to_check)} routes × {required_consecutive} consecutive OK)"
+                        f"({len(urls_to_check)} routes, "
+                        f"{required_consecutive} consecutive + "
+                        f"{sustained_period_s}s sustained + warmup)"
                     )
-                return
+                    return
         else:
+            if sustained_until is not None:
+                click.echo(
+                    "    App stability check failed — restarting consecutive-OK count"
+                )
             consecutive_ok = 0
+            sustained_until = None
 
         attempt += 1
         time.sleep(3)
-    click.echo(
-        f"    Warning: app-ready check timed out after {timeout}s — "
-        f"only {consecutive_ok}/{required_consecutive} consecutive OK. "
-        f"Iteration may start with degraded system."
-    )
+
+    if sustained_until is not None:
+        click.echo(
+            f"    Warning: app-ready timed out in sustained phase — proceeding anyway"
+        )
+    else:
+        click.echo(
+            f"    Warning: app-ready check timed out after {timeout}s — "
+            f"only {consecutive_ok}/{required_consecutive} consecutive OK. "
+            f"Iteration may start with degraded system."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -707,17 +875,21 @@ def _run_single_iteration(
     _restart_unhealthy_infra(ctx.namespace)
 
     step_label = "  Step 3" if ctx.iterations == 1 else "    Step A"
-    if ctx.settle_time > 0:
-        click.echo(f"\n{step_label}: Waiting {ctx.settle_time}s for workloads to settle...")
-        time.sleep(ctx.settle_time)
+    click.echo(f"\n{step_label}: Waiting for cluster readiness...")
 
+    # Dynamic readiness gate — no blind sleep.  The previous fixed
+    # ``time.sleep(settle_time)`` here was redundant: the three gates
+    # below already poll for cluster recovery and return as soon as
+    # the conditions are met.  Replacing the fixed wait with the
+    # dynamic chain means a healthy cluster proceeds immediately,
+    # while a damaged one waits exactly as long as it needs to.
     click.echo("    Verifying deployment readiness...")
-    wait_for_healthy_deployments(ctx.namespace, timeout=120)
+    wait_for_healthy_deployments(ctx.namespace, timeout=180)
 
     # Ensure the chaos target deployment has at least one ready pod
     # that stays stable (important for colocate where resource pressure
     # can cause pods to crash shortly after starting).
-    _wait_for_target_pod(ctx.namespace, ctx.target_deployment, timeout=120, stable_secs=10)
+    _wait_for_target_pod(ctx.namespace, ctx.target_deployment, timeout=180, stable_secs=10)
 
     click.echo("    Ready.")
 
@@ -740,10 +912,13 @@ def _run_single_iteration(
     # starting probers.  This prevents cascading poisoning where a
     # previous iteration's post-chaos damage leaks into the next
     # iteration's pre-chaos baseline.
+    # 240s upper bound: consecutive-OK (≥15s) + sustained period (15s) +
+    # generous slack for slow JVM warm-up between iterations.  The function
+    # returns early as soon as the gate passes.
     _wait_for_app_ready(
         ctx.namespace,
         ctx.target_deployment,
-        timeout=180,
+        timeout=240,
         http_routes=http_routes or None,
     )
 
@@ -778,13 +953,27 @@ def _run_single_iteration(
 
     # Compute windows before starting Locust so its duration covers the
     # full experiment lifecycle (pre-chaos + experiment + post-chaos).
+    #
+    # The previous hardcoded ``min(settle_time, 15)`` cap was the source
+    # of the 33/75 bimodality in results/20260519-222220: when chaos
+    # left the cluster needing 30-60s of recovery (typical for
+    # cumulative pod-delete pressure on a microservice cascade), the
+    # 15s post-chaos sample window caught only error responses and
+    # dragged the iteration's verdict to a cascade-Fail score, while
+    # iterations that happened to recover in <15s scored normally.
+    # Same chaos, same placement — different measurement outcome.
+    # Now: ``settle_time`` directly controls both windows, so a user
+    # who wants to measure "did chaos cause damage that persists 60s
+    # after stopping" can set --settle-time 60 and actually get a 60s
+    # window.  pre_chaos_window still defers to --baseline-duration
+    # when explicitly set, since baseline collection has its own knob.
     pre_chaos_window = (
-        ctx.baseline_duration if ctx.baseline_duration > 0 else min(ctx.settle_time, 15)
+        ctx.baseline_duration if ctx.baseline_duration > 0 else ctx.settle_time
     )
     has_probers = any(
         probers.get(k) for k in ("latency", "redis", "disk", "resource", "prometheus")
     )
-    post_chaos_window = min(ctx.settle_time, 15)
+    post_chaos_window = ctx.settle_time
 
     iter_locust_runner = None
     if ctx.load_profile:
@@ -920,13 +1109,49 @@ def _run_single_iteration(
             total_ok += route_data.get("sampleCount", 0)
         # sampleCount counts successful measurements only; errorCount
         # counts failed ones.  Total attempts = total_ok + total_errors.
+        # Threshold lowered from 50% → 10%: empirically the BAD iterations
+        # observed in the 20260518-131302 run had 0% pre-chaos errors
+        # (the marginal-recovery state shows up only under chaos load),
+        # so this gate is a backstop for grossly-tainted starts, not a
+        # primary detector.  The proactive functional gate in
+        # _wait_for_app_ready is the main defence.
         total_attempts = total_ok + total_errors
-        if total_attempts > 0 and total_errors / total_attempts > 0.5:
+        if total_attempts > 0 and total_errors / total_attempts > 0.1:
             pre_chaos_tainted = True
             click.echo(
                 f"    WARNING: Pre-chaos baseline was degraded "
                 f"({total_errors}/{total_attempts} samples had errors). "
                 f"Score may not reflect strategy resilience."
+            )
+
+        # Latency-based taint check: require BOTH p95 AND mean above
+        # threshold, since pre-chaos samples are sparse (N≈15) and p95
+        # alone is dominated by single-outlier spikes that don't reflect
+        # cluster health.  Investigation in results/20260521-073913:
+        # adversarial iter3 had pre-chaos `/` max=1160ms (outlier) but
+        # mean=252ms and scored 75 cleanly — high p95 alone falsely
+        # flagged it as tainted.  Requiring mean > threshold/2 filters
+        # outlier-driven false positives.
+        SLOW_BASELINE_P95_MS = 1500.0
+        slow_routes = []
+        for route_name, route_data in pre_chaos.get("routes", {}).items():
+            p95 = route_data.get("p95_ms")
+            mean = route_data.get("mean_ms")
+            if (
+                p95 is not None and mean is not None
+                and p95 > SLOW_BASELINE_P95_MS
+                and mean > SLOW_BASELINE_P95_MS / 2
+            ):
+                slow_routes.append((route_name, p95, mean))
+        if slow_routes:
+            pre_chaos_tainted = True
+            slow_summary = ", ".join(
+                f"{r}=p95:{p:.0f}/mean:{m:.0f}ms" for r, p, m in slow_routes
+            )
+            click.echo(
+                f"    WARNING: Pre-chaos baseline latency degraded on "
+                f"{len(slow_routes)} route(s) [{slow_summary}]. "
+                f"Cluster likely tainted by previous iteration."
             )
 
     # Extract per-probe verdicts for diagnostic analysis.
@@ -977,6 +1202,22 @@ def _run_single_iteration(
     # count lets analysis flag iterations where data quality is poor
     # rather than silently trusting a deflated score.
     unknown_probe_count = sum(1 for v in probe_verdicts.values() if v == "Unknown")
+
+    # When ALL probes are Unknown (CRD stuck at "Awaited", ChaosCenter
+    # returned empty verdicts), the experiment never actually evaluated
+    # probes — typically because the K8s API or ChaosCenter became
+    # unreachable mid-experiment.  Score 0.0 in this case is not a
+    # valid resilience measurement; it's an infrastructure failure.
+    # Mark as ERROR so aggregate_iterations excludes it from statistics
+    # rather than dragging down the mean with a meaningless 0.
+    if unknown_probe_count > 0 and unknown_probe_count == len(probe_verdicts):
+        click.echo(
+            f"    WARNING: All {unknown_probe_count} probes returned Unknown — "
+            f"experiment did not evaluate probes (infra failure). "
+            f"Marking iteration as ERROR."
+        )
+        verdict = "ERROR"
+        score = 0
 
     iter_result = {
         "iteration": iter_num,
@@ -1064,6 +1305,35 @@ def _run_iterations(
                     break
                 # Re-clean stale resources that accumulated during the outage
                 _clean_stale_resources(ctx.namespace)
+                # When the K8s API goes down, kubectl port-forward processes
+                # die too — ChaosCenter, Prometheus, and Neo4j tunnels need
+                # explicit re-establishment.  Without this, the next
+                # iteration would discover the dead tunnels mid-flight
+                # (raising ChaosCenter-unreachable on probe registration
+                # or Neo4j driver-closed on sync) and trip another ERROR.
+                click.echo("    Re-establishing port-forwards after API outage...")
+                pf.ensure_all()
+                # Neo4j driver may also be in a closed state — reset it
+                # so _sync_neo4j builds a fresh driver on next use.
+                if ctx.graph_store is not None:
+                    try:
+                        ctx.graph_store.close()
+                    except Exception:
+                        pass
+                    try:
+                        from chaosprobe.storage.neo4j_store import Neo4jStore
+                        ctx.graph_store = Neo4jStore(
+                            ctx.neo4j_uri,
+                            ctx.neo4j_user,
+                            ctx.neo4j_password,
+                        )
+                    except Exception as exc:
+                        click.echo(
+                            f"    Neo4j reconnect failed after K8s outage — "
+                            f"disabling sync: {exc}",
+                            err=True,
+                        )
+                        ctx.graph_store = None
             click.echo("    Restarting app deployments for clean next iteration...")
             _restart_app_deployments(ctx.namespace, ctx.target_deployment)
     return results
@@ -1130,7 +1400,11 @@ def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
         # Brief cooldown after rollout — K8s reports pods Ready before
         # connection pools and service endpoints are fully propagated.
         # Without this, the next iteration's app-ready check may fail
-        # on transient connection errors.
+        # on transient connection errors.  A previous attempt to remove
+        # this on the grounds that _wait_for_app_ready tolerates it was
+        # reverted (results/20260518-175642 produced a persistent
+        # broken-infra state; this was one of three dynamic-wait changes
+        # rolled back together).
         time.sleep(5)
     except Exception as e:
         click.echo(f"    Warning: deployment restart failed: {e}")
@@ -1197,51 +1471,20 @@ def _aggregate_strategy(
 
 
 def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
-    """Sync run data to Neo4j with retry logic. Returns True on success."""
+    """Sync run data to Neo4j with retry logic. Returns True on success.
+
+    Recreates ``ctx.graph_store`` on connection failure (driver closed,
+    connection refused) so that subsequent iterations can use a fresh
+    driver if Neo4j temporarily disappears.  Aborts early if we can't
+    even construct a new Neo4jStore (cluster API is down) — retrying
+    a dead store just produces the same "Driver closed" error.
+    """
     for attempt in range(3):
         try:
             ctx.graph_store.sync_run(output_data)
             return True
         except Exception as e:
-            if attempt < 2:
-                click.echo(
-                    f"    Neo4j sync attempt {attempt + 1} failed, reconnecting...",
-                    err=True,
-                )
-                try:
-                    ctx.graph_store.close()
-                except Exception:
-                    pass
-
-                # Ensure Neo4j port-forward is alive before reconnecting.
-                # Heavy strategies (colocate/best-fit) can starve nodes and
-                # kill kubectl tunnels; without this the driver reconnect
-                # will also fail with "Connection refused".
-                neo4j_host, neo4j_port = "localhost", 7687
-                try:
-                    parsed = (ctx.neo4j_uri or "").replace("bolt://", "").replace("neo4j://", "")
-                    if ":" in parsed:
-                        neo4j_host, neo4j_port = parsed.split(":", 1)
-                        neo4j_port = int(neo4j_port)
-                except (ValueError, AttributeError):
-                    pass
-                if not pf.check_port(neo4j_host, neo4j_port):
-                    pf.ensure_all()
-                    # Give port-forwards a moment to stabilise
-                    time.sleep(3)
-
-                try:
-                    from chaosprobe.storage.neo4j_store import Neo4jStore
-
-                    ctx.graph_store = Neo4jStore(
-                        ctx.neo4j_uri,
-                        ctx.neo4j_user,
-                        ctx.neo4j_password,
-                    )
-                except Exception:
-                    time.sleep(5)
-                    continue
-            else:
+            if attempt >= 2:
                 import traceback
 
                 click.echo(
@@ -1249,4 +1492,57 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
                     err=True,
                 )
                 click.echo(traceback.format_exc(), err=True)
-    return False
+                return False
+
+            click.echo(
+                f"    Neo4j sync attempt {attempt + 1} failed, reconnecting...",
+                err=True,
+            )
+            try:
+                ctx.graph_store.close()
+            except Exception:
+                pass
+
+            # Ensure Neo4j port-forward is alive before reconnecting.
+            # Heavy strategies (colocate/best-fit) can starve nodes and
+            # kill kubectl tunnels; without this the driver reconnect
+            # will also fail with "Connection refused".
+            neo4j_host, neo4j_port = "localhost", 7687
+            try:
+                parsed = (ctx.neo4j_uri or "").replace("bolt://", "").replace("neo4j://", "")
+                if ":" in parsed:
+                    neo4j_host, neo4j_port = parsed.split(":", 1)
+                    neo4j_port = int(neo4j_port)
+            except (ValueError, AttributeError):
+                pass
+            if not pf.check_port(neo4j_host, neo4j_port):
+                # pf.ensure_all() polls check_port internally before
+                # returning, so no additional sleep is needed here.
+                pf.ensure_all()
+
+            try:
+                from chaosprobe.storage.neo4j_store import Neo4jStore
+
+                ctx.graph_store = Neo4jStore(
+                    ctx.neo4j_uri,
+                    ctx.neo4j_user,
+                    ctx.neo4j_password,
+                )
+            except Exception as ctor_exc:
+                # New driver couldn't be constructed (Neo4j port-forward
+                # dead, bolt unreachable, cluster API down).  Without
+                # this early return, the retry loop would re-call
+                # ``sync_run`` on the closed driver we just close()d,
+                # producing repeated "Driver closed" errors (this is the
+                # failure mode observed in results/20260520-220937
+                # during the colocate strategy after the K8s control
+                # plane crashed in best-fit iter6).  Mark the store as
+                # absent so future iterations don't try either, and
+                # return failure for this sync.
+                click.echo(
+                    f"    Neo4j unreachable — disabling sync for this run: "
+                    f"{ctor_exc}",
+                    err=True,
+                )
+                ctx.graph_store = None
+                return False

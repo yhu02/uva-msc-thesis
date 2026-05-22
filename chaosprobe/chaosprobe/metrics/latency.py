@@ -819,6 +819,12 @@ class ContinuousLatencyProber(ContinuousProberBase):
         # [(pod_name, node_name), ...] populated in start()
         self._probe_points: List[Tuple[str, str]] = []
         self._expected_chaos_duration = expected_chaos_duration
+        # Track consecutive errors per pod to evict dead pods.
+        # Key: pod_name, Value: consecutive error count.
+        self._pod_consecutive_errors: Dict[str, int] = {}
+        # Max consecutive errors before removing a pod from the probe set.
+        # 3 consecutive all-error ticks means the pod is likely dead/evicted.
+        self._max_consecutive_errors = 3
 
     def start(self) -> None:
         """Discover every eligible probe pod (all ready pods with python3)."""
@@ -899,7 +905,14 @@ class ContinuousLatencyProber(ContinuousProberBase):
             self._stop_event.wait(timeout=self.interval)
 
     def _run_all_probes(self) -> Dict[str, Any]:
-        """Probe each route from every probe pod in parallel."""
+        """Probe each route from every probe pod in parallel.
+
+        Evicts pods that produce consecutive errors (likely dead/evicted)
+        to prevent a single dead pod from inflating error counts across
+        all subsequent ticks.  This eliminates a source of non-deterministic
+        variance where iterations that happened to lose a probe pod early
+        reported higher error rates than identical iterations that didn't.
+        """
         if not self._probe_points or not self._http_routes:
             return {}
 
@@ -923,18 +936,52 @@ class ContinuousLatencyProber(ContinuousProberBase):
             return results
 
         with ThreadPoolExecutor(max_workers=min(len(self._probe_points), 8)) as pool:
-            futs = [
-                pool.submit(_probe_one, pod, node)
+            futs = {
+                pool.submit(_probe_one, pod, node): (pod, node)
                 for pod, node in self._probe_points
-            ]
+            }
+            pod_all_errors: Dict[str, bool] = {}
             for f in futs:
+                pod, node = futs[f]
                 try:
-                    for pod, node, sample in f.result():
+                    results = f.result()
+                    all_err = all(s.status != "ok" for _, _, s in results)
+                    pod_all_errors[pod] = all_err
+                    for _p, _n, sample in results:
                         per_route_samples.setdefault(sample.route, []).append(
                             (pod, node, sample),
                         )
                 except Exception as exc:
                     logger.warning("per-pod latency probe raised: %s", exc)
+                    pod_all_errors[pod] = True
+
+        # Track consecutive errors and evict dead pods
+        for pod, all_err in pod_all_errors.items():
+            if all_err:
+                self._pod_consecutive_errors[pod] = (
+                    self._pod_consecutive_errors.get(pod, 0) + 1
+                )
+            else:
+                self._pod_consecutive_errors[pod] = 0
+
+        # Evict pods with too many consecutive all-error ticks
+        evicted = [
+            pod for pod, count in self._pod_consecutive_errors.items()
+            if count >= self._max_consecutive_errors
+        ]
+        if evicted:
+            self._probe_points = [
+                (p, n) for p, n in self._probe_points if p not in evicted
+            ]
+            for pod in evicted:
+                del self._pod_consecutive_errors[pod]
+            logger.info(
+                "Latency prober evicted %d dead pod(s): %s. "
+                "%d probe point(s) remaining.",
+                len(evicted),
+                ", ".join(evicted),
+                len(self._probe_points),
+            )
 
         return {
             route: _aggregate_latency_samples(samples)
