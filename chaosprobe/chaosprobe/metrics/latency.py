@@ -62,6 +62,11 @@ class LatencySample:
     status: str  # "ok", "error", "timeout"
     timestamp: str
     error: Optional[str] = None
+    # True when the kubectl exec to the probe pod itself failed (pod
+    # dead/evicted), as opposed to the HTTP probe timing out against
+    # a temporarily-down target.  Used by eviction logic to distinguish
+    # "pod is gone" from "target is unreachable."
+    exec_failed: bool = False
 
 
 @dataclass
@@ -501,6 +506,7 @@ class LatencyProber:
                 status="error",
                 timestamp=now,
                 error=str(e)[:200],
+                exec_failed=True,
             )
 
     def _measure_http_wget(
@@ -600,6 +606,7 @@ class LatencyProber:
                 status="error",
                 timestamp=now,
                 error=f"wget: {str(e)[:200]}",
+                exec_failed=True,
             )
 
     def _measure_tcp_from_pod(
@@ -805,7 +812,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
     def __init__(
         self,
         namespace: str,
-        interval: float = 2.0,
+        interval: float = 3.5,
         timeout_seconds: int = 5,
         http_routes: Optional[List[Tuple[str, str, str, str]]] = None,
         exclude_prefixes: Optional[List[str]] = None,
@@ -889,6 +896,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
     def _probe_loop(self) -> None:
         """Main probe loop running in the background."""
         while not self._stop_event.is_set():
+            tick_start = time.time()
             try:
                 now = time.time()
                 entry = self._make_entry(now, self._current_phase(now))
@@ -902,16 +910,26 @@ class ContinuousLatencyProber(ContinuousProberBase):
                 with self._lock:
                     self._probe_errors += 1
 
-            self._stop_event.wait(timeout=self.interval)
+            # Enforce minimum tick interval from tick START, not end.
+            # Without this, fast error responses (connection refused ~0.1s)
+            # cause the prober to cycle much faster than during healthy
+            # periods, generating extra HTTP load that sustains cascading
+            # degradation.
+            elapsed = time.time() - tick_start
+            remaining = self.interval - elapsed
+            if remaining > 0:
+                self._stop_event.wait(timeout=remaining)
 
     def _run_all_probes(self) -> Dict[str, Any]:
         """Probe each route from every probe pod in parallel.
 
-        Evicts pods that produce consecutive errors (likely dead/evicted)
-        to prevent a single dead pod from inflating error counts across
-        all subsequent ticks.  This eliminates a source of non-deterministic
-        variance where iterations that happened to lose a probe pod early
-        reported higher error rates than identical iterations that didn't.
+        Evicts pods whose kubectl exec fails consecutively (pod truly
+        dead/evicted from K8s).  Does NOT evict pods that successfully
+        exec but whose HTTP probes return errors — that indicates the
+        probe TARGET is temporarily down (e.g. gRPC cascade), not that
+        the probe pod is gone.  Previous behavior evicted on any error,
+        which blinded the prober for 50%+ of the chaos phase whenever
+        the target experienced extended degradation.
         """
         if not self._probe_points or not self._http_routes:
             return {}
@@ -940,31 +958,39 @@ class ContinuousLatencyProber(ContinuousProberBase):
                 pool.submit(_probe_one, pod, node): (pod, node)
                 for pod, node in self._probe_points
             }
-            pod_all_errors: Dict[str, bool] = {}
+            pod_exec_failed: Dict[str, bool] = {}
             for f in futs:
                 pod, node = futs[f]
                 try:
                     results = f.result()
-                    all_err = all(s.status != "ok" for _, _, s in results)
-                    pod_all_errors[pod] = all_err
+                    # A pod's exec failed if ANY sample has exec_failed=True
+                    # (indicates kubectl exec to the pod itself failed, not
+                    # just the HTTP target being unreachable).
+                    pod_exec_failed[pod] = any(
+                        s.exec_failed for _, _, s in results
+                    )
                     for _p, _n, sample in results:
                         per_route_samples.setdefault(sample.route, []).append(
                             (pod, node, sample),
                         )
                 except Exception as exc:
                     logger.warning("per-pod latency probe raised: %s", exc)
-                    pod_all_errors[pod] = True
+                    pod_exec_failed[pod] = True
 
-        # Track consecutive errors and evict dead pods
-        for pod, all_err in pod_all_errors.items():
-            if all_err:
+        # Only evict pods whose exec itself failed (pod dead/evicted from
+        # K8s), NOT pods whose HTTP probes returned errors (target down).
+        # During chaos the probe target is expected to be temporarily
+        # unreachable; evicting healthy vantage points in that scenario
+        # blinds the prober for the remainder of the experiment.
+        for pod, exec_failed in pod_exec_failed.items():
+            if exec_failed:
                 self._pod_consecutive_errors[pod] = (
                     self._pod_consecutive_errors.get(pod, 0) + 1
                 )
             else:
                 self._pod_consecutive_errors[pod] = 0
 
-        # Evict pods with too many consecutive all-error ticks
+        # Evict pods with too many consecutive exec failures
         evicted = [
             pod for pod, count in self._pod_consecutive_errors.items()
             if count >= self._max_consecutive_errors

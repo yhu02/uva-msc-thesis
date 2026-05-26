@@ -725,6 +725,29 @@ def run(
     results_dir = Path(output_dir) / ts
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Fail-fast: verify K8s API is reachable ──
+    # If the API server is down (e.g. control plane crashed in a previous
+    # run), there's no point loading scenarios, deploying manifests, or
+    # building probes.  Detect this early and give a clear error.
+    from chaosprobe.k8s import ensure_k8s_config
+
+    ensure_k8s_config()
+    try:
+        from kubernetes import client as _k8s_check
+        from kubernetes.client.rest import ApiException as _ApiExc
+        from urllib3.exceptions import MaxRetryError as _MaxRetry
+
+        _k8s_check.CoreV1Api().list_namespace(limit=1)
+    except (_ApiExc, _MaxRetry, ConnectionError, OSError) as exc:
+        click.echo(
+            f"Error: K8s API server at unreachable — cannot proceed.\n"
+            f"  Detail: {exc}\n"
+            f"  The control plane may need restarting (e.g. after an adversarial crash).\n"
+            f"  Restart the control plane node and retry.",
+            err=True,
+        )
+        sys.exit(1)
+
     # Load scenario, deploy manifests, discover topology, build probes
     shared_scenario, namespace, experiment_file, service_routes = _load_and_prepare_scenario(
         experiment, namespace

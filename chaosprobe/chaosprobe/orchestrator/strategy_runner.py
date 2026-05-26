@@ -186,17 +186,19 @@ def _capture_unknown_diagnostics(
 
 
 def _parse_probe_timeout(s: str) -> int:
-    """Parse a Go-style duration string (e.g. ``'15s'``) to integer seconds."""
+    """Parse a Go-style duration string (e.g. ``'15s'``, ``'1.5s'``) to integer seconds."""
     s = s.strip()
-    if s.endswith("ms"):
-        return max(1, int(s[:-2]) // 1000)
-    if s.endswith("s"):
-        return int(s[:-1])
-    if s.endswith("m"):
-        return int(s[:-1]) * 60
+    if not s:
+        return 5
     try:
-        return int(s)
-    except ValueError:
+        if s.endswith("ms"):
+            return max(1, int(float(s[:-2]) // 1000))
+        if s.endswith("s"):
+            return max(1, int(float(s[:-1])))
+        if s.endswith("m"):
+            return max(1, int(float(s[:-1]) * 60))
+        return max(1, int(float(s)))
+    except (ValueError, OverflowError):
         return 5
 
 
@@ -236,12 +238,20 @@ def _compute_effective_timeout(scenario: Dict[str, Any], user_timeout: int) -> i
             for probe in exp.get("spec", {}).get("probe", []):
                 run_props = probe.get("runProperties", {})
                 t = _parse_probe_timeout(run_props.get("probeTimeout", "5s"))
-                r = int(run_props.get("retry", 0))
+                try:
+                    r = int(run_props.get("retry", 0))
+                except (ValueError, TypeError):
+                    r = 0
                 total_probe_budget += t * (r + 1)
 
     # pre-chaos probes + chaos + post-chaos probes + workflow overhead
     min_timeout = chaos_duration + 2 * total_probe_budget + 120
     return max(user_timeout, min_timeout)
+
+
+def _shell_escape(s: str) -> str:
+    """Escape a string for safe use inside single quotes in sh."""
+    return s.replace("'", "'\\''")
 
 
 # Environment variables for the baseline trivial fault (pod-cpu-hog).
@@ -386,6 +396,13 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
     Rather than immediately failing all subsequent strategies when the
     API is unreachable, wait for it to recover.
 
+    **Active remediation**: after 60s of passive waiting, attempts to
+    SSH into the control plane node and force-restart containerd +
+    kubelet.  This handles the case where containerd gets wedged and
+    the API server container is stuck in "Created" state — a scenario
+    observed after the adversarial strategy overwhelms the node (run
+    20260523-093030).
+
     Re-establishes port-forwards after the API comes back, since the
     kubectl tunnels will have died during the outage.
     """
@@ -404,6 +421,9 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
     click.echo("  K8s API server unreachable — waiting for recovery...")
     deadline = time.time() + timeout
     recovered = False
+    remediation_attempted = False
+    start = time.time()
+
     while time.time() < deadline:
         time.sleep(10)
         try:
@@ -414,6 +434,15 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
         except (ApiException, MaxRetryError, NewConnectionError,
                 ConnectionError, OSError):
             remaining = int(deadline - time.time())
+            elapsed = time.time() - start
+
+            # After 60s of passive waiting, attempt active remediation
+            # by SSH-ing into the control plane and restarting the
+            # container runtime + kubelet.
+            if elapsed >= 60 and not remediation_attempted:
+                remediation_attempted = True
+                _attempt_control_plane_ssh_remediation()
+
             if remaining > 0 and remaining % 30 < 10:
                 click.echo(f"    Still waiting ({remaining}s remaining)...")
 
@@ -434,6 +463,87 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
             f"K8s API server unreachable for {timeout}s. "
             "The cluster may need manual intervention."
         )
+
+
+def _attempt_control_plane_ssh_remediation() -> None:
+    """SSH into the control plane and force-restart containerd + kubelet.
+
+    Extracts the control plane host from the active kubeconfig's server
+    URL.  Tries common SSH key locations (Vagrant insecure key, default
+    id_rsa).  This is a best-effort operation — if SSH fails, we fall
+    back to passive waiting.
+    """
+    import subprocess
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    from kubernetes import client as k8s_client
+
+    # Extract control plane host from kubeconfig
+    try:
+        config = k8s_client.Configuration.get_default_copy()
+        parsed = urlparse(config.host)
+        cp_host = parsed.hostname
+        if not cp_host:
+            return
+    except Exception:
+        return
+
+    click.echo(f"    Attempting SSH remediation on control plane ({cp_host})...")
+
+    # Try common SSH keys in order of likelihood
+    ssh_keys = [
+        Path.home() / ".vagrant.d" / "insecure_private_key",
+        Path.home() / ".ssh" / "id_rsa",
+        Path.home() / ".ssh" / "id_ed25519",
+    ]
+    ssh_key = None
+    for key_path in ssh_keys:
+        if key_path.exists():
+            ssh_key = key_path
+            break
+
+    # The remediation command: stop kubelet, force-kill containerd
+    # (graceful restart often hangs when it's wedged), restart both.
+    remediation_cmd = (
+        "sudo systemctl stop kubelet; "
+        "sudo systemctl kill -s SIGKILL containerd 2>/dev/null; "
+        "sleep 2; "
+        "sudo systemctl start containerd; "
+        "sleep 3; "
+        "sudo systemctl start kubelet"
+    )
+
+    ssh_cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
+    ]
+    if ssh_key:
+        ssh_cmd.extend(["-i", str(ssh_key)])
+    ssh_cmd.append(f"vagrant@{cp_host}")
+    ssh_cmd.append(remediation_cmd)
+
+    try:
+        result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            click.echo("    SSH remediation: containerd + kubelet restarted, waiting for API...")
+        else:
+            click.echo(
+                f"    SSH remediation failed (exit {result.returncode}): "
+                f"{result.stderr.strip()[:100]}",
+                err=True,
+            )
+    except subprocess.TimeoutExpired:
+        click.echo("    SSH remediation timed out — continuing passive wait", err=True)
+    except Exception as exc:
+        click.echo(f"    SSH remediation failed: {exc}", err=True)
 
 
 def _warmup_application(
@@ -466,7 +576,7 @@ def _warmup_application(
     # `wget -q -O /dev/null -T 2` makes each request bounded and silent.
     # `while true; do ... done` loops continuously; killed by `timeout`.
     routes_block = " ".join(
-        f"(while true; do wget -q -O /dev/null -T 2 '{url}' || true; done) &"
+        f"(while true; do wget -q -O /dev/null -T 2 '{_shell_escape(url)}' || true; done) &"
         for _path, url in urls_to_check
     )
     cmd = (
@@ -491,7 +601,7 @@ def _wait_for_app_ready(
     http_routes: Optional[List[tuple]] = None,
     required_consecutive: int = 5,
     sustained_period_s: int = 15,
-    latency_budget_ms: int = 1500,
+    latency_budget_ms: int = 5000,
 ) -> None:
     """Wait until all probed routes respond with HTTP 200 and stay stable.
 
@@ -559,14 +669,24 @@ def _wait_for_app_ready(
         results/20260520-163953 trace where every iteration printed the
         timeout warning yet still scored normally.
         """
+        nonlocal pod
         budget_s = max(1, latency_budget_ms // 1000 + 1)
         for _path, url in urls_to_check:
             cmd = (
-                f"wget -q -O /dev/null --timeout={budget_s} '{url}' "
+                f"wget -q -O /dev/null --timeout={budget_s} '{_shell_escape(url)}' "
                 f"&& echo OK || echo FAIL"
             )
             out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
             if "OK" not in out:
+                # Pod may have been evicted — try to re-discover
+                if "ERROR:" in out:
+                    new_pod = find_probe_pod(
+                        core, namespace,
+                        require_python3=False,
+                        exclude_prefixes=[target_deployment],
+                    )
+                    if new_pod and new_pod != pod:
+                        pod = new_pod
                 return False
         return True
 
@@ -626,9 +746,10 @@ def _wait_for_app_ready(
                         converged = True
                         for _path, url in urls_to_check:
                             # Time a single request to check latency
+                            safe_url = _shell_escape(url)
                             cmd = (
                                 f"S=$(date +%s%N 2>/dev/null); "
-                                f"wget -q -O /dev/null --timeout=5 '{url}'; "
+                                f"wget -q -O /dev/null --timeout=5 '{safe_url}'; "
                                 f"E=$(date +%s%N 2>/dev/null); "
                                 f"echo $(( (E - S) / 1000000 ))"
                             )
@@ -667,6 +788,17 @@ def _wait_for_app_ready(
                 click.echo(
                     "    App stability check failed — restarting consecutive-OK count"
                 )
+                # The probe pod may have been evicted during the sustained
+                # check (e.g. rollout of another service completed and K8s
+                # reclaimed resources).  Re-discover to avoid exec'ing into
+                # a dead pod for the remaining timeout.
+                new_pod = find_probe_pod(
+                    core, namespace,
+                    require_python3=False,
+                    exclude_prefixes=[target_deployment],
+                )
+                if new_pod and new_pod != pod:
+                    pod = new_pod
             consecutive_ok = 0
             sustained_until = None
 
@@ -764,7 +896,12 @@ def execute_strategy(
         # (control plane overload from cascading evictions/rescheduling),
         # wait for it to recover before attempting cleanup.  Without this,
         # every subsequent strategy fails immediately with "Connection refused".
-        _wait_for_k8s_api(ctx.namespace, timeout=300)
+        # 600s timeout: control plane crashes (etcd compaction, API server
+        # OOM-kill) can take 5+ minutes to self-heal on resource-constrained
+        # VM clusters.  The previous 300s was insufficient — see run
+        # 20260523-093030 where the adversarial strategy killed the API
+        # and the 300s timeout wasn't enough.
+        _wait_for_k8s_api(ctx.namespace, timeout=600)
 
         # ── Inter-strategy cleanup ──
         # Between back-to-back strategies, lingering ChaosEngines, helper pods,
@@ -780,7 +917,16 @@ def execute_strategy(
         pf.ensure_all()
 
         click.echo("  Waiting for all deployments to be ready...")
-        wait_for_healthy_deployments(ctx.namespace, timeout=120)
+        wait_for_healthy_deployments(ctx.namespace, timeout=180, strict=True)
+
+        # ── Full app-level health verification ──
+        # K8s reporting pods as Ready is necessary but not sufficient:
+        # pods can report Ready while their connection pools are broken,
+        # gRPC channels are in TRANSIENT_FAILURE, or service endpoints
+        # haven't propagated.  Restart all app deployments to clear any
+        # post-crash damage, then verify actual HTTP reachability.
+        click.echo("  Restarting app deployments for clean strategy start...")
+        _restart_app_deployments(ctx.namespace, ctx.target_deployment)
 
         _apply_placement(ctx, strategy_name, strategy_result)
         iteration_results = _run_iterations(ctx, strategy_name, strategy_result)
@@ -1187,7 +1333,6 @@ def _run_single_iteration(
     # because ChaosCenter cleaned it up), fall back to ChaosCenter API
     # verdicts extracted from executionData.
     if not probe_verdicts or all(v == "Unknown" for v in probe_verdicts.values()):
-        executed = runner.get_executed_experiments()
         for exp_entry in executed:
             cc_verdicts = exp_entry.get("probeVerdicts", {})
             if cc_verdicts:
@@ -1296,7 +1441,7 @@ def _run_iterations(
             if ir.get("verdict") == "ERROR":
                 click.echo("    Waiting for K8s API to recover before next iteration...")
                 try:
-                    _wait_for_k8s_api(ctx.namespace, timeout=300)
+                    _wait_for_k8s_api(ctx.namespace, timeout=600)
                 except click.ClickException:
                     click.echo(
                         "    K8s API still unreachable — skipping remaining iterations",
@@ -1313,6 +1458,22 @@ def _run_iterations(
                 # or Neo4j driver-closed on sync) and trip another ERROR.
                 click.echo("    Re-establishing port-forwards after API outage...")
                 pf.ensure_all()
+                # Verify deployments are healthy before proceeding — a
+                # crash may have left pods in CrashLoopBackOff or pending
+                # state.  strict=True ensures we don't silently proceed
+                # with a broken cluster.
+                click.echo("    Verifying deployment health after crash recovery...")
+                try:
+                    wait_for_healthy_deployments(
+                        ctx.namespace, timeout=180, strict=True
+                    )
+                except click.ClickException:
+                    click.echo(
+                        "    Deployments not healthy after recovery — "
+                        "skipping remaining iterations",
+                        err=True,
+                    )
+                    break
                 # Neo4j driver may also be in a closed state — reset it
                 # so _sync_neo4j builds a fresh driver on next use.
                 if ctx.graph_store is not None:

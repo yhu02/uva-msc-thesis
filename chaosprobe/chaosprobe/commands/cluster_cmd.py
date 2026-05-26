@@ -338,6 +338,43 @@ def vagrant_up(name: str, vagrant_dir: Optional[str]):
         sys.exit(1)
 
 
+@cluster_vagrant.command("halt")
+@click.option("--name", "-n", default="chaosprobe", help="Cluster name")
+@click.option(
+    "--dir",
+    "-d",
+    "vagrant_dir",
+    type=click.Path(exists=True),
+    help="Vagrant directory",
+)
+@click.option("--force", "-f", is_flag=True, help="Force power-off (ungraceful shutdown)")
+def vagrant_halt(name: str, vagrant_dir: Optional[str], force: bool):
+    """Stop (power off) Vagrant VMs without destroying them.
+
+    Gracefully shuts down the VMs. They can be restarted with
+    'chaosprobe cluster vagrant up'. Disk state is preserved.
+    """
+    setup = LitmusSetup(skip_k8s_init=True)
+
+    if vagrant_dir:
+        vdir = Path(vagrant_dir)
+    else:
+        vdir = setup.VAGRANT_DIR / name
+
+    if not (vdir / "Vagrantfile").exists():
+        click.echo(f"Error: No Vagrantfile found at {vdir}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Stopping Vagrant VMs in {vdir}...")
+
+    try:
+        setup.vagrant_halt(vdir, force=force)
+        click.echo("\nVMs stopped. Restart with: chaosprobe cluster vagrant up")
+    except Exception as e:
+        click.echo(f"\nError stopping VMs: {e}", err=True)
+        sys.exit(1)
+
+
 @cluster_vagrant.command("status")
 @click.option("--name", "-n", default="chaosprobe", help="Cluster name")
 @click.option(

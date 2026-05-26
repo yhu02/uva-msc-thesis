@@ -36,12 +36,12 @@
 #     Expected to fail under pod-delete; confirm chaos has impact.
 #
 #   Tier 2 — Moderate-tight (2 probes): 3s timeout, 4 retries ≈ 15s window.
-#     Pass only when recovery is fast (<5s). Window of 15s spans ≥1.5
-#     chaos cycles (10s each), reliably catching a recovery window.
+#     Pass only when recovery is fast (<5s). Window of 15s spans ≥1
+#     chaos cycle (15s each), reliably catching a recovery window.
 #     Interval 5s gives 24 checks over 120s — sufficient sensitivity.
 #
 #   Tier 3 — Moderate-loose (2 probes): 5s timeout, 4 retries ≈ 25s window.
-#     Pass when recovery is moderate. Window spans 2.5 chaos cycles;
+#     Pass when recovery is moderate. Window spans ~1.7 chaos cycles;
 #     only fails if degradation persists across multiple kill cycles.
 #
 #   Tier 4 — Control (1 probe): healthz endpoint, 5s timeout, 3 retries.
@@ -76,7 +76,7 @@ spec:
             - name: TOTAL_CHAOS_DURATION
               value: "120"
             - name: CHAOS_INTERVAL
-              value: "10"
+              value: "15"
             - name: FORCE
               value: "true"
             - name: PODS_AFFECTED_PERC
@@ -121,8 +121,8 @@ spec:
 
           # Probe 3: Homepage (moderate-tight)
           # retry:4 gives a 15s evaluation window (3s × 5 attempts).
-          # With CHAOS_INTERVAL=10s and avg recovery ~2s, each 10s cycle
-          # has ~8s of uptime. A 15s window spans 1.5 cycles, reliably
+          # With CHAOS_INTERVAL=15s and avg recovery ~5s, each 15s cycle
+          # has ~10s of uptime. A 15s window spans 1 full cycle, reliably
           # catching a recovery window and eliminating timing races.
           # Previous retry:3/interval:3s (40 checks, 12s window) produced
           # cascade-dependent bimodality when recovery was slow.

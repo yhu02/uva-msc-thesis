@@ -31,6 +31,7 @@ class _ChaosCenterAPIMixin:
         data: Optional[dict] = None,
         token: Optional[str] = None,
         headers: Optional[dict] = None,
+        timeout: int = 30,
     ) -> dict:
         """Make an HTTP request to the ChaosCenter API.
 
@@ -40,6 +41,7 @@ class _ChaosCenterAPIMixin:
             data: JSON-serialisable body (for POST/PUT).
             token: Bearer token for authenticated requests.
             headers: Additional HTTP headers.
+            timeout: HTTP request timeout in seconds.
 
         Returns:
             Parsed JSON response as a dict.
@@ -52,7 +54,7 @@ class _ChaosCenterAPIMixin:
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 result = _json.loads(resp.read().decode())
             # Surface GraphQL-level errors that arrive with HTTP 200
             if (
@@ -667,6 +669,7 @@ class _ChaosCenterAPIMixin:
         project_id: str,
         token: str,
         notify_id: str,
+        timeout: int = 10,
     ) -> dict[str, Any]:
         """Query the status of a running experiment.
 
@@ -675,6 +678,7 @@ class _ChaosCenterAPIMixin:
             project_id: ChaosCenter project ID.
             token: Bearer token.
             notify_id: The notifyID returned by ``runChaosExperiment``.
+            timeout: HTTP timeout for this poll request (seconds).
 
         Returns:
             Dict with at least ``phase`` key (e.g. ``Running``,
@@ -699,6 +703,7 @@ class _ChaosCenterAPIMixin:
                 },
             },
             token=token,
+            timeout=timeout,
         )
         return (resp.get("data") or {}).get("getExperimentRun", {})
 

@@ -164,7 +164,10 @@ export KUBECONFIG=~/.kube/config-chaosprobe
 uv run chaosprobe init
 uv run chaosprobe run -n online-boutique
 
-# Destroy VMs when done
+# Stop VMs (preserves state, can restart with 'vagrant up')
+uv run chaosprobe cluster vagrant halt
+
+# Destroy VMs permanently when done
 uv run chaosprobe cluster vagrant destroy
 ```
 
@@ -319,6 +322,7 @@ uv run chaosprobe cluster vagrant deploy
 uv run chaosprobe cluster vagrant kubeconfig
 uv run chaosprobe cluster vagrant status
 uv run chaosprobe cluster vagrant ssh <vm-name>
+uv run chaosprobe cluster vagrant halt             # stop VMs (preserves disk)
 uv run chaosprobe cluster vagrant destroy
 
 # Kubespray

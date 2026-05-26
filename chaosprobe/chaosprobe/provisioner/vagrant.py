@@ -372,6 +372,36 @@ class _VagrantMixin:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to start Vagrant VMs: {e}") from e
 
+    def vagrant_halt(self, vagrant_dir: Path, force: bool = False) -> bool:
+        """Gracefully shut down Vagrant VMs without destroying them.
+
+        VMs can be restarted later with vagrant_up().
+
+        Args:
+            vagrant_dir: Directory containing the Vagrantfile.
+            force: Force power-off (equivalent to pulling the plug).
+
+        Returns:
+            True if successful.
+        """
+        vagrant_dir = Path(vagrant_dir)
+
+        if not (vagrant_dir / "Vagrantfile").exists():
+            raise RuntimeError(f"No Vagrantfile found in {vagrant_dir}")
+
+        print("Shutting down Vagrant VMs...")
+
+        cmd = ["vagrant", "halt"]
+        if force:
+            cmd.append("--force")
+
+        try:
+            subprocess.run(cmd, check=True, cwd=str(vagrant_dir), env=self._get_vagrant_env())
+            print("Vagrant VMs shut down successfully!")
+            return True
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to halt Vagrant VMs: {e}") from e
+
     def vagrant_destroy(self, vagrant_dir: Path, force: bool = False) -> bool:
         """Destroy Vagrant VMs."""
         vagrant_dir = Path(vagrant_dir)

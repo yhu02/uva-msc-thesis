@@ -341,3 +341,92 @@ class TestAggregateLatencySamples:
         assert entry["errorCount"] == 0
         assert entry["perPod"] == {}
         assert entry["perNode"] == {}
+
+
+class TestEvictionLogic:
+    """Tests for pod eviction in ContinuousLatencyProber._run_all_probes."""
+
+    def _make_prober(self):
+        from unittest.mock import MagicMock
+
+        prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
+        prober._lock = threading.Lock()
+        prober._probe_points = [("pod-a", "node1"), ("pod-b", "node1")]
+        prober._pod_consecutive_errors = {}
+        prober._max_consecutive_errors = 3
+        prober._http_routes = [("frontend", "/", "homepage", "GET")]
+        prober.namespace = "test"
+        prober._prober = MagicMock()
+        return prober
+
+    def test_target_timeout_does_not_evict(self):
+        """Pods that successfully exec but get target timeouts must NOT be evicted."""
+        prober = self._make_prober()
+
+        # Target is down: exec succeeds but HTTP probe returns error
+        prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
+            source="probe-pod", target="frontend", route="/",
+            protocol="http", latency_ms=0, status="error",
+            timestamp="now", error="timeout", exec_failed=False,
+        )
+
+        # Run 5 ticks (more than _max_consecutive_errors=3)
+        for _ in range(5):
+            prober._run_all_probes()
+
+        # Pods must NOT be evicted — they're alive, target is just down
+        assert len(prober._probe_points) == 2
+        assert prober._pod_consecutive_errors.get("pod-a", 0) == 0
+        assert prober._pod_consecutive_errors.get("pod-b", 0) == 0
+
+    def test_exec_failure_evicts_after_threshold(self):
+        """Pods whose exec fails (pod dead) must be evicted after threshold."""
+        prober = self._make_prober()
+
+        # Pod is dead: exec fails, sample marked exec_failed=True
+        prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
+            source="probe-pod", target="frontend", route="/",
+            protocol="http", latency_ms=0, status="error",
+            timestamp="now", error="pod not found", exec_failed=True,
+        )
+
+        # Run exactly 3 ticks (= threshold)
+        for _ in range(3):
+            prober._run_all_probes()
+
+        # Both pods should be evicted
+        assert len(prober._probe_points) == 0
+
+    def test_exec_failure_resets_on_success(self):
+        """A successful exec resets the consecutive failure counter."""
+        prober = self._make_prober()
+
+        # 2 consecutive exec failures
+        prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
+            source="probe-pod", target="frontend", route="/",
+            protocol="http", latency_ms=0, status="error",
+            timestamp="now", error="pod not found", exec_failed=True,
+        )
+        for _ in range(2):
+            prober._run_all_probes()
+        assert prober._pod_consecutive_errors["pod-a"] == 2
+
+        # One successful exec resets the counter
+        prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
+            source="probe-pod", target="frontend", route="/",
+            protocol="http", latency_ms=100, status="ok",
+            timestamp="now", exec_failed=False,
+        )
+        prober._run_all_probes()
+        assert prober._pod_consecutive_errors["pod-a"] == 0
+
+        # 2 more exec failures don't trigger eviction (not 3 consecutive)
+        prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
+            source="probe-pod", target="frontend", route="/",
+            protocol="http", latency_ms=0, status="error",
+            timestamp="now", error="pod not found", exec_failed=True,
+        )
+        for _ in range(2):
+            prober._run_all_probes()
+
+        assert len(prober._probe_points) == 2  # not evicted

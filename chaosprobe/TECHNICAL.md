@@ -347,7 +347,7 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 | LitmusChaos | `install_litmus()`, `setup_rbac()`, `install_experiment()` |
 | ChaosCenter | `install_chaoscenter()`, `chaoscenter_save_experiment()`, `chaoscenter_run_experiment()` |
 | Components | `is_metrics_server_installed()`, `is_prometheus_installed()`, `is_neo4j_installed()` |
-| Vagrant | `create_vagrantfile()`, `vagrant_up()`, `vagrant_deploy_cluster()`, `vagrant_destroy()` |
+| Vagrant | `create_vagrantfile()`, `vagrant_up()`, `vagrant_halt()`, `vagrant_deploy_cluster()`, `vagrant_destroy()` |
 | Kubespray | `deploy_cluster()`, `generate_inventory()`, `get_kubeconfig()` |
 
 **Mixins** in separate files:
@@ -514,6 +514,7 @@ Options: `--format csv|parquet`, `--strategy <name>`. Parquet requires `pyarrow`
 | `chaosprobe cluster vagrant init` | Generate Vagrantfile for multi-node cluster |
 | `chaosprobe cluster vagrant setup` | Setup libvirt provider (WSL2/Linux) |
 | `chaosprobe cluster vagrant up` | Start VMs with libvirt |
+| `chaosprobe cluster vagrant halt` | Stop VMs gracefully (preserves disk state) |
 | `chaosprobe cluster vagrant deploy` | Deploy K8s via Kubespray on VMs |
 | `chaosprobe cluster vagrant kubeconfig` | Fetch kubeconfig from control plane |
 | `chaosprobe cluster vagrant status` | Check VM and cluster health |

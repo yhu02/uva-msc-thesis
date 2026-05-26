@@ -425,7 +425,9 @@ class ChaosRunner:
         attempts, the poll loop aborts early with a ``timeout`` result
         instead of flooding the log for the remaining timeout budget.
         """
-        _MAX_CONSECUTIVE_POLL_FAILURES = 20  # ~100s at 5s interval
+        # At 10s HTTP timeout + 5s sleep = 15s per failed iteration,
+        # 10 failures = ~150s of dead time before circuit breaks.
+        _MAX_CONSECUTIVE_POLL_FAILURES = 10
         last_phase = None
         last_heartbeat = start_time
         consecutive_failures = 0
@@ -437,15 +439,23 @@ class ChaosRunner:
                     project_id=self._cc["project_id"],
                     token=self._cc["token"],
                     notify_id=notify_id,
+                    timeout=10,
                 )
                 consecutive_failures = 0
             except Exception as exc:
                 consecutive_failures += 1
-                print(f"    [{elapsed}s] WARNING: poll failed: {exc}")
+                # Only log every failure if count is low; otherwise
+                # summarise to avoid flooding output during long outages.
+                if consecutive_failures <= 3 or consecutive_failures % 5 == 0:
+                    print(
+                        f"    [{elapsed}s] WARNING: poll failed "
+                        f"({consecutive_failures}x): {exc}"
+                    )
                 if consecutive_failures >= _MAX_CONSECUTIVE_POLL_FAILURES:
                     print(
                         f"    API unreachable for {consecutive_failures} "
-                        f"consecutive polls — aborting early"
+                        f"consecutive polls (~{consecutive_failures * 15}s) "
+                        f"— aborting early"
                     )
                     return {
                         "phase": "timeout",
