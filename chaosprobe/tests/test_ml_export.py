@@ -10,8 +10,7 @@ from chaosprobe.output.ml_export import (
 )
 
 
-def _make_run_data(strategy="baseline", fault_type="pod-delete",
-                   target="productcatalogservice"):
+def _make_run_data(strategy="baseline", fault_type="pod-delete", target="productcatalogservice"):
     """Build a minimal run output dict with enough data to produce rows."""
     return {
         "schemaVersion": "2.0.0",
@@ -90,10 +89,18 @@ def _make_run_data(strategy="baseline", fault_type="pod-delete",
                 "summary": {},
             },
             "eventTimeline": [
-                {"time": "2026-04-02T01:35:10+00:00", "type": "DELETED",
-                 "pod": "test-abc", "phase": "Running"},
-                {"time": "2026-04-02T01:35:10+00:00", "type": "ADDED",
-                 "pod": "test-def", "phase": "Pending"},
+                {
+                    "time": "2026-04-02T01:35:10+00:00",
+                    "type": "DELETED",
+                    "pod": "test-abc",
+                    "phase": "Running",
+                },
+                {
+                    "time": "2026-04-02T01:35:10+00:00",
+                    "type": "ADDED",
+                    "pod": "test-def",
+                    "phase": "Pending",
+                },
             ],
         },
     }

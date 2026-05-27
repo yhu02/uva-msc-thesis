@@ -12,13 +12,15 @@ import click
 from chaosprobe.k8s import ensure_k8s_config
 
 # Litmus infrastructure deployments to exclude from readiness checks
-LITMUS_INFRA_DEPLOYMENTS = frozenset({
-    "chaos-exporter",
-    "chaos-operator-ce",
-    "event-tracker",
-    "subscriber",
-    "workflow-controller",
-})
+LITMUS_INFRA_DEPLOYMENTS = frozenset(
+    {
+        "chaos-exporter",
+        "chaos-operator-ce",
+        "event-tracker",
+        "subscriber",
+        "workflow-controller",
+    }
+)
 
 
 def wait_for_healthy_deployments(
@@ -62,13 +64,15 @@ def wait_for_healthy_deployments(
     remediation_attempted = False
     start = time.time()
 
-    _STUCK_REASONS = frozenset({
-        "CrashLoopBackOff",
-        "Error",
-        "CreateContainerError",
-        "ImagePullBackOff",
-        "ErrImagePull",
-    })
+    _STUCK_REASONS = frozenset(
+        {
+            "CrashLoopBackOff",
+            "Error",
+            "CreateContainerError",
+            "ImagePullBackOff",
+            "ErrImagePull",
+        }
+    )
 
     while time.time() < deadline:
         try:
@@ -104,8 +108,14 @@ def wait_for_healthy_deployments(
                     apps_api, core_api, namespace, unhealthy_deps, _STUCK_REASONS
                 )
 
-        except (ApiException, HTTPError, MaxRetryError, NewConnectionError,
-                ConnectionError, OSError) as exc:
+        except (
+            ApiException,
+            HTTPError,
+            MaxRetryError,
+            NewConnectionError,
+            ConnectionError,
+            OSError,
+        ) as exc:
             consecutive_errors += 1
             click.echo(
                 f"    Warning: K8s API error during health check "
@@ -142,8 +152,7 @@ def wait_for_healthy_deployments(
                     f"({ready}/{desired} replicas)",
                     err=True,
                 )
-    except (ApiException, HTTPError, MaxRetryError, NewConnectionError,
-            ConnectionError, OSError):
+    except (ApiException, HTTPError, MaxRetryError, NewConnectionError, ConnectionError, OSError):
         click.echo(
             "    Warning: could not list deployments for readiness summary",
             err=True,
@@ -207,9 +216,7 @@ def _remediate_unhealthy_deployments(
             )
             for pod_name in stuck_pods:
                 try:
-                    core_api.delete_namespaced_pod(
-                        pod_name, namespace, grace_period_seconds=0
-                    )
+                    core_api.delete_namespaced_pod(pod_name, namespace, grace_period_seconds=0)
                 except Exception:
                     pass
         else:

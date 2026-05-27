@@ -84,7 +84,7 @@ class LoadStats:
         }
 
 
-DEFAULT_LOCUSTFILE = '''\"\"\"Default Locust load test for a web frontend.
+DEFAULT_LOCUSTFILE = """\"\"\"Default Locust load test for a web frontend.
 
 Seeded for reproducible per-iteration load patterns.  Locust has no
 ``--seed`` CLI flag, so we seed the ``random`` module that
@@ -151,7 +151,7 @@ class FrontendUser(HttpUser):
                 "credit_card_cvv": 672,
             },
         )
-'''
+"""
 
 
 class LocustRunner:

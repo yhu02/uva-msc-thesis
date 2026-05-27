@@ -180,9 +180,7 @@ def generate_anomaly_labels(
                 observed = _build_observed_windows(cycles)
                 label["observedWindows"] = observed
                 label["observedCycleCount"] = len(cycles)
-                completed = sum(
-                    1 for c in cycles if c.get("totalRecovery_ms") is not None
-                )
+                completed = sum(1 for c in cycles if c.get("totalRecovery_ms") is not None)
                 label["observedCompletedCycles"] = completed
                 label["observedIncompleteCycles"] = len(cycles) - completed
 

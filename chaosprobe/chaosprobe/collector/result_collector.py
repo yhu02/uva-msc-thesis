@@ -60,7 +60,9 @@ class ResultCollector:
 
             for exp_name in exp_names:
                 result = self._collect_experiment_result(
-                    engine_name, exp_name, api_resiliency_score=api_score,
+                    engine_name,
+                    exp_name,
+                    api_resiliency_score=api_score,
                 )
                 results.append(result)
 
@@ -96,9 +98,7 @@ class ResultCollector:
         # the ChaosCenter API reported a resiliency score, prefer the API
         # score.  This covers e.g. timeout scenarios or API-only probes.
         if api_resiliency_score is not None:
-            crd_probes = (
-                result.get("chaosResult", {}).get("probes") or []
-            )
+            crd_probes = result.get("chaosResult", {}).get("probes") or []
             if not crd_probes:
                 result["probeSuccessPercentage"] = float(api_resiliency_score)
 

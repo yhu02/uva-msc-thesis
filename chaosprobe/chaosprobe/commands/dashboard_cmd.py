@@ -47,7 +47,9 @@ def dashboard_install(service_type: str, timeout: int):
     click.echo("Installing ChaosCenter dashboard...")
     try:
         ok = setup.install_chaoscenter(
-            service_type=service_type, wait=True, timeout=timeout,
+            service_type=service_type,
+            wait=True,
+            timeout=timeout,
         )
         if ok:
             click.echo("ChaosCenter installed successfully!")
@@ -121,7 +123,10 @@ def dashboard_open():
 
 @dashboard.command("connect")
 @click.option(
-    "--namespace", "-n", required=True, help="Namespace to register as chaos infrastructure",
+    "--namespace",
+    "-n",
+    required=True,
+    help="Namespace to register as chaos infrastructure",
 )
 @click.option("--username", default="", help="ChaosCenter username (default: admin)")
 @click.option("--password", default="", help="ChaosCenter password (default: litmus)")
@@ -137,7 +142,9 @@ def dashboard_connect(namespace: str, username: str, password: str):
     click.echo(f"Connecting namespace '{namespace}' to ChaosCenter...")
     try:
         result = setup.connect_infrastructure(
-            namespace=namespace, username=username, password=password,
+            namespace=namespace,
+            username=username,
+            password=password,
         )
         click.echo(f"Infrastructure registered: {result['infra_id']}")
     except Exception as e:

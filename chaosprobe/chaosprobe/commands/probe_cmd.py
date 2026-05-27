@@ -90,7 +90,7 @@ def probe_init(name: str, scenario: str, single_file: bool):
         f"      comparator:\n"
         f"        type: string\n"
         f"        criteria: contains\n"
-        f"        value: \"OK\"\n"
+        f'        value: "OK"\n'
         f"      source:\n"
         f"        image: auto  # patched at build time\n"
         f"    runProperties:\n"

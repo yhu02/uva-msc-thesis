@@ -182,11 +182,16 @@ def cluster_vagrant():
 @click.option("--control-planes", "-c", default=1, type=int, help="Number of control plane nodes")
 @click.option("--workers", "-w", default=4, type=int, help="Number of worker nodes")
 @click.option(
-    "--memory", "-m", default=None, type=int,
+    "--memory",
+    "-m",
+    default=None,
+    type=int,
     help="Memory for ALL VMs in MB (overrides --cp-memory/--worker-memory)",
 )
 @click.option(
-    "--cpus", default=None, type=int,
+    "--cpus",
+    default=None,
+    type=int,
     help="CPUs for ALL VMs (overrides --cp-cpus/--worker-cpus)",
 )
 @click.option("--cp-memory", default=4096, type=int, help="Memory for control plane VMs in MB")

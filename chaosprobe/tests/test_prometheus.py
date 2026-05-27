@@ -20,15 +20,18 @@ from chaosprobe.metrics.prometheus import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_prom_response(results):
     """Build a Prometheus instant query JSON response."""
-    return json.dumps({
-        "status": "success",
-        "data": {
-            "resultType": "vector",
-            "result": results,
-        },
-    }).encode()
+    return json.dumps(
+        {
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": results,
+            },
+        }
+    ).encode()
 
 
 def _make_prober(**kwargs):
@@ -63,10 +66,12 @@ def _make_prober(**kwargs):
 class TestQueryPrometheus:
     def test_parses_vector_result(self, tmp_path):
         """Valid Prometheus response is parsed into label/value dicts."""
-        handler_body = _make_prom_response([
-            {"metric": {"pod": "frontend-abc", "__name__": "up"}, "value": [1711700000, "1.5"]},
-            {"metric": {"pod": "cart-def"}, "value": [1711700000, "0.3"]},
-        ])
+        handler_body = _make_prom_response(
+            [
+                {"metric": {"pod": "frontend-abc", "__name__": "up"}, "value": [1711700000, "1.5"]},
+                {"metric": {"pod": "cart-def"}, "value": [1711700000, "0.3"]},
+            ]
+        )
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -123,10 +128,12 @@ class TestQueryPrometheus:
         assert result is None
 
     def test_skips_unparseable_values(self, tmp_path):
-        body = _make_prom_response([
-            {"metric": {"pod": "a"}, "value": [1711700000, "NaN"]},
-            {"metric": {"pod": "b"}, "value": [1711700000, "42"]},
-        ])
+        body = _make_prom_response(
+            [
+                {"metric": {"pod": "a"}, "value": [1711700000, "NaN"]},
+                {"metric": {"pod": "b"}, "value": [1711700000, "42"]},
+            ]
+        )
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -214,21 +221,24 @@ class TestDiscoverPrometheusUrls:
         assert result == []
 
     @patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True)
-    @patch("chaosprobe.metrics.prometheus._find_prometheus_service",
-           return_value=[
-               ("prometheus-server", "prometheus", 9090),
-           ])
+    @patch(
+        "chaosprobe.metrics.prometheus._find_prometheus_service",
+        return_value=[
+            ("prometheus-server", "prometheus", 9090),
+        ],
+    )
     def test_returns_all_reachable_urls(self, _mock_find, _mock_check):
         result = discover_prometheus_urls()
         assert len(result) == 1
         assert "http://prometheus-server.prometheus:9090" in result
 
-    @patch("chaosprobe.metrics.prometheus._check_prometheus_url",
-           side_effect=[False])
-    @patch("chaosprobe.metrics.prometheus._find_prometheus_service",
-           return_value=[
-               ("prometheus-server", "prometheus", 9090),
-           ])
+    @patch("chaosprobe.metrics.prometheus._check_prometheus_url", side_effect=[False])
+    @patch(
+        "chaosprobe.metrics.prometheus._find_prometheus_service",
+        return_value=[
+            ("prometheus-server", "prometheus", 9090),
+        ],
+    )
     def test_filters_unreachable(self, _mock_find, _mock_check):
         result = discover_prometheus_urls()
         assert result == []
@@ -382,8 +392,10 @@ class TestPrometheusProberLifecycle:
         prober = _make_prober(urls=[])
         prober._prometheus_urls = []
 
-        with patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]), \
-             patch("chaosprobe.metrics.prometheus._find_prometheus_service", return_value=[]):
+        with (
+            patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]),
+            patch("chaosprobe.metrics.prometheus._find_prometheus_service", return_value=[]),
+        ):
             prober.start()
 
         assert prober._available is False
@@ -400,12 +412,17 @@ class TestPrometheusProberLifecycle:
         prober = _make_prober(urls=[])
         prober._prometheus_urls = []
 
-        with patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]), \
-             patch("chaosprobe.metrics.prometheus._find_prometheus_service",
-                   return_value=[("prometheus-server", "prometheus", 80)]), \
-             patch.object(prober, "_start_port_forward",
-                         return_value="http://localhost:19090") as mock_pf, \
-             patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True):
+        with (
+            patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]),
+            patch(
+                "chaosprobe.metrics.prometheus._find_prometheus_service",
+                return_value=[("prometheus-server", "prometheus", 80)],
+            ),
+            patch.object(
+                prober, "_start_port_forward", return_value="http://localhost:19090"
+            ) as mock_pf,
+            patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True),
+        ):
             prober.start()
 
         mock_pf.assert_called_once_with("prometheus-server", "prometheus", 80)
@@ -416,14 +433,19 @@ class TestPrometheusProberLifecycle:
         prober = _make_prober(urls=[])
         prober._prometheus_urls = []
 
-        with patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]), \
-             patch("chaosprobe.metrics.prometheus._find_prometheus_service",
-                   return_value=[
-                       ("prometheus-server", "prometheus", 80),
-                   ]), \
-             patch.object(prober, "_start_port_forward",
-                         return_value="http://localhost:19090") as mock_pf, \
-             patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True):
+        with (
+            patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]),
+            patch(
+                "chaosprobe.metrics.prometheus._find_prometheus_service",
+                return_value=[
+                    ("prometheus-server", "prometheus", 80),
+                ],
+            ),
+            patch.object(
+                prober, "_start_port_forward", return_value="http://localhost:19090"
+            ) as mock_pf,
+            patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True),
+        ):
             prober.start()
 
         assert mock_pf.call_count == 1
@@ -470,6 +492,6 @@ class TestDefaultQueries:
         """All default queries exclude LitmusChaos experiment pods."""
         for label, template in DEFAULT_QUERIES.items():
             formatted = template.format(namespace="test-ns")
-            assert 'pod!~"' in formatted, (
-                f"Query {label!r} is missing the LitmusChaos pod exclusion filter"
-            )
+            assert (
+                'pod!~"' in formatted
+            ), f"Query {label!r} is missing the LitmusChaos pod exclusion filter"

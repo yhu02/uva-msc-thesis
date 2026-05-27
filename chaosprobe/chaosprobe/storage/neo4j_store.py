@@ -108,4 +108,3 @@ class Neo4jStore(Neo4jWriterMixin, Neo4jReaderMixin):
                 )
             for iname, label, prop in indexes:
                 session.run(f"CREATE INDEX {iname} IF NOT EXISTS " f"FOR (n:{label}) ON (n.{prop})")
-

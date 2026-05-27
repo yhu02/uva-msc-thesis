@@ -6,7 +6,9 @@ and the ``ensure_chaoscenter_configured`` orchestrator.
 Low-level API / GraphQL helpers live in ``chaoscenter_api.py``.
 """
 
+import os
 import subprocess
+import tempfile
 import time
 from typing import Any, Optional
 
@@ -310,7 +312,8 @@ class _ChaosCenterMixin:
                 try:
                     subprocess.run(
                         ["kubectl", "apply", "-f", url],
-                        check=True, capture_output=True,
+                        check=True,
+                        capture_output=True,
                     )
                     installed_any = True
                 except subprocess.CalledProcessError as e:
@@ -318,7 +321,6 @@ class _ChaosCenterMixin:
 
         if etp_crd_name not in existing_crds:
             print(f"  Installing missing CRD: {etp_crd_name}")
-            import tempfile, os
             etp_manifest = """\
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -344,14 +346,17 @@ spec:
         status: {}
 """
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False,
+                mode="w",
+                suffix=".yaml",
+                delete=False,
             ) as f:
                 f.write(etp_manifest)
                 f.flush()
                 try:
                     subprocess.run(
                         ["kubectl", "apply", "-f", f.name],
-                        check=True, capture_output=True,
+                        check=True,
+                        capture_output=True,
                     )
                     installed_any = True
                 except subprocess.CalledProcessError as e:
@@ -479,13 +484,22 @@ spec:
                 for dep_name in ("workflow-controller", "event-tracker", "subscriber"):
                     try:
                         from datetime import datetime, timezone
+
                         self.apps_api.patch_namespaced_deployment(
-                            dep_name, namespace, {
-                                "spec": {"template": {"metadata": {"annotations": {
-                                    "chaosprobe.io/crdRepair": datetime.now(
-                                        timezone.utc
-                                    ).isoformat(),
-                                }}}},
+                            dep_name,
+                            namespace,
+                            {
+                                "spec": {
+                                    "template": {
+                                        "metadata": {
+                                            "annotations": {
+                                                "chaosprobe.io/crdRepair": datetime.now(
+                                                    timezone.utc
+                                                ).isoformat(),
+                                            }
+                                        }
+                                    }
+                                },
                             },
                         )
                     except Exception:

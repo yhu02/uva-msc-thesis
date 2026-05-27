@@ -217,13 +217,9 @@ def compute_assignments(
     elif strategy == PlacementStrategy.ADVERSARIAL:
         return _compute_adversarial(deployments, schedulable, node_names)
     elif strategy == PlacementStrategy.BEST_FIT:
-        return _compute_best_fit(
-            deployments, schedulable, node_names, node_existing_usage or {}
-        )
+        return _compute_best_fit(deployments, schedulable, node_names, node_existing_usage or {})
     elif strategy == PlacementStrategy.DEPENDENCY_AWARE:
-        return _compute_dependency_aware(
-            deployments, schedulable, node_names, dependencies or []
-        )
+        return _compute_dependency_aware(deployments, schedulable, node_names, dependencies or [])
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 

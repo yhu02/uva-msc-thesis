@@ -11,9 +11,12 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-# Module-level state — tracks all active port-forward processes
+# Module-level state — tracks all active port-forward processes.
+# Mutated from both the main thread and the background monitor thread,
+# so all reads/writes go through ``_lock``.
 _procs: Dict[tuple, Any] = {}
 _specs: Dict[tuple, list[str]] = {}  # (svc, ns) -> ports list for auto-restart
+_lock = threading.Lock()
 _monitor_event: Optional[threading.Event] = None
 _monitor_thread: Optional[threading.Thread] = None
 
@@ -43,14 +46,16 @@ def start(svc: str, ns: str, ports: list[str]):
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    _procs[(svc, ns)] = proc
-    _specs[(svc, ns)] = ports
+    with _lock:
+        _procs[(svc, ns)] = proc
+        _specs[(svc, ns)] = ports
     time.sleep(3)
 
 
 def ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
     """Check if port-forward is alive; restart if dead. Returns True if reachable."""
-    proc = _procs.get((svc, ns))
+    with _lock:
+        proc = _procs.get((svc, ns))
     if proc and proc.poll() is not None:
         start(svc, ns, ports)
     elif not proc:
@@ -59,7 +64,8 @@ def ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
         if check_port(host, port):
             return True
         # If process died, restart it before retrying
-        proc = _procs.get((svc, ns))
+        with _lock:
+            proc = _procs.get((svc, ns))
         if proc and proc.poll() is not None:
             start(svc, ns, ports)
         time.sleep(2)
@@ -69,11 +75,14 @@ def ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
 def _monitor_loop(stop_event: threading.Event):
     """Background loop that restarts dead port-forward processes."""
     while not stop_event.is_set():
-        for key, proc in list(_procs.items()):
+        with _lock:
+            snapshot = list(_procs.items())
+        for key, proc in snapshot:
             if proc and proc.poll() is not None:
                 # Process died — restart it
                 svc, ns = key
-                ports = _specs.get(key, [])
+                with _lock:
+                    ports = list(_specs.get(key, []))
                 if ports:
                     new_proc = subprocess.Popen(
                         ["kubectl", "port-forward", f"svc/{svc}", "-n", ns] + ports,
@@ -81,7 +90,8 @@ def _monitor_loop(stop_event: threading.Event):
                         stderr=subprocess.DEVNULL,
                         start_new_session=True,
                     )
-                    _procs[key] = new_proc
+                    with _lock:
+                        _procs[key] = new_proc
         stop_event.wait(5)  # check every 5 seconds
 
 
@@ -91,9 +101,12 @@ def ensure_all() -> None:
     Call this between strategies to recover from infrastructure
     disruptions (resource-starved nodes killing kubectl tunnels).
     """
-    for key, ports in list(_specs.items()):
+    with _lock:
+        specs_snapshot = [(key, list(ports)) for key, ports in _specs.items()]
+    for key, ports in specs_snapshot:
         svc, ns = key
-        proc = _procs.get(key)
+        with _lock:
+            proc = _procs.get(key)
         if not proc or proc.poll() is not None:
             start(svc, ns, ports)
         # Extract the local port from the first port spec (e.g. "9090:80" -> 9090)
@@ -102,7 +115,8 @@ def ensure_all() -> None:
             local_port = int(local_port_str)
             if not check_port("localhost", local_port):
                 # Kill stale process and restart
-                proc = _procs.get(key)
+                with _lock:
+                    proc = _procs.get(key)
                 if proc and proc.poll() is None:
                     proc.terminate()
                     try:
@@ -143,12 +157,14 @@ def monitor_stop():
 def cleanup():
     """Stop the monitor and terminate all tracked port-forward processes."""
     monitor_stop()
-    for proc in _procs.values():
+    with _lock:
+        procs = list(_procs.values())
+        _procs.clear()
+        _specs.clear()
+    for proc in procs:
         if proc and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-    _procs.clear()
-    _specs.clear()

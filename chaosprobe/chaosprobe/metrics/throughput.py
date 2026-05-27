@@ -109,17 +109,13 @@ def _aggregate_disk_samples(
     return {
         "ops_per_second": round(statistics.mean(ops), 2),
         "latency_ms": round(statistics.mean(lats), 4),
-        "bytes_per_second": (
-            round(statistics.mean(bps_list), 2) if bps_list else None
-        ),
+        "bytes_per_second": (round(statistics.mean(bps_list), 2) if bps_list else None),
         "status": "ok",
         "probeCount": len(ok),
         "errorCount": len(err),
         "minOpsPerSecond": round(min(ops), 2),
         "maxOpsPerSecond": round(max(ops), 2),
-        "stddevOpsPerSecond": (
-            round(statistics.stdev(ops), 2) if len(ops) > 1 else 0.0
-        ),
+        "stddevOpsPerSecond": (round(statistics.stdev(ops), 2) if len(ops) > 1 else 0.0),
         "perNode": per_node,
     }
 
@@ -318,9 +314,7 @@ class ThroughputProber:
             read_result.samples.append(r_sample)
 
         # Clean up test file
-        self._exec_in_pod(
-            pod, ["sh", "-c", f"rm -f {disk_path} 2>/dev/null; echo done"]
-        )
+        self._exec_in_pod(pod, ["sh", "-c", f"rm -f {disk_path} 2>/dev/null; echo done"])
 
         return [write_result, read_result]
 
@@ -377,7 +371,10 @@ class ThroughputProber:
         return find_ready_pod(self.core_api, self.namespace, service_name)
 
     def _find_exec_pod(
-        self, target_service: str, *, exclude_services: Optional[List[str]] = None,
+        self,
+        target_service: str,
+        *,
+        exclude_services: Optional[List[str]] = None,
     ) -> Optional[str]:
         """Find a pod that supports shell exec for benchmarks.
 
@@ -415,7 +412,8 @@ class ThroughputProber:
         # Auto-discover all running pods in the namespace
         try:
             pods = self.core_api.list_namespaced_pod(
-                self.namespace, field_selector="status.phase=Running",
+                self.namespace,
+                field_selector="status.phase=Running",
             )
         except Exception:
             pods = None
@@ -429,10 +427,10 @@ class ThroughputProber:
                 if not app or app in exclude or app in seen:
                     continue
                 seen.add(app)
-                if not (p.status.conditions and any(
-                    c.type == "Ready" and c.status == "True"
-                    for c in p.status.conditions
-                )):
+                if not (
+                    p.status.conditions
+                    and any(c.type == "Ready" and c.status == "True" for c in p.status.conditions)
+                ):
                     continue
                 pod_name = p.metadata.name
                 resp = self._exec_in_pod(pod_name, ["sh", "-c", "echo ok"])
@@ -479,8 +477,7 @@ class ThroughputProber:
         cmd = [
             "sh",
             "-c",
-            f"redis-benchmark -h {host} -p {port} -t {bench_op} "
-            f"-n {count} -q -e 2>&1",
+            f"redis-benchmark -h {host} -p {port} -t {bench_op} " f"-n {count} -q -e 2>&1",
         ]
 
         resp = self._exec_in_pod(pod_name, cmd)
@@ -761,7 +758,8 @@ class ContinuousDiskProber(ContinuousProberBase):
             logger.warning(
                 "Disk prober: no ready pods found for per-node probing "
                 "(namespace=%s, excluded=%s)",
-                self._prober.namespace, self._exclude_services,
+                self._prober.namespace,
+                self._exclude_services,
             )
             super().start()
             return
@@ -772,12 +770,15 @@ class ContinuousDiskProber(ContinuousProberBase):
                 self._probe_points.append((pod, node, path))
                 logger.info(
                     "Disk prober per-node probe OK: pod=%s node=%s path=%s",
-                    pod, node, path,
+                    pod,
+                    node,
+                    path,
                 )
             else:
                 logger.info(
                     "Disk prober: no writable dir on pod %s (node %s) — skipping",
-                    pod, node,
+                    pod,
+                    node,
                 )
 
         if not self._probe_points:
@@ -801,9 +802,11 @@ class ContinuousDiskProber(ContinuousProberBase):
             path = f"{d}/chaosprobe_disktest"
             resp = self._prober._exec_in_pod(
                 pod,
-                ["sh", "-c",
-                 f"dd if=/dev/zero of={path} bs=1k count=1 2>&1 "
-                 f"&& echo OK || echo FAIL"],
+                [
+                    "sh",
+                    "-c",
+                    f"dd if=/dev/zero of={path} bs=1k count=1 2>&1 " f"&& echo OK || echo FAIL",
+                ],
             )
             if "OK" in resp:
                 return path
@@ -818,8 +821,7 @@ class ContinuousDiskProber(ContinuousProberBase):
             "timeSeries": series,
             "phases": phases,
             "probePoints": [
-                {"pod": p, "node": n, "path": path}
-                for p, n, path in self._probe_points
+                {"pod": p, "node": n, "path": path} for p, n, path in self._probe_points
             ],
             "config": {
                 "interval_s": self.interval,
@@ -863,19 +865,24 @@ class ContinuousDiskProber(ContinuousProberBase):
 
         def _probe_one(pod: str, node: str, path: str) -> tuple:
             w = self._prober._disk_benchmark(
-                pod, "write", self._block_size_kb, self._block_count, path,
+                pod,
+                "write",
+                self._block_size_kb,
+                self._block_count,
+                path,
             )
             r = self._prober._disk_benchmark(
-                pod, "read", self._block_size_kb, self._block_count, path,
+                pod,
+                "read",
+                self._block_size_kb,
+                self._block_count,
+                path,
             )
             return (pod, node, w, r)
 
         results: List[tuple] = []
         with ThreadPoolExecutor(max_workers=min(len(self._probe_points), 8)) as pool:
-            futs = [
-                pool.submit(_probe_one, p, n, path)
-                for p, n, path in self._probe_points
-            ]
+            futs = [pool.submit(_probe_one, p, n, path) for p, n, path in self._probe_points]
             for f in futs:
                 try:
                     results.append(f.result())

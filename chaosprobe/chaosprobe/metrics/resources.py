@@ -182,9 +182,7 @@ class ContinuousResourceProber(ContinuousProberBase):
                 # distinguishing colocate from spread.
                 used_node_names = self._fetch_used_node_names()
                 entry["usedNodeNames"] = sorted(used_node_names)
-                used_node_metrics = [
-                    n for n in node_metrics if n["name"] in used_node_names
-                ]
+                used_node_metrics = [n for n in node_metrics if n["name"] in used_node_names]
                 entry["usedNode"] = self._aggregate_node_metrics(used_node_metrics)
                 entry["usedNodeStats"] = self._node_stats(used_node_metrics)
 

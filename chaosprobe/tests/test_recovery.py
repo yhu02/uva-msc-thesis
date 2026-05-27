@@ -22,11 +22,13 @@ class TestFinalizeCycle:
         scheduled = datetime(2024, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
         ready = datetime(2024, 1, 1, 12, 0, 3, tzinfo=timezone.utc)
 
-        result = RecoveryWatcher._finalize_cycle({
-            "deletionTime": deletion,
-            "scheduledTime": scheduled,
-            "readyTime": ready,
-        })
+        result = RecoveryWatcher._finalize_cycle(
+            {
+                "deletionTime": deletion,
+                "scheduledTime": scheduled,
+                "readyTime": ready,
+            }
+        )
 
         assert result["deletionToScheduled_ms"] == 1000
         assert result["scheduledToReady_ms"] == 2000
@@ -35,11 +37,13 @@ class TestFinalizeCycle:
 
     def test_incomplete_cycle_no_ready(self):
         deletion = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-        result = RecoveryWatcher._finalize_cycle({
-            "deletionTime": deletion,
-            "scheduledTime": None,
-            "readyTime": None,
-        })
+        result = RecoveryWatcher._finalize_cycle(
+            {
+                "deletionTime": deletion,
+                "scheduledTime": None,
+                "readyTime": None,
+            }
+        )
         assert result["totalRecovery_ms"] is None
         assert result["deletionToScheduled_ms"] is None
         assert result["scheduledToReady_ms"] is None
@@ -127,23 +131,27 @@ class TestGetScheduledTime:
 class TestFailureReason:
     def test_incomplete_cycle_has_failure_reason(self):
         deletion = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-        result = RecoveryWatcher._finalize_cycle({
-            "deletionTime": deletion,
-            "scheduledTime": None,
-            "readyTime": None,
-            "failure_reason": "experiment_ended_before_recovery",
-        })
+        result = RecoveryWatcher._finalize_cycle(
+            {
+                "deletionTime": deletion,
+                "scheduledTime": None,
+                "readyTime": None,
+                "failure_reason": "experiment_ended_before_recovery",
+            }
+        )
         assert result["failure_reason"] == "experiment_ended_before_recovery"
 
     def test_complete_cycle_no_failure_reason(self):
         deletion = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         scheduled = datetime(2024, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
         ready = datetime(2024, 1, 1, 12, 0, 3, tzinfo=timezone.utc)
-        result = RecoveryWatcher._finalize_cycle({
-            "deletionTime": deletion,
-            "scheduledTime": scheduled,
-            "readyTime": ready,
-        })
+        result = RecoveryWatcher._finalize_cycle(
+            {
+                "deletionTime": deletion,
+                "scheduledTime": scheduled,
+                "readyTime": ready,
+            }
+        )
         assert "failure_reason" not in result
 
 

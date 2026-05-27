@@ -15,16 +15,18 @@ from chaosprobe.chaos.manifest import build_workflow_manifest
 from chaosprobe.provisioner.setup import LitmusSetup
 
 # Phase values returned by ChaosCenter ``getExperimentRun.phase``
-_TERMINAL_PHASES = frozenset({
-    "Completed",
-    "Completed_With_Error",
-    "Completed_With_Probe_Failure",
-    "Stopped",
-    "Error",
-    "Timeout",
-    "Terminated",
-    "Skipped",
-})
+_TERMINAL_PHASES = frozenset(
+    {
+        "Completed",
+        "Completed_With_Error",
+        "Completed_With_Probe_Failure",
+        "Stopped",
+        "Error",
+        "Timeout",
+        "Terminated",
+        "Skipped",
+    }
+)
 
 # How many times to re-trigger an experiment after TARGET_SELECTION_ERROR
 _MAX_TARGET_RETRIES = 2
@@ -66,9 +68,7 @@ def _parse_execution_data(execution_data: Any) -> Dict[str, Any]:
             if not chaos_data:
                 continue
             probe_statuses = (
-                chaos_data.get("chaosResult", {})
-                .get("status", {})
-                .get("probeStatuses", [])
+                chaos_data.get("chaosResult", {}).get("status", {}).get("probeStatuses", [])
             )
             for ps in probe_statuses:
                 name = ps.get("name", "")
@@ -255,7 +255,10 @@ class ChaosRunner:
         experiment_id = str(uuid.uuid5(_ns, engine_name))
         instance_id = str(uuid.uuid4())
         manifest, wf_name = self._build_workflow_manifest(
-            engine_spec, engine_name, instance_id, probe_ref=probe_ref,
+            engine_spec,
+            engine_name,
+            instance_id,
+            probe_ref=probe_ref,
         )
 
         try:
@@ -277,12 +280,14 @@ class ChaosRunner:
             # score that downstream analysis cannot distinguish from a
             # real catastrophic-resilience result.  Raising lets the
             # iteration loop record an ERROR verdict and recover.
-            self._executed_experiments.append({
-                "engineName": engine_name,
-                "experimentNames": exp_names,
-                "status": "error",
-                "error": str(exc),
-            })
+            self._executed_experiments.append(
+                {
+                    "engineName": engine_name,
+                    "experimentNames": exp_names,
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
             raise RuntimeError(
                 f"ChaosCenter failed to save experiment '{engine_name}': {exc}"
             ) from exc
@@ -366,9 +371,8 @@ class ChaosRunner:
             # unavailable), NOT on probe failures ("Completed_With_Error"
             # with a resiliencyScore > 0 means probes ran but some failed).
             resiliency = result.get("resiliencyScore")
-            is_execution_error = (
-                phase == "Error"
-                or (phase == "Completed_With_Error" and resiliency in (None, 0, 0.0))
+            is_execution_error = phase == "Error" or (
+                phase == "Completed_With_Error" and resiliency in (None, 0, 0.0)
             )
             if is_execution_error and attempt < _MAX_TARGET_RETRIES and target_deployment:
                 print("    Execution error detected, waiting for target pod to recover...")
@@ -384,7 +388,9 @@ class ChaosRunner:
         return result  # type: ignore[possibly-undefined]
 
     def _wait_for_target_recovery(
-        self, deployment_name: str, timeout: int = 90,
+        self,
+        deployment_name: str,
+        timeout: int = 90,
     ) -> bool:
         """Wait until the target deployment has a Running pod."""
         from kubernetes import client as k8s_client
@@ -398,11 +404,11 @@ class ChaosRunner:
                     label_selector=f"app={deployment_name}",
                 )
                 running = [
-                    p for p in pods.items
-                    if p.status and p.status.phase == "Running"
-                    and all(
-                        cs.ready for cs in (p.status.container_statuses or [])
-                    )
+                    p
+                    for p in pods.items
+                    if p.status
+                    and p.status.phase == "Running"
+                    and all(cs.ready for cs in (p.status.container_statuses or []))
                 ]
                 if running:
                     return True
@@ -415,9 +421,7 @@ class ChaosRunner:
     # Internal -- poll ChaosCenter for run completion
     # ------------------------------------------------------------------
 
-    def _poll_experiment_run(
-        self, notify_id: str, start_time: float
-    ) -> Dict[str, Any]:
+    def _poll_experiment_run(self, notify_id: str, start_time: float) -> Dict[str, Any]:
         """Poll ``getExperimentRun`` until a terminal phase or timeout.
 
         Includes a circuit breaker: if the ChaosCenter / K8s API is
@@ -460,8 +464,7 @@ class ChaosRunner:
                     return {
                         "phase": "timeout",
                         "error": (
-                            f"API unreachable ({consecutive_failures} "
-                            f"consecutive failures)"
+                            f"API unreachable ({consecutive_failures} " f"consecutive failures)"
                         ),
                     }
                 time.sleep(5)
@@ -491,7 +494,8 @@ class ChaosRunner:
     # ------------------------------------------------------------------
 
     def _register_and_extract_probes(
-        self, engine_spec: Dict[str, Any],
+        self,
+        engine_spec: Dict[str, Any],
     ) -> List[Dict[str, str]]:
         """Register inline probes with ChaosCenter and return probeRef list.
 
@@ -509,9 +513,7 @@ class ChaosRunner:
             List of ``{"probeID": name, "mode": mode}`` dicts for the
             ``probeRef`` annotation.
         """
-        experiments = (
-            engine_spec.get("spec", {}).get("experiments", [])
-        )
+        experiments = engine_spec.get("spec", {}).get("experiments", [])
         if not experiments:
             return []
 
@@ -666,8 +668,7 @@ class ChaosRunner:
                 "resource": k8s_inputs.get("resource", ""),
                 "operation": k8s_inputs.get("operation", "present"),
             }
-            for key in ("group", "namespace", "resourceNames",
-                        "fieldSelector", "labelSelector"):
+            for key in ("group", "namespace", "resourceNames", "fieldSelector", "labelSelector"):
                 if key in k8s_inputs:
                     request["k8sProperties"][key] = k8s_inputs[key]
 

@@ -10,8 +10,7 @@ _DEPLOY_DIR = str(Path(__file__).parent.parent / "scenarios" / "online-boutique"
 _SERVICE_ROUTES = parse_topology_from_directory(_DEPLOY_DIR)
 
 
-def _make_scenario(exp_name="pod-delete", target="productcatalogservice",
-                   env_vars=None):
+def _make_scenario(exp_name="pod-delete", target="productcatalogservice", env_vars=None):
     """Build a minimal scenario dict for testing."""
     envs = env_vars or [
         {"name": "TOTAL_CHAOS_DURATION", "value": "120"},
@@ -78,12 +77,16 @@ class TestGenerateAnomalyLabels:
         assert labels[0]["affectedServices"] == []
 
     def test_cpu_hog_parameters(self):
-        scenario = _make_scenario("pod-cpu-hog", "currencyservice", env_vars=[
-            {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
-            {"name": "CPU_CORES", "value": "1"},
-            {"name": "CPU_LOAD", "value": "100"},
-            {"name": "PODS_AFFECTED_PERC", "value": "100"},
-        ])
+        scenario = _make_scenario(
+            "pod-cpu-hog",
+            "currencyservice",
+            env_vars=[
+                {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
+                {"name": "CPU_CORES", "value": "1"},
+                {"name": "CPU_LOAD", "value": "100"},
+                {"name": "PODS_AFFECTED_PERC", "value": "100"},
+            ],
+        )
         labels = generate_anomaly_labels(scenario)
 
         lbl = labels[0]
@@ -94,11 +97,15 @@ class TestGenerateAnomalyLabels:
         assert lbl["parameters"]["cpuLoad"] == 100
 
     def test_memory_hog_parameters(self):
-        scenario = _make_scenario("pod-memory-hog", "recommendationservice", env_vars=[
-            {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
-            {"name": "MEMORY_CONSUMPTION", "value": "300"},
-            {"name": "PODS_AFFECTED_PERC", "value": "100"},
-        ])
+        scenario = _make_scenario(
+            "pod-memory-hog",
+            "recommendationservice",
+            env_vars=[
+                {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
+                {"name": "MEMORY_CONSUMPTION", "value": "300"},
+                {"name": "PODS_AFFECTED_PERC", "value": "100"},
+            ],
+        )
         labels = generate_anomaly_labels(scenario)
 
         lbl = labels[0]
@@ -106,11 +113,15 @@ class TestGenerateAnomalyLabels:
         assert lbl["parameters"]["memoryConsumption_mb"] == 300
 
     def test_network_loss_parameters(self):
-        scenario = _make_scenario("pod-network-loss", "checkoutservice", env_vars=[
-            {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
-            {"name": "NETWORK_PACKET_LOSS_PERCENTAGE", "value": "60"},
-            {"name": "PODS_AFFECTED_PERC", "value": "100"},
-        ])
+        scenario = _make_scenario(
+            "pod-network-loss",
+            "checkoutservice",
+            env_vars=[
+                {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
+                {"name": "NETWORK_PACKET_LOSS_PERCENTAGE", "value": "60"},
+                {"name": "PODS_AFFECTED_PERC", "value": "100"},
+            ],
+        )
         labels = generate_anomaly_labels(scenario)
 
         lbl = labels[0]
@@ -138,7 +149,8 @@ class TestGenerateAnomalyLabels:
             }
         }
         labels = generate_anomaly_labels(
-            scenario, metrics=metrics,
+            scenario,
+            metrics=metrics,
             experiment_start="2026-04-02T01:34:00+00:00",
             experiment_end="2026-04-02T01:38:00+00:00",
         )

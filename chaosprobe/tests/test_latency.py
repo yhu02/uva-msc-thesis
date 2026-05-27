@@ -63,11 +63,17 @@ class TestLatencyResult:
             description="Homepage",
         )
         for ms in [10.0, 20.0, 30.0, 40.0, 50.0]:
-            result.samples.append(LatencySample(
-                source="frontend", target="productcatalogservice",
-                route="/", protocol="http", latency_ms=ms,
-                status="ok", timestamp="2026-03-24T12:00:00+00:00",
-            ))
+            result.samples.append(
+                LatencySample(
+                    source="frontend",
+                    target="productcatalogservice",
+                    route="/",
+                    protocol="http",
+                    latency_ms=ms,
+                    status="ok",
+                    timestamp="2026-03-24T12:00:00+00:00",
+                )
+            )
 
         summary = result.summary()
         assert summary["sampleCount"] == 5
@@ -88,17 +94,29 @@ class TestLatencyResult:
             protocol="http",
             description="API call",
         )
-        result.samples.append(LatencySample(
-            source="frontend", target="backend", route="/api",
-            protocol="http", latency_ms=25.0, status="ok",
-            timestamp="2026-03-24T12:00:00+00:00",
-        ))
-        result.samples.append(LatencySample(
-            source="frontend", target="backend", route="/api",
-            protocol="http", latency_ms=0, status="error",
-            timestamp="2026-03-24T12:00:01+00:00",
-            error="timeout",
-        ))
+        result.samples.append(
+            LatencySample(
+                source="frontend",
+                target="backend",
+                route="/api",
+                protocol="http",
+                latency_ms=25.0,
+                status="ok",
+                timestamp="2026-03-24T12:00:00+00:00",
+            )
+        )
+        result.samples.append(
+            LatencySample(
+                source="frontend",
+                target="backend",
+                route="/api",
+                protocol="http",
+                latency_ms=0,
+                status="error",
+                timestamp="2026-03-24T12:00:01+00:00",
+                error="timeout",
+            )
+        )
 
         summary = result.summary()
         assert summary["sampleCount"] == 2
@@ -108,15 +126,24 @@ class TestLatencyResult:
 
     def test_summary_all_errors(self):
         result = LatencyResult(
-            source="a", target="b", route="/", protocol="http",
+            source="a",
+            target="b",
+            route="/",
+            protocol="http",
             description="test",
         )
-        result.samples.append(LatencySample(
-            source="a", target="b", route="/", protocol="http",
-            latency_ms=0, status="error",
-            timestamp="2026-03-24T12:00:00+00:00",
-            error="failed",
-        ))
+        result.samples.append(
+            LatencySample(
+                source="a",
+                target="b",
+                route="/",
+                protocol="http",
+                latency_ms=0,
+                status="error",
+                timestamp="2026-03-24T12:00:00+00:00",
+                error="failed",
+            )
+        )
 
         summary = result.summary()
         assert summary["mean_ms"] is None
@@ -125,7 +152,10 @@ class TestLatencyResult:
 
     def test_summary_empty(self):
         result = LatencyResult(
-            source="a", target="b", route="/", protocol="http",
+            source="a",
+            target="b",
+            route="/",
+            protocol="http",
             description="test",
         )
         summary = result.summary()
@@ -135,14 +165,23 @@ class TestLatencyResult:
 
     def test_summary_single_sample_stddev(self):
         result = LatencyResult(
-            source="a", target="b", route="/", protocol="http",
+            source="a",
+            target="b",
+            route="/",
+            protocol="http",
             description="test",
         )
-        result.samples.append(LatencySample(
-            source="a", target="b", route="/", protocol="http",
-            latency_ms=42.0, status="ok",
-            timestamp="2026-03-24T12:00:00+00:00",
-        ))
+        result.samples.append(
+            LatencySample(
+                source="a",
+                target="b",
+                route="/",
+                protocol="http",
+                latency_ms=42.0,
+                status="ok",
+                timestamp="2026-03-24T12:00:00+00:00",
+            )
+        )
         summary = result.summary()
         assert summary["stddev_ms"] == 0.0
 
@@ -153,21 +192,36 @@ class TestContinuousLatencyProber:
         prober._lock = __import__("threading").Lock()
 
         series = [
-            {"phase": "pre-chaos", "routes": {
-                "/": {"latency_ms": 50, "status": "ok"},
-            }},
-            {"phase": "pre-chaos", "routes": {
-                "/": {"latency_ms": 55, "status": "ok"},
-            }},
-            {"phase": "during-chaos", "routes": {
-                "/": {"latency_ms": 200, "status": "ok"},
-            }},
-            {"phase": "during-chaos", "routes": {
-                "/": {"latency_ms": None, "status": "error", "error": "timeout"},
-            }},
-            {"phase": "post-chaos", "routes": {
-                "/": {"latency_ms": 60, "status": "ok"},
-            }},
+            {
+                "phase": "pre-chaos",
+                "routes": {
+                    "/": {"latency_ms": 50, "status": "ok"},
+                },
+            },
+            {
+                "phase": "pre-chaos",
+                "routes": {
+                    "/": {"latency_ms": 55, "status": "ok"},
+                },
+            },
+            {
+                "phase": "during-chaos",
+                "routes": {
+                    "/": {"latency_ms": 200, "status": "ok"},
+                },
+            },
+            {
+                "phase": "during-chaos",
+                "routes": {
+                    "/": {"latency_ms": None, "status": "error", "error": "timeout"},
+                },
+            },
+            {
+                "phase": "post-chaos",
+                "routes": {
+                    "/": {"latency_ms": 60, "status": "ok"},
+                },
+            },
         ]
 
         phases = prober._split_phases(series)
@@ -194,6 +248,7 @@ class TestContinuousLatencyProber:
 
     def test_current_phase_transitions(self):
         import time
+
         prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
         prober._lock = threading.Lock()
         prober._chaos_start_time = None
@@ -221,6 +276,7 @@ class TestContinuousLatencyProber:
         results/20260520-191703 documented at metrics/base.py:_current_phase.
         """
         import time
+
         prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
         prober._lock = threading.Lock()
         prober._chaos_end_time = None
@@ -299,9 +355,15 @@ class TestAggregateLatencySamples:
     def test_partial_failure(self):
         per_pod = [
             ("pod-a", "node-1", _mk_latency_sample(30.0)),
-            ("pod-b", "node-2", _mk_latency_sample(
-                latency_ms=0, status="error", error="connection refused",
-            )),
+            (
+                "pod-b",
+                "node-2",
+                _mk_latency_sample(
+                    latency_ms=0,
+                    status="error",
+                    error="connection refused",
+                ),
+            ),
         ]
         entry = _aggregate_latency_samples(per_pod)
         assert entry["status"] == "ok"  # at least one probe succeeded
@@ -317,12 +379,24 @@ class TestAggregateLatencySamples:
 
     def test_all_failed(self):
         per_pod = [
-            ("pod-a", "node-1", _mk_latency_sample(
-                latency_ms=0, status="error", error="timeout",
-            )),
-            ("pod-b", "node-2", _mk_latency_sample(
-                latency_ms=0, status="error", error="connection refused",
-            )),
+            (
+                "pod-a",
+                "node-1",
+                _mk_latency_sample(
+                    latency_ms=0,
+                    status="error",
+                    error="timeout",
+                ),
+            ),
+            (
+                "pod-b",
+                "node-2",
+                _mk_latency_sample(
+                    latency_ms=0,
+                    status="error",
+                    error="connection refused",
+                ),
+            ),
         ]
         entry = _aggregate_latency_samples(per_pod)
         assert entry["status"] == "error"
@@ -365,9 +439,15 @@ class TestEvictionLogic:
 
         # Target is down: exec succeeds but HTTP probe returns error
         prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
-            source="probe-pod", target="frontend", route="/",
-            protocol="http", latency_ms=0, status="error",
-            timestamp="now", error="timeout", exec_failed=False,
+            source="probe-pod",
+            target="frontend",
+            route="/",
+            protocol="http",
+            latency_ms=0,
+            status="error",
+            timestamp="now",
+            error="timeout",
+            exec_failed=False,
         )
 
         # Run 5 ticks (more than _max_consecutive_errors=3)
@@ -385,9 +465,15 @@ class TestEvictionLogic:
 
         # Pod is dead: exec fails, sample marked exec_failed=True
         prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
-            source="probe-pod", target="frontend", route="/",
-            protocol="http", latency_ms=0, status="error",
-            timestamp="now", error="pod not found", exec_failed=True,
+            source="probe-pod",
+            target="frontend",
+            route="/",
+            protocol="http",
+            latency_ms=0,
+            status="error",
+            timestamp="now",
+            error="pod not found",
+            exec_failed=True,
         )
 
         # Run exactly 3 ticks (= threshold)
@@ -403,9 +489,15 @@ class TestEvictionLogic:
 
         # 2 consecutive exec failures
         prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
-            source="probe-pod", target="frontend", route="/",
-            protocol="http", latency_ms=0, status="error",
-            timestamp="now", error="pod not found", exec_failed=True,
+            source="probe-pod",
+            target="frontend",
+            route="/",
+            protocol="http",
+            latency_ms=0,
+            status="error",
+            timestamp="now",
+            error="pod not found",
+            exec_failed=True,
         )
         for _ in range(2):
             prober._run_all_probes()
@@ -413,18 +505,29 @@ class TestEvictionLogic:
 
         # One successful exec resets the counter
         prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
-            source="probe-pod", target="frontend", route="/",
-            protocol="http", latency_ms=100, status="ok",
-            timestamp="now", exec_failed=False,
+            source="probe-pod",
+            target="frontend",
+            route="/",
+            protocol="http",
+            latency_ms=100,
+            status="ok",
+            timestamp="now",
+            exec_failed=False,
         )
         prober._run_all_probes()
         assert prober._pod_consecutive_errors["pod-a"] == 0
 
         # 2 more exec failures don't trigger eviction (not 3 consecutive)
         prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
-            source="probe-pod", target="frontend", route="/",
-            protocol="http", latency_ms=0, status="error",
-            timestamp="now", error="pod not found", exec_failed=True,
+            source="probe-pod",
+            target="frontend",
+            route="/",
+            protocol="http",
+            latency_ms=0,
+            status="error",
+            timestamp="now",
+            error="pod not found",
+            exec_failed=True,
         )
         for _ in range(2):
             prober._run_all_probes()

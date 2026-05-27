@@ -57,31 +57,24 @@ class _ChaosCenterAPIMixin:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 result = _json.loads(resp.read().decode())
             # Surface GraphQL-level errors that arrive with HTTP 200
-            if (
-                isinstance(result, dict)
-                and result.get("errors")
-                and result.get("data") is None
-            ):
+            if isinstance(result, dict) and result.get("errors") and result.get("data") is None:
                 errors = result["errors"]
-                msg = (
-                    errors[0].get("message", str(errors))
-                    if errors
-                    else str(result)
-                )
+                msg = errors[0].get("message", str(errors)) if errors else str(result)
                 raise RuntimeError(f"ChaosCenter GraphQL error: {msg}")
             return result
         except urllib.error.HTTPError as e:
             body_text = e.read().decode() if e.fp else ""
-            raise RuntimeError(
-                f"ChaosCenter API error {e.code}: {body_text}"
-            ) from e
+            raise RuntimeError(f"ChaosCenter API error {e.code}: {body_text}") from e
 
     # ------------------------------------------------------------------
     # Authentication
     # ------------------------------------------------------------------
 
     def _chaoscenter_authenticate(
-        self, server_url: str, username: str, password: str,
+        self,
+        server_url: str,
+        username: str,
+        password: str,
     ) -> dict:
         """Authenticate against ChaosCenter and return login response.
 
@@ -97,17 +90,17 @@ class _ChaosCenterAPIMixin:
             f"{server_url}/login",
             data={"username": username, "password": password},
         )
-        token = (
-            resp.get("accessToken")
-            or resp.get("access_token")
-            or resp.get("token")
-        )
+        token = resp.get("accessToken") or resp.get("access_token") or resp.get("token")
         if not token:
             raise RuntimeError("Failed to obtain ChaosCenter access token")
         return resp
 
     def _chaoscenter_change_password(
-        self, auth_url: str, username: str, old_password: str, new_password: str,
+        self,
+        auth_url: str,
+        username: str,
+        old_password: str,
+        new_password: str,
         token: str = "",
     ) -> None:
         """Change ChaosCenter password via the auth API."""
@@ -154,25 +147,24 @@ class _ChaosCenterAPIMixin:
         for pwd in candidates:
             try:
                 resp = self._chaoscenter_authenticate(auth_url, username, pwd)
-                token = (
-                    resp.get("accessToken")
-                    or resp.get("access_token")
-                    or resp.get("token")
-                )
+                token = resp.get("accessToken") or resp.get("access_token") or resp.get("token")
                 project_id = resp.get("projectID", "")
 
                 # Auto-rotate factory default → managed password
                 if pwd == self.CHAOSCENTER_DEFAULT_PASS and pwd != self.CHAOSCENTER_MANAGED_PASS:
                     try:
                         self._chaoscenter_change_password(
-                            auth_url, username,
+                            auth_url,
+                            username,
                             self.CHAOSCENTER_DEFAULT_PASS,
                             self.CHAOSCENTER_MANAGED_PASS,
                             token=token,
                         )
                         # Re-login with the new password
                         resp2 = self._chaoscenter_authenticate(
-                            auth_url, username, self.CHAOSCENTER_MANAGED_PASS,
+                            auth_url,
+                            username,
+                            self.CHAOSCENTER_MANAGED_PASS,
                         )
                         token = (
                             resp2.get("accessToken")
@@ -180,9 +172,7 @@ class _ChaosCenterAPIMixin:
                             or resp2.get("token")
                         )
                         project_id = resp2.get("projectID", project_id)
-                        print(
-                            "  ChaosCenter: default password rotated to managed password"
-                        )
+                        print("  ChaosCenter: default password rotated to managed password")
                     except Exception:
                         pass  # keep using the default-password token
 
@@ -199,7 +189,10 @@ class _ChaosCenterAPIMixin:
     # ------------------------------------------------------------------
 
     def _chaoscenter_list_environments(
-        self, gql_url: str, project_id: str, token: str,
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
     ) -> list[dict]:
         """Return existing environments for the given project."""
         resp = self._chaoscenter_api_request(
@@ -213,14 +206,13 @@ class _ChaosCenterAPIMixin:
             },
             token=token,
         )
-        return (
-            resp.get("data", {})
-            .get("listEnvironments", {})
-            .get("environments")
-        ) or []
+        return (resp.get("data", {}).get("listEnvironments", {}).get("environments")) or []
 
     def _chaoscenter_list_infras(
-        self, gql_url: str, project_id: str, token: str,
+        self,
+        gql_url: str,
+        project_id: str,
+        token: str,
     ) -> list[dict]:
         """Return registered infrastructures for the given project."""
         resp = self._chaoscenter_api_request(
@@ -235,14 +227,14 @@ class _ChaosCenterAPIMixin:
             },
             token=token,
         )
-        return (
-            resp.get("data", {})
-            .get("listInfras", {})
-            .get("infras")
-        ) or []
+        return (resp.get("data", {}).get("listInfras", {}).get("infras")) or []
 
     def _chaoscenter_create_environment(
-        self, gql_url: str, project_id: str, env_name: str, token: str,
+        self,
+        gql_url: str,
+        project_id: str,
+        env_name: str,
+        token: str,
     ) -> str:
         """Create a ChaosCenter environment and return its ID."""
         env_query = (
@@ -265,11 +257,7 @@ class _ChaosCenterAPIMixin:
             },
             token=token,
         )
-        return (
-            resp.get("data", {})
-            .get("createEnvironment", {})
-            .get("environmentID", env_name)
-        )
+        return resp.get("data", {}).get("createEnvironment", {}).get("environmentID", env_name)
 
     def _chaoscenter_server_internal_url(self) -> str:
         """Return the cluster-internal URL of the ChaosCenter frontend.
@@ -334,7 +322,9 @@ class _ChaosCenterAPIMixin:
     def _apply_manifest(self, manifest: str, namespace: str) -> None:
         """Write *manifest* to a temp file and ``kubectl apply`` it."""
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False,
+            mode="w",
+            suffix=".yaml",
+            delete=False,
         ) as f:
             f.write(manifest)
             f.flush()
@@ -378,19 +368,22 @@ class _ChaosCenterAPIMixin:
         lines = []
         try:
             pods = self.core_api.list_namespaced_pod(
-                namespace, label_selector="app=subscriber",
+                namespace,
+                label_selector="app=subscriber",
             )
             if not pods.items:
-                lines.append("  No subscriber pods found in namespace "
-                             f"'{namespace}'.")
+                lines.append("  No subscriber pods found in namespace " f"'{namespace}'.")
                 # Check if the deployment exists
                 try:
                     dep = self.apps_api.read_namespaced_deployment(
-                        "subscriber", namespace,
+                        "subscriber",
+                        namespace,
                     )
-                    lines.append(f"  Deployment exists: replicas="
-                                 f"{dep.spec.replicas}, "
-                                 f"ready={dep.status.ready_replicas}")
+                    lines.append(
+                        f"  Deployment exists: replicas="
+                        f"{dep.spec.replicas}, "
+                        f"ready={dep.status.ready_replicas}"
+                    )
                 except Exception:
                     lines.append("  Subscriber deployment not found.")
             else:
@@ -447,11 +440,7 @@ class _ChaosCenterAPIMixin:
                 },
                 token=token,
             )
-            experiments = (
-                (resp.get("data") or {})
-                .get("listExperiment", {})
-                .get("experiments", [])
-            )
+            experiments = (resp.get("data") or {}).get("listExperiment", {}).get("experiments", [])
             for exp in experiments:
                 if exp.get("name") == experiment_name:
                     return exp.get("experimentID")
@@ -486,11 +475,7 @@ class _ChaosCenterAPIMixin:
                 },
                 token=token,
             )
-            return (
-                (resp.get("data") or {})
-                .get("listExperiment", {})
-                .get("experiments", [])
-            ) or []
+            return ((resp.get("data") or {}).get("listExperiment", {}).get("experiments", [])) or []
         except Exception:
             return []
 
@@ -560,7 +545,10 @@ class _ChaosCenterAPIMixin:
         # Check if an experiment with this name already exists and reuse
         # its ID so the save mutation updates instead of inserting.
         existing_id = self._chaoscenter_find_experiment_id(
-            gql_url, project_id, token, name,
+            gql_url,
+            project_id,
+            token,
+            name,
         )
         if existing_id:
             experiment_id = existing_id
@@ -601,12 +589,16 @@ class _ChaosCenterAPIMixin:
             # Try deleting it — ignore "already deleted" — then retry.
             print(f"    ChaosCenter: stale experiment '{name}' blocks save, cleaning up...")
             self.chaoscenter_delete_experiment(
-                gql_url, project_id, token, experiment_id,
+                gql_url,
+                project_id,
+                token,
+                experiment_id,
             )
 
             # Retry with a fresh ID to sidestep soft-deleted ghosts
             # that still occupy MongoDB's unique index on experiment_id.
             import uuid as _uuid
+
             fresh_id = str(_uuid.uuid4())
             save_data["variables"]["req"]["id"] = fresh_id
             try:
@@ -621,7 +613,7 @@ class _ChaosCenterAPIMixin:
                 f"Cannot save experiment '{name}': a soft-deleted experiment "
                 f"with this name exists in ChaosCenter's database and blocks "
                 f"new experiments.  Delete it from the MongoDB shell:\n"
-                f"  db.chaosExperiments.deleteOne({{name: \"{name}\", is_removed: true}})"
+                f'  db.chaosExperiments.deleteOne({{name: "{name}", is_removed: true}})'
             ) from exc
 
     def chaoscenter_run_experiment(
@@ -657,11 +649,7 @@ class _ChaosCenterAPIMixin:
             },
             token=token,
         )
-        return (
-            (resp.get("data") or {})
-            .get("runChaosExperiment", {})
-            .get("notifyID", "")
-        )
+        return (resp.get("data") or {}).get("runChaosExperiment", {}).get("notifyID", "")
 
     def chaoscenter_get_experiment_run(
         self,
@@ -796,10 +784,7 @@ class _ChaosCenterAPIMixin:
         resp = self._chaoscenter_api_request(
             gql_url,
             data={
-                "query": (
-                    "query($pid: ID!) "
-                    "{ listProbes(projectID: $pid) { name type } }"
-                ),
+                "query": ("query($pid: ID!) " "{ listProbes(projectID: $pid) { name type } }"),
                 "variables": {"pid": project_id},
             },
             token=token,

@@ -44,6 +44,7 @@ def _service_from_url(url: str) -> str:
     """
     try:
         from urllib.parse import urlparse
+
         host = urlparse(url).hostname or ""
         return host.split(".")[0] if host else "unknown"
     except Exception:
@@ -528,11 +529,11 @@ class LatencyProber:
         # URL and timeout are passed as positional arguments ($1, $2) to
         # avoid shell injection from URLs containing quotes.
         shell_script = (
-            'S=$(date +%s%N 2>/dev/null); '
+            "S=$(date +%s%N 2>/dev/null); "
             'case "$S" in *N*|*%*) S=$(date +%s)000000000;; esac; '
             'wget -q -O /dev/null --timeout="$2" '
             '"$1" 2>/dev/null; RC=$?; '
-            'E=$(date +%s%N 2>/dev/null); '
+            "E=$(date +%s%N 2>/dev/null); "
             'case "$E" in *N*|*%*) E=$(date +%s)000000000;; esac; '
             'if [ "$RC" -eq 0 ]; then echo "200 $S $E"; '
             'else echo "ERR wget_rc=$RC"; fi'
@@ -737,13 +738,8 @@ def _aggregate_latency_samples(
             "podCount": len(samples),
             "okCount": len(ok_node),
             "errorCount": len(samples) - len(ok_node),
-            "mean_ms": (
-                round(statistics.mean(lats_node), 2) if lats_node else None
-            ),
-            "stddev_ms": (
-                round(statistics.stdev(lats_node), 2)
-                if len(lats_node) > 1 else 0.0
-            ),
+            "mean_ms": (round(statistics.mean(lats_node), 2) if lats_node else None),
+            "stddev_ms": (round(statistics.stdev(lats_node), 2) if len(lats_node) > 1 else 0.0),
         }
 
     if not ok:
@@ -767,9 +763,7 @@ def _aggregate_latency_samples(
         "errorCount": len(err),
         "minLatency_ms": round(min(lats), 2),
         "maxLatency_ms": round(max(lats), 2),
-        "stddevLatency_ms": (
-            round(statistics.stdev(lats), 2) if len(lats) > 1 else 0.0
-        ),
+        "stddevLatency_ms": (round(statistics.stdev(lats), 2) if len(lats) > 1 else 0.0),
         "perPod": per_pod,
         "perNode": per_node,
     }
@@ -821,7 +815,9 @@ class ContinuousLatencyProber(ContinuousProberBase):
         super().__init__(namespace, interval, name="latency-prober")
         self._http_routes = http_routes
         self._prober = LatencyProber(
-            namespace, timeout_seconds, exclude_prefixes=exclude_prefixes,
+            namespace,
+            timeout_seconds,
+            exclude_prefixes=exclude_prefixes,
         )
         # [(pod_name, node_name), ...] populated in start()
         self._probe_points: List[Tuple[str, str]] = []
@@ -850,9 +846,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
                 "Latency prober probing %d pod(s) across %d node(s): %s",
                 len(self._probe_points),
                 len(node_counts),
-                ", ".join(
-                    f"{n}({c} pods)" for n, c in sorted(node_counts.items())
-                ),
+                ", ".join(f"{n}({c} pods)" for n, c in sorted(node_counts.items())),
             )
         else:
             # Fallback: keep at least one vantage point if discovery
@@ -881,9 +875,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
         data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
-            "probePoints": [
-                {"pod": p, "node": n} for p, n in self._probe_points
-            ],
+            "probePoints": [{"pod": p, "node": n} for p, n in self._probe_points],
             "config": {
                 "interval_s": self.interval,
                 "namespace": self.namespace,
@@ -940,23 +932,24 @@ class ContinuousLatencyProber(ContinuousProberBase):
         }
 
         def _probe_one(
-            pod: str, node: str,
+            pod: str,
+            node: str,
         ) -> List[Tuple[str, str, LatencySample]]:
             results: List[Tuple[str, str, LatencySample]] = []
             for service, route, _desc, method in self._http_routes:
-                url = (
-                    f"http://{service}.{self.namespace}.svc.cluster.local{route}"
-                )
+                url = f"http://{service}.{self.namespace}.svc.cluster.local{route}"
                 sample = self._prober._measure_http_from_pod(
-                    pod, url, method, route,
+                    pod,
+                    url,
+                    method,
+                    route,
                 )
                 results.append((pod, node, sample))
             return results
 
         with ThreadPoolExecutor(max_workers=min(len(self._probe_points), 8)) as pool:
             futs = {
-                pool.submit(_probe_one, pod, node): (pod, node)
-                for pod, node in self._probe_points
+                pool.submit(_probe_one, pod, node): (pod, node) for pod, node in self._probe_points
             }
             pod_exec_failed: Dict[str, bool] = {}
             for f in futs:
@@ -966,9 +959,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
                     # A pod's exec failed if ANY sample has exec_failed=True
                     # (indicates kubectl exec to the pod itself failed, not
                     # just the HTTP target being unreachable).
-                    pod_exec_failed[pod] = any(
-                        s.exec_failed for _, _, s in results
-                    )
+                    pod_exec_failed[pod] = any(s.exec_failed for _, _, s in results)
                     for _p, _n, sample in results:
                         per_route_samples.setdefault(sample.route, []).append(
                             (pod, node, sample),
@@ -984,26 +975,22 @@ class ContinuousLatencyProber(ContinuousProberBase):
         # blinds the prober for the remainder of the experiment.
         for pod, exec_failed in pod_exec_failed.items():
             if exec_failed:
-                self._pod_consecutive_errors[pod] = (
-                    self._pod_consecutive_errors.get(pod, 0) + 1
-                )
+                self._pod_consecutive_errors[pod] = self._pod_consecutive_errors.get(pod, 0) + 1
             else:
                 self._pod_consecutive_errors[pod] = 0
 
         # Evict pods with too many consecutive exec failures
         evicted = [
-            pod for pod, count in self._pod_consecutive_errors.items()
+            pod
+            for pod, count in self._pod_consecutive_errors.items()
             if count >= self._max_consecutive_errors
         ]
         if evicted:
-            self._probe_points = [
-                (p, n) for p, n in self._probe_points if p not in evicted
-            ]
+            self._probe_points = [(p, n) for p, n in self._probe_points if p not in evicted]
             for pod in evicted:
                 del self._pod_consecutive_errors[pod]
             logger.info(
-                "Latency prober evicted %d dead pod(s): %s. "
-                "%d probe point(s) remaining.",
+                "Latency prober evicted %d dead pod(s): %s. " "%d probe point(s) remaining.",
                 len(evicted),
                 ", ".join(evicted),
                 len(self._probe_points),
@@ -1072,12 +1059,14 @@ class ContinuousLatencyProber(ContinuousProberBase):
                     stddevs = route_stddevs.get(route, [])
                     if stddevs:
                         summary["meanCrossNodeStddev_ms"] = round(
-                            statistics.mean(stddevs), 2,
+                            statistics.mean(stddevs),
+                            2,
                         )
                     maxes = route_maxes.get(route, [])
                     if maxes:
                         summary["maxCrossNodeLatency_ms"] = round(
-                            max(maxes), 2,
+                            max(maxes),
+                            2,
                         )
                     routes_summary[route] = summary
                 else:

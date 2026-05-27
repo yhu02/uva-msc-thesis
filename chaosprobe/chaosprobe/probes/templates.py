@@ -137,9 +137,7 @@ def generate_dockerfile(binary_name: str, source_repo: str = "") -> str:
             the resulting package to that repository (used for
             inherit-from-source-repo visibility).
     """
-    label_line = (
-        f'LABEL org.opencontainers.image.source="{source_repo}"\n' if source_repo else ""
-    )
+    label_line = f'LABEL org.opencontainers.image.source="{source_repo}"\n' if source_repo else ""
     return f"""\
 FROM busybox:stable-musl
 {label_line}COPY {binary_name} /probe/{binary_name}

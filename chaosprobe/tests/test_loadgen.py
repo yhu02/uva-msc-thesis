@@ -97,12 +97,12 @@ class TestLocustRunner:
         """Test parsing a Locust stats CSV file."""
         csv_file = tmp_path / "stats_stats.csv"
         csv_file.write_text(
-            'Type,Name,Request Count,Failure Count,Average Response Time,'
-            'Min Response Time,Max Response Time,Average Content Size,'
-            'Requests/s,Failures/s,50%,66%,75%,80%,90%,95%,98%,99%,99.9%,99.99%,100%\n'
-            'GET,/,500,2,45.2,10.0,200.0,1024,16.7,0.07,40,50,60,70,90,120,150,180,195,199,200\n'
-            'GET,/product/OLJCESPC7Z,300,1,55.0,15.0,250.0,2048,10.0,0.03,50,60,70,80,100,130,160,190,240,248,250\n'
-            'Aggregated,,800,3,48.9,10.0,250.0,1408,26.7,0.1,44,54,64,74,94,124,154,184,215,245,250\n'
+            "Type,Name,Request Count,Failure Count,Average Response Time,"
+            "Min Response Time,Max Response Time,Average Content Size,"
+            "Requests/s,Failures/s,50%,66%,75%,80%,90%,95%,98%,99%,99.9%,99.99%,100%\n"
+            "GET,/,500,2,45.2,10.0,200.0,1024,16.7,0.07,40,50,60,70,90,120,150,180,195,199,200\n"
+            "GET,/product/OLJCESPC7Z,300,1,55.0,15.0,250.0,2048,10.0,0.03,50,60,70,80,100,130,160,190,240,248,250\n"
+            "Aggregated,,800,3,48.9,10.0,250.0,1408,26.7,0.1,44,54,64,74,94,124,154,184,215,245,250\n"
         )
 
         runner = LocustRunner(target_url="http://localhost:8080")

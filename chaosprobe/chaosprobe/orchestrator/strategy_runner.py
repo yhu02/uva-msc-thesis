@@ -115,29 +115,33 @@ def _capture_unknown_diagnostics(
             if not name:
                 continue
             lname = name.lower()
-            if not any(p in lname for p in ("probe", "litmus")) and \
-                    not any(u in lname for u in unknown_names):
+            if not any(p in lname for p in ("probe", "litmus")) and not any(
+                u in lname for u in unknown_names
+            ):
                 continue
             ev_ts = ev.last_timestamp or ev.event_time or ev.first_timestamp
             if ev_ts and not (start_dt <= ev_ts <= end_dt):
                 continue
-            probe_pod_events.append({
-                "time": ev_ts.isoformat() if ev_ts else None,
-                "type": ev.type,
-                "reason": ev.reason,
-                "object": f"{io.kind}/{io.name}" if io else "",
-                "message": ev.message,
-            })
+            probe_pod_events.append(
+                {
+                    "time": ev_ts.isoformat() if ev_ts else None,
+                    "type": ev.type,
+                    "reason": ev.reason,
+                    "object": f"{io.kind}/{io.name}" if io else "",
+                    "message": ev.message,
+                }
+            )
 
         # Snapshot of any surviving probe-related pods at read time.
         pods = core.list_namespaced_pod(namespace=namespace).items
         for pod in pods:
             pname = (pod.metadata.name or "").lower()
-            if not any(p in pname for p in ("probe", "litmus")) and \
-                    not any(u in pname for u in unknown_names):
+            if not any(p in pname for p in ("probe", "litmus")) and not any(
+                u in pname for u in unknown_names
+            ):
                 continue
             container_states: List[Dict[str, Any]] = []
-            for cs in (pod.status.container_statuses or []):
+            for cs in pod.status.container_statuses or []:
                 state = {}
                 if cs.state and cs.state.waiting:
                     state["waiting"] = {
@@ -149,19 +153,25 @@ def _capture_unknown_diagnostics(
                         "reason": cs.state.terminated.reason,
                         "exitCode": cs.state.terminated.exit_code,
                     }
-                container_states.append({
-                    "name": cs.name,
-                    "restartCount": cs.restart_count,
-                    "state": state,
-                })
-            probe_pod_summary.append({
-                "name": pod.metadata.name,
-                "node": pod.spec.node_name,
-                "phase": pod.status.phase,
-                "podIP": pod.status.pod_ip,
-                "startTime": pod.status.start_time.isoformat() if pod.status.start_time else None,
-                "containerStatuses": container_states,
-            })
+                container_states.append(
+                    {
+                        "name": cs.name,
+                        "restartCount": cs.restart_count,
+                        "state": state,
+                    }
+                )
+            probe_pod_summary.append(
+                {
+                    "name": pod.metadata.name,
+                    "node": pod.spec.node_name,
+                    "phase": pod.status.phase,
+                    "podIP": pod.status.pod_ip,
+                    "startTime": (
+                        pod.status.start_time.isoformat() if pod.status.start_time else None
+                    ),
+                    "containerStatuses": container_states,
+                }
+            )
     except Exception as e:
         probe_pod_events = [{"_error": f"events capture failed: {e}"}]
 
@@ -414,8 +424,7 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
         api = k8s_client.CoreV1Api()
         api.list_namespace(limit=1)
         return  # API is reachable, proceed immediately
-    except (ApiException, MaxRetryError, NewConnectionError,
-            ConnectionError, OSError):
+    except (ApiException, MaxRetryError, NewConnectionError, ConnectionError, OSError):
         pass
 
     click.echo("  K8s API server unreachable — waiting for recovery...")
@@ -431,8 +440,7 @@ def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
             api.list_namespace(limit=1)
             recovered = True
             break
-        except (ApiException, MaxRetryError, NewConnectionError,
-                ConnectionError, OSError):
+        except (ApiException, MaxRetryError, NewConnectionError, ConnectionError, OSError):
             remaining = int(deadline - time.time())
             elapsed = time.time() - start
 
@@ -516,9 +524,12 @@ def _attempt_control_plane_ssh_remediation() -> None:
 
     ssh_cmd = [
         "ssh",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "ConnectTimeout=10",
-        "-o", "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "BatchMode=yes",
     ]
     if ssh_key:
         ssh_cmd.extend(["-i", str(ssh_key)])
@@ -681,7 +692,8 @@ def _wait_for_app_ready(
                 # Pod may have been evicted — try to re-discover
                 if "ERROR:" in out:
                     new_pod = find_probe_pod(
-                        core, namespace,
+                        core,
+                        namespace,
                         require_python3=False,
                         exclude_prefixes=[target_deployment],
                     )
@@ -727,7 +739,10 @@ def _wait_for_app_ready(
                     # 20s ensures ≥5 full request cycles per route at the
                     # typical 3-4s response time under colocate pressure.
                     _warmup_application(
-                        core, namespace, pod, urls_to_check,
+                        core,
+                        namespace,
+                        pod,
+                        urls_to_check,
                         duration_s=20,
                     )
 
@@ -753,9 +768,7 @@ def _wait_for_app_ready(
                                 f"E=$(date +%s%N 2>/dev/null); "
                                 f"echo $(( (E - S) / 1000000 ))"
                             )
-                            out = exec_in_pod(
-                                core, namespace, pod, ["sh", "-c", cmd]
-                            )
+                            out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
                             try:
                                 lat_ms = int(out.strip())
                                 if lat_ms > _CONVERGENCE_THRESHOLD_MS:
@@ -772,7 +785,10 @@ def _wait_for_app_ready(
                             f"extending warmup..."
                         )
                         _warmup_application(
-                            core, namespace, pod, urls_to_check,
+                            core,
+                            namespace,
+                            pod,
+                            urls_to_check,
                             duration_s=10,
                         )
 
@@ -785,15 +801,14 @@ def _wait_for_app_ready(
                     return
         else:
             if sustained_until is not None:
-                click.echo(
-                    "    App stability check failed — restarting consecutive-OK count"
-                )
+                click.echo("    App stability check failed — restarting consecutive-OK count")
                 # The probe pod may have been evicted during the sustained
                 # check (e.g. rollout of another service completed and K8s
                 # reclaimed resources).  Re-discover to avoid exec'ing into
                 # a dead pod for the remaining timeout.
                 new_pod = find_probe_pod(
-                    core, namespace,
+                    core,
+                    namespace,
                     require_python3=False,
                     exclude_prefixes=[target_deployment],
                 )
@@ -806,9 +821,7 @@ def _wait_for_app_ready(
         time.sleep(3)
 
     if sustained_until is not None:
-        click.echo(
-            f"    Warning: app-ready timed out in sustained phase — proceeding anyway"
-        )
+        click.echo("    Warning: app-ready timed out in sustained phase — proceeding anyway")
     else:
         click.echo(
             f"    Warning: app-ready check timed out after {timeout}s — "
@@ -1074,9 +1087,7 @@ def _run_single_iteration(
     # only correct moment to record which specific pods chaos is about
     # to act on.  Downstream analysis correlates which-pod-was-killed
     # against which-node-it-lived-on using this map.
-    iter_app_deps = sorted(
-        (strategy_result.get("placement") or {}).get("assignments") or {}
-    )
+    iter_app_deps = sorted((strategy_result.get("placement") or {}).get("assignments") or {})
     if not iter_app_deps:
         # Baseline/default: assignments is empty; observe everything in
         # the namespace that has replicas.
@@ -1113,9 +1124,7 @@ def _run_single_iteration(
     # after stopping" can set --settle-time 60 and actually get a 60s
     # window.  pre_chaos_window still defers to --baseline-duration
     # when explicitly set, since baseline collection has its own knob.
-    pre_chaos_window = (
-        ctx.baseline_duration if ctx.baseline_duration > 0 else ctx.settle_time
-    )
+    pre_chaos_window = ctx.baseline_duration if ctx.baseline_duration > 0 else ctx.settle_time
     has_probers = any(
         probers.get(k) for k in ("latency", "redis", "disk", "resource", "prometheus")
     )
@@ -1284,16 +1293,15 @@ def _run_single_iteration(
             p95 = route_data.get("p95_ms")
             mean = route_data.get("mean_ms")
             if (
-                p95 is not None and mean is not None
+                p95 is not None
+                and mean is not None
                 and p95 > SLOW_BASELINE_P95_MS
                 and mean > SLOW_BASELINE_P95_MS / 2
             ):
                 slow_routes.append((route_name, p95, mean))
         if slow_routes:
             pre_chaos_tainted = True
-            slow_summary = ", ".join(
-                f"{r}=p95:{p:.0f}/mean:{m:.0f}ms" for r, p, m in slow_routes
-            )
+            slow_summary = ", ".join(f"{r}=p95:{p:.0f}/mean:{m:.0f}ms" for r, p, m in slow_routes)
             click.echo(
                 f"    WARNING: Pre-chaos baseline latency degraded on "
                 f"{len(slow_routes)} route(s) [{slow_summary}]. "
@@ -1464,9 +1472,7 @@ def _run_iterations(
                 # with a broken cluster.
                 click.echo("    Verifying deployment health after crash recovery...")
                 try:
-                    wait_for_healthy_deployments(
-                        ctx.namespace, timeout=180, strict=True
-                    )
+                    wait_for_healthy_deployments(ctx.namespace, timeout=180, strict=True)
                 except click.ClickException:
                     click.echo(
                         "    Deployments not healthy after recovery — "
@@ -1483,6 +1489,7 @@ def _run_iterations(
                         pass
                     try:
                         from chaosprobe.storage.neo4j_store import Neo4jStore
+
                         ctx.graph_store = Neo4jStore(
                             ctx.neo4j_uri,
                             ctx.neo4j_user,
@@ -1701,8 +1708,7 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
                 # absent so future iterations don't try either, and
                 # return failure for this sync.
                 click.echo(
-                    f"    Neo4j unreachable — disabling sync for this run: "
-                    f"{ctor_exc}",
+                    f"    Neo4j unreachable — disabling sync for this run: " f"{ctor_exc}",
                     err=True,
                 )
                 ctx.graph_store = None

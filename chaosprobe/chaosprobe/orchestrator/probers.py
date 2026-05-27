@@ -13,6 +13,7 @@ import click
 # Create & start
 # ---------------------------------------------------------------------------
 
+
 def create_and_start_probers(
     namespace: str,
     target_deployment: str,
@@ -55,9 +56,7 @@ def create_and_start_probers(
         else None
     )
     resource_prober = (
-        ContinuousResourceProber(namespace, target_deployment)
-        if measure_resources
-        else None
+        ContinuousResourceProber(namespace, target_deployment) if measure_resources else None
     )
     prometheus_prober = (
         ContinuousPrometheusProber(
@@ -111,6 +110,7 @@ def create_and_start_probers(
 # ---------------------------------------------------------------------------
 # Stop & collect
 # ---------------------------------------------------------------------------
+
 
 def stop_and_collect_probers(
     probers: Dict[str, Any],

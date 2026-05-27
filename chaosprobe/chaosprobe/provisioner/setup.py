@@ -482,8 +482,10 @@ end
             # owned by root and the SSH user may not have read access.
             ssh_cmd = [
                 "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "ConnectTimeout=10",
             ]
             if ssh_key:
                 ssh_cmd.extend(["-i", str(ssh_key)])
@@ -862,9 +864,7 @@ end
             "chaoscenter_installed": (
                 self.is_chaoscenter_installed() if self._k8s_initialized else False
             ),
-            "chaoscenter_ready": (
-                self.is_chaoscenter_ready() if self._k8s_initialized else False
-            ),
+            "chaoscenter_ready": (self.is_chaoscenter_ready() if self._k8s_initialized else False),
         }
         results["all_ready"] = all(
             [

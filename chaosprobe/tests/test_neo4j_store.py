@@ -143,8 +143,7 @@ def _make_run_data(**overrides):
                         "containers": {
                             "server": {
                                 "current": (
-                                    "INFO starting server on :8080\n"
-                                    "ERROR connection refused"
+                                    "INFO starting server on :8080\n" "ERROR connection refused"
                                 ),
                                 "previous": "FATAL out of memory",
                             },

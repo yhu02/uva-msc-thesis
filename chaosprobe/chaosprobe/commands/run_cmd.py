@@ -457,11 +457,18 @@ def _save_partial_results(overall_results: Dict[str, Any], results_dir: Path) ->
     """
     import json as _json_mod
 
+    partial_path = results_dir / "partial_summary.json"
     try:
-        partial_path = results_dir / "partial_summary.json"
-        partial_path.write_text(_json_mod.dumps(overall_results, separators=(',', ':'), default=str))
-    except Exception:
-        pass  # best-effort — don't crash the run for a save failure
+        partial_path.write_text(
+            _json_mod.dumps(overall_results, separators=(",", ":"), default=str)
+        )
+    except OSError as exc:
+        # Best-effort: a save failure here must not crash the run, but the
+        # user has to know that crash-recovery data is unreliable.
+        click.echo(
+            f"  Warning: could not write partial results to {partial_path}: {exc}",
+            err=True,
+        )
 
 
 def _print_run_banner(
@@ -734,13 +741,18 @@ def run(
     ensure_k8s_config()
     try:
         from kubernetes import client as _k8s_check
+        from kubernetes.client import Configuration as _K8sConfig
         from kubernetes.client.rest import ApiException as _ApiExc
         from urllib3.exceptions import MaxRetryError as _MaxRetry
 
         _k8s_check.CoreV1Api().list_namespace(limit=1)
     except (_ApiExc, _MaxRetry, ConnectionError, OSError) as exc:
+        try:
+            _api_host = _K8sConfig.get_default_copy().host or "<unknown>"
+        except Exception:
+            _api_host = "<unknown>"
         click.echo(
-            f"Error: K8s API server at unreachable — cannot proceed.\n"
+            f"Error: K8s API server at {_api_host} unreachable — cannot proceed.\n"
             f"  Detail: {exc}\n"
             f"  The control plane may need restarting (e.g. after an adversarial crash).\n"
             f"  Restart the control plane node and retry.",
@@ -897,8 +909,7 @@ def run(
 
     probe_images = extract_cmdprobe_images(shared_scenario.get("experiments", []))
     worker_node_names = [
-        n.name for n in mutator.get_nodes()
-        if n.is_schedulable and not n.is_control_plane
+        n.name for n in mutator.get_nodes() if n.is_schedulable and not n.is_control_plane
     ]
     if probe_images and worker_node_names:
         click.echo(

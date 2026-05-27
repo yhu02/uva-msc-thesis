@@ -51,8 +51,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
     click.echo(f"  git: {'OK' if prereqs['git'] else 'MISSING'}")
     click.echo(f"  ssh: {'OK' if prereqs['ssh'] else 'MISSING'}")
     ansible_status = (
-        "OK" if prereqs["ansible"]
-        else "Not found (bundled with Kubespray on first cluster create)"
+        "OK" if prereqs["ansible"] else "Not found (bundled with Kubespray on first cluster create)"
     )
     click.echo(f"  ansible: {ansible_status}")
 

@@ -383,9 +383,7 @@ def _build_hypothesis_evaluation(
                 key=lambda kv: kv[1].get("avgResilienceScore", 0),
                 reverse=True,
             )
-            top3 = ", ".join(
-                f"{n} ({v.get('avgResilienceScore', 0):.0f})" for n, v in ranked[:3]
-            )
+            top3 = ", ".join(f"{n} ({v.get('avgResilienceScore', 0):.0f})" for n, v in ranked[:3])
             h2_detail = (
                 f"Spread scored {spread_score:.1f}, but {best_name} scored "
                 f"{best_score:.1f} (best). Ranking: {top3}. "
@@ -796,9 +794,12 @@ def _generate_html_summary(
         if all_worker_nodes:
             worker_nodes = sorted(all_worker_nodes)
             for strat_name in sorted(resource_data.keys()):
-                per_node = resource_data[strat_name].get("phases", {}).get(
-                    "during-chaos", {}
-                ).get("perNode", {})
+                per_node = (
+                    resource_data[strat_name]
+                    .get("phases", {})
+                    .get("during-chaos", {})
+                    .get("perNode", {})
+                )
                 for node_name in worker_nodes:
                     nd = per_node.get(node_name, {})
                     cpu = nd.get("meanCpu_percent")

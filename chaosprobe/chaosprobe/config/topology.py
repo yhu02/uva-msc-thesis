@@ -29,18 +29,20 @@ ServiceRoute = Tuple[str, str, str, str, str]
 _ADDR_ENV_RE = re.compile(r"^(.+?)_(?:SERVICE_)?ADDR$", re.IGNORECASE)
 
 # Well-known non-dependency env vars to skip
-_SKIP_ENV_NAMES = frozenset({
-    "PORT",
-    "LISTEN_ADDR",
-    "BIND_ADDR",
-    "JAEGER_SERVICE_ADDR",
-    "COLLECTOR_ADDR",
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-    "DISABLE_PROFILER",
-    "ENABLE_PROFILER",
-    "SHOPPING_ASSISTANT_SERVICE_ADDR",
-})
+_SKIP_ENV_NAMES = frozenset(
+    {
+        "PORT",
+        "LISTEN_ADDR",
+        "BIND_ADDR",
+        "JAEGER_SERVICE_ADDR",
+        "COLLECTOR_ADDR",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "DISABLE_PROFILER",
+        "ENABLE_PROFILER",
+        "SHOPPING_ASSISTANT_SERVICE_ADDR",
+    }
+)
 
 # Protocol inference for well-known technologies
 _TCP_PREFIXES = ("redis", "memcached")
@@ -103,13 +105,15 @@ def _extract_dependencies_from_deployment(
             protocol = _infer_protocol(target_service, port)
             description = _env_name_to_description(env_name)
 
-            routes.append((
-                source_name,
-                target_service,
-                target_host,
-                protocol,
-                description,
-            ))
+            routes.append(
+                (
+                    source_name,
+                    target_service,
+                    target_host,
+                    protocol,
+                    description,
+                )
+            )
 
     return routes
 

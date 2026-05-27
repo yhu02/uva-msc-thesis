@@ -56,9 +56,14 @@ packages = ["chaosprobe"]
 [tool.black]
 line-length = 100
 target-version = ["py39", "py310", "py311", "py312"]
+# `results/` holds runtime experiment outputs and ad-hoc re-aggregation
+# scripts dropped into per-run directories; they are not part of the
+# package source and must not be subjected to formatting.
+extend-exclude = "/(results)/"
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["results"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

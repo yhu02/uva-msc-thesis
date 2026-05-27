@@ -149,11 +149,16 @@ class RustProbeBuilder:
 
         cmd = [
             "rustc",
-            "--target", MUSL_TARGET,
-            "--edition", "2021",
-            "-C", "opt-level=3",
-            "-C", "target-feature=+crt-static",
-            "-o", out_binary,
+            "--target",
+            MUSL_TARGET,
+            "--edition",
+            "2021",
+            "-C",
+            "opt-level=3",
+            "-C",
+            "target-feature=+crt-static",
+            "-o",
+            out_binary,
             rs_path,
         ]
         _run_cmd(cmd, f"Failed to compile {rs_path}")
@@ -163,10 +168,13 @@ class RustProbeBuilder:
         _require_tool("cargo", "Cargo not found. Install via https://rustup.rs")
 
         cmd = [
-            "cargo", "build",
+            "cargo",
+            "build",
             "--release",
-            "--target", MUSL_TARGET,
-            "--manifest-path", str(Path(project_path) / "Cargo.toml"),
+            "--target",
+            MUSL_TARGET,
+            "--manifest-path",
+            str(Path(project_path) / "Cargo.toml"),
         ]
         _run_cmd(cmd, f"Failed to build Cargo project at {project_path}")
 
@@ -228,9 +236,12 @@ class RustProbeBuilder:
 
             # Build
             cmd = [
-                "docker", "build",
-                "-t", image_tag,
-                "-t", f"{image_name}:latest",
+                "docker",
+                "build",
+                "-t",
+                image_tag,
+                "-t",
+                f"{image_name}:latest",
                 str(build_dir),
             ]
             _run_cmd(cmd, f"Failed to build Docker image for probe '{probe_name}'")
@@ -258,7 +269,10 @@ class RustProbeBuilder:
             except ProbeBuilderError:
                 if attempt < retries - 1:
                     wait = 5 * (attempt + 1)
-                    print(f"    Push failed (attempt {attempt + 1}/{retries}), retrying in {wait}s...")
+                    print(
+                        f"    Push failed (attempt {attempt + 1}/{retries}), "
+                        f"retrying in {wait}s..."
+                    )
                     _time.sleep(wait)
                 else:
                     raise
@@ -308,9 +322,7 @@ class RustProbeBuilder:
         if visibility == "public":
             return
 
-        settings_url = (
-            f"https://github.com/users/{owner}/packages/container/{encoded}/settings"
-        )
+        settings_url = f"https://github.com/users/{owner}/packages/container/{encoded}/settings"
         print(f"    Set visibility to Public: {settings_url}")
 
     def _registry_host(self) -> str:
@@ -525,15 +537,25 @@ def ensure_image_pull_secret(
     # Create or replace the docker-registry secret
     _run_cmd(
         [
-            "kubectl", "delete", "secret", secret_name,
-            "-n", namespace, "--ignore-not-found",
+            "kubectl",
+            "delete",
+            "secret",
+            secret_name,
+            "-n",
+            namespace,
+            "--ignore-not-found",
         ],
         "Failed to delete old imagePullSecret",
     )
     _run_cmd(
         [
-            "kubectl", "create", "secret", "docker-registry", secret_name,
-            "-n", namespace,
+            "kubectl",
+            "create",
+            "secret",
+            "docker-registry",
+            secret_name,
+            "-n",
+            namespace,
             f"--docker-server={server}",
             f"--docker-username={user}",
             f"--docker-password={password}",
@@ -550,9 +572,14 @@ def ensure_image_pull_secret(
         try:
             _run_cmd(
                 [
-                    "kubectl", "patch", "serviceaccount", sa,
-                    "-n", namespace,
-                    "-p", patch_json,
+                    "kubectl",
+                    "patch",
+                    "serviceaccount",
+                    sa,
+                    "-n",
+                    namespace,
+                    "-p",
+                    patch_json,
                 ],
                 f"Failed to patch SA {sa}",
             )
@@ -571,11 +598,7 @@ def extract_cmdprobe_images(experiments: List[Dict[str, Any]]) -> List[str]:
             for probe in exp.get("spec", {}).get("probe", []):
                 if probe.get("type") != "cmdProbe":
                     continue
-                image = (
-                    probe.get("cmdProbe/inputs", {})
-                    .get("source", {})
-                    .get("image", "")
-                )
+                image = probe.get("cmdProbe/inputs", {}).get("source", {}).get("image", "")
                 if image and image != "auto" and image not in seen:
                     seen.append(image)
     return seen

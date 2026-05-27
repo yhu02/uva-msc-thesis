@@ -526,9 +526,7 @@ class TestUtilities:
     def test_run_cmd_failure(self, mock_run):
         import subprocess
 
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "cmd", stderr="compilation error"
-        )
+        mock_run.side_effect = subprocess.CalledProcessError(1, "cmd", stderr="compilation error")
         with pytest.raises(ProbeBuilderError, match="compilation error"):
             _run_cmd(["bad-cmd"], "build failed")
 

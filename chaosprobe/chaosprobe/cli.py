@@ -81,9 +81,7 @@ def status(json_output: bool):
         f"{'Installed' if prereqs['chaoscenter_installed'] else 'Not installed'}"
     )
     if prereqs["chaoscenter_installed"]:
-        click.echo(
-            f"  ChaosCenter ready: {'Yes' if prereqs['chaoscenter_ready'] else 'No'}"
-        )
+        click.echo(f"  ChaosCenter ready: {'Yes' if prereqs['chaoscenter_ready'] else 'No'}")
         url = setup.get_dashboard_url()
         if url:
             click.echo(f"  Dashboard URL: {url}")
@@ -94,18 +92,25 @@ def status(json_output: bool):
         if not prereqs["cluster_access"]:
             click.echo("\nNo cluster configured. Options:")
             click.echo("  Option A — Local libvirt/Vagrant cluster:")
-            click.echo("    1. chaosprobe cluster vagrant init"
-                       "        (first time only — generates Vagrantfile)")
-            click.echo("    2. chaosprobe cluster vagrant setup"
-                       "       (first time only — installs libvirt/KVM)")
+            click.echo(
+                "    1. chaosprobe cluster vagrant init"
+                "        (first time only — generates Vagrantfile)"
+            )
+            click.echo(
+                "    2. chaosprobe cluster vagrant setup"
+                "       (first time only — installs libvirt/KVM)"
+            )
             click.echo("    3. chaosprobe cluster vagrant up          (start VMs)")
-            click.echo("    4. chaosprobe cluster vagrant deploy"
-                       "      (install Kubernetes via Kubespray)")
+            click.echo(
+                "    4. chaosprobe cluster vagrant deploy"
+                "      (install Kubernetes via Kubespray)"
+            )
             click.echo("    5. chaosprobe cluster vagrant kubeconfig  (fetch kubeconfig)")
-            click.echo("    6. chaosprobe init"
-                       "                        (install ChaosProbe infrastructure)")
-            click.echo("    7. chaosprobe run"
-                       "                         (run experiments)")
+            click.echo(
+                "    6. chaosprobe init"
+                "                        (install ChaosProbe infrastructure)"
+            )
+            click.echo("    7. chaosprobe run" "                         (run experiments)")
             click.echo("  Option B — Bare metal/cloud VMs with Kubespray:")
             click.echo("    1. chaosprobe cluster create")
             click.echo("    2. chaosprobe init")
@@ -252,8 +257,6 @@ def cleanup(namespace: str, cleanup_all: bool):
     else:
         provisioner.cleanup()
         click.echo("Resources cleaned up successfully")
-
-
 
 
 # ─────────────────────────────────────────────────────────────

@@ -63,9 +63,7 @@ def _assign_phases(
         buckets[bk]["anomaly_label"] = anomaly_type
 
 
-def _merge_latency(
-    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
-) -> None:
+def _merge_latency(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn) -> None:
     for entry in metrics.get("latency", {}).get("timeSeries", []):
         ts = entry.get("timestamp")
         if ts is None:
@@ -80,9 +78,7 @@ def _merge_latency(
             buckets[bk][f"latency:{route}:error"] = 1 if data.get("status") != "ok" else 0
 
 
-def _merge_resources(
-    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
-) -> None:
+def _merge_resources(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn) -> None:
     resources = metrics.get("resources", {})
     if not resources.get("available"):
         return
@@ -104,9 +100,7 @@ def _merge_resources(
         buckets[bk]["pod_count"] = agg.get("podCount")
 
 
-def _merge_redis(
-    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
-) -> None:
+def _merge_redis(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn) -> None:
     for entry in metrics.get("redis", {}).get("timeSeries", []):
         ts = entry.get("timestamp")
         if ts is None:
@@ -119,9 +113,7 @@ def _merge_redis(
             buckets[bk][f"redis:{op}:latency_ms"] = data.get("latency_ms")
 
 
-def _merge_disk(
-    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
-) -> None:
+def _merge_disk(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn) -> None:
     for entry in metrics.get("disk", {}).get("timeSeries", []):
         ts = entry.get("timestamp")
         if ts is None:
@@ -134,9 +126,7 @@ def _merge_disk(
             buckets[bk][f"disk:{op}:bytes_per_s"] = data.get("bytes_per_second")
 
 
-def _merge_prometheus(
-    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
-) -> None:
+def _merge_prometheus(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn) -> None:
     prometheus = metrics.get("prometheus", {})
     if not prometheus.get("available"):
         return
@@ -161,9 +151,7 @@ def _merge_prometheus(
                 buckets[bk][f"prom:{metric_name}:avg"] = round(total / count, 4)
 
 
-def _merge_recovery(
-    metrics: Dict[str, Any], buckets: _BucketMap, bucket_keys: List[float]
-) -> None:
+def _merge_recovery(metrics: Dict[str, Any], buckets: _BucketMap, bucket_keys: List[float]) -> None:
     for cycle in metrics.get("recovery", {}).get("recoveryEvents", []):
         del_time = cycle.get("deletionTime")
         ready_time = cycle.get("readyTime")
@@ -176,9 +164,7 @@ def _merge_recovery(
                     buckets[bk]["recovery_total_ms"] = cycle.get("totalRecovery_ms")
 
 
-def _merge_events(
-    metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn
-) -> None:
+def _merge_events(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn) -> None:
     for event in metrics.get("eventTimeline", []):
         ts = event.get("time")
         if ts is None:

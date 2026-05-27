@@ -9,8 +9,10 @@ from chaosprobe.metrics.collector import MetricsCollector
 
 def _make_collector():
     """Create a MetricsCollector without hitting the real K8s API."""
-    with patch("chaosprobe.metrics.collector.ensure_k8s_config"), \
-         patch("chaosprobe.metrics.collector.client") as mock_client:
+    with (
+        patch("chaosprobe.metrics.collector.ensure_k8s_config"),
+        patch("chaosprobe.metrics.collector.client") as mock_client,
+    ):
         mock_core = MagicMock()
         mock_apps = MagicMock()
         mock_client.CoreV1Api.return_value = mock_core

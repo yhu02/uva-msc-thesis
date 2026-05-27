@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Shared pod helper functions
 # ---------------------------------------------------------------------------
 
+
 def find_ready_pod(core_api: Any, namespace: str, service_name: str) -> Optional[str]:
     """Find a ready pod for a given service by label ``app=<service_name>``."""
     try:
@@ -115,10 +116,7 @@ def find_probe_pod(
     for pod in pods.items:
         if not pod.status.conditions:
             continue
-        is_ready = any(
-            c.type == "Ready" and c.status == "True"
-            for c in pod.status.conditions
-        )
+        is_ready = any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions)
         if not is_ready:
             continue
         name = pod.metadata.name
@@ -182,10 +180,7 @@ def find_probe_pods_per_node(
     for pod in pods.items:
         if not pod.status.conditions:
             continue
-        is_ready = any(
-            c.type == "Ready" and c.status == "True"
-            for c in pod.status.conditions
-        )
+        is_ready = any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions)
         if not is_ready:
             continue
         name = pod.metadata.name
@@ -235,10 +230,7 @@ def find_all_probe_pods_with_node(
     for pod in pods.items:
         if not pod.status.conditions:
             continue
-        is_ready = any(
-            c.type == "Ready" and c.status == "True"
-            for c in pod.status.conditions
-        )
+        is_ready = any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions)
         if not is_ready:
             continue
         name = pod.metadata.name
@@ -287,10 +279,7 @@ def find_all_probe_pods(
     for pod in pods.items:
         if not pod.status.conditions:
             continue
-        is_ready = any(
-            c.type == "Ready" and c.status == "True"
-            for c in pod.status.conditions
-        )
+        is_ready = any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions)
         if not is_ready:
             continue
         name = pod.metadata.name
@@ -505,7 +494,8 @@ class ContinuousProberBase:
                 tick_stddevs = stddev_by_op.get(op, [])
                 if tick_stddevs:
                     row["meanCrossNodeStddevOpsPerSecond"] = round(
-                        statistics.mean(tick_stddevs), 2,
+                        statistics.mean(tick_stddevs),
+                        2,
                     )
                 tick_maxes = tick_max_by_op.get(op, [])
                 if tick_maxes:

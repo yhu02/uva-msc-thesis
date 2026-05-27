@@ -78,9 +78,7 @@ def build_workflow_manifest(
                 "env": [
                     e_var
                     for exp in experiments
-                    for e_var in exp.get("spec", {})
-                    .get("components", {})
-                    .get("env", [])
+                    for e_var in exp.get("spec", {}).get("components", {}).get("env", [])
                 ],
                 "labels": {"name": fault_name},
             },

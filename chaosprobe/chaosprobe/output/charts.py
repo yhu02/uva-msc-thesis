@@ -11,9 +11,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.ticker as ticker
+
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
@@ -22,6 +24,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
+
 
 def strategy_colors(names: List[str]) -> List[str]:
     """Return consistent colors for strategy names."""
@@ -45,8 +48,6 @@ def strategy_colors(names: List[str]) -> List[str]:
             colors.append(default_colors[idx % len(default_colors)])
             idx += 1
     return colors
-
-
 
 
 def _extract_metric(
@@ -97,6 +98,7 @@ def _extract_metric(
 # ---------------------------------------------------------------------------
 # Core charts (resilience + recovery)
 # ---------------------------------------------------------------------------
+
 
 def chart_resilience_scores(
     strategies: Dict[str, Any],
@@ -244,17 +246,16 @@ def chart_recovery_times(
     return filepath
 
 
-
 # ---------------------------------------------------------------------------
 # Latency charts + extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_latency_data(
     raw_strategies: Dict[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
     """Extract latency phase data from raw strategy results."""
     return _extract_metric(raw_strategies, "latency")
-
 
 
 def chart_latency_by_strategy(
@@ -323,7 +324,6 @@ def chart_latency_by_strategy(
     fig.savefig(filepath, dpi=150)
     plt.close(fig)
     return filepath
-
 
 
 def chart_latency_degradation(
@@ -401,10 +401,10 @@ def chart_latency_degradation(
     return filepath
 
 
-
 # ---------------------------------------------------------------------------
 # Throughput charts + extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_throughput_data(
     raw_strategies: Dict[str, Any],
@@ -453,7 +453,6 @@ def extract_throughput_data(
             result[name] = merged
 
     return result
-
 
 
 def chart_throughput_by_strategy(
@@ -526,7 +525,6 @@ def chart_throughput_by_strategy(
     fig.savefig(filepath, dpi=150)
     plt.close(fig)
     return filepath
-
 
 
 def chart_throughput_degradation(
@@ -615,17 +613,16 @@ def chart_throughput_degradation(
     return filepath
 
 
-
 # ---------------------------------------------------------------------------
 # Resource charts + extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_resource_data(
     raw_strategies: Dict[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
     """Extract resource utilization data from raw strategy results."""
     return _extract_metric(raw_strategies, "resources", require_available=True)
-
 
 
 def chart_resource_utilization(
@@ -650,23 +647,11 @@ def chart_resource_utilization(
             continue
 
         elapsed = [e["elapsed_s"] for e in series]
-        cpu_pct = [
-            e.get("usedNode", {}).get("cpu_percent", 0)
-            for e in series
-        ]
-        mem_pct = [
-            e.get("usedNode", {}).get("memory_percent", 0)
-            for e in series
-        ]
+        cpu_pct = [e.get("usedNode", {}).get("cpu_percent", 0) for e in series]
+        mem_pct = [e.get("usedNode", {}).get("memory_percent", 0) for e in series]
         # Peak-node CPU/memory per tick (hottest individual node)
-        peak_cpu = [
-            e.get("usedNodeStats", {}).get("maxCpu_percent", 0)
-            for e in series
-        ]
-        peak_mem = [
-            e.get("usedNodeStats", {}).get("maxMemory_percent", 0)
-            for e in series
-        ]
+        peak_cpu = [e.get("usedNodeStats", {}).get("maxCpu_percent", 0) for e in series]
+        peak_mem = [e.get("usedNodeStats", {}).get("maxMemory_percent", 0) for e in series]
 
         ax_cpu.plot(
             elapsed,
@@ -722,7 +707,6 @@ def chart_resource_utilization(
     return filepath
 
 
-
 def chart_resource_by_phase(
     resource_by_strategy: Dict[str, Dict[str, Any]],
     output_path: Path,
@@ -766,9 +750,15 @@ def chart_resource_by_phase(
         # Peak-node marker on top of each bar
         for xi, peak in zip(x, peak_cpu_vals):
             if peak > 0:
-                ax_cpu.plot(xi + width / 2, peak, "v", color=colors[i],
-                            markersize=5, markeredgecolor="black",
-                            markeredgewidth=0.5)
+                ax_cpu.plot(
+                    xi + width / 2,
+                    peak,
+                    "v",
+                    color=colors[i],
+                    markersize=5,
+                    markeredgecolor="black",
+                    markeredgewidth=0.5,
+                )
 
         ax_mem.bar(
             x,
@@ -879,17 +869,16 @@ def chart_resource_per_node(
     return filepath
 
 
-
 # ---------------------------------------------------------------------------
 # Prometheus charts + extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_prometheus_data(
     raw_strategies: Dict[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
     """Extract Prometheus metrics data from raw strategy results."""
     return _extract_metric(raw_strategies, "prometheus", require_available=True)
-
 
 
 def chart_prometheus_by_phase(
@@ -967,10 +956,10 @@ def chart_prometheus_by_phase(
     return filepath
 
 
-
 # ---------------------------------------------------------------------------
 # Strategy comparison heatmap — all thesis dimensions in one chart
 # ---------------------------------------------------------------------------
+
 
 def chart_strategy_comparison_heatmap(
     strategies: Dict[str, Any],
@@ -1005,7 +994,7 @@ def chart_strategy_comparison_heatmap(
     for name in strat_names:
         row = [
             strategies[name].get("avgResilienceScore", 0),  # higher = better
-            strategies[name].get("avgMeanRecovery_ms"),      # lower = better
+            strategies[name].get("avgMeanRecovery_ms"),  # lower = better
             None,  # latency degradation %                    (lower = better)
             None,  # CPU during chaos                         (lower = better)
             None,  # throughput impact %                      (lower = better)
@@ -1071,7 +1060,7 @@ def chart_strategy_comparison_heatmap(
         if not col_vals or max(col_vals) == min(col_vals):
             continue
         lo, hi = min(col_vals), max(col_vals)
-        higher_is_better = (orig_c == 0)  # only resilience score
+        higher_is_better = orig_c == 0  # only resilience score
         for r in range(n_rows):
             v = data[r][c_idx]
             if v is None:
@@ -1087,9 +1076,8 @@ def chart_strategy_comparison_heatmap(
 
     # Green = good, Red = bad
     from matplotlib.colors import LinearSegmentedColormap
-    thesis_cmap = LinearSegmentedColormap.from_list(
-        "thesis", ["#E74C3C", "#F39C12", "#2ECC71"]
-    )
+
+    thesis_cmap = LinearSegmentedColormap.from_list("thesis", ["#E74C3C", "#F39C12", "#2ECC71"])
 
     im = ax.imshow(norm_arr, cmap=thesis_cmap, aspect="auto", vmin=0, vmax=1)
 
@@ -1112,18 +1100,26 @@ def chart_strategy_comparison_heatmap(
                 txt = f"{v:+.0f}%"
             else:
                 txt = f"{v:.1f}%"
-            ax.text(c, r, txt, ha="center", va="center",
-                    fontsize=9, fontweight="bold",
-                    color="white" if norm[r][c] < 0.35 or norm[r][c] > 0.65 else "black")
+            ax.text(
+                c,
+                r,
+                txt,
+                ha="center",
+                va="center",
+                fontsize=9,
+                fontweight="bold",
+                color="white" if norm[r][c] < 0.35 or norm[r][c] > 0.65 else "black",
+            )
 
-    ax.set_title("Strategy Comparison — All Thesis Dimensions\n"
-                 "(green = better, red = worse)", fontsize=13, pad=15)
-    fig.colorbar(im, ax=ax, label="Normalised Score (0 = worst, 1 = best)",
-                 fraction=0.03, pad=0.04)
+    ax.set_title(
+        "Strategy Comparison — All Thesis Dimensions\n" "(green = better, red = worse)",
+        fontsize=13,
+        pad=15,
+    )
+    fig.colorbar(im, ax=ax, label="Normalised Score (0 = worst, 1 = best)", fraction=0.03, pad=0.04)
 
     plt.tight_layout()
     filepath = str(output_path / "strategy_comparison_heatmap.png")
     fig.savefig(filepath, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return filepath
-

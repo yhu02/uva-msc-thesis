@@ -27,6 +27,7 @@ LOAD_TARGET_LOCAL_PORT = 8089
 # 1.  Pre-flight sub-steps
 # ---------------------------------------------------------------------------
 
+
 def _check_nodes(core_api: Any) -> None:
     """Verify all cluster nodes are Ready; abort if any are not."""
     nodes = core_api.list_node()
@@ -51,16 +52,20 @@ def _clean_stale_resources(namespace: str) -> None:
     # ChaosEngines
     try:
         engines = custom_api.list_namespaced_custom_object(
-            group="litmuschaos.io", version="v1alpha1",
-            namespace=namespace, plural="chaosengines",
+            group="litmuschaos.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="chaosengines",
         )
         items = engines.get("items", [])
         if items:
             click.echo(f"  Cleaning up {len(items)} stale ChaosEngine(s)...")
             for eng in items:
                 custom_api.delete_namespaced_custom_object(
-                    group="litmuschaos.io", version="v1alpha1",
-                    namespace=namespace, plural="chaosengines",
+                    group="litmuschaos.io",
+                    version="v1alpha1",
+                    namespace=namespace,
+                    plural="chaosengines",
                     name=eng["metadata"]["name"],
                 )
             click.echo("  ChaosEngines: cleaned")
@@ -72,16 +77,20 @@ def _clean_stale_resources(namespace: str) -> None:
     # ChaosResults
     try:
         results = custom_api.list_namespaced_custom_object(
-            group="litmuschaos.io", version="v1alpha1",
-            namespace=namespace, plural="chaosresults",
+            group="litmuschaos.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="chaosresults",
         )
         items = results.get("items", [])
         if items:
             click.echo(f"  Cleaning up {len(items)} stale ChaosResult(s)...")
             for res in items:
                 custom_api.delete_namespaced_custom_object(
-                    group="litmuschaos.io", version="v1alpha1",
-                    namespace=namespace, plural="chaosresults",
+                    group="litmuschaos.io",
+                    version="v1alpha1",
+                    namespace=namespace,
+                    plural="chaosresults",
                     name=res["metadata"]["name"],
                 )
             click.echo("  ChaosResults: cleaned")
@@ -92,14 +101,16 @@ def _clean_stale_resources(namespace: str) -> None:
     try:
         batch_api = k8s_client_mod.BatchV1Api()
         jobs = batch_api.list_namespaced_job(
-            namespace, label_selector="app.kubernetes.io/part-of=litmus",
+            namespace,
+            label_selector="app.kubernetes.io/part-of=litmus",
         )
         for job in jobs.items:
             succeeded = getattr(job.status, "succeeded", None) if job.status else None
             failed = getattr(job.status, "failed", None) if job.status else None
             if succeeded or failed:
                 batch_api.delete_namespaced_job(
-                    name=job.metadata.name, namespace=namespace,
+                    name=job.metadata.name,
+                    namespace=namespace,
                     propagation_policy="Background",
                 )
     except Exception as e:
@@ -109,7 +120,8 @@ def _clean_stale_resources(namespace: str) -> None:
     try:
         core_api = k8s_client_mod.CoreV1Api()
         wf_pods = core_api.list_namespaced_pod(
-            namespace, label_selector="workflows.argoproj.io/workflow",
+            namespace,
+            label_selector="workflows.argoproj.io/workflow",
         )
         stale = [p for p in wf_pods.items if p.status.phase in ("Failed", "Error", "Succeeded")]
         if stale:
@@ -142,7 +154,8 @@ def _restart_unhealthy_infra(namespace: str) -> None:
                 ),
             )
             needs_restart = any(
-                cs.state and cs.state.waiting
+                cs.state
+                and cs.state.waiting
                 and cs.state.waiting.reason in ("CrashLoopBackOff", "Error", "CreateContainerError")
                 for pod in pods.items
                 for cs in (pod.status.container_statuses or [])
@@ -150,17 +163,29 @@ def _restart_unhealthy_infra(namespace: str) -> None:
             if needs_restart:
                 click.echo(f"  Restarting unhealthy {dep_name}...")
                 apps_api.patch_namespaced_deployment(
-                    dep_name, namespace, {
-                        "spec": {"template": {"metadata": {"annotations": {
-                            "chaosprobe.io/restartedAt": datetime.now(timezone.utc).isoformat(),
-                        }}}},
+                    dep_name,
+                    namespace,
+                    {
+                        "spec": {
+                            "template": {
+                                "metadata": {
+                                    "annotations": {
+                                        "chaosprobe.io/restartedAt": datetime.now(
+                                            timezone.utc
+                                        ).isoformat(),
+                                    }
+                                }
+                            }
+                        },
                     },
                 )
                 for _ in range(24):
                     time.sleep(5)
                     try:
                         dep = apps_api.read_namespaced_deployment(dep_name, namespace)
-                        if (dep.status.ready_replicas or 0) >= dep.spec.replicas:
+                        desired = dep.spec.replicas if dep.spec.replicas is not None else 1
+                        ready = (dep.status.ready_replicas or 0) if dep.status else 0
+                        if ready >= desired:
                             click.echo(f"  {dep_name}: recovered")
                             break
                     except Exception:
@@ -280,7 +305,8 @@ def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
         setup = LitmusSetup(skip_k8s_init=True)
         setup._init_k8s_client()
         cc_result = setup.ensure_chaoscenter_configured(
-            namespace=namespace, base_host="http://localhost",
+            namespace=namespace,
+            base_host="http://localhost",
         )
         click.echo("  ChaosCenter: auto-configured for experiment visibility")
         return {
@@ -303,7 +329,9 @@ def _check_metrics_server() -> None:
 
     try:
         k8s_client_mod.CustomObjectsApi().list_cluster_custom_object(
-            group="metrics.k8s.io", version="v1beta1", plural="nodes",
+            group="metrics.k8s.io",
+            version="v1beta1",
+            plural="nodes",
         )
         click.echo("  metrics-srv: API available")
     except Exception:
@@ -324,8 +352,11 @@ def _setup_load_target(
     if load_profile:
         if not pf.check_port("localhost", local_port):
             pf.ensure(
-                load_service, namespace,
-                [f"{local_port}:80"], "localhost", local_port,
+                load_service,
+                namespace,
+                [f"{local_port}:80"],
+                "localhost",
+                local_port,
             )
         target_url = f"http://localhost:{local_port}"
         if pf.check_port("localhost", local_port):
@@ -343,6 +374,7 @@ def _setup_load_target(
 # ---------------------------------------------------------------------------
 # 1.  Pre-flight checks — orchestrator
 # ---------------------------------------------------------------------------
+
 
 def run_preflight_checks(
     namespace: str,
@@ -383,7 +415,10 @@ def run_preflight_checks(
     click.echo("  Deployments: all ready")
 
     target_url, frontend_pf_port = _setup_load_target(
-        namespace, load_profile, target_url, load_service=load_service,
+        namespace,
+        load_profile,
+        target_url,
+        load_service=load_service,
     )
 
     # Start background monitor to auto-restart dead port-forward processes
@@ -400,6 +435,7 @@ def run_preflight_checks(
 # ---------------------------------------------------------------------------
 # 2.  Neo4j graph store initialisation
 # ---------------------------------------------------------------------------
+
 
 def init_graph_store(
     neo4j_uri: str,
@@ -476,6 +512,7 @@ from chaosprobe.orchestrator.probers import (  # noqa: E402, F401
 # 4.  Final summary output
 # ---------------------------------------------------------------------------
 
+
 def _regenerate_presentation() -> None:
     """Re-run create_presentation.py so the .pptx reflects the latest charts."""
     import subprocess
@@ -543,9 +580,7 @@ def _print_probe_failure_analysis(strategies: Dict[str, Any]) -> None:
         if not tally:
             continue
         failing_probes = [
-            (name, counts)
-            for name, counts in tally.items()
-            if counts.get("Fail", 0) > 0
+            (name, counts) for name, counts in tally.items() if counts.get("Fail", 0) > 0
         ]
         if not failing_probes:
             click.echo(f"    {strat_name:<16s} all probes passed in all iterations")
@@ -578,9 +613,7 @@ def write_run_results(
 
     # Build comparison table
     iterations = overall_results.get("iterations", 1)
-    comparison_table = _build_comparison_table_impl(
-        overall_results["strategies"], iterations
-    )
+    comparison_table = _build_comparison_table_impl(overall_results["strategies"], iterations)
     overall_results["comparison"] = comparison_table
 
     # Remediation log
@@ -611,14 +644,10 @@ def write_run_results(
         click.echo(f"  {'─' * 90}")
         for row in comparison_table:
             avg_r = (
-                f"{row['avgRecovery_ms']:.0f}ms"
-                if row.get("avgRecovery_ms") is not None
-                else "n/a"
+                f"{row['avgRecovery_ms']:.0f}ms" if row.get("avgRecovery_ms") is not None else "n/a"
             )
             max_r = (
-                f"{row['maxRecovery_ms']:.0f}ms"
-                if row.get("maxRecovery_ms") is not None
-                else "n/a"
+                f"{row['maxRecovery_ms']:.0f}ms" if row.get("maxRecovery_ms") is not None else "n/a"
             )
             stddev = row.get("stddevScore", 0.0)
             score_str = f"{row['resilienceScore']:.1f} +/- {stddev:.1f}"
@@ -728,15 +757,15 @@ def _build_comparison_table_impl(
                     "meanResilienceScore_healthyOnly",
                 )
                 row["resilienceScore"] = (
-                    healthy_mean if healthy_mean is not None
+                    healthy_mean
+                    if healthy_mean is not None
                     else agg.get("meanResilienceScore", 0.0)
                 )
                 healthy_sd = agg.get(
                     "stddevResilienceScore_healthyOnly",
                 )
                 row["stddevScore"] = (
-                    healthy_sd if healthy_sd is not None
-                    else agg.get("stddevResilienceScore", 0.0)
+                    healthy_sd if healthy_sd is not None else agg.get("stddevResilienceScore", 0.0)
                 )
             else:
                 row["resilienceScore"] = agg.get("meanResilienceScore", 0.0)
@@ -764,6 +793,7 @@ def _build_comparison_table_impl(
 # ---------------------------------------------------------------------------
 # 6.  Multi-iteration aggregation
 # ---------------------------------------------------------------------------
+
 
 def aggregate_iterations(
     iteration_results: List[Dict[str, Any]],
@@ -800,17 +830,18 @@ def aggregate_iterations(
     healthy_iters = [ir for ir in valid_iters if ir.get("preChaosHealthy", True)]
     tainted_count = len(valid_iters) - len(healthy_iters)
     all_tainted = len(healthy_iters) == 0 and tainted_count > 0
-    healthy_scores = [ir["resilienceScore"] for ir in healthy_iters] if healthy_iters else valid_scores
-
-    healthy_stddev = (
-        round(statistics.stdev(healthy_scores), 1) if len(healthy_scores) > 1 else 0.0
+    healthy_scores = (
+        [ir["resilienceScore"] for ir in healthy_iters] if healthy_iters else valid_scores
     )
+
+    healthy_stddev = round(statistics.stdev(healthy_scores), 1) if len(healthy_scores) > 1 else 0.0
+    valid_stddev = round(statistics.stdev(valid_scores), 1) if len(valid_scores) > 1 else 0.0
     agg: Dict[str, Any] = {
         "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
         "passRate": round(pass_count / len(verdicts), 2),
         "meanResilienceScore": round(statistics.mean(valid_scores), 1),
         "meanResilienceScore_healthyOnly": round(statistics.mean(healthy_scores), 1),
-        "stddevResilienceScore": round(statistics.stdev(valid_scores), 1) if len(valid_scores) > 1 else 0.0,
+        "stddevResilienceScore": valid_stddev,
         "stddevResilienceScore_healthyOnly": healthy_stddev,
         "minResilienceScore": min(valid_scores),
         "maxResilienceScore": max(valid_scores),
@@ -861,9 +892,7 @@ def aggregate_iterations(
 
         agg["meanRecoveryTime_ms"] = round(statistics.mean(all_recovery_times), 1)
         agg["stddevRecoveryTime_ms"] = (
-            round(statistics.stdev(all_recovery_times), 1)
-            if len(all_recovery_times) > 1
-            else 0.0
+            round(statistics.stdev(all_recovery_times), 1) if len(all_recovery_times) > 1 else 0.0
         )
         agg["medianRecoveryTime_ms"] = round(statistics.median(all_recovery_times), 1)
         agg["maxRecoveryTime_ms"] = max(all_max) if all_max else None
@@ -872,9 +901,7 @@ def aggregate_iterations(
         # averaging them gives a representative cross-iteration p95.
         # (Taking max() would report the worst-case outlier, not a
         # proper aggregate percentile.)
-        agg["p95RecoveryTime_ms"] = (
-            round(statistics.mean(all_p95), 1) if all_p95 else None
-        )
+        agg["p95RecoveryTime_ms"] = round(statistics.mean(all_p95), 1) if all_p95 else None
     else:
         agg["meanRecoveryTime_ms"] = None
         agg["stddevRecoveryTime_ms"] = None

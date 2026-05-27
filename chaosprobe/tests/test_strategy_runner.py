@@ -1,7 +1,5 @@
 """Unit tests for strategy_runner helper functions."""
 
-import pytest
-
 from chaosprobe.orchestrator.strategy_runner import (
     _compute_effective_timeout,
     _extract_chaos_duration,
@@ -49,21 +47,25 @@ class TestParseProbeTimeout:
 class TestExtractChaosDuration:
     def test_extracts_from_env(self):
         scenario = {
-            "experiments": [{
-                "spec": {
+            "experiments": [
+                {
                     "spec": {
-                        "experiments": [{
-                            "spec": {
-                                "components": {
-                                    "env": [
-                                        {"name": "TOTAL_CHAOS_DURATION", "value": "120"},
-                                    ]
+                        "spec": {
+                            "experiments": [
+                                {
+                                    "spec": {
+                                        "components": {
+                                            "env": [
+                                                {"name": "TOTAL_CHAOS_DURATION", "value": "120"},
+                                            ]
+                                        }
+                                    }
                                 }
-                            }
-                        }]
+                            ]
+                        }
                     }
                 }
-            }]
+            ]
         }
         assert _extract_chaos_duration(scenario) == 120
 
@@ -77,22 +79,34 @@ class TestExtractChaosDuration:
                 {
                     "spec": {
                         "spec": {
-                            "experiments": [{
-                                "spec": {"components": {"env": [
-                                    {"name": "TOTAL_CHAOS_DURATION", "value": "30"},
-                                ]}}
-                            }]
+                            "experiments": [
+                                {
+                                    "spec": {
+                                        "components": {
+                                            "env": [
+                                                {"name": "TOTAL_CHAOS_DURATION", "value": "30"},
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 },
                 {
                     "spec": {
                         "spec": {
-                            "experiments": [{
-                                "spec": {"components": {"env": [
-                                    {"name": "TOTAL_CHAOS_DURATION", "value": "90"},
-                                ]}}
-                            }]
+                            "experiments": [
+                                {
+                                    "spec": {
+                                        "components": {
+                                            "env": [
+                                                {"name": "TOTAL_CHAOS_DURATION", "value": "90"},
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 },
@@ -110,27 +124,33 @@ class TestComputeEffectiveTimeout:
 
     def test_computes_minimum_with_probes(self):
         scenario = {
-            "experiments": [{
-                "spec": {
+            "experiments": [
+                {
                     "spec": {
-                        "experiments": [{
-                            "spec": {
-                                "components": {
-                                    "env": [
-                                        {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
-                                    ]
-                                },
-                                "probe": [{
-                                    "runProperties": {
-                                        "probeTimeout": "10s",
-                                        "retry": "3",
+                        "spec": {
+                            "experiments": [
+                                {
+                                    "spec": {
+                                        "components": {
+                                            "env": [
+                                                {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
+                                            ]
+                                        },
+                                        "probe": [
+                                            {
+                                                "runProperties": {
+                                                    "probeTimeout": "10s",
+                                                    "retry": "3",
+                                                }
+                                            }
+                                        ],
                                     }
-                                }]
-                            }
-                        }]
+                                }
+                            ]
+                        }
                     }
                 }
-            }]
+            ]
         }
         # chaos=60, probes: 10*(3+1)=40, min=60+2*40+120=260
         assert _compute_effective_timeout(scenario, 100) == 260
@@ -138,27 +158,33 @@ class TestComputeEffectiveTimeout:
     def test_handles_malformed_retry(self):
         """Non-integer retry value should not crash — should default to 0."""
         scenario = {
-            "experiments": [{
-                "spec": {
+            "experiments": [
+                {
                     "spec": {
-                        "experiments": [{
-                            "spec": {
-                                "components": {
-                                    "env": [
-                                        {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
-                                    ]
-                                },
-                                "probe": [{
-                                    "runProperties": {
-                                        "probeTimeout": "10s",
-                                        "retry": "invalid",
+                        "spec": {
+                            "experiments": [
+                                {
+                                    "spec": {
+                                        "components": {
+                                            "env": [
+                                                {"name": "TOTAL_CHAOS_DURATION", "value": "60"},
+                                            ]
+                                        },
+                                        "probe": [
+                                            {
+                                                "runProperties": {
+                                                    "probeTimeout": "10s",
+                                                    "retry": "invalid",
+                                                }
+                                            }
+                                        ],
                                     }
-                                }]
-                            }
-                        }]
+                                }
+                            ]
+                        }
                     }
                 }
-            }]
+            ]
         }
         # chaos=60, probes: 10*(0+1)=10 (retry defaults to 0), min=60+2*10+120=200
         assert _compute_effective_timeout(scenario, 100) == 200

@@ -273,10 +273,7 @@ class PlacementMutator:
         if not all_deps:
             raise ValueError(f"No deployments found in namespace '{self.namespace}'")
 
-        if (
-            strategy == PlacementStrategy.DEPENDENCY_AWARE
-            and dependencies is None
-        ):
+        if strategy == PlacementStrategy.DEPENDENCY_AWARE and dependencies is None:
             dependencies = self.get_service_dependencies()
 
         # Best-fit needs realistic free capacity — otherwise it packs
@@ -477,9 +474,7 @@ class PlacementMutator:
         except ApiException as e:
             click.echo(f"  WARNING: Failed to patch '{deployment_name}': {e.reason}")
 
-    def observe_pod_placements(
-        self, deployment_names: List[str]
-    ) -> Dict[str, str]:
+    def observe_pod_placements(self, deployment_names: List[str]) -> Dict[str, str]:
         """Return ``{pod_name: node_name}`` for the given deployments.
 
         Uses each deployment's own ``spec.selector.matchLabels`` rather
@@ -494,16 +489,12 @@ class PlacementMutator:
                 dep = self.apps_api.read_namespaced_deployment(dep_name, self.namespace)
             except ApiException:
                 continue
-            match_labels = (
-                (dep.spec.selector.match_labels or {}) if dep.spec.selector else {}
-            )
+            match_labels = (dep.spec.selector.match_labels or {}) if dep.spec.selector else {}
             if not match_labels:
                 continue
             selector = ",".join(f"{k}={v}" for k, v in match_labels.items())
             try:
-                pods = self.core_api.list_namespaced_pod(
-                    self.namespace, label_selector=selector
-                )
+                pods = self.core_api.list_namespaced_pod(self.namespace, label_selector=selector)
             except ApiException:
                 continue
             for pod in pods.items:
@@ -553,10 +544,7 @@ class PlacementMutator:
             # Check all pending deployments in parallel
             with ThreadPoolExecutor(max_workers=min(len(pending), 8)) as executor:
                 futures = {
-                    executor.submit(
-                        self._check_deployment_ready, name
-                    ): name
-                    for name in pending
+                    executor.submit(self._check_deployment_ready, name): name for name in pending
                 }
                 for future in as_completed(futures):
                     name = futures[future]
@@ -585,9 +573,7 @@ class PlacementMutator:
         desired = dep.spec.replicas or 1
         generation = dep.metadata.generation or 0
         observed = (
-            dep.status.observed_generation
-            if dep.status and dep.status.observed_generation
-            else 0
+            dep.status.observed_generation if dep.status and dep.status.observed_generation else 0
         )
         ready = (dep.status.ready_replicas or 0) if dep.status else 0
         updated = (dep.status.updated_replicas or 0) if dep.status else 0

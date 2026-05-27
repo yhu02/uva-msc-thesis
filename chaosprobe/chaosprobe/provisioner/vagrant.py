@@ -485,14 +485,16 @@ class _VagrantMixin:
                 else:
                     roles = ["worker"]
 
-                hosts.append({
-                    "name": vm_name,
-                    "ip": info["ip"],
-                    "ansible_host": info["ip"],
-                    "ansible_user": info["user"],
-                    "ansible_ssh_private_key_file": info["ssh_key"],
-                    "roles": roles,
-                })
+                hosts.append(
+                    {
+                        "name": vm_name,
+                        "ip": info["ip"],
+                        "ansible_host": info["ip"],
+                        "ansible_user": info["user"],
+                        "ansible_ssh_private_key_file": info["ssh_key"],
+                        "roles": roles,
+                    }
+                )
 
             except subprocess.TimeoutExpired:
                 print(f"Warning: Timed out getting SSH config for {vm_name} (30s)")
@@ -504,7 +506,9 @@ class _VagrantMixin:
         return hosts
 
     def _get_vagrant_vm_ssh_info(
-        self, vagrant_dir: Path, vm_name: str,
+        self,
+        vagrant_dir: Path,
+        vm_name: str,
     ) -> dict:
         """Get SSH connection info for a single Vagrant VM.
 
