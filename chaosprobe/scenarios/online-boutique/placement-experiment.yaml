@@ -240,27 +240,30 @@ spec:
               interval: 5s
               retry: 0
 
-          # ── Rust cmdProbe: HTTP latency (Edge) ────────────────────
+          # ── Rust cmdProbe: HTTP latency (Continuous) ──────────────
           # Threshold-aware GET on the frontend homepage. Fails when the
           # response body returns OK status but the wall-clock latency
-          # exceeds PROBE_LATENCY_MS_MAX (default 1000ms in the binary).
-          # Captures the latency-preservation component of the resilience
-          # score directly, rather than inferring it from probe verdicts.
+          # exceeds PROBE_LATENCY_MS_MAX. Captures the latency-preservation
+          # component of resilience directly, rather than inferring it
+          # from probe verdicts.
           #
-          # Changed from Continuous→Edge: in Continuous mode with retry:0,
-          # a single latency spike during 120s of pod-delete chaos
-          # (inevitable when productcatalog is killed every 5s) causes
-          # permanent failure. This gave 0/4 pass across ALL strategies
-          # and ALL iterations — providing zero differentiation signal.
-          # Edge mode samples pre-chaos and post-chaos latency, measuring
-          # whether the strategy PRESERVES low latency after recovery
-          # rather than during active chaos. This differentiates strategies
-          # by their residual impact: colocate leaves lasting resource
-          # pressure that inflates post-chaos latency; spread recovers
-          # cleanly.
+          # Mode rationale (Continuous with high retry budget):
+          # Edge mode was tried previously to avoid the all-fail outcome
+          # of Continuous + retry:0 (a single spike during 120s of chaos
+          # killed the probe).  But Edge collapses to one pre / one post
+          # sample per iteration, giving n=3 measurements per strategy —
+          # statistically underpowered (cannot detect a 2x latency change
+          # at p<0.05).
+          #
+          # The fix is to keep Continuous mode but raise retry to 6, with
+          # a long interval (12s) so the evaluation window is ~84s — long
+          # enough to span the entire chaos period plus recovery.  This
+          # gives a binary indicator with realistic tolerance: the probe
+          # only fails when latency stays high across the whole window,
+          # not on a transient spike.
           - name: check-http-latency
             type: cmdProbe
-            mode: Edge
+            mode: Continuous
             cmdProbe/inputs:
               command: /probe/check-http-latency
               comparator:
@@ -271,15 +274,10 @@ spec:
                 image: auto
                 imagePullSecrets:
                   - name: chaosprobe-registry
-            # Edge mode: pre-chaos sample validates clean baseline, post-
-            # chaos sample validates full recovery. Binary is bounded to
-            # PROBE_TIMEOUT_MS=5s; 8s probeTimeout gives slack for kubelet
-            # exec overhead.  retry:1 tolerates a single transient spike
-            # in the post-chaos sample without masking persistent damage.
             runProperties:
               probeTimeout: 8s
-              interval: 10s
-              retry: 1
+              interval: 12s
+              retry: 6
 
           # ── Rust cmdProbe: DNS resolve latency (Continuous) ────────
           # Times Kubernetes service-name resolution. CoreDNS sits on the

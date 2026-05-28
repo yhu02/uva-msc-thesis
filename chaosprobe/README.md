@@ -227,7 +227,20 @@ uv run chaosprobe run -n online-boutique -s colocate,spread       # Specific str
 uv run chaosprobe run -n online-boutique -i 3                     # Multiple iterations
 uv run chaosprobe run -n online-boutique --load-profile ramp      # Ramp load profile
 uv run chaosprobe run -n online-boutique --no-visualize           # Skip chart generation
+
+# Multi-fault matrix — every strategy runs once per fault class.
+# This is the recommended invocation for the thesis defense, since
+# it directly tests the churn-vs-contention claim by varying the
+# fault class while holding placement, target, and probes constant.
+uv run chaosprobe run -n online-boutique \
+    -e scenarios/online-boutique/placement-experiment.yaml \
+    -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
+    -i 5
 ```
+
+For `random`, each iteration uses a different seed (`base_seed + iter - 1`)
+so the N iterations actually sample the seed-variance distribution, not
+the same placement N times. Override the base with `--seed`.
 
 ### Placement
 

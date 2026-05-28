@@ -190,7 +190,19 @@ Background thread using the Kubernetes watch API to observe pod lifecycle events
 
 **Recovery cycle**: DELETED → PodScheduled → Ready. Records `deletionToScheduled_ms`, `scheduledToReady_ms`, `totalRecovery_ms`.
 
-**Summary statistics**: count, completedCycles, mean, median, min, max, p95 (all in ms).
+**Summary statistics**: count, completedCycles, mean, median, min, max, p95 (all in ms), plus `meanDeletionToScheduled_ms` / `maxDeletionToScheduled_ms` and `meanScheduledToReady_ms` / `maxScheduledToReady_ms`. Separating the two phases lets analysis distinguish scheduler stalls (large d2s — e.g. affinity collisions, resource starvation) from genuine container start-up latency (large s2r).
+
+#### statistics.py — Bootstrap CIs + Mann-Whitney U
+
+Lightweight pure-Python helpers used by `aggregate_iterations` and the visualizer to expose statistical uncertainty rather than hiding it behind point estimates.
+
+| Function | Purpose |
+|---|---|
+| `bootstrap_ci(values, statistic="mean", confidence=0.95, n_resamples=2000, seed=42)` | Bootstrap CI for mean / median / min / p25. Returns `{point, ci_low, ci_high, confidence, n, n_resamples, statistic}`. |
+| `mann_whitney_u(a, b)` | Two-sided Mann-Whitney U with normal approximation and tie correction. Returns U statistic, z, p (two-sided). |
+| `pairwise_comparisons(samples_by_label, holm_bonferroni=True)` | Cross-strategy pairwise table with Holm-Bonferroni step-down adjustment. Drives `pairwise_stats.csv` in the charts directory. |
+
+Used internally by `aggregate_iterations` (CI for the mean score) and by `chaosprobe.output.charts.write_pairwise_stats_csv` (pairwise table).
 
 #### collector.py — MetricsCollector
 
@@ -1493,11 +1505,15 @@ The analysis prompt defines which data signals are reliable and which are not, b
 
 | Signal | Reliability | Used For | Known Issues |
 |---|---|---|---|
-| Recovery cycles (`RecoveryCycle`) | **High** | Fault timing, recovery duration | `deletionToScheduled_ms` can be negative (timestamp precision); use `totalRecovery_ms` |
-| Load generator (`ChaosRun.load_*`) | **High** | User-perspective impact (RPS, errors, P95) | None — most reliable signal |
+| Recovery cycles (`RecoveryCycle`) | **High** | Fault timing, recovery duration | `deletionToScheduled_ms` can be negative (timestamp precision); use `totalRecovery_ms`. Component split surfaced as `meanDeletionToScheduled_ms` / `meanScheduledToReady_ms` distinguishes scheduler stalls from container start-up. |
+| Load generator (`ChaosRun.load_*` + per-iteration `loadGeneration`) | **High** | User-perspective impact (RPS, errors, P95) | None — most reliable signal. Per-iteration RPS surfaces at `iteration.loadGeneration` and aggregates at `aggregated.loadGenerationAggregate`. |
 | Probe verdicts (`ProbeResult`) | **High** | Resilience scoring, pass/fail per sensitivity tier | Strict probes always fail with single-replica pod-delete (by design) |
 | Node resources (`MetricsPhase` resources) | **Medium** | CPU/memory contention analysis | `pod_total_*` frequently null (metrics-server limitation) |
-| Prometheus (`MetricsPhase` prometheus) | **Medium** | Cluster-wide trends | `pod_ready_count` stays 16.0 during chaos (10s scrape too coarse for 1-2s recovery) |
+| Prometheus mechanism queries (`MetricsPhase` prometheus) | **High** | Direct measurement of the churn mechanism: `kubeproxy_network_programming_p99`, `kubeproxy_sync_proxy_rules_p99`, `coredns_request_duration_p99`, `conntrack_entries_per_node`, `tcp_retransmit_rate_per_node`. Maps to the K8s Network Programming Latency SLO (sig-scalability). | Requires kube-state-metrics + node-exporter installed. |
+| Prometheus app-side (`MetricsPhase` prometheus) | **Medium** | Cluster-wide trends | `pod_ready_count` stays 16.0 during chaos (10s scrape too coarse for 1-2s recovery) |
+| Bootstrap CI (`aggregated.meanResilienceScore_ci95`) | **High** | 95% confidence interval around the mean across iterations. Computed by `metrics/statistics.py:bootstrap_ci`. | Stable for n ≥ 5; below that, the CI is wide by definition. |
+| Pairwise Mann-Whitney (`charts/pairwise_stats.csv`) | **High** | Cross-strategy significance with Holm-Bonferroni adjustment. Computed by `metrics/statistics.py:pairwise_comparisons`. | Tests against α=0.05; underpowered for n < 8 per group. |
+| Score variants (`aggregated.p25ResilienceScore`, `harmonicMeanResilienceScore`) | **Medium** | Tail-aware alternatives to the mean. Harmonic mean penalises any low-score iteration disproportionately. | Per Dean & Barroso *The Tail at Scale* (CACM 2013), mean-based metrics hide what matters; report alongside the mean rather than instead of it. |
 | Redis throughput | **Control** | Confirms blast radius doesn't reach data layer | Stable across all phases; used as negative evidence |
 | Cascade timeline (`CascadeEvent`) | **Low** | Route-level error propagation | `peakLatency_ms` may be null for routes not targeted by probes |
 | Latency prober (`MetricsPhase` latency) | **Medium** | Route-level HTTP response time | Derives target service from URL; pre-flight validates reachability |

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 #   pod!~".*-runner$|.*chaos.*|.*litmus.*"
 
 DEFAULT_QUERIES: Dict[str, str] = {
+    # ── Application-side metrics (per pod) ─────────────────────────────
     "pod_ready_count": (
         'sum(kube_pod_status_ready{{namespace="{namespace}",condition="true",'
         'pod!~".*-runner$|.*chaos.*|.*litmus.*"}})'
@@ -50,6 +51,44 @@ DEFAULT_QUERIES: Dict[str, str] = {
     "network_receive_bytes": (
         'sum(rate(container_network_receive_bytes_total{{namespace="{namespace}",'
         'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
+    ),
+    # ── Churn-mechanism metrics (cluster-wide) ─────────────────────────
+    # These directly measure the reconvergence behaviour the thesis
+    # identifies as the dominant resilience-degrading mechanism under
+    # pod-delete: kube-proxy load-balancer programming latency, CoreDNS
+    # DNS-resolution latency, conntrack table size, and TCP retransmits.
+    #
+    # The `{namespace}` placeholder is unused in these queries but is
+    # left out of the strings so `_build_queries` can `.format()` the
+    # rest without raising on missing substitutions.
+    #
+    # References:
+    #   - K8s SIG-Scalability "Network Programming Latency SLO":
+    #     github.com/kubernetes/community/blob/master/sig-scalability/
+    #     slos/network_latency.md
+    #   - kubernetes/kubernetes#82378 (SLO investigation)
+    #   - kubernetes/kubernetes#100698 (conntrack not cleared on endpoint
+    #     change) — direct primary source for the conntrack-churn mechanism
+    "kubeproxy_network_programming_p99": (
+        'histogram_quantile(0.99, sum(rate('
+        'kubeproxy_network_programming_duration_seconds_bucket[5m])) by (le))'
+    ),
+    "kubeproxy_sync_proxy_rules_p99": (
+        'histogram_quantile(0.99, sum(rate('
+        'kubeproxy_sync_proxy_rules_duration_seconds_bucket[5m])) by (le))'
+    ),
+    "coredns_request_duration_p99": (
+        'histogram_quantile(0.99, sum(rate('
+        'coredns_dns_request_duration_seconds_bucket[5m])) by (le))'
+    ),
+    "coredns_request_count_per_sec": (
+        'sum(rate(coredns_dns_requests_total[1m]))'
+    ),
+    "conntrack_entries_per_node": (
+        'sum(node_nf_conntrack_entries) by (instance)'
+    ),
+    "tcp_retransmit_rate_per_node": (
+        'sum(rate(node_netstat_Tcp_RetransSegs[1m])) by (instance)'
     ),
 }
 
