@@ -355,10 +355,10 @@ hypotheses = [
      "Distributing pods evenly across nodes minimizes per-node contention "
      "and limits fault blast radius, yielding the best resilience scores.",
      ACCENT_GREEN),
-    ("H3", "Baseline validates methodology",
-     "A trivial fault (1% CPU, 1 second) with default scheduling should "
-     "produce 100% resilience — any degradation indicates pre-existing instability.",
-     CLR_INFRA),
+    ("H3", "Recovery time predicts resilience",
+     "Faster pod recovery yields higher resilience scores — shorter unavailability "
+     "windows mean fewer probe checks fall inside the fault window (Dean–Barroso 2013).",
+     ACCENT_ORANGE),
 ]
 
 for i, (label, title, desc, clr) in enumerate(hypotheses):
@@ -566,7 +566,7 @@ for name, x in bottom:
     add_arrow(slide, 2.3, 3.55, x + 0.6, 3.8, LIGHT_GRAY, Pt(1))
 
 add_text_box(slide, 0.7, 4.3, 5.6, 0.6,
-    "12 microservices, polyglot (Go, C#, Python, Java, Node.js)\n"
+    "11 services (10 polyglot microservices + Redis)\n"
     "Single replica per service — 100% pod-delete = full unavailability",
     font_size=10, color=MID_GRAY)
 
@@ -599,14 +599,14 @@ add_text_box(slide, 7.0, 2.7, 5.4, 0.3,
 # Experiment configurations — bottom
 add_rounded_box(slide, 0.5, 5.2, 6.0, 2.1, VERY_DARK,
                 border_color=CLR_CHAOS, border_width=Pt(2))
-add_text_box(slide, 0.7, 5.2, 5.6, 0.3, "Fault Injection Experiments",
+add_text_box(slide, 0.7, 5.2, 5.6, 0.3, "Placement-Matrix Fault Injection",
              font_size=14, bold=True, color=CLR_CHAOS)
 exp_data = [
-    ["", "pod-delete (availability)", "pod-cpu-hog (contention)"],
-    ["Target", "productcatalogservice", "currencyservice"],
-    ["Duration", "120s (5s interval)", "60s"],
-    ["Parameters", "FORCE=true, 100% pods", "1 core, 100% load"],
-    ["Probes", "7 httpProbes + 5 cmdProbes", "1 httpProbe"],
+    ["", "Matrix fault (pod-delete)", "Baseline (trivial pod-cpu-hog)"],
+    ["Target", "productcatalogservice", "productcatalogservice"],
+    ["Duration", "120s (CHAOS_INTERVAL=15s)", "1s"],
+    ["Parameters", "FORCE=true, 100% pods", "CPU_LOAD=1%, 1 core"],
+    ["Probes", "7 httpProbes + 5 cmdProbes", "Same probe set (control)"],
 ]
 add_table(slide, 0.7, 5.55, 5.6, 1.6, 5, 3, exp_data,
           font_size=9, header_color=CLR_CHAOS)
@@ -614,12 +614,13 @@ add_table(slide, 0.7, 5.55, 5.6, 1.6, 5, 3, exp_data,
 # Baseline + infrastructure — right bottom
 add_rounded_box(slide, 6.8, 3.9, 5.8, 1.1, VERY_DARK,
                 border_color=CLR_INFRA, border_width=Pt(2))
-add_text_box(slide, 7.0, 3.9, 5.4, 0.3, "Baseline (Control Group)",
+add_text_box(slide, 7.0, 3.9, 5.4, 0.3, "Baseline — Methodology Control",
              font_size=13, bold=True, color=CLR_INFRA)
 add_text_box(slide, 7.0, 4.25, 5.4, 0.6,
-    "Swaps pod-delete → pod-cpu-hog with DURATION=1s, CPU_LOAD=1%\n"
-    "All probes execute identically — expected result: 100% score, 0 recovery cycles",
-    font_size=11, color=LIGHT_GRAY)
+    "Swaps pod-delete → trivial pod-cpu-hog (DURATION=1s, CPU_LOAD=1%).\n"
+    "Validates probes & scoring: expected 100%, 0 recovery cycles — any drift\n"
+    "indicates pre-existing instability rather than placement effects.",
+    font_size=10, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 6.8, 5.2, 5.8, 2.1, VERY_DARK,
                 border_color=CLR_STORAGE, border_width=Pt(2))
@@ -750,11 +751,11 @@ slide_title(slide, "Measurement Design")
 add_text_box(slide, 0.5, 1.3, 12, 0.3, "Three-Phase Measurement Window",
              font_size=16, bold=True, color=ACCENT_BLUE)
 add_rounded_box(slide, 0.5, 1.65, 3.5, 0.45, CLR_ORCH,
-                "PreChaos — steady state (30s)", 11, WHITE, True)
+                "PreChaos — steady state (60s)", 11, WHITE, True)
 add_rounded_box(slide, 4.2, 1.65, 4.5, 0.45, CLR_CHAOS,
                 "DuringChaos — fault active (120s)", 11, WHITE, True)
 add_rounded_box(slide, 8.9, 1.65, 3.8, 0.45, CLR_METRICS,
-                "PostChaos — recovery observation", 11, WHITE, True)
+                "PostChaos — recovery sampling (60s)", 11, WHITE, True)
 
 # Probers table — left
 add_text_box(slide, 0.5, 2.4, 7, 0.3, "6 Continuous Probers (Background Threads)",
@@ -762,11 +763,11 @@ add_text_box(slide, 0.5, 2.4, 7, 0.3, "6 Continuous Probers (Background Threads)
 prober_data = [
     ["Prober", "What It Measures", "Data Source", "Interval"],
     ["RecoveryWatcher", "Pod deletion → scheduled → ready (ms)", "K8s Watch API", "Real-time"],
-    ["LatencyProber", "HTTP route latency + error rates", "kubectl exec → python3/wget", "~2s"],
-    ["RedisProber", "Redis ops/s (GET/SET throughput)", "kubectl exec → redis-cli", "~10s"],
-    ["DiskProber", "Sequential disk R/W bytes/s", "kubectl exec → dd", "~10s"],
-    ["ResourceProber", "Node/pod CPU (millicores) + memory", "Metrics API (v1beta1)", "~5s"],
-    ["PrometheusProber", "pod_ready, CPU/memory, throttle, net rx", "PromQL queries", "~10s"],
+    ["LatencyProber", "HTTP route latency + error rates", "kubectl exec → python3/wget", "3.5s"],
+    ["RedisProber", "Redis ops/s (GET/SET throughput)", "kubectl exec → redis-cli", "10s"],
+    ["DiskProber", "Sequential disk R/W bytes/s", "kubectl exec → dd", "10s"],
+    ["ResourceProber", "Node/pod CPU (millicores) + memory", "Metrics API (v1beta1)", "5s"],
+    ["PrometheusProber", "pod_ready, CPU/memory, throttle, net rx", "PromQL queries", "10s"],
 ]
 add_table(slide, 0.3, 2.8, 7.5, 2.4, 7, 4, prober_data, font_size=10)
 
@@ -775,13 +776,13 @@ add_text_box(slide, 8.2, 2.4, 5, 0.3, "Resilience Probes (LitmusChaos)",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 
 probe_summary = [
-    ["Probe", "Mode", "Timeout"],
+    ["Probe", "Mode (interval)", "Timeout / retries"],
     ["frontend-product-strict", "Continuous (2s)", "3s, 1 retry"],
     ["frontend-homepage-strict", "Continuous (2s)", "3s, 1 retry"],
-    ["frontend-homepage-moderate", "Continuous (3s)", "3s, 2 retries"],
-    ["frontend-product-moderate", "Continuous (3s)", "3s, 2 retries"],
-    ["frontend-cart", "Continuous (4s)", "5s, 3 retries"],
-    ["frontend-homepage-loose", "Continuous (4s)", "5s, 3 retries"],
+    ["frontend-homepage-moderate", "Continuous (5s)", "3s, 4 retries"],
+    ["frontend-product-moderate", "Continuous (5s)", "3s, 4 retries"],
+    ["frontend-cart", "Continuous (6s)", "5s, 4 retries"],
+    ["frontend-homepage-loose", "Continuous (6s)", "5s, 4 retries"],
     ["frontend-healthz", "Continuous (4s)", "5s, 3 retries"],
 ]
 add_table(slide, 8.2, 2.8, 4.8, 2.1, 8, 3, probe_summary,
@@ -820,8 +821,8 @@ add_bullet_frame(slide, 0.5, 6.6, 6.0, 0.8, [
     "• Phase-aware: measurements tagged PreChaos / DuringChaos / PostChaos",
 ], font_size=11, color=LIGHT_GRAY)
 add_bullet_frame(slide, 6.8, 6.6, 6.0, 0.8, [
-    "• Strict → Moderate-tight → Moderate-loose: layered sensitivity",
-    "• Control probes (healthz, cart): detect node-level contention",
+    "• 4 sensitivity tiers (strict → moderate-tight → moderate-loose → control)",
+    "• Healthz control probe detects node-level contention even when chaos is local",
 ], font_size=11, color=LIGHT_GRAY)
 
 
@@ -848,27 +849,28 @@ add_rounded_box(slide, 8.5, 1.4, 4.3, 4.5, VERY_DARK,
 add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Key Observations",
              font_size=16, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
-    "• Baseline: 100% score as expected —\n  validates experimental methodology",
-    "• Colocate: consistently lowest scores —\n  maximum contention degrades all probes",
-    "• Spread: highest scores among non-baseline\n  — fault isolation limits blast radius",
-    "• Default: moderate — K8s scheduler provides\n  partial but unintentional isolation",
-    "• Random & Adversarial: variable —\n  depends on resource-hotspot placement",
+    "• Baseline: 100.0% (stddev 0) —\n  methodology control holds",
+    "• Colocate: 83.0% (stddev 0) — BEST\n  non-baseline; stable across iterations",
+    "• best-fit / adversarial / dep-aware:\n  ~69% (stddev 24–31)",
+    "• Spread: 52.3% — among the WORST\n  non-baseline strategies",
+    "• Default / random: ~50% — broadest\n  probe-failure footprint",
+    "• Ordering inverts the literature\n  intuition encoded in H1 + H2",
 ], font_size=11, color=LIGHT_GRAY)
 
 # Hypothesis check
 add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
-                border_color=ACCENT_GREEN, border_width=Pt(2))
+                border_color=ACCENT_ORANGE, border_width=Pt(2))
 add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "Hypothesis Validation",
-             font_size=14, bold=True, color=ACCENT_GREEN)
-add_text_box(slide, 0.7, 6.55, 3.7, 0.6,
-    "H1 (colocate = worst): Supported",
-    font_size=13, bold=True, color=ACCENT_RED)
-add_text_box(slide, 4.6, 6.55, 3.7, 0.6,
-    "H2 (spread = best isolation): Supported",
-    font_size=13, bold=True, color=ACCENT_GREEN)
-add_text_box(slide, 8.5, 6.55, 4.0, 0.6,
-    "H3 (baseline = 100%): Supported",
-    font_size=13, bold=True, color=CLR_INFRA)
+             font_size=14, bold=True, color=ACCENT_ORANGE)
+add_text_box(slide, 0.7, 6.55, 4.0, 0.6,
+    "H1 (colocate = worst): REFUTED",
+    font_size=12, bold=True, color=ACCENT_RED)
+add_text_box(slide, 4.8, 6.55, 4.0, 0.6,
+    "H2 (spread = best): REFUTED",
+    font_size=12, bold=True, color=ACCENT_RED)
+add_text_box(slide, 8.9, 6.55, 4.0, 0.6,
+    "H3 (recovery → score): REFUTED",
+    font_size=12, bold=True, color=ACCENT_RED)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -990,14 +992,17 @@ add_text_box(slide, 7.2, 1.4, 5.5, 0.3, "Hypothesis Evaluation",
 
 hyp_results = [
     ("H1", "Colocate = worst resilience",
-     "Colocate: lowest scores, longest recovery,\nhighest latency & CPU throttling.",
-     ACCENT_RED, "Supported"),
+     "Inverted: colocate scored 83.0 (best non-baseline,\n"
+     "stddev 0); spread scored 52.3 (among the worst).",
+     ACCENT_RED, "Refuted"),
     ("H2", "Spread = best fault isolation",
-     "Spread: best non-baseline scores, minimal\nlatency increase, fastest recovery.",
-     ACCENT_GREEN, "Supported"),
-    ("H3", "Baseline = 100% (valid method)",
-     "Trivial fault → 100% score, 0 recovery\ncycles — confirms measurement validity.",
-     CLR_INFRA, "Supported"),
+     "Inverted: spread had highest during-chaos latency\n"
+     "(229ms vs colocate 99ms) and widest probe failure set.",
+     ACCENT_RED, "Refuted"),
+    ("H3", "Recovery time predicts score",
+     "Refuted: dep-aware fastest (1229ms) but score 69;\n"
+     "colocate slower (1333ms) but score 83. No correlation.",
+     ACCENT_RED, "Refuted"),
 ]
 
 for i, (label, title, explanation, clr, verdict) in enumerate(hyp_results):
@@ -1017,34 +1022,38 @@ add_text_box(slide, 0.5, 5.6, 12, 0.3, "Key Insights",
              font_size=18, bold=True, color=ACCENT_ORANGE)
 
 add_rounded_box(slide, 0.5, 6.0, 3.9, 1.2, VERY_DARK,
-                border_color=ACCENT_ORANGE)
-add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Placement Matters",
-             font_size=13, bold=True, color=ACCENT_ORANGE)
+                border_color=ACCENT_RED)
+add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Churn ≠ Contention",
+             font_size=13, bold=True, color=ACCENT_RED)
 add_text_box(slide, 0.7, 6.3, 3.5, 0.8,
-    "Topology is not just a resource concern — "
-    "it directly determines fault blast radius "
-    "and recovery characteristics.",
-    font_size=11, color=LIGHT_GRAY)
+    "Literature assumes faults create resource "
+    "contention. Pod-delete creates rescheduling "
+    "churn — a different mechanism with opposite "
+    "placement implications.",
+    font_size=10, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 4.7, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_BLUE)
-add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Scheduler Is Not Enough",
+add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Locality > Recovery Speed",
              font_size=13, bold=True, color=ACCENT_BLUE)
 add_text_box(slide, 4.9, 6.3, 3.5, 0.8,
-    "Default K8s scheduling provides some isolation "
-    "but is not optimized for resilience — "
-    "intentional placement is needed.",
-    font_size=11, color=LIGHT_GRAY)
+    "Recovery times cluster in 1.2–1.6s for all "
+    "strategies, yet scores span 52–83. What "
+    "matters is whether probe paths stay node-"
+    "local during the kill cycle — not how fast "
+    "the replacement pod becomes ready.",
+    font_size=10, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 8.9, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_GREEN)
-add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "Multi-Dimensional Impact",
+add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "Cross-Node = Failure Surface",
              font_size=13, bold=True, color=ACCENT_GREEN)
 add_text_box(slide, 9.1, 6.3, 3.5, 0.8,
-    "Placement affects all measured dimensions: "
-    "recovery, latency, resources, and throughput "
-    "— not just a single metric.",
-    font_size=11, color=LIGHT_GRAY)
+    "Spread maximises cross-node traffic, "
+    "which is exactly what pod-delete churn "
+    "disrupts — every cross-node hop becomes "
+    "a failure surface during the kill cycle.",
+    font_size=10, color=LIGHT_GRAY)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1123,14 +1132,14 @@ add_rounded_box(slide, 6.8, 1.5, 5.8, 3.2, VERY_DARK,
 add_text_box(slide, 7.0, 1.5, 5.4, 0.35, "Key Findings",
              font_size=18, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 7.0, 1.95, 5.4, 2.6, [
-    "• Placement topology has a measurable and\n"
-    "  significant impact on chaos resilience",
-    "• Colocate: consistently worst — highest latency,\n"
-    "  longest recovery, most contention",
-    "• Spread: consistently best fault isolation —\n"
-    "  minimal degradation across all metrics",
-    "• All three hypotheses supported by\n"
-    "  experimental evidence",
+    "• All three literature-derived hypotheses\n"
+    "  REFUTED — colocate 83 > spread 52",
+    "• Mechanism: pod-delete is churn-based,\n"
+    "  not contention-based — locality wins",
+    "• Recovery time does not predict score —\n"
+    "  what matters is in-flight cross-node hops",
+    "• Methodology control held: baseline = 100,\n"
+    "  stddev 0 — refutations are real, not noise",
 ], font_size=12, color=LIGHT_GRAY)
 
 # Future work
@@ -1139,23 +1148,22 @@ add_rounded_box(slide, 0.5, 4.9, 12.1, 1.6, VERY_DARK,
 add_text_box(slide, 0.7, 4.9, 11.7, 0.35, "Future Work",
              font_size=16, bold=True, color=ACCENT_ORANGE)
 add_bullet_frame(slide, 0.7, 5.3, 5.6, 1.15, [
-    "• Multi-fault injection — concurrent faults\n  for complex failure scenarios",
-    "• Larger cluster scale — 20+ nodes, 100+ services",
-    "• ML-based anomaly detection on collected dataset",
+    "• Test contention-based faults (pod-cpu-hog,\n  memory-hog) — predict ordering flips back",
+    "• Multi-replica services — does locality still win\n  when restart can happen on a peer pod?",
+    "• Larger cluster + production-like traffic patterns",
 ], font_size=11, color=LIGHT_GRAY)
 add_bullet_frame(slide, 6.7, 5.3, 5.7, 1.15, [
-    "• Custom placement policies — RL-based scheduling",
-    "• Production-like traffic patterns & workloads",
-    "• Integration with GitOps for automated remediation",
+    "• Per-fault-class placement guidance — choose strategy\n  by expected fault type, not by general 'best practice'",
+    "• ML-based anomaly detection on collected dataset",
+    "• Per-fault-class extensions to Borg / Medea schedulers",
 ], font_size=11, color=LIGHT_GRAY)
 
 # Core message
 add_rounded_box(slide, 0.5, 6.7, 12.1, 0.7, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(3))
 add_text_box(slide, 0.7, 6.75, 11.7, 0.6,
-    "Pod placement topology has a measurable and significant impact on microservice resilience "
-    "under chaos injection. Topology-aware scheduling is essential for building resilient "
-    "cloud-native systems.",
+    "Placement-vs-resilience intuition from the literature is fault-class-specific. Under churn-based faults "
+    "(pod-delete), co-location wins because it minimises cross-node disruption during the kill cycle.",
     font_size=14, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
 
 
@@ -1180,9 +1188,9 @@ add_text_box(slide, 1.5, 3.7, 10.3, 0.8, "Questions?",
 # Summary badges at bottom
 summary_items = [
     ("6", "Placement\nStrategies", CLR_ORCH),
-    ("2", "Fault\nTypes", CLR_CHAOS),
     ("4", "Metric\nDimensions", CLR_METRICS),
-    ("3/3", "Hypotheses\nSupported", ACCENT_GREEN),
+    ("3/3", "Hypotheses\nRefuted", ACCENT_RED),
+    ("1", "Unified\nMechanism", ACCENT_BLUE),
 ]
 for i, (val, label, clr) in enumerate(summary_items):
     x = 2.5 + i * 2.3

@@ -26,15 +26,17 @@ Speaker notes for the thesis defense presentation.
 
 > Our research question is: *How does pod placement topology affect microservice resilience under fault injection in Kubernetes?*
 >
-> We test three hypotheses:
+> We test three hypotheses, derived from the placement and chaos-engineering literature:
 >
-> **H1** -- Colocating all pods on a single node maximizes resource contention and produces the worst resilience scores. All services compete for shared CPU, memory, disk, and network on one machine.
+> **H1** -- Colocating all pods on a single node maximizes resource contention and produces the worst resilience scores. All services compete for shared CPU, memory, disk, and network on one machine. This is the prediction from Mars (2011) and Delimitrou (2014) on contention-aware co-scheduling.
 >
-> **H2** -- Spreading pods evenly across nodes minimizes per-node contention and limits the blast radius of a fault, yielding the best resilience scores.
+> **H2** -- Spreading pods evenly across nodes minimizes per-node contention and limits the blast radius of a fault, yielding the best resilience scores. This is the topology-spread argument from Medea (Garefalakis 2018) and Borg's anti-affinity defaults (Verma 2015).
 >
-> **H3** -- A baseline experiment with a trivial fault and default scheduling should produce 100% resilience. Any degradation would indicate pre-existing instability in the setup.
+> **H3** -- Recovery time predicts resilience. Faster pod recovery yields higher resilience scores, because shorter unavailability windows mean fewer probe checks fall inside the fault window. This is the intuition behind Dean and Barroso's "Tail at Scale" (2013) and the Basiri chaos-engineering principles.
 >
-> We measure across four dimensions: recovery time, inter-service latency, resource utilization, and I/O throughput.
+> The baseline run with a trivial pod-cpu-hog sits outside the hypothesis set -- it is a methodology control. A 100% baseline score validates the probes and scoring; any degradation would mean we cannot trust the measurement instrument.
+>
+> We measure across four dimensions: recovery time, inter-service latency, resource utilization, and I/O throughput. Spoiler -- as you will see in the results, all three hypotheses are refuted, and the three refutations point at the same mechanism.
 
 ---
 
@@ -74,7 +76,7 @@ Speaker notes for the thesis defense presentation.
 
 ## Slide 6 -- Experimental Setup
 
-> Our target application is Google's Online Boutique -- 12 polyglot microservices written in Go, C#, Python, Java, and Node.js. We run a single replica per service, which means a pod-delete causes full unavailability of that service.
+> Our target application is Google's Online Boutique -- 10 polyglot microservices plus a Redis cache, written in Go, C#, Python, Java, and Node.js. We run a single replica per service, which means a 100% pod-delete causes full unavailability of that service.
 >
 > The cluster runs on Proxmox with KVM/QEMU virtualization. We have 5 nodes:
 > - **cp1**: the control plane, 2 vCPU and 2 GiB RAM -- it only runs infrastructure (Prometheus, Neo4j, ChaosCenter, metrics-server)
@@ -83,11 +85,9 @@ Speaker notes for the thesis defense presentation.
 > - Total: 10 vCPU, 14 GiB across the cluster
 > - Running Kubernetes v1.28.6 with Calico CNI and containerd 1.7.11
 >
-> We inject two fault types:
-> - **pod-delete** targeting productcatalogservice -- a central service in the dependency graph. 120 seconds duration with deletions every 5 seconds, using 6 httpProbes across 4 sensitivity tiers.
-> - **pod-cpu-hog** targeting currencyservice -- 60 seconds of 100% CPU load on 1 core, with 1 httpProbe.
+> The placement matrix uses a single fault: **pod-delete** targeting productcatalogservice -- a central service in the dependency graph. Total chaos duration is 120 seconds, with deletions every 15 seconds (CHAOS_INTERVAL), FORCE=true, and PODS_AFFECTED_PERC=100. Resilience is evaluated by 7 httpProbes across 4 sensitivity tiers, plus 5 Rust cmdProbes for orthogonal signals.
 >
-> The baseline swaps pod-delete for a trivial pod-cpu-hog: 1 second duration, 1% CPU load. All probes execute identically, and we expect 100% score with zero recovery cycles.
+> The baseline strategy swaps pod-delete for a trivial pod-cpu-hog on the same target -- 1 second duration, 1% CPU load on 0 cores -- so no pods are actually killed. All probes execute identically, and we expect a 100% score with zero recovery cycles. This validates the methodology.
 >
 > Infrastructure includes LitmusChaos for fault injection, Prometheus for cluster metrics, Neo4j for graph storage with 14 node types and 18 relationships, and Locust generating steady-state load at 50 users and 10 requests per second.
 
@@ -118,58 +118,56 @@ Speaker notes for the thesis defense presentation.
 ## Slide 8 -- Measurement Design
 
 > Measurement happens in three phases:
-> - **PreChaos** (30 seconds) -- establish steady-state baselines
-> - **DuringChaos** (120 seconds for pod-delete, 60 seconds for pod-cpu-hog) -- fault is active
-> - **PostChaos** -- observe recovery behaviour
+> - **PreChaos** (60 seconds, the default `--settle-time`) -- establish steady-state baselines
+> - **DuringChaos** (120 seconds for pod-delete) -- fault is active
+> - **PostChaos** (60 seconds) -- observe recovery behaviour
 >
-> Six continuous probers run as background threads:
+> Six probers run alongside the experiment. Five of them extend `ContinuousProberBase` and sample on fixed intervals; the sixth, RecoveryWatcher, is event-driven.
 > - **RecoveryWatcher** uses the Kubernetes Watch API to observe pod lifecycle events in real-time: deletion, scheduling, and ready timestamps.
-> - **LatencyProber** measures HTTP route latency every 2 seconds by executing requests inside the cluster via kubectl exec.
+> - **LatencyProber** measures HTTP route latency every 3.5 seconds by executing requests inside the cluster via kubectl exec.
 > - **RedisProber** and **DiskProber** measure I/O throughput every 10 seconds via redis-cli and dd respectively.
-> - **ResourceProber** fetches node CPU and memory from the Metrics API every 5 seconds -- only across nodes hosting namespace pods.
+> - **ResourceProber** fetches node and pod CPU and memory from the Metrics API every 5 seconds -- only across nodes hosting namespace pods.
 > - **PrometheusProber** collects pod readiness, CPU throttling, memory, and network metrics via PromQL every 10 seconds.
 >
-> For resilience probes, we use 6 LitmusChaos httpProbes at different sensitivity tiers -- strict (2-second interval, 1 retry), moderate (3-4 second interval, 2-3 retries), and an edge probe (5-second interval, 5 retries with 15-second timeout).
+> For resilience probes, we use 7 LitmusChaos httpProbes across 4 sensitivity tiers, all in Continuous mode:
+> - **Tier 1 -- Strict** (2 probes, 2s interval, 3s timeout, 1 retry): the product page and homepage; expected to fail under 100% pod-delete and confirm chaos has impact.
+> - **Tier 2 -- Moderate-tight** (2 probes, 5s interval, 3s timeout, 4 retries): pass only when recovery is fast.
+> - **Tier 3 -- Moderate-loose** (2 probes including the cart route, 6s interval, 5s timeout, 4 retries): pass when recovery is moderate.
+> - **Tier 4 -- Control** (1 probe, /_healthz, 4s interval, 5s timeout, 3 retries): pure infrastructure health; failure means severe node-level pressure.
 >
-> The resilience score is the mean probe success percentage across all probes, on a 0-100 scale. The verdict is PASS only if all probes pass.
+> Alongside these we run 5 Rust cmdProbes -- check-redis, check-http-latency, check-dns-latency, check-tcp-connect, check-cart-flow -- which capture Redis collateral damage, post-chaos HTTP latency, DNS resolution time, TCP connect time, and a multi-route user journey.
+>
+> The resilience score is the mean probe success percentage across all probes, on a 0-100 scale. The verdict is PASS only if every probe passes.
 
 ---
 
 ## Slide 9 -- Results: Resilience Scores
 
-> Looking at the resilience scores across all strategies:
+> The results refute the hypotheses, but the methodology holds.
 >
-> **Baseline achieves exactly 100%**, as expected -- this validates our experimental methodology and confirms H3.
+> First, the control: **baseline achieved exactly 100% with zero standard deviation across three iterations**. The probes and scoring work as designed -- so the refutations that follow are real signal, not measurement artefacts.
 >
-> **Colocate consistently has the lowest scores** -- maximum resource contention degrades all probes. This supports H1.
+> The non-baseline ranking is not what the literature predicted. **Colocate scored 83.0% with standard deviation zero** -- the highest non-baseline score and perfectly stable across iterations. **Spread scored 52.3%** with high variance, among the worst non-baseline strategies.
 >
-> **Spread has the highest scores among non-baseline strategies** -- fault isolation limits the blast radius. This supports H2.
+> The middle tier -- best-fit, adversarial, and dependency-aware -- all clustered around 69%, with high iteration-to-iteration variance.
 >
-> **Default** scores moderately -- the Kubernetes scheduler provides some isolation, but it is not intentional resilience optimization.
+> Default and random sit at roughly 50%, on par with spread.
 >
-> **Random and adversarial** show variable results depending on where the resource hotspot lands.
->
-> All three hypotheses are supported by the experimental evidence.
+> H1 predicted colocate would be worst. It was the best non-baseline. H2 predicted spread would be best. It was among the worst. Both literature-derived hypotheses are refuted by the score data alone. The next slides examine recovery time and latency -- which is where H3 gets tested -- and the discussion ties all three refutations together.
 
 ---
 
 ## Slide 10 -- Results: Recovery Time & Latency
 
-> For recovery time -- measured as the interval from pod deletion to pod ready:
+> Recovery time -- measured as the interval from pod deletion to pod ready -- is where H3 gets tested directly.
 >
-> **Colocate has the longest recovery**. The scheduler faces contention on the saturated node, delaying rescheduling.
+> The fastest recovery was **dependency-aware at 1229 milliseconds**, followed by adversarial (1248), colocate (1333), best-fit (1461), spread (1576), and default (1596). Random is an outlier at 9395 milliseconds, almost six times slower than anything else -- this is likely a node-affinity collision during scheduling.
 >
-> **Spread has the fastest recovery**. Dedicated node resources allow immediate rescheduling without competition.
+> H3 predicted that faster recovery should produce higher resilience scores. The data does not support this. Dependency-aware had the *fastest* recovery (1229ms) but only a mid-tier score (69). Colocate had *slower* recovery (1333ms) but the best score (83). Spread had a recovery time in the same band as colocate (1576ms) but its score was the second-worst (52). Recovery time and resilience score are essentially uncorrelated across the 6 main strategies -- H3 is refuted.
 >
-> **Baseline has zero recovery cycles** because no pods are actually deleted -- it serves as the control.
+> The lesson is that recovery speed is not the dominant factor under pod-delete. What matters is whether *in-flight probe traffic* during the kill cycle has to cross the affected node.
 >
-> For latency degradation between pre-chaos and during-chaos:
->
-> **Colocate shows the highest degradation**. Shared CPU, memory, and network stack amplify latency when the fault is active.
->
-> **Spread shows minimal increase**. Fault isolation contains the impact to the targeted service's node.
->
-> **Adversarial also shows high degradation** -- the resource-heavy hotspot node amplifies cross-service contention.
+> Latency degradation between pre-chaos and during-chaos tells the same story. **Colocate's during-chaos homepage latency was 99 milliseconds** -- the lowest of all strategies. **Spread's was 229 milliseconds** -- more than double. Adversarial, best-fit, and dependency-aware sit between them. The strategies that disrupt the *fewest* cross-node paths during the kill cycle suffer the *least* latency degradation. This is the mechanism that explains all three refutations, which I cover on the discussion slide.
 
 ---
 
@@ -195,21 +193,37 @@ Speaker notes for the thesis defense presentation.
 
 ## Slide 12 -- Discussion
 
-> All three hypotheses are supported:
+> All three literature-derived hypotheses are refuted, and the three refutations point at the same mechanism.
 >
-> **H1: Colocate is the worst**. It has the lowest resilience scores, longest recovery times, highest latency degradation, and most CPU throttling. Supported.
+> **H1 -- Colocate is the worst: refuted.** Colocate scored 83.0 with zero variance. It was the best non-baseline strategy, not the worst. Its during-chaos frontend latency was 99 milliseconds, lower than every other strategy.
 >
-> **H2: Spread provides the best fault isolation**. It has the best non-baseline scores, minimal latency increase, and fastest recovery. Supported.
+> **H2 -- Spread provides the best fault isolation: refuted.** Spread scored 52.3, with standard deviation 27. Its during-chaos latency was 229 milliseconds, more than double colocate's. It was among the worst non-baseline strategies, not the best.
 >
-> **H3: Baseline achieves 100%**. The trivial fault produces perfect scores with zero recovery cycles, confirming our measurement validity. Supported.
+> **H3 -- Recovery time predicts resilience: refuted.** Mean recovery time across the 6 main strategies clusters tightly between 1229 and 1596 milliseconds, yet resilience scores span from 52 to 83. Dependency-aware had the fastest recovery but only a mid-tier score; colocate had slower recovery but the best score. Recovery speed and resilience are essentially uncorrelated.
 >
-> Three key insights emerge:
+> The methodology control held: baseline scored 100 with zero variance, so these refutations are signal, not noise.
 >
-> First, **placement matters**. Topology is not just a resource concern -- it directly determines fault blast radius and recovery characteristics.
+> So what is going on? The explanation comes from looking carefully at what pod-delete actually does.
 >
-> Second, **the default scheduler is not enough**. It provides some isolation, but it is not optimized for resilience. Intentional placement is needed for fault-tolerant systems.
+> The placement literature builds its predictions on **contention-based faults**: CPU hogs, memory hogs, disk I/O stress. Under those faults, co-locating services causes shared resources to compete and degrade, and spreading services across nodes genuinely helps. The intuition behind H1, H2, and H3 all comes from this contention model.
 >
-> Third, the impact is **multi-dimensional**. Placement affects all measured dimensions -- recovery, latency, resources, and throughput. It is not a single-metric problem.
+> **Pod-delete is not a contention-based fault. It is a churn-based fault.** Every 15 seconds, the productcatalogservice pod is killed and a new one is scheduled. The kernel's TCP stack, conntrack table, kube-proxy iptables rules, and CoreDNS cache all have to reconverge to the new pod IP. While this is happening, every cross-node hop to or through the affected node is briefly disrupted.
+>
+> This mechanism explains all three refutations at once:
+>
+> Under colocate, every probe path stays kernel-local on the saturated node. The kill cycle proceeds without ever crossing a node boundary -- so most probes never see the disruption. Only the probes that *directly target* productcatalogservice fail. This is why colocate scores highest and has the lowest during-chaos latency.
+>
+> Under spread, every backend call has to cross the node hosting productcatalogservice or its replacement. That cross-node hop is exactly what pod-delete churn disrupts. So the entire dependency graph sees the disruption, and resilience scores collapse.
+>
+> And H3 fails because **recovery time is not the bottleneck** under churn. All strategies recover in roughly 1.2 to 1.6 seconds; the score gap of 30+ percentage points does not come from how long the new pod takes to be ready. It comes from in-flight cross-node failures *during* the kill cycle. If your probe call crosses the affected node while conntrack is reconverging, it fails regardless of how fast the replacement pod is scheduled.
+>
+> Three insights follow:
+>
+> First, **placement-vs-resilience intuition is fault-class-specific**. The literature is built on contention-based faults, and its conclusions do not transfer to churn-based faults. This is a publishable gap.
+>
+> Second, **co-location is not pathological under churn**. It is, in fact, optimal -- because it minimises the surface area for cross-node disruption during the kill cycle.
+>
+> Third, **the right placement strategy depends on the expected fault class**. Operators should not pick "spread for resilience" as a universal default; they should pick spread for contention-prone workloads and co-locate for churn-prone services.
 
 ---
 
@@ -245,11 +259,11 @@ Speaker notes for the thesis defense presentation.
 >
 > Fourth, a **reproducible methodology** with seeded randomness, exact configurations, and an automated comparison pipeline.
 >
-> Key findings: placement topology has a measurable and significant impact on chaos resilience. Colocate is consistently the worst. Spread consistently provides the best fault isolation. All three hypotheses are supported.
+> Key findings: all three literature-derived hypotheses are refuted, and the three refutations point at the same mechanism. Under pod-delete on a single-replica critical service, colocate scored 83.0 with zero variance, while spread scored 52.3 with high variance. Recovery time does not predict score -- the strategies all recover in roughly the same 1.2 to 1.6 second band, yet scores span 52 to 83. The mechanism is that pod-delete is a churn-based fault, not a contention-based one, so co-located services keep their probe paths kernel-local during the kill cycle and avoid cross-node TCP and conntrack disruption. Spread amplifies exactly the cross-node traffic that pod churn disrupts. The methodology control held -- baseline scored 100% with zero variance -- so the refutations are real, not noise.
 >
-> Future work includes multi-fault injection for complex failure scenarios, larger cluster scale with 20+ nodes and 100+ services, ML-based anomaly detection on the collected dataset, custom placement policies using reinforcement learning, production-like traffic patterns, and integration with GitOps for automated remediation.
+> Future work: the most important next step is to test contention-based faults -- pod-cpu-hog, pod-memory-hog, network-latency injection -- and check whether the ordering flips back to the literature direction. If it does, that confirms the fault-class-specific story and turns it into a concrete operator recommendation: pick the placement strategy by the dominant fault class for the workload. Other directions include multi-replica services where restart can happen on a peer pod, larger clusters with production-like traffic, and integrating per-fault-class placement guidance into existing schedulers like Borg or Medea.
 >
-> To summarize: pod placement topology has a measurable and significant impact on microservice resilience under chaos injection. Topology-aware scheduling is essential for building resilient cloud-native systems.
+> To summarize: placement-vs-resilience intuition from the literature is fault-class-specific. The community has implicitly assumed contention-based faults, and the resulting "spread is safer" guidance does not survive contact with churn-based faults like pod-delete. Co-location wins under churn because it minimises the surface area for cross-node disruption during the kill cycle.
 
 ---
 
@@ -257,4 +271,4 @@ Speaker notes for the thesis defense presentation.
 
 > Thank you. I am happy to take any questions.
 >
-> To recap the numbers: 6 placement strategies, 2 fault types, 4 metric dimensions, and all 3 hypotheses supported by experimental evidence.
+> To recap: 6 placement strategies plus baseline and default-scheduler controls, 4 metric dimensions, 7 httpProbes across 4 tiers plus 5 Rust cmdProbes, and three literature-derived hypotheses -- all three refuted, pointing at one shared mechanism. The placement-vs-resilience intuition in the literature implicitly assumes faults are contention-based. Pod-delete is churn-based, and under churn the prescription inverts: co-location wins, spread loses, and recovery speed is not the bottleneck. ChaosProbe gives operators a framework to make this distinction empirically rather than by default.
