@@ -30,10 +30,25 @@ class RecoveryWatcher:
         result = watcher.result()  # structured recovery data
     """
 
+    # Event reasons we surface as `schedulerEvents`.  These are the K8s
+    # events that explain *why* the scheduler made a decision, *why* a
+    # scheduling attempt failed, or *why* a pod can't start — exactly the
+    # signal the H9 "scheduling latency dominates recovery" hypothesis needs.
+    _SCHEDULER_EVENT_REASONS = frozenset(
+        {
+            "Scheduled",
+            "FailedScheduling",
+            "BackOff",
+            "FailedCreate",
+            "FailedMount",
+        }
+    )
+
     def __init__(self, namespace: str, deployment_name: str):
         self.namespace = namespace
         self.deployment_name = deployment_name
         self._label_selector = f"app={deployment_name}"
+        self._pod_name_prefix = f"{deployment_name}-"
 
         ensure_k8s_config()
 
@@ -42,6 +57,7 @@ class RecoveryWatcher:
         # Internal state
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._event_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
         # Pod tracking: pod_name -> was_ready (bool)
@@ -54,11 +70,15 @@ class RecoveryWatcher:
         self._events: List[Dict[str, Any]] = []
         # Watch errors surfaced through result()
         self._watch_errors: List[str] = []
+        # Scheduler-specific K8s events for the deployment's pods.  Captured
+        # in parallel with the pod-state watch so a failed scheduling attempt
+        # is visible even when the pod never reaches Ready.
+        self._scheduler_events: List[Dict[str, Any]] = []
 
     # ── Lifecycle ────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start watching pods in a background thread."""
+        """Start watching pods and scheduler events in background threads."""
         # Snapshot current pods before experiment starts
         self._snapshot_pods()
 
@@ -67,11 +87,17 @@ class RecoveryWatcher:
         )
         self._thread.start()
 
+        self._event_thread = threading.Thread(
+            target=self._event_watch_loop, daemon=True, name="recovery-event-watcher"
+        )
+        self._event_thread.start()
+
     def stop(self) -> None:
-        """Stop the watch and wait for the thread to finish."""
+        """Stop the watches and wait for both threads to finish."""
         self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
+        for thread in (self._thread, self._event_thread):
+            if thread and thread.is_alive():
+                thread.join(timeout=5)
 
         # Close any pending cycle
         with self._lock:
@@ -93,6 +119,7 @@ class RecoveryWatcher:
         with self._lock:
             cycles = list(self._cycles)
             events = list(self._events)
+            scheduler_events = list(self._scheduler_events)
             errors = list(self._watch_errors)
 
         summary = self._compute_summary(cycles)
@@ -101,6 +128,7 @@ class RecoveryWatcher:
             "recoveryEvents": cycles,
             "summary": summary,
             "rawEvents": events,
+            "schedulerEvents": scheduler_events,
         }
         if errors:
             data["watchErrors"] = errors
@@ -203,6 +231,101 @@ class RecoveryWatcher:
                     retry_delay = min(retry_delay * 2, 10.0)
             finally:
                 w.stop()
+
+    def _event_watch_loop(self) -> None:
+        """Background loop that watches K8s events for the deployment's pods.
+
+        Uses the same retry-with-backoff shape as the pod watch.  Events
+        are filtered to:
+
+        * involvedObject kind == Pod, namespace == self.namespace
+        * involvedObject name starts with ``"<deployment>-"`` (the standard
+          K8s naming convention for deployment-managed pods)
+        * reason ∈ ``_SCHEDULER_EVENT_REASONS``
+
+        Each captured event is recorded as a flat dict; downstream consumers
+        (visualisation, ML export) can join on `podName` to correlate with
+        recovery cycles.
+        """
+        max_retries = 5
+        retry_delay = 1.0
+
+        for attempt in range(max_retries):
+            if self._stop_event.is_set():
+                return
+
+            w = watch.Watch()
+            try:
+                for raw_event in w.stream(
+                    self.core_api.list_namespaced_event,
+                    namespace=self.namespace,
+                    field_selector="involvedObject.kind=Pod",
+                    timeout_seconds=0,
+                ):
+                    if self._stop_event.is_set():
+                        return
+
+                    parsed = self._parse_scheduler_event(raw_event.get("object"))
+                    if parsed is None:
+                        continue
+                    with self._lock:
+                        self._scheduler_events.append(parsed)
+            except Exception as exc:
+                logger.warning(
+                    "Scheduler-event watch interrupted (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                )
+                with self._lock:
+                    self._watch_errors.append(f"event-attempt {attempt + 1}: {exc}")
+                if attempt < max_retries - 1 and not self._stop_event.is_set():
+                    self._stop_event.wait(timeout=retry_delay)
+                    retry_delay = min(retry_delay * 2, 10.0)
+            finally:
+                w.stop()
+
+    def _parse_scheduler_event(self, event_obj: Any) -> Optional[Dict[str, Any]]:
+        """Convert a K8s V1Event into a flat dict, or None if the event is
+        not one of the scheduler reasons we surface (or is malformed)."""
+        if event_obj is None:
+            return None
+        reason = getattr(event_obj, "reason", None)
+        if reason not in self._SCHEDULER_EVENT_REASONS:
+            return None
+        involved = getattr(event_obj, "involved_object", None)
+        if involved is None:
+            return None
+        pod_name = getattr(involved, "name", None)
+        if not pod_name or not pod_name.startswith(self._pod_name_prefix):
+            return None
+
+        # Node: prefer event.source.host (set by the scheduler / kubelet),
+        # fall back to None if absent.  Don't parse the message text — that's
+        # K8s-version-fragile.
+        source = getattr(event_obj, "source", None)
+        node = getattr(source, "host", None) if source is not None else None
+
+        event_time = (
+            getattr(event_obj, "event_time", None)
+            or getattr(event_obj, "last_timestamp", None)
+            or getattr(event_obj, "first_timestamp", None)
+        )
+        if event_time is not None and hasattr(event_time, "isoformat"):
+            timestamp = event_time.isoformat()
+        elif event_time is not None:
+            timestamp = str(event_time)
+        else:
+            timestamp = datetime.now(timezone.utc).isoformat()
+
+        return {
+            "timestamp": timestamp,
+            "type": getattr(event_obj, "type", None),
+            "reason": reason,
+            "message": getattr(event_obj, "message", None),
+            "podName": pod_name,
+            "node": node,
+        }
 
     # ── Helpers ──────────────────────────────────────────────
 
@@ -307,13 +430,11 @@ class RecoveryWatcher:
         # Separating the components makes those scheduler-pathological
         # cases distinguishable from true container start-up latency.
         d2s = [
-            c["deletionToScheduled_ms"] for c in cycles
+            c["deletionToScheduled_ms"]
+            for c in cycles
             if c.get("deletionToScheduled_ms") is not None
         ]
-        s2r = [
-            c["scheduledToReady_ms"] for c in cycles
-            if c.get("scheduledToReady_ms") is not None
-        ]
+        s2r = [c["scheduledToReady_ms"] for c in cycles if c.get("scheduledToReady_ms") is not None]
 
         summary = {
             "count": len(cycles),
