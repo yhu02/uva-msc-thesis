@@ -80,6 +80,124 @@ def generate_from_summary(
     return generate_from_dict(summary, output_dir)
 
 
+def _normalize_strategy(
+    name: str,
+    sdata: Dict[str, Any],
+    iterations_count: int,
+) -> Dict[str, Any]:
+    """Project a raw strategy result into the flat shape charts expect.
+
+    Pulls out the resilience-score moments (mean/stddev/min/max),
+    pass rate, and recovery-time summaries from whichever nesting
+    level they live in — aggregated multi-iteration data and
+    single-iteration data store these in different places.
+    """
+    import statistics as stats
+
+    exp = sdata.get("experiment", {}) or {}
+    agg = sdata.get("aggregated", {}) or {}
+    # Recovery metrics live in experiment for multi-iteration (aggregated),
+    # but in metrics.recovery.summary for single-iteration runs.
+    rec_summary = (sdata.get("metrics") or {}).get("recovery", {}).get("summary", {})
+
+    # Compute stddev/min/max from iterations
+    iter_scores = [it.get("resilienceScore", 0) for it in sdata.get("iterations", [])]
+    if iter_scores and len(iter_scores) > 1:
+        stddev = agg.get("stddevResilienceScore") or round(stats.stdev(iter_scores), 1)
+        min_s = (
+            agg.get("minResilienceScore")
+            if agg.get("minResilienceScore") is not None
+            else min(iter_scores)
+        )
+        max_s = (
+            agg.get("maxResilienceScore")
+            if agg.get("maxResilienceScore") is not None
+            else max(iter_scores)
+        )
+    else:
+        stddev = agg.get("stddevResilienceScore", 0.0)
+        min_s = agg.get("minResilienceScore")
+        max_s = agg.get("maxResilienceScore")
+
+    # Prefer healthy-only mean when tainted iterations exist
+    tainted = agg.get("taintedIterations", 0)
+    all_tainted = agg.get("allIterationsTainted", False)
+    if tainted > 0 and not all_tainted:
+        avg_score = agg.get(
+            "meanResilienceScore_healthyOnly",
+            exp.get("meanResilienceScore", exp.get("resilienceScore", 0)),
+        )
+        stddev = agg.get("stddevResilienceScore_healthyOnly") or stddev
+    else:
+        avg_score = exp.get("meanResilienceScore", exp.get("resilienceScore", 0))
+
+    return {
+        "avgResilienceScore": avg_score,
+        "stddevResilienceScore": stddev,
+        "minResilienceScore": min_s,
+        "maxResilienceScore": max_s,
+        "passRate": _compute_pass_rate(exp),
+        "avgMeanRecovery_ms": (
+            exp.get("meanRecoveryTime_ms")
+            if exp.get("meanRecoveryTime_ms") is not None
+            else rec_summary.get("meanRecovery_ms")
+        ),
+        "avgP95Recovery_ms": (
+            exp.get("p95RecoveryTime_ms")
+            if exp.get("p95RecoveryTime_ms") is not None
+            else (
+                rec_summary.get("p95Recovery_ms")
+                if rec_summary.get("p95Recovery_ms") is not None
+                else exp.get("maxRecoveryTime_ms")
+            )
+        ),
+        "medianRecovery_ms": exp.get("medianRecoveryTime_ms")
+        or rec_summary.get("medianRecovery_ms"),
+        "runCount": exp.get("totalExperiments", iterations_count),
+    }
+
+
+def _normalize_strategies(
+    raw_strategies: Dict[str, Any],
+    iterations_count: int,
+) -> Dict[str, Dict[str, Any]]:
+    """Apply :func:`_normalize_strategy` to every entry in raw_strategies."""
+    return {
+        name: _normalize_strategy(name, sdata, iterations_count)
+        for name, sdata in raw_strategies.items()
+    }
+
+
+def _collect_iteration_data(
+    raw_strategies: Dict[str, Any],
+) -> Dict[str, Dict[str, list]]:
+    """Per-strategy per-iteration data used by the detailed charts.
+
+    Returns ``{strategy_name: {"resilienceScores": [...], "recoveryTimes": [...]}}``
+    for every strategy that has iteration records.  Strategies with a
+    single iteration are omitted (their data is already captured in
+    the normalized summary).
+    """
+    iteration_data: Dict[str, Dict[str, list]] = {}
+    for name, sdata in raw_strategies.items():
+        iters = sdata.get("iterations", [])
+        if not iters:
+            continue
+        scores = [it.get("resilienceScore", 0) for it in iters]
+        recovery_times = []
+        for it in iters:
+            metrics = it.get("metrics", {})
+            recovery = metrics.get("recovery", {}).get("summary", {})
+            mean_rec = recovery.get("meanRecovery_ms")
+            if mean_rec is not None:
+                recovery_times.append(mean_rec)
+        iteration_data[name] = {
+            "resilienceScores": scores,
+            "recoveryTimes": recovery_times,
+        }
+    return iteration_data
+
+
 def generate_from_dict(
     summary: Dict[str, Any],
     output_dir: str,
@@ -103,89 +221,9 @@ def generate_from_dict(
 
     generated = []
     iterations_count = summary.get("iterations", 1)
+    strategies = _normalize_strategies(raw_strategies, iterations_count)
 
-    # Build strategies dict from the full strategy data (not the flat comparison table)
-    strategies = {}
-    for name, sdata in raw_strategies.items():
-        exp = sdata.get("experiment", {}) or {}
-        agg = sdata.get("aggregated", {}) or {}
-        # Recovery metrics live in experiment for multi-iteration (aggregated),
-        # but in metrics.recovery.summary for single-iteration runs.
-        rec_summary = (sdata.get("metrics") or {}).get("recovery", {}).get("summary", {})
-
-        # Compute stddev/min/max from iterations
-        iter_scores = [it.get("resilienceScore", 0) for it in sdata.get("iterations", [])]
-        if iter_scores and len(iter_scores) > 1:
-            import statistics as _stats
-
-            stddev = agg.get("stddevResilienceScore") or round(_stats.stdev(iter_scores), 1)
-            min_s = (
-                agg.get("minResilienceScore")
-                if agg.get("minResilienceScore") is not None
-                else min(iter_scores)
-            )
-            max_s = (
-                agg.get("maxResilienceScore")
-                if agg.get("maxResilienceScore") is not None
-                else max(iter_scores)
-            )
-        else:
-            stddev = agg.get("stddevResilienceScore", 0.0)
-            min_s = agg.get("minResilienceScore")
-            max_s = agg.get("maxResilienceScore")
-
-        # Prefer healthy-only mean when tainted iterations exist
-        tainted = agg.get("taintedIterations", 0)
-        all_tainted = agg.get("allIterationsTainted", False)
-        if tainted > 0 and not all_tainted:
-            avg_score = agg.get(
-                "meanResilienceScore_healthyOnly",
-                exp.get("meanResilienceScore", exp.get("resilienceScore", 0)),
-            )
-            stddev = agg.get("stddevResilienceScore_healthyOnly") or stddev
-        else:
-            avg_score = exp.get("meanResilienceScore", exp.get("resilienceScore", 0))
-
-        strategies[name] = {
-            "avgResilienceScore": avg_score,
-            "stddevResilienceScore": stddev,
-            "minResilienceScore": min_s,
-            "maxResilienceScore": max_s,
-            "passRate": _compute_pass_rate(exp),
-            "avgMeanRecovery_ms": (
-                exp.get("meanRecoveryTime_ms")
-                if exp.get("meanRecoveryTime_ms") is not None
-                else rec_summary.get("meanRecovery_ms")
-            ),
-            "avgP95Recovery_ms": (
-                exp.get("p95RecoveryTime_ms")
-                if exp.get("p95RecoveryTime_ms") is not None
-                else (
-                    rec_summary.get("p95Recovery_ms")
-                    if rec_summary.get("p95Recovery_ms") is not None
-                    else exp.get("maxRecoveryTime_ms")
-                )
-            ),
-            "medianRecovery_ms": exp.get("medianRecoveryTime_ms")
-            or rec_summary.get("medianRecovery_ms"),
-            "runCount": exp.get("totalExperiments", iterations_count),
-        }
-
-    # Collect per-iteration data points for detailed charts
-    iteration_data = {}
-    for name, sdata in raw_strategies.items():
-        iters = sdata.get("iterations", [])
-        if iters:
-            iteration_data[name] = {
-                "resilienceScores": [it.get("resilienceScore", 0) for it in iters],
-                "recoveryTimes": [],
-            }
-            for it in iters:
-                metrics = it.get("metrics", {})
-                recovery = metrics.get("recovery", {}).get("summary", {})
-                mean_rec = recovery.get("meanRecovery_ms")
-                if mean_rec is not None:
-                    iteration_data[name]["recoveryTimes"].append(mean_rec)
+    iteration_data = _collect_iteration_data(raw_strategies)
 
     path = chart_resilience_scores(strategies, output_path, iteration_data)
     if path:

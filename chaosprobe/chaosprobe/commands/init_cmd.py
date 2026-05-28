@@ -89,7 +89,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
         sys.exit(1)
     click.echo(f"  {message}")
 
-    setup._init_k8s_client()
+    setup.init_k8s_client()
     prereqs = setup.check_prerequisites()
 
     click.echo(f"  Cluster access: {'OK' if prereqs['cluster_access'] else 'No cluster'}")

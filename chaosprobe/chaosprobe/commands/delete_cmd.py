@@ -48,7 +48,7 @@ def delete(namespace: str, keep_app: bool):
     if not is_valid:
         click.echo("Error: No reachable cluster.", err=True)
         sys.exit(1)
-    setup._init_k8s_client()
+    setup.init_k8s_client()
 
     # 1. Kill lingering port-forwards
     click.echo("Stopping port-forwards...")

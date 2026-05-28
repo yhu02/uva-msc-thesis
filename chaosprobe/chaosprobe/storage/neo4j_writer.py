@@ -354,7 +354,19 @@ class Neo4jWriterMixin:
         run_id: str,
         recovery: Dict[str, Any],
     ) -> None:
-        """Store individual recovery cycle events."""
+        """Store individual recovery cycle events.
+
+        Single-writer assumption: this clear-then-write pattern (and
+        the analogous one in every other ``_sync_*`` helper) assumes
+        only one process is syncing data for a given ``run_id`` at a
+        time.  The clear and the re-create live in the same Bolt
+        transaction so a crash mid-sync rolls back atomically, but
+        two concurrent syncs would still race because each begins by
+        deleting the other's just-written children.  ChaosProbe runs
+        sequential iterations from a single CLI process, so this is
+        fine — but don't change the run model without rewriting these
+        helpers as upserts.
+        """
         self._clear_children(tx, run_id, "HAS_RECOVERY_CYCLE", "RecoveryCycle")
         for idx, cycle in enumerate(recovery.get("recoveryEvents", [])):
             tx.run(

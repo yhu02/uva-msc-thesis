@@ -21,13 +21,11 @@ from typing import Any, Dict, List, Optional
 from kubernetes import client
 
 from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics import base as _base
 from chaosprobe.metrics.base import (
     ContinuousProberBase,
     find_probe_pods_per_node,
     find_ready_pod,
-)
-from chaosprobe.metrics.base import (
-    exec_in_pod as _base_exec_in_pod,
 )
 
 logger = logging.getLogger(__name__)
@@ -445,8 +443,13 @@ class ThroughputProber:
         return None
 
     def _exec_in_pod(self, pod_name: str, command: List[str]) -> str:
-        """Execute a command inside a pod and return stdout."""
-        return _base_exec_in_pod(self.core_api, self.namespace, pod_name, command)
+        """Execute a command inside a pod and return stdout.
+
+        Thin instance-bound wrapper around :func:`chaosprobe.metrics.base.exec_in_pod`
+        that captures ``self.core_api`` and ``self.namespace`` so callers
+        only need to supply pod_name + command.
+        """
+        return _base.exec_in_pod(self.core_api, self.namespace, pod_name, command)
 
     def _redis_benchmark(
         self,

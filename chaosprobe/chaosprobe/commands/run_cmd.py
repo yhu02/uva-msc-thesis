@@ -1,15 +1,30 @@
 """CLI command: chaosprobe run — automated full experiment matrix."""
 
+import json
+import os
+import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import click
+from kubernetes import client as k8s_client
+from kubernetes.client import Configuration as K8sConfig
+from kubernetes.client.rest import ApiException
+from urllib3.exceptions import MaxRetryError
 
+from chaosprobe.commands.shared import (
+    neo4j_password_option,
+    neo4j_uri_option,
+    neo4j_user_option,
+)
 from chaosprobe.config.loader import load_scenario
 from chaosprobe.config.topology import parse_topology_from_scenario
 from chaosprobe.config.validator import validate_scenario
+from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
@@ -25,7 +40,15 @@ from chaosprobe.orchestrator.run_phases import (
 from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
-from chaosprobe.provisioner.setup import LitmusSetup
+from chaosprobe.probes.builder import (
+    DEFAULT_REGISTRY,
+    RustProbeBuilder,
+    ensure_image_pull_secret,
+    extract_cmdprobe_images,
+    patch_probe_images,
+    prepull_probe_images,
+)
+from chaosprobe.provisioner.setup import LitmusSetup, UnknownExperimentType
 
 
 def _ensure_litmus_setup(
@@ -53,7 +76,7 @@ def _ensure_litmus_setup(
         return False
     click.echo(f"  {message}")
 
-    setup._init_k8s_client()
+    setup.init_k8s_client()
     prereqs = setup.check_prerequisites()
 
     # ── Ensure Helm is available (needed for LitmusChaos install) ──
@@ -98,70 +121,97 @@ def _ensure_litmus_setup(
 
     for exp_type in set(experiment_types):
         click.echo(f"  Installing experiment: {exp_type}")
-        if not setup.install_experiment(exp_type, namespace):
-            click.echo(f"  WARNING: Failed to install experiment '{exp_type}'", err=True)
+        try:
+            installed = setup.install_experiment(exp_type, namespace)
+        except UnknownExperimentType as exc:
+            click.echo(f"  ERROR: {exc}", err=True)
+            return False
+        if not installed:
+            click.echo(
+                f"  WARNING: kubectl apply failed for experiment '{exp_type}' — "
+                f"cluster may have transient network issues; continuing",
+                err=True,
+            )
 
     # ── Ensure infrastructure components (install or repair, parallel) ──
+    _ensure_infrastructure_parallel(setup)
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    return True
 
-    def _deployment_has_pvc(name: str, ns: str) -> bool:
+
+def _deployment_has_pvc(setup: LitmusSetup, name: str, ns: str) -> bool:
+    """Best-effort check whether a deployment mounts a PVC.
+
+    Returns ``True`` on error so callers don't trigger a destructive
+    re-install just because the readiness probe failed transiently.
+    """
+    try:
+        dep = setup.apps_api.read_namespaced_deployment(name, ns)
+        volumes = dep.spec.template.spec.volumes or []
+        return any(v.persistent_volume_claim is not None for v in volumes)
+    except Exception:
+        return True
+
+
+def _ensure_metrics_server(setup: LitmusSetup) -> Tuple[str, str]:
+    if setup.is_metrics_server_installed():
         try:
-            dep = setup.apps_api.read_namespaced_deployment(name, ns)
-            volumes = dep.spec.template.spec.volumes or []
-            return any(v.persistent_volume_claim is not None for v in volumes)
+            dep = setup.apps_api.read_namespaced_deployment("metrics-server", "kube-system")
+            containers = dep.spec.template.spec.containers or []
+            args = containers[0].args or [] if containers else []
+            if "--kubelet-insecure-tls" not in args:
+                setup.install_metrics_server(wait=True)
+                return "metrics-server", "repaired (added --kubelet-insecure-tls)"
         except Exception:
-            return True
+            pass
+        return "metrics-server", "available"
+    if setup.install_metrics_server(wait=True):
+        return "metrics-server", "installed"
+    return "metrics-server", "installed (not yet ready)"
 
-    def _ensure_metrics_server():
-        if setup.is_metrics_server_installed():
-            try:
-                dep = setup.apps_api.read_namespaced_deployment("metrics-server", "kube-system")
-                containers = dep.spec.template.spec.containers or []
-                args = containers[0].args or [] if containers else []
-                if "--kubelet-insecure-tls" not in args:
-                    setup.install_metrics_server(wait=True)
-                    return "metrics-server", "repaired (added --kubelet-insecure-tls)"
-            except Exception:
-                pass
-            return "metrics-server", "available"
-        if setup.install_metrics_server(wait=True):
-            return "metrics-server", "installed"
-        return "metrics-server", "installed (not yet ready)"
 
-    def _ensure_prometheus():
-        if setup.is_prometheus_installed():
-            if not _deployment_has_pvc("prometheus-server", "prometheus"):
-                setup.install_prometheus(wait=True)
-                return "Prometheus", "repaired (restored persistent storage)"
-            return "Prometheus", "available"
-        if setup.install_prometheus(wait=True):
-            return "Prometheus", "installed"
-        return "Prometheus", "installed (not yet ready)"
+def _ensure_prometheus(setup: LitmusSetup) -> Tuple[str, str]:
+    if setup.is_prometheus_installed():
+        if not _deployment_has_pvc(setup, "prometheus-server", "prometheus"):
+            setup.install_prometheus(wait=True)
+            return "Prometheus", "repaired (restored persistent storage)"
+        return "Prometheus", "available"
+    if setup.install_prometheus(wait=True):
+        return "Prometheus", "installed"
+    return "Prometheus", "installed (not yet ready)"
 
-    def _ensure_neo4j():
-        if setup.is_neo4j_installed():
-            if not _deployment_has_pvc("neo4j", "neo4j"):
-                setup.install_neo4j(wait=True)
-                return "Neo4j", "repaired (restored persistent storage)"
-            return "Neo4j", "available"
-        if setup.install_neo4j(wait=True):
-            return "Neo4j", "installed"
-        return "Neo4j", "installed (not yet ready)"
 
-    def _ensure_chaoscenter():
-        if setup.is_chaoscenter_installed():
-            return "ChaosCenter", "available"
-        if setup.install_chaoscenter(wait=True):
-            return "ChaosCenter", "installed"
-        return "ChaosCenter", "installed (not yet ready)"
+def _ensure_neo4j(setup: LitmusSetup) -> Tuple[str, str]:
+    if setup.is_neo4j_installed():
+        if not _deployment_has_pvc(setup, "neo4j", "neo4j"):
+            setup.install_neo4j(wait=True)
+            return "Neo4j", "repaired (restored persistent storage)"
+        return "Neo4j", "available"
+    if setup.install_neo4j(wait=True):
+        return "Neo4j", "installed"
+    return "Neo4j", "installed (not yet ready)"
 
+
+def _ensure_chaoscenter(setup: LitmusSetup) -> Tuple[str, str]:
+    if setup.is_chaoscenter_installed():
+        return "ChaosCenter", "available"
+    if setup.install_chaoscenter(wait=True):
+        return "ChaosCenter", "installed"
+    return "ChaosCenter", "installed (not yet ready)"
+
+
+def _ensure_infrastructure_parallel(setup: LitmusSetup) -> None:
+    """Install or repair the four infra components concurrently.
+
+    Each component is installed/repaired independently in its own
+    thread; results are printed in completion order.
+    """
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {
-            executor.submit(_ensure_metrics_server): "metrics-server",
-            executor.submit(_ensure_prometheus): "Prometheus",
-            executor.submit(_ensure_neo4j): "Neo4j",
-            executor.submit(_ensure_chaoscenter): "ChaosCenter",
+            executor.submit(_ensure_metrics_server, setup): "metrics-server",
+            executor.submit(_ensure_prometheus, setup): "Prometheus",
+            executor.submit(_ensure_neo4j, setup): "Neo4j",
+            executor.submit(_ensure_chaoscenter, setup): "ChaosCenter",
         }
         for future in as_completed(futures):
             label = futures[future]
@@ -171,15 +221,13 @@ def _ensure_litmus_setup(
             except Exception as e:
                 click.echo(f"  WARNING: {label} setup failed: {e}", err=True)
 
-    return True
-
 
 # ------------------------------------------------------------------
 # Helpers extracted from run() to keep the main command manageable
 # ------------------------------------------------------------------
 
 
-def _strip_unbuilt_cmdprobes(experiments: List[Dict[str, Any]]) -> None:
+def _assert_no_unbuilt_cmdprobes(experiments: List[Dict[str, Any]]) -> None:
     """Abort if any cmdProbe still has the placeholder ``image: auto``.
 
     Earlier this silently dropped unbuilt cmdProbes; we now raise
@@ -236,28 +284,30 @@ def _load_and_prepare_scenario(
         click.echo(f"Error loading experiment: {e}", err=True)
         sys.exit(1)
 
-    # Auto-deploy application manifests from scenario's deploy/ directory
+    # Auto-deploy application manifests from scenario's deploy/ directory.
+    # Shells out to kubectl rather than using the python client because
+    # ``kubectl apply -f <dir>`` walks the directory, handles multi-doc
+    # YAML, and computes 3-way merges — all of which would have to be
+    # re-implemented against the API client.  Worth the dual transport.
     deploy_dir = Path(shared_scenario["path"]) / "deploy"
     if deploy_dir.is_dir():
-        import subprocess as _sp
-
         yamls = sorted(deploy_dir.glob("*.yaml")) + sorted(deploy_dir.glob("*.yml"))
         if yamls:
             click.echo(f"  Deploying {len(yamls)} manifest(s) from {deploy_dir.name}/...")
-            _sp.run(
+            subprocess.run(
                 ["kubectl", "create", "namespace", namespace],
                 capture_output=True,
                 text=True,
                 timeout=120,
             )
             try:
-                result = _sp.run(
+                result = subprocess.run(
                     ["kubectl", "apply", "-f", str(deploy_dir), "-n", namespace],
                     capture_output=True,
                     text=True,
                     timeout=300,
                 )
-            except _sp.TimeoutExpired:
+            except subprocess.TimeoutExpired:
                 click.echo(
                     "  Warning: kubectl apply timed out after 300s — "
                     "the K8s API server may be overloaded or unreachable.",
@@ -284,15 +334,6 @@ def _load_and_prepare_scenario(
     # the image via `docker pull`, so push is unconditionally required.
     if shared_scenario.get("probes"):
         click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
-        import os
-
-        from chaosprobe.probes.builder import (
-            DEFAULT_REGISTRY,
-            RustProbeBuilder,
-            ensure_image_pull_secret,
-            patch_probe_images,
-        )
-
         registry = os.environ.get("CHAOSPROBE_REGISTRY", DEFAULT_REGISTRY)
         builder = RustProbeBuilder(registry=registry, push=True)
 
@@ -320,44 +361,40 @@ def _load_and_prepare_scenario(
         # placeholder image (shouldn't happen given the strictness above,
         # but covers a probe defined in YAML without a matching binary),
         # abort rather than silently dropping it from the experiment.
-        _strip_unbuilt_cmdprobes(shared_scenario["experiments"])
+        _assert_no_unbuilt_cmdprobes(shared_scenario["experiments"])
 
     return shared_scenario, namespace, experiment_file, service_routes
 
 
 def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
     """Clear leftover nodeSelector constraints and rollout-restart app deployments."""
-    from kubernetes import client as k8s_client_mod
-
     click.echo("Clearing stale placement constraints...")
-    for _attempt in range(3):
+    for attempt in range(3):
         try:
             mutator.clear_placement(wait=True, timeout=120)
             break
-        except Exception as _e:
-            if _attempt < 2:
-                click.echo(f"  Retry clearing placement ({_e})...", err=True)
-                import time as _time
-
-                _time.sleep(5)
+        except Exception as e:
+            if attempt < 2:
+                click.echo(f"  Retry clearing placement ({e})...", err=True)
+                time.sleep(5)
             else:
-                click.echo(f"  WARNING: could not clear placement ({_e})", err=True)
+                click.echo(f"  WARNING: could not clear placement ({e})", err=True)
 
     # Ensure ALL app deployments use RollingUpdate before the restart
     # patch.  Previous runs leave deployments with Recreate strategy,
     # which kills all pods during a rollout restart.
     click.echo("Ensuring safe rollout strategy for all deployments...")
+    apps_api = k8s_client.AppsV1Api()
     try:
-        _apps_api = k8s_client_mod.AppsV1Api()
-        _all_deps = _apps_api.list_namespaced_deployment(namespace)
-        for _dep in _all_deps.items:
-            _name = _dep.metadata.name
-            if _name in LITMUS_INFRA_DEPLOYMENTS:
+        all_deps = apps_api.list_namespaced_deployment(namespace)
+        for dep in all_deps.items:
+            name = dep.metadata.name
+            if name in LITMUS_INFRA_DEPLOYMENTS:
                 continue
-            _strat = _dep.spec.strategy
-            if _strat and _strat.type == "Recreate":
-                _apps_api.patch_namespaced_deployment(
-                    name=_name,
+            strat = dep.spec.strategy
+            if strat and strat.type == "Recreate":
+                apps_api.patch_namespaced_deployment(
+                    name=name,
                     namespace=namespace,
                     body={
                         "spec": {
@@ -376,31 +413,30 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
 
     click.echo("Restarting app deployments for a clean baseline...")
     try:
-        _apps_api = k8s_client_mod.AppsV1Api()
-        _all_deps = _apps_api.list_namespaced_deployment(namespace)
-        _restart_names = [
+        all_deps = apps_api.list_namespaced_deployment(namespace)
+        restart_names = [
             d.metadata.name
-            for d in _all_deps.items
+            for d in all_deps.items
             if d.metadata.name not in LITMUS_INFRA_DEPLOYMENTS
         ]
-        _now = datetime.now(timezone.utc).isoformat()
-        for _dep_name in _restart_names:
-            _apps_api.patch_namespaced_deployment(
-                name=_dep_name,
+        now = datetime.now(timezone.utc).isoformat()
+        for dep_name in restart_names:
+            apps_api.patch_namespaced_deployment(
+                name=dep_name,
                 namespace=namespace,
                 body={
                     "spec": {
                         "template": {
                             "metadata": {
                                 "annotations": {
-                                    "chaosprobe.io/restartedAt": _now,
+                                    "chaosprobe.io/restartedAt": now,
                                 }
                             }
                         }
                     }
                 },
             )
-        click.echo(f"  Triggered rollout restart for {len(_restart_names)} deployment(s)")
+        click.echo(f"  Triggered rollout restart for {len(restart_names)} deployment(s)")
 
         # Wait for ALL restarted deployments to finish rolling out before
         # proceeding.  `wait_for_healthy_deployments` only checks
@@ -409,34 +445,32 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
         # updated_replicas == desired for every deployment so that fresh
         # pods (with cold caches, JVM warm-up, etc.) are fully serving
         # traffic before the first experiment starts.
-        import time as _time_mod
-
-        _restart_deadline = _time_mod.time() + 180
-        click.echo(f"  Waiting for {len(_restart_names)} rollout(s) to complete (timeout: 180s)...")
-        _pending = list(_restart_names)
-        while _pending and _time_mod.time() < _restart_deadline:
-            _still_pending = []
-            _deps = _apps_api.list_namespaced_deployment(namespace)
-            _dep_map = {d.metadata.name: d for d in _deps.items}
-            for _name in _pending:
-                _dep = _dep_map.get(_name)
-                if _dep is None:
+        restart_deadline = time.time() + 180
+        click.echo(f"  Waiting for {len(restart_names)} rollout(s) to complete (timeout: 180s)...")
+        pending = list(restart_names)
+        while pending and time.time() < restart_deadline:
+            still_pending = []
+            deps = apps_api.list_namespaced_deployment(namespace)
+            dep_map = {d.metadata.name: d for d in deps.items}
+            for name in pending:
+                dep = dep_map.get(name)
+                if dep is None:
                     continue  # deployment gone, skip
-                _desired = _dep.spec.replicas if _dep.spec.replicas is not None else 1
-                if _desired == 0:
+                desired = dep.spec.replicas if dep.spec.replicas is not None else 1
+                if desired == 0:
                     continue
-                _gen = _dep.metadata.generation or 0
-                _obs_gen = (_dep.status.observed_generation or 0) if _dep.status else 0
-                _updated = (_dep.status.updated_replicas or 0) if _dep.status else 0
-                _avail = (_dep.status.available_replicas or 0) if _dep.status else 0
-                if _obs_gen < _gen or _updated < _desired or _avail < _desired:
-                    _still_pending.append(_name)
-            _pending = _still_pending
-            if _pending:
-                _time_mod.sleep(5)
-        if _pending:
+                gen = dep.metadata.generation or 0
+                obs_gen = (dep.status.observed_generation or 0) if dep.status else 0
+                updated = (dep.status.updated_replicas or 0) if dep.status else 0
+                avail = (dep.status.available_replicas or 0) if dep.status else 0
+                if obs_gen < gen or updated < desired or avail < desired:
+                    still_pending.append(name)
+            pending = still_pending
+            if pending:
+                time.sleep(5)
+        if pending:
             click.echo(
-                f"  WARNING: {len(_pending)} rollout(s) did not complete in time: {_pending}",
+                f"  WARNING: {len(pending)} rollout(s) did not complete in time: {pending}",
                 err=True,
             )
         else:
@@ -455,13 +489,9 @@ def _save_partial_results(overall_results: Dict[str, Any], results_dir: Path) ->
     Uses compact JSON (no indentation) to keep the file size manageable
     (~36MB vs ~102MB with indent=2 for a full 8-strategy run).
     """
-    import json as _json_mod
-
     partial_path = results_dir / "partial_summary.json"
     try:
-        partial_path.write_text(
-            _json_mod.dumps(overall_results, separators=(",", ":"), default=str)
-        )
+        partial_path.write_text(json.dumps(overall_results, separators=(",", ":"), default=str))
     except OSError as exc:
         # Best-effort: a save failure here must not crash the run, but the
         # user has to know that crash-recovery data is unreliable.
@@ -647,21 +677,9 @@ def _print_run_banner(
         " (default: 0 = use settle time)"
     ),
 )
-@click.option(
-    "--neo4j-uri",
-    default="bolt://localhost:7687",
-    envvar="NEO4J_URI",
-    help="Neo4j connection URI (default: bolt://localhost:7687). Enables graph storage.",
-)
-@click.option(
-    "--neo4j-user", default="neo4j", envvar="NEO4J_USER", help="Neo4j username (default: neo4j)"
-)
-@click.option(
-    "--neo4j-password",
-    default="chaosprobe",
-    envvar="NEO4J_PASSWORD",
-    help="Neo4j password (default: chaosprobe)",
-)
+@neo4j_uri_option
+@neo4j_user_option
+@neo4j_password_option
 def run(
     namespace: Optional[str],
     output_dir: Optional[str],
@@ -736,23 +754,16 @@ def run(
     # If the API server is down (e.g. control plane crashed in a previous
     # run), there's no point loading scenarios, deploying manifests, or
     # building probes.  Detect this early and give a clear error.
-    from chaosprobe.k8s import ensure_k8s_config
-
     ensure_k8s_config()
     try:
-        from kubernetes import client as _k8s_check
-        from kubernetes.client import Configuration as _K8sConfig
-        from kubernetes.client.rest import ApiException as _ApiExc
-        from urllib3.exceptions import MaxRetryError as _MaxRetry
-
-        _k8s_check.CoreV1Api().list_namespace(limit=1)
-    except (_ApiExc, _MaxRetry, ConnectionError, OSError) as exc:
+        k8s_client.CoreV1Api().list_namespace(limit=1)
+    except (ApiException, MaxRetryError, ConnectionError, OSError) as exc:
         try:
-            _api_host = _K8sConfig.get_default_copy().host or "<unknown>"
+            api_host = K8sConfig.get_default_copy().host or "<unknown>"
         except Exception:
-            _api_host = "<unknown>"
+            api_host = "<unknown>"
         click.echo(
-            f"Error: K8s API server at {_api_host} unreachable — cannot proceed.\n"
+            f"Error: K8s API server at {api_host} unreachable — cannot proceed.\n"
             f"  Detail: {exc}\n"
             f"  The control plane may need restarting (e.g. after an adversarial crash).\n"
             f"  Restart the control plane node and retry.",
@@ -902,11 +913,6 @@ def run(
     # pods couldn't pull in time when the chaos pod was bursting CPU/network
     # on the same node, dragging the score down by ~8 points per missed
     # probe even though the SUT was healthy).
-    from chaosprobe.probes.builder import (
-        extract_cmdprobe_images,
-        prepull_probe_images,
-    )
-
     probe_images = extract_cmdprobe_images(shared_scenario.get("experiments", []))
     worker_node_names = [
         n.name for n in mutator.get_nodes() if n.is_schedulable and not n.is_control_plane

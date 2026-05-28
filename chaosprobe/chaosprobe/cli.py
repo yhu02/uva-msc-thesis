@@ -9,16 +9,10 @@ import click
 from dotenv import find_dotenv, load_dotenv
 
 from chaosprobe.commands.shared import (
-    get_graph_store as _get_graph_store,
-)
-from chaosprobe.commands.shared import (
-    neo4j_password_option as _neo4j_password_option,
-)
-from chaosprobe.commands.shared import (
-    neo4j_uri_option as _neo4j_uri_option,
-)
-from chaosprobe.commands.shared import (
-    neo4j_user_option as _neo4j_user_option,
+    get_graph_store,
+    neo4j_password_option,
+    neo4j_uri_option,
+    neo4j_user_option,
 )
 from chaosprobe.config.loader import load_scenario
 from chaosprobe.config.validator import validate_scenario
@@ -44,7 +38,7 @@ def main():
 def status(json_output: bool):
     """Check the status of ChaosProbe and its dependencies."""
     setup = LitmusSetup(skip_k8s_init=True)
-    setup._init_k8s_client()
+    setup.init_k8s_client()
     prereqs = setup.check_prerequisites()
 
     cluster_info = setup.get_cluster_info()
@@ -167,9 +161,9 @@ def provision(scenario_path: str, namespace: Optional[str]):
 @click.argument("baseline", type=str)
 @click.argument("afterfix", type=str)
 @click.option("--output", "-o", type=click.Path(), help="Output file for comparison JSON")
-@_neo4j_uri_option
-@_neo4j_user_option
-@_neo4j_password_option
+@neo4j_uri_option
+@neo4j_user_option
+@neo4j_password_option
 def compare(
     baseline: str,
     afterfix: str,
@@ -202,7 +196,7 @@ def compare(
             sys.exit(1)
     elif neo4j_uri:
         click.echo(f"Comparing runs from Neo4j: {baseline} vs {afterfix}...")
-        store = _get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
+        store = get_graph_store(neo4j_uri, neo4j_user, neo4j_password)
         try:
             baseline_data = store.get_run_output(baseline)
             afterfix_data = store.get_run_output(afterfix)

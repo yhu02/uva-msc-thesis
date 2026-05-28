@@ -50,13 +50,13 @@ These are set inside probe containers at runtime (via ChaosEngine env or Kuberne
 |---|---|---|
 | `PROBE_REDIS_ADDR` | `redis-cart.online-boutique.svc.cluster.local:6379` | check-redis |
 | `PROBE_URL` | `http://frontend.online-boutique.svc.cluster.local/` | check-http-latency |
-| `PROBE_LATENCY_MS_MAX` | `1000` | check-http-latency |
+| `PROBE_LATENCY_MS_MAX` | `4000` | check-http-latency |
 | `PROBE_HOST` | `frontend.online-boutique.svc.cluster.local:80` | check-dns-latency, check-cart-flow |
 | `PROBE_DNS_MS_MAX` | `250` | check-dns-latency |
 | `PROBE_TARGET` | `frontend.online-boutique.svc.cluster.local:80` | check-tcp-connect |
 | `PROBE_CONNECT_MS_MAX` | `500` | check-tcp-connect |
 | `PROBE_ROUTE_MS_MAX` | `1500` | check-cart-flow |
-| `PROBE_TIMEOUT_MS` | `5000` | check-http-latency, check-tcp-connect, check-cart-flow |
+| `PROBE_TIMEOUT_MS` | `5000` (check-http-latency); `2000` (check-redis, check-tcp-connect, check-cart-flow) | per-probe |
 
 ## Prerequisites
 

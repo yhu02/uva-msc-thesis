@@ -303,7 +303,7 @@ def _setup_chaoscenter(namespace: str) -> Optional[Dict[str, Any]]:
     # Auto-configure
     try:
         setup = LitmusSetup(skip_k8s_init=True)
-        setup._init_k8s_client()
+        setup.init_k8s_client()
         cc_result = setup.ensure_chaoscenter_configured(
             namespace=namespace,
             base_host="http://localhost",

@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from chaosprobe.output import SCHEMA_VERSION
+
 
 def compare_runs(
     baseline: Dict[str, Any],
@@ -69,7 +71,7 @@ def compare_runs(
     confidence = _calculate_confidence(verdict_changed, score_change, experiment_improvements)
 
     return {
-        "schemaVersion": "2.0.0",
+        "schemaVersion": SCHEMA_VERSION,
         "comparisonId": comparison_id,
         "timestamp": timestamp,
         "scenario": baseline.get("scenario", {}),

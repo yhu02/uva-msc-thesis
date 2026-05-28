@@ -18,6 +18,29 @@ from chaosprobe.provisioner.components import _ComponentsMixin
 from chaosprobe.provisioner.vagrant import _VagrantMixin
 
 
+class UnknownExperimentType(ValueError):
+    """Raised when a requested chaos experiment type is not in the catalog.
+
+    Distinguishes a typo / unsupported fault from a network or API
+    failure during ``kubectl apply``, so the CLI can surface a clear
+    "did you mean ...?" error instead of a generic "install failed".
+    """
+
+
+def _format_helm_error(action: str, exc: subprocess.CalledProcessError) -> str:
+    """Build a RuntimeError message that includes helm's stderr.
+
+    ``subprocess.run(..., capture_output=True, check=True)`` raises
+    ``CalledProcessError`` with ``.stderr`` populated.  The default
+    str(exc) only shows the exit code; the actual helm error message
+    is in stderr and was previously lost.
+    """
+    stderr = (exc.stderr or b"").decode(errors="replace").strip()
+    if stderr:
+        return f"Failed to {action}: {exc} — helm stderr: {stderr[:500]}"
+    return f"Failed to {action}: {exc}"
+
+
 class LitmusSetup(_VagrantMixin, _ComponentsMixin, _ChaosCenterAPIMixin, _ChaosCenterMixin):
     """Handles automatic installation and verification of LitmusChaos."""
 
@@ -114,10 +137,10 @@ end
         self._k8s_initialized = False
 
         if not skip_k8s_init:
-            self._init_k8s_client()
+            self.init_k8s_client()
 
-    def _init_k8s_client(self):
-        """Initialize Kubernetes client."""
+    def init_k8s_client(self):
+        """Initialize Kubernetes client (idempotent — safe to call repeatedly)."""
         try:
             config.load_incluster_config()
             self._in_cluster = True
@@ -228,7 +251,7 @@ end
 
         # Initialize k8s client if needed to test connectivity
         if not self._k8s_initialized:
-            self._init_k8s_client()
+            self.init_k8s_client()
 
         if not self._k8s_initialized:
             return False, "Could not initialize Kubernetes client."
@@ -619,6 +642,7 @@ end
                     "https://litmuschaos.github.io/litmus-helm/",
                 ],
                 check=True,
+                capture_output=True,
             )
         except subprocess.CalledProcessError:
             pass  # Repo may already exist
@@ -628,9 +652,10 @@ end
             subprocess.run(
                 ["helm", "repo", "update"],
                 check=True,
+                capture_output=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to update helm repos: {e}") from e
+            raise RuntimeError(_format_helm_error("update helm repos", e)) from e
 
         # Install litmus-core chart (chaos operator and CRDs)
         print("Installing LitmusChaos operator...")
@@ -646,9 +671,10 @@ end
                     self.LITMUS_NAMESPACE,
                 ],
                 check=True,
+                capture_output=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install LitmusChaos operator: {e}") from e
+            raise RuntimeError(_format_helm_error("install LitmusChaos operator", e)) from e
 
         # Install kubernetes-chaos chart (experiment definitions)
         print("Installing LitmusChaos experiments...")
@@ -664,9 +690,10 @@ end
                     self.LITMUS_NAMESPACE,
                 ],
                 check=True,
+                capture_output=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install LitmusChaos experiments: {e}") from e
+            raise RuntimeError(_format_helm_error("install LitmusChaos experiments", e)) from e
 
         if wait:
             return self._wait_for_litmus(timeout)
@@ -698,6 +725,16 @@ end
             if e.status != 409:
                 raise
 
+        # NOTE: this role is intentionally cluster-wide rather than
+        # namespace-scoped.  LitmusChaos experiments need to read nodes
+        # (NoSchedule/taint state), reach into kube-system for
+        # metrics-server lookups, and operate on any pod the chaos engine
+        # targets — none of which are achievable with a namespaced Role.
+        # The cluster-wide `*/*` on the `litmuschaos.io` API group is
+        # also load-bearing: ChaosCenter creates ChaosResults/ChaosEngines
+        # in arbitrary namespaces during experiment execution.
+        # In production this should be scoped down per experiment-type;
+        # for the thesis use case (researcher-owned cluster) it is fine.
         cluster_role = client.V1ClusterRole(
             metadata=client.V1ObjectMeta(
                 name=f"litmus-admin-{namespace}",
@@ -776,38 +813,51 @@ end
 
         return True
 
+    # Catalog of supported experiment types and their upstream chart URLs.
+    # Lifted to a class attribute so callers can introspect supported
+    # types without having to invoke install_experiment with each one.
+    _CHAOS_CHARTS_BASE = (
+        "https://raw.githubusercontent.com/litmuschaos/chaos-charts/master/faults/kubernetes"
+    )
+    EXPERIMENT_URLS = {
+        "pod-delete": f"{_CHAOS_CHARTS_BASE}/pod-delete/fault.yaml",
+        "container-kill": f"{_CHAOS_CHARTS_BASE}/container-kill/fault.yaml",
+        "pod-cpu-hog": f"{_CHAOS_CHARTS_BASE}/pod-cpu-hog/fault.yaml",
+        "pod-memory-hog": f"{_CHAOS_CHARTS_BASE}/pod-memory-hog/fault.yaml",
+        "pod-network-loss": f"{_CHAOS_CHARTS_BASE}/pod-network-loss/fault.yaml",
+        "pod-network-latency": f"{_CHAOS_CHARTS_BASE}/pod-network-latency/fault.yaml",
+        "pod-network-corruption": f"{_CHAOS_CHARTS_BASE}/pod-network-corruption/fault.yaml",
+        "pod-network-duplication": f"{_CHAOS_CHARTS_BASE}/pod-network-duplication/fault.yaml",
+        "pod-io-stress": f"{_CHAOS_CHARTS_BASE}/pod-io-stress/fault.yaml",
+        "node-drain": f"{_CHAOS_CHARTS_BASE}/node-drain/fault.yaml",
+        "node-cpu-hog": f"{_CHAOS_CHARTS_BASE}/node-cpu-hog/fault.yaml",
+        "node-memory-hog": f"{_CHAOS_CHARTS_BASE}/node-memory-hog/fault.yaml",
+        "node-taint": f"{_CHAOS_CHARTS_BASE}/node-taint/fault.yaml",
+    }
+
     def install_experiment(self, experiment_type: str, namespace: str) -> bool:
         """Install a specific chaos experiment type.
 
         Args:
             experiment_type: The type of experiment (e.g., 'pod-delete').
+                Must be a key in :attr:`EXPERIMENT_URLS`.
             namespace: Target namespace.
 
         Returns:
-            True if installation succeeded.
-        """
-        GITHUB_RAW_BASE = (
-            "https://raw.githubusercontent.com/litmuschaos/chaos-charts/master/faults/kubernetes"
-        )
-        experiment_urls = {
-            "pod-delete": f"{GITHUB_RAW_BASE}/pod-delete/fault.yaml",
-            "container-kill": f"{GITHUB_RAW_BASE}/container-kill/fault.yaml",
-            "pod-cpu-hog": f"{GITHUB_RAW_BASE}/pod-cpu-hog/fault.yaml",
-            "pod-memory-hog": f"{GITHUB_RAW_BASE}/pod-memory-hog/fault.yaml",
-            "pod-network-loss": f"{GITHUB_RAW_BASE}/pod-network-loss/fault.yaml",
-            "pod-network-latency": f"{GITHUB_RAW_BASE}/pod-network-latency/fault.yaml",
-            "pod-network-corruption": f"{GITHUB_RAW_BASE}/pod-network-corruption/fault.yaml",
-            "pod-network-duplication": f"{GITHUB_RAW_BASE}/pod-network-duplication/fault.yaml",
-            "pod-io-stress": f"{GITHUB_RAW_BASE}/pod-io-stress/fault.yaml",
-            "node-drain": f"{GITHUB_RAW_BASE}/node-drain/fault.yaml",
-            "node-cpu-hog": f"{GITHUB_RAW_BASE}/node-cpu-hog/fault.yaml",
-            "node-memory-hog": f"{GITHUB_RAW_BASE}/node-memory-hog/fault.yaml",
-            "node-taint": f"{GITHUB_RAW_BASE}/node-taint/fault.yaml",
-        }
+            True if installation succeeded, False if ``kubectl apply``
+            returned non-zero (e.g. transient network failure).
 
-        url = experiment_urls.get(experiment_type)
+        Raises:
+            UnknownExperimentType: If *experiment_type* is not a known
+                fault.  Distinguished from an install failure so the
+                CLI can give a specific "unsupported type" message.
+        """
+        url = self.EXPERIMENT_URLS.get(experiment_type)
         if not url:
-            return False
+            raise UnknownExperimentType(
+                f"Unknown experiment type '{experiment_type}'. "
+                f"Supported: {', '.join(sorted(self.EXPERIMENT_URLS))}"
+            )
 
         try:
             subprocess.run(

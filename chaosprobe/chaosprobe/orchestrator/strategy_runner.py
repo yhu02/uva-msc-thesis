@@ -8,15 +8,18 @@ from __future__ import annotations
 import copy
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import click
+from kubernetes import client as k8s_client
 
 from chaosprobe.chaos.runner import ChaosRunner
 from chaosprobe.collector.result_collector import ResultCollector
 from chaosprobe.loadgen.runner import LoadProfile, LocustRunner
 from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.orchestrator import portforward as pf
+from chaosprobe.orchestrator.diagnostics import capture_unknown_diagnostics
 from chaosprobe.orchestrator.preflight import (
     wait_for_healthy_deployments,
 )
@@ -24,257 +27,35 @@ from chaosprobe.orchestrator.probers import (
     create_and_start_probers,
     stop_and_collect_probers,
 )
+from chaosprobe.orchestrator.readiness import (
+    wait_for_app_ready,
+    wait_for_target_pod,
+)
+from chaosprobe.orchestrator.recovery import wait_for_k8s_api
 from chaosprobe.orchestrator.run_phases import (
     _clean_stale_resources,
     _restart_unhealthy_infra,
     aggregate_iterations,
 )
+from chaosprobe.orchestrator.timeout import (
+    compute_effective_timeout,
+    extract_chaos_duration,
+)
 from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
-
-# ---------------------------------------------------------------------------
-# Unknown-verdict diagnostics
-# ---------------------------------------------------------------------------
-
-
-def _capture_unknown_diagnostics(
-    *,
-    namespace: str,
-    probe_verdicts: Dict[str, str],
-    output_data: Dict[str, Any],
-    executed: List[Dict[str, Any]],
-    experiment_start: float,
-    experiment_end: float,
-) -> Dict[str, Any]:
-    """Capture raw probe state when verdicts are Unknown.
-
-    Used to diagnose *why* certain probes resolve to Unknown — i.e., is
-    the CRD's ``probeStatuses`` actually missing those entries, is
-    ChaosCenter's executionData a different snapshot, and what
-    happened to the probe pods themselves.
-
-    Every read is wrapped in try/except: a diagnostic capture failure
-    must never break an experiment run.
-    """
-    unknown_names = sorted(n for n, v in probe_verdicts.items() if v == "Unknown")
-
-    # 1. Raw CRD probe statuses (already parsed by result_collector but
-    #    we kept the .status dict verbatim).
-    crd_probe_statuses: Dict[str, Any] = {}
-    try:
-        for exp in output_data.get("experiments", []):
-            for probe in exp.get("probes", []):
-                name = probe.get("name", "")
-                if name:
-                    crd_probe_statuses[name] = {
-                        "type": probe.get("type"),
-                        "mode": probe.get("mode"),
-                        "status": probe.get("status", {}),
-                        "phaseVerdicts": probe.get("phaseVerdicts"),
-                    }
-    except Exception as e:
-        crd_probe_statuses = {"_error": f"crd capture failed: {e}"}
-
-    # 2. ChaosCenter's view (raw probe statuses + parsed verdicts) from
-    #    executionData — different snapshot moment than the CRD.
-    cc_raw: Dict[str, Any] = {}
-    cc_verdicts: Dict[str, str] = {}
-    try:
-        for exp_entry in executed:
-            cc_raw.update(exp_entry.get("chaosCenterRawProbeStatuses", {}) or {})
-            cc_verdicts.update(exp_entry.get("probeVerdicts", {}) or {})
-    except Exception as e:
-        cc_raw = {"_error": f"chaoscenter capture failed: {e}"}
-
-    # 3. Probe-pod events from the chaos namespace within the experiment
-    #    window. LitmusChaos cmdProbe pods carry the probe name in
-    #    metadata labels and the name prefix.
-    probe_pod_events: List[Dict[str, Any]] = []
-    probe_pod_summary: List[Dict[str, Any]] = []
-    try:
-        from datetime import datetime, timezone
-
-        from kubernetes import client as _k8s_client
-
-        from chaosprobe.k8s import ensure_k8s_config
-
-        ensure_k8s_config()
-        core = _k8s_client.CoreV1Api()
-
-        start_dt = datetime.fromtimestamp(experiment_start, tz=timezone.utc)
-        end_dt = datetime.fromtimestamp(experiment_end, tz=timezone.utc)
-
-        # Events involving any pod whose name contains a probe name or
-        # the marker "probe" / "litmus".  Cheap to over-collect: the
-        # diagnostic is rare (only when Unknowns occur).
-        events = core.list_namespaced_event(namespace=namespace).items
-        for ev in events:
-            io = ev.involved_object
-            name = (io.name or "") if io else ""
-            if not name:
-                continue
-            lname = name.lower()
-            if not any(p in lname for p in ("probe", "litmus")) and not any(
-                u in lname for u in unknown_names
-            ):
-                continue
-            ev_ts = ev.last_timestamp or ev.event_time or ev.first_timestamp
-            if ev_ts and not (start_dt <= ev_ts <= end_dt):
-                continue
-            probe_pod_events.append(
-                {
-                    "time": ev_ts.isoformat() if ev_ts else None,
-                    "type": ev.type,
-                    "reason": ev.reason,
-                    "object": f"{io.kind}/{io.name}" if io else "",
-                    "message": ev.message,
-                }
-            )
-
-        # Snapshot of any surviving probe-related pods at read time.
-        pods = core.list_namespaced_pod(namespace=namespace).items
-        for pod in pods:
-            pname = (pod.metadata.name or "").lower()
-            if not any(p in pname for p in ("probe", "litmus")) and not any(
-                u in pname for u in unknown_names
-            ):
-                continue
-            container_states: List[Dict[str, Any]] = []
-            for cs in pod.status.container_statuses or []:
-                state = {}
-                if cs.state and cs.state.waiting:
-                    state["waiting"] = {
-                        "reason": cs.state.waiting.reason,
-                        "message": cs.state.waiting.message,
-                    }
-                if cs.state and cs.state.terminated:
-                    state["terminated"] = {
-                        "reason": cs.state.terminated.reason,
-                        "exitCode": cs.state.terminated.exit_code,
-                    }
-                container_states.append(
-                    {
-                        "name": cs.name,
-                        "restartCount": cs.restart_count,
-                        "state": state,
-                    }
-                )
-            probe_pod_summary.append(
-                {
-                    "name": pod.metadata.name,
-                    "node": pod.spec.node_name,
-                    "phase": pod.status.phase,
-                    "podIP": pod.status.pod_ip,
-                    "startTime": (
-                        pod.status.start_time.isoformat() if pod.status.start_time else None
-                    ),
-                    "containerStatuses": container_states,
-                }
-            )
-    except Exception as e:
-        probe_pod_events = [{"_error": f"events capture failed: {e}"}]
-
-    return {
-        "unknownProbes": unknown_names,
-        "experimentWindow": {
-            "start": experiment_start,
-            "end": experiment_end,
-            "duration_s": round(experiment_end - experiment_start, 1),
-        },
-        "crdProbeStatuses": crd_probe_statuses,
-        "chaosCenterProbeStatuses": cc_raw,
-        "chaosCenterVerdicts": cc_verdicts,
-        "probePodEvents": probe_pod_events,
-        "probePodSnapshot": probe_pod_summary,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Timeout helpers
-# ---------------------------------------------------------------------------
-
-
-def _parse_probe_timeout(s: str) -> int:
-    """Parse a Go-style duration string (e.g. ``'15s'``, ``'1.5s'``) to integer seconds."""
-    s = s.strip()
-    if not s:
-        return 5
-    try:
-        if s.endswith("ms"):
-            return max(1, int(float(s[:-2]) // 1000))
-        if s.endswith("s"):
-            return max(1, int(float(s[:-1])))
-        if s.endswith("m"):
-            return max(1, int(float(s[:-1]) * 60))
-        return max(1, int(float(s)))
-    except (ValueError, OverflowError):
-        return 5
-
-
-def _extract_chaos_duration(scenario: Dict[str, Any]) -> int:
-    """Extract the total chaos duration (seconds) from the scenario."""
-    chaos_duration = 60  # fallback
-    for exp_entry in scenario.get("experiments", []):
-        spec = exp_entry.get("spec", {})
-        for exp in spec.get("spec", {}).get("experiments", []):
-            for env in exp.get("spec", {}).get("components", {}).get("env", []):
-                if env.get("name") == "TOTAL_CHAOS_DURATION":
-                    try:
-                        chaos_duration = max(chaos_duration, int(env["value"]))
-                    except (ValueError, KeyError):
-                        pass
-    return chaos_duration
-
-
-def _compute_effective_timeout(scenario: Dict[str, Any], user_timeout: int) -> int:
-    """Compute a polling timeout that accounts for chaos duration + probe overhead.
-
-    The go-runner evaluates probes **before** and **after** the chaos
-    window.  At PreChaos and PostChaos, probes are evaluated
-    **sequentially** (not in goroutines).  When probes can't reach
-    their targets, each one exhausts its full ``(retry + 1) ×
-    probeTimeout`` budget (``retry`` is the count of *additional*
-    retries after the initial attempt).
-
-    Returns the larger of *user_timeout* and the computed minimum.
-    """
-    chaos_duration = _extract_chaos_duration(scenario)
-    total_probe_budget = 0
-
-    for exp_entry in scenario.get("experiments", []):
-        spec = exp_entry.get("spec", {})
-        for exp in spec.get("spec", {}).get("experiments", []):
-            for probe in exp.get("spec", {}).get("probe", []):
-                run_props = probe.get("runProperties", {})
-                t = _parse_probe_timeout(run_props.get("probeTimeout", "5s"))
-                try:
-                    r = int(run_props.get("retry", 0))
-                except (ValueError, TypeError):
-                    r = 0
-                total_probe_budget += t * (r + 1)
-
-    # pre-chaos probes + chaos + post-chaos probes + workflow overhead
-    min_timeout = chaos_duration + 2 * total_probe_budget + 120
-    return max(user_timeout, min_timeout)
-
-
-def _shell_escape(s: str) -> str:
-    """Escape a string for safe use inside single quotes in sh."""
-    return s.replace("'", "'\\''")
-
 
 # Environment variables for the baseline trivial fault (pod-cpu-hog).
 # 1% CPU stress on 1 core for 1 second — imperceptible, no pods deleted.
 # CONTAINER_RUNTIME and SOCKET_PATH are required by pod-cpu-hog to
 # inject the stress-ng helper via the container runtime API.
-_BASELINE_ENV = [
+_BASELINE_ENV: Tuple[Dict[str, str], ...] = (
     {"name": "TOTAL_CHAOS_DURATION", "value": "1"},
     {"name": "CPU_CORES", "value": "0"},
     {"name": "CPU_LOAD", "value": "1"},
     {"name": "CONTAINER_RUNTIME", "value": "containerd"},
     {"name": "SOCKET_PATH", "value": "/run/containerd/containerd.sock"},
-]
+)
 
 
 def _swap_to_trivial_fault(scenario: Dict[str, Any]) -> None:
@@ -346,488 +127,6 @@ def _extract_http_routes(
                 routes.append((service, path, name, method))
 
     return routes
-
-
-def _wait_for_target_pod(
-    namespace: str,
-    deployment_name: str,
-    timeout: int = 60,
-    stable_secs: int = 10,
-) -> None:
-    """Wait until the target deployment has a pod that stays Running.
-
-    After finding a Running pod, keeps checking for *stable_secs* to
-    confirm the pod doesn't crash under resource pressure (common with
-    colocate where all deployments compete on one node).
-
-    Raises ``click.ClickException`` if no stable pod is found within
-    *timeout* seconds.
-    """
-    from kubernetes import client as k8s_client
-
-    core = k8s_client.CoreV1Api()
-    deadline = time.time() + timeout
-    stable_since: float | None = None
-
-    while time.time() < deadline:
-        pods = core.list_namespaced_pod(
-            namespace,
-            label_selector=f"app={deployment_name}",
-        )
-        running = [
-            p
-            for p in pods.items
-            if p.status
-            and p.status.phase == "Running"
-            and all(cs.ready for cs in (p.status.container_statuses or []))
-        ]
-        if running:
-            if stable_since is None:
-                stable_since = time.time()
-            elif time.time() - stable_since >= stable_secs:
-                return  # Pod has been Running for stable_secs
-        else:
-            stable_since = None  # Pod disappeared — reset
-        time.sleep(3)
-    raise click.ClickException(
-        f"Target deployment '{deployment_name}' has no ready pods in "
-        f"'{namespace}' after {timeout}s. The placement strategy may "
-        f"have moved pods to a node that cannot schedule them."
-    )
-
-
-def _wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
-    """Wait until the K8s API server is reachable.
-
-    Heavy placement strategies can indirectly overwhelm the control plane
-    through cascading pressure: worker-node resource starvation triggers
-    pod evictions, rescheduling storms, and elevated etcd/API-server
-    churn — all of which share the control plane's limited memory.
-    Rather than immediately failing all subsequent strategies when the
-    API is unreachable, wait for it to recover.
-
-    **Active remediation**: after 60s of passive waiting, attempts to
-    SSH into the control plane node and force-restart containerd +
-    kubelet.  This handles the case where containerd gets wedged and
-    the API server container is stuck in "Created" state — a scenario
-    observed after the adversarial strategy overwhelms the node (run
-    20260523-093030).
-
-    Re-establishes port-forwards after the API comes back, since the
-    kubectl tunnels will have died during the outage.
-    """
-    from kubernetes import client as k8s_client
-    from kubernetes.client.rest import ApiException
-    from urllib3.exceptions import MaxRetryError, NewConnectionError
-
-    try:
-        api = k8s_client.CoreV1Api()
-        api.list_namespace(limit=1)
-        return  # API is reachable, proceed immediately
-    except (ApiException, MaxRetryError, NewConnectionError, ConnectionError, OSError):
-        pass
-
-    click.echo("  K8s API server unreachable — waiting for recovery...")
-    deadline = time.time() + timeout
-    recovered = False
-    remediation_attempted = False
-    start = time.time()
-
-    while time.time() < deadline:
-        time.sleep(10)
-        try:
-            api = k8s_client.CoreV1Api()
-            api.list_namespace(limit=1)
-            recovered = True
-            break
-        except (ApiException, MaxRetryError, NewConnectionError, ConnectionError, OSError):
-            remaining = int(deadline - time.time())
-            elapsed = time.time() - start
-
-            # After 60s of passive waiting, attempt active remediation
-            # by SSH-ing into the control plane and restarting the
-            # container runtime + kubelet.
-            if elapsed >= 60 and not remediation_attempted:
-                remediation_attempted = True
-                _attempt_control_plane_ssh_remediation()
-
-            if remaining > 0 and remaining % 30 < 10:
-                click.echo(f"    Still waiting ({remaining}s remaining)...")
-
-    if recovered:
-        click.echo("  K8s API server recovered.")
-        # Re-establish port-forwards that died during the outage
-        pf.ensure_all()
-        # Brief stabilisation period for kube-proxy/endpoints to sync.
-        # A previous attempt at a dynamic 5-consecutive-OK poll was
-        # reverted alongside the portforward.start dynamic-poll change
-        # (results/20260518-175642): the chaos infrastructure entered a
-        # persistent broken state in that run, and although the cause
-        # was not conclusively this gate, the dynamic version was rolled
-        # back to restore the known-working pattern.
-        time.sleep(10)
-    else:
-        raise click.ClickException(
-            f"K8s API server unreachable for {timeout}s. "
-            "The cluster may need manual intervention."
-        )
-
-
-def _attempt_control_plane_ssh_remediation() -> None:
-    """SSH into the control plane and force-restart containerd + kubelet.
-
-    Extracts the control plane host from the active kubeconfig's server
-    URL.  Tries common SSH key locations (Vagrant insecure key, default
-    id_rsa).  This is a best-effort operation — if SSH fails, we fall
-    back to passive waiting.
-    """
-    import subprocess
-    from pathlib import Path
-    from urllib.parse import urlparse
-
-    from kubernetes import client as k8s_client
-
-    # Extract control plane host from kubeconfig
-    try:
-        config = k8s_client.Configuration.get_default_copy()
-        parsed = urlparse(config.host)
-        cp_host = parsed.hostname
-        if not cp_host:
-            return
-    except Exception:
-        return
-
-    click.echo(f"    Attempting SSH remediation on control plane ({cp_host})...")
-
-    # Try common SSH keys in order of likelihood
-    ssh_keys = [
-        Path.home() / ".vagrant.d" / "insecure_private_key",
-        Path.home() / ".ssh" / "id_rsa",
-        Path.home() / ".ssh" / "id_ed25519",
-    ]
-    ssh_key = None
-    for key_path in ssh_keys:
-        if key_path.exists():
-            ssh_key = key_path
-            break
-
-    # The remediation command: stop kubelet, force-kill containerd
-    # (graceful restart often hangs when it's wedged), restart both.
-    remediation_cmd = (
-        "sudo systemctl stop kubelet; "
-        "sudo systemctl kill -s SIGKILL containerd 2>/dev/null; "
-        "sleep 2; "
-        "sudo systemctl start containerd; "
-        "sleep 3; "
-        "sudo systemctl start kubelet"
-    )
-
-    ssh_cmd = [
-        "ssh",
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "BatchMode=yes",
-    ]
-    if ssh_key:
-        ssh_cmd.extend(["-i", str(ssh_key)])
-    ssh_cmd.append(f"vagrant@{cp_host}")
-    ssh_cmd.append(remediation_cmd)
-
-    try:
-        result = subprocess.run(
-            ssh_cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode == 0:
-            click.echo("    SSH remediation: containerd + kubelet restarted, waiting for API...")
-        else:
-            click.echo(
-                f"    SSH remediation failed (exit {result.returncode}): "
-                f"{result.stderr.strip()[:100]}",
-                err=True,
-            )
-    except subprocess.TimeoutExpired:
-        click.echo("    SSH remediation timed out — continuing passive wait", err=True)
-    except Exception as exc:
-        click.echo(f"    SSH remediation failed: {exc}", err=True)
-
-
-def _warmup_application(
-    core: Any,
-    namespace: str,
-    pod: str,
-    urls_to_check: List[Tuple[str, str]],
-    *,
-    duration_s: int = 10,
-) -> None:
-    """Pump concurrent HTTP load on every probed route for ``duration_s``.
-
-    Runs as a single sh-loop inside the probe pod that fires ``wget``
-    requests against each URL in a tight loop, in parallel via ``&``.
-    Not a benchmark — the requests' outputs are discarded.  The goal is
-    to force every route's downstream chain (frontend → recommendation
-    → currency, etc.) to warm its connection pools and JIT caches so
-    the cluster is in a consistent "hot" state when chaos starts.
-
-    Reduces iteration-to-iteration variance from cold-state effects
-    that the previous readiness gate didn't address: the gate verified
-    HTTP-200 reachability under low load, but a probe-pod kubectl exec
-    issuing one request per route is nowhere near the load profile
-    chaos + Locust will apply, so warmup-sensitive failure modes only
-    surfaced under chaos and showed up as bimodal scores.
-    """
-    from chaosprobe.metrics.base import exec_in_pod
-
-    # Build a parallel wget loop per route, all running for duration_s.
-    # `wget -q -O /dev/null -T 2` makes each request bounded and silent.
-    # `while true; do ... done` loops continuously; killed by `timeout`.
-    routes_block = " ".join(
-        f"(while true; do wget -q -O /dev/null -T 2 '{_shell_escape(url)}' || true; done) &"
-        for _path, url in urls_to_check
-    )
-    cmd = (
-        f"set +e; "
-        f"{routes_block} "
-        f"sleep {duration_s}; "
-        # Kill background loops so the exec returns promptly.
-        f"kill $(jobs -p) 2>/dev/null; "
-        f"wait 2>/dev/null; "
-        f"echo done"
-    )
-    try:
-        exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
-    except Exception as exc:
-        click.echo(f"    Warning: warmup phase failed (continuing anyway): {exc}", err=True)
-
-
-def _wait_for_app_ready(
-    namespace: str,
-    target_deployment: str,
-    timeout: int = 180,
-    http_routes: Optional[List[tuple]] = None,
-    required_consecutive: int = 5,
-    sustained_period_s: int = 15,
-    latency_budget_ms: int = 5000,
-) -> None:
-    """Wait until all probed routes respond with HTTP 200 and stay stable.
-
-    Two-phase functional gate:
-
-    1. **Consecutive-OK phase**: every probed route must return 200
-       within ``latency_budget_ms`` for ``required_consecutive`` checks
-       in a row.  This filters transient failures.
-
-    2. **Sustained-clean phase**: after the consecutive gate passes,
-       keep sampling for ``sustained_period_s`` seconds.  Any single
-       failure or over-budget response during this window resets back
-       to the consecutive-OK phase.  This catches "marginal recovery"
-       where the cluster responds OK but is fragile — the failure
-       mode observed when iterations score wildly differently with
-       identical placements.  See the procedural-variance analysis
-       in results/20260518-131302 for evidence: BAD iterations passed
-       a 3-consecutive-OK gate with 0% subsequent prober errors yet
-       still produced bimodal scores under chaos.
-
-    K8s readiness probes may pass while the application isn't fully
-    serving traffic (e.g. during connection pool warm-up).  This does
-    actual HTTP checks from a probe pod to confirm end-to-end readiness
-    across ALL routes that will be probed during the experiment.
-    """
-    from kubernetes import client as k8s_client
-
-    from chaosprobe.metrics.base import exec_in_pod, find_probe_pod
-
-    core = k8s_client.CoreV1Api()
-    pod = find_probe_pod(
-        core,
-        namespace,
-        require_python3=False,
-        exclude_prefixes=[target_deployment],
-    )
-    if not pod:
-        click.echo("    Warning: no probe pod for app-ready check, skipping")
-        return
-
-    # Build the list of URLs to check: all probed routes + healthz fallback
-    urls_to_check = []
-    if http_routes:
-        seen = set()
-        for service, path, _desc, _method in http_routes:
-            url = f"http://{service}.{namespace}.svc.cluster.local{path}"
-            if url not in seen:
-                urls_to_check.append((path, url))
-                seen.add(url)
-    if not urls_to_check:
-        urls_to_check = [("/_healthz", f"http://frontend.{namespace}.svc.cluster.local/_healthz")]
-
-    def _check_all_routes() -> bool:
-        """Return True iff every route returns successfully within the budget.
-
-        Uses ``wget``'s exit code as the success signal — busybox wget
-        exits non-zero on connect failure, timeout, and 4xx/5xx
-        responses, so this is sufficient for "did the URL respond OK".
-
-        Previous attempt (``wget -q -S ... | grep ' 200'``) silently
-        broke in this environment: busybox wget's ``-q`` flag suppresses
-        the ``-S`` server-response output, so the grep never matched
-        and the gate reported "0/5 consecutive OK in 240s" while the
-        cluster was actually responding fine.  See the
-        results/20260520-163953 trace where every iteration printed the
-        timeout warning yet still scored normally.
-        """
-        nonlocal pod
-        budget_s = max(1, latency_budget_ms // 1000 + 1)
-        for _path, url in urls_to_check:
-            cmd = (
-                f"wget -q -O /dev/null --timeout={budget_s} '{_shell_escape(url)}' "
-                f"&& echo OK || echo FAIL"
-            )
-            out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
-            if "OK" not in out:
-                # Pod may have been evicted — try to re-discover
-                if "ERROR:" in out:
-                    new_pod = find_probe_pod(
-                        core,
-                        namespace,
-                        require_python3=False,
-                        exclude_prefixes=[target_deployment],
-                    )
-                    if new_pod and new_pod != pod:
-                        pod = new_pod
-                return False
-        return True
-
-    consecutive_ok = 0
-    deadline = time.time() + timeout
-    attempt = 0
-    sustained_until: Optional[float] = None  # absolute time
-
-    while time.time() < deadline:
-        all_ok = _check_all_routes()
-
-        if all_ok:
-            if sustained_until is None:
-                consecutive_ok += 1
-                if consecutive_ok >= required_consecutive:
-                    sustained_until = time.time() + sustained_period_s
-                    click.echo(
-                        f"    App reachable ({consecutive_ok} consecutive OK); "
-                        f"verifying stability for {sustained_period_s}s..."
-                    )
-            else:
-                # In sustained-clean phase — wait until the period elapses.
-                if time.time() >= sustained_until:
-                    # Warmup phase: pump concurrent load on every probed
-                    # route for ~20s to warm gRPC connection pools, JVM
-                    # JIT caches, and CoreDNS resolution before the
-                    # iteration's pre-chaos baseline starts.  Without
-                    # this, frontend's outbound connection pool to
-                    # productcatalog is at cold-start size when chaos
-                    # hits, which sometimes triggers a thundering-herd
-                    # retry cascade and produces a 33-mode score on an
-                    # iteration that would otherwise score 75 with the
-                    # same placement.
-                    #
-                    # Increased from 10s→20s: under colocate (11 services
-                    # on 1 node), 10s was insufficient to warm all pools
-                    # because CPU contention slows connection establishment.
-                    # 20s ensures ≥5 full request cycles per route at the
-                    # typical 3-4s response time under colocate pressure.
-                    _warmup_application(
-                        core,
-                        namespace,
-                        pod,
-                        urls_to_check,
-                        duration_s=20,
-                    )
-
-                    # Post-warmup latency convergence check: verify that
-                    # response times have stabilised below a threshold.
-                    # Without this, strategies that place services across
-                    # nodes (adversarial, spread) can start chaos with
-                    # elevated baseline latency because gRPC connection
-                    # pools inside Go/Java services warm slowly even after
-                    # wget has warmed the Service VIP path.  The fix:
-                    # take 3 quick latency samples; if any route exceeds
-                    # the convergence threshold, run another 10s warmup
-                    # burst and re-check (up to 2 extra rounds).
-                    _CONVERGENCE_THRESHOLD_MS = 300
-                    for _warmup_round in range(2):
-                        converged = True
-                        for _path, url in urls_to_check:
-                            # Time a single request to check latency
-                            safe_url = _shell_escape(url)
-                            cmd = (
-                                f"S=$(date +%s%N 2>/dev/null); "
-                                f"wget -q -O /dev/null --timeout=5 '{safe_url}'; "
-                                f"E=$(date +%s%N 2>/dev/null); "
-                                f"echo $(( (E - S) / 1000000 ))"
-                            )
-                            out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
-                            try:
-                                lat_ms = int(out.strip())
-                                if lat_ms > _CONVERGENCE_THRESHOLD_MS:
-                                    converged = False
-                                    break
-                            except (ValueError, TypeError):
-                                converged = False
-                                break
-                        if converged:
-                            break
-                        # Not converged — run another warmup burst
-                        click.echo(
-                            f"    Latency not converged (>{_CONVERGENCE_THRESHOLD_MS}ms), "
-                            f"extending warmup..."
-                        )
-                        _warmup_application(
-                            core,
-                            namespace,
-                            pod,
-                            urls_to_check,
-                            duration_s=10,
-                        )
-
-                    click.echo(
-                        f"    App ready after {attempt} checks "
-                        f"({len(urls_to_check)} routes, "
-                        f"{required_consecutive} consecutive + "
-                        f"{sustained_period_s}s sustained + warmup)"
-                    )
-                    return
-        else:
-            if sustained_until is not None:
-                click.echo("    App stability check failed — restarting consecutive-OK count")
-                # The probe pod may have been evicted during the sustained
-                # check (e.g. rollout of another service completed and K8s
-                # reclaimed resources).  Re-discover to avoid exec'ing into
-                # a dead pod for the remaining timeout.
-                new_pod = find_probe_pod(
-                    core,
-                    namespace,
-                    require_python3=False,
-                    exclude_prefixes=[target_deployment],
-                )
-                if new_pod and new_pod != pod:
-                    pod = new_pod
-            consecutive_ok = 0
-            sustained_until = None
-
-        attempt += 1
-        time.sleep(3)
-
-    if sustained_until is not None:
-        click.echo("    Warning: app-ready timed out in sustained phase — proceeding anyway")
-    else:
-        click.echo(
-            f"    Warning: app-ready check timed out after {timeout}s — "
-            f"only {consecutive_ok}/{required_consecutive} consecutive OK. "
-            f"Iteration may start with degraded system."
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -914,7 +213,7 @@ def execute_strategy(
         # VM clusters.  The previous 300s was insufficient — see run
         # 20260523-093030 where the adversarial strategy killed the API
         # and the 300s timeout wasn't enough.
-        _wait_for_k8s_api(ctx.namespace, timeout=600)
+        wait_for_k8s_api(ctx.namespace, timeout=600)
 
         # ── Inter-strategy cleanup ──
         # Between back-to-back strategies, lingering ChaosEngines, helper pods,
@@ -1048,7 +347,7 @@ def _run_single_iteration(
     # Ensure the chaos target deployment has at least one ready pod
     # that stays stable (important for colocate where resource pressure
     # can cause pods to crash shortly after starting).
-    _wait_for_target_pod(ctx.namespace, ctx.target_deployment, timeout=180, stable_secs=10)
+    wait_for_target_pod(ctx.namespace, ctx.target_deployment, timeout=180, stable_secs=10)
 
     click.echo("    Ready.")
 
@@ -1065,7 +364,7 @@ def _run_single_iteration(
     http_routes = _extract_http_routes(scenario, ctx.namespace)
 
     # Extract chaos duration for prober phase labeling
-    chaos_duration = _extract_chaos_duration(scenario)
+    chaos_duration = extract_chaos_duration(scenario)
 
     # Verify app-level HTTP readiness across ALL probed routes before
     # starting probers.  This prevents cascading poisoning where a
@@ -1074,7 +373,7 @@ def _run_single_iteration(
     # 240s upper bound: consecutive-OK (≥15s) + sustained period (15s) +
     # generous slack for slow JVM warm-up between iterations.  The function
     # returns early as soon as the gate passes.
-    _wait_for_app_ready(
+    wait_for_app_ready(
         ctx.namespace,
         ctx.target_deployment,
         timeout=240,
@@ -1145,7 +444,7 @@ def _run_single_iteration(
         base_profile = LoadProfile.from_name(ctx.load_profile)
         # Compute Locust run duration to span the full experiment window:
         # pre-chaos baseline + effective ChaosRunner timeout + post-chaos + buffer
-        effective_timeout = _compute_effective_timeout(scenario, ctx.timeout)
+        effective_timeout = compute_effective_timeout(scenario, ctx.timeout)
         locust_duration = pre_chaos_window + effective_timeout + post_chaos_window + 30
         profile = LoadProfile.custom(
             users=base_profile.users,
@@ -1172,7 +471,7 @@ def _run_single_iteration(
         if strategy_name == "baseline":
             _swap_to_trivial_fault(scenario)
 
-        effective_timeout = _compute_effective_timeout(scenario, ctx.timeout)
+        effective_timeout = compute_effective_timeout(scenario, ctx.timeout)
         runner = ChaosRunner(
             ctx.namespace,
             timeout=effective_timeout,
@@ -1387,7 +686,7 @@ def _run_single_iteration(
     }
 
     if unknown_probe_count > 0:
-        iter_result["unknownDiagnostics"] = _capture_unknown_diagnostics(
+        iter_result["unknownDiagnostics"] = capture_unknown_diagnostics(
             namespace=ctx.namespace,
             probe_verdicts=probe_verdicts,
             output_data=output_data,
@@ -1449,7 +748,7 @@ def _run_iterations(
             if ir.get("verdict") == "ERROR":
                 click.echo("    Waiting for K8s API to recover before next iteration...")
                 try:
-                    _wait_for_k8s_api(ctx.namespace, timeout=600)
+                    wait_for_k8s_api(ctx.namespace, timeout=600)
                 except click.ClickException:
                     click.echo(
                         "    K8s API still unreachable — skipping remaining iterations",
@@ -1513,8 +812,6 @@ def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
     This clears post-chaos damage (stuck connections, unhealthy pods,
     resource exhaustion) that the settle-time alone cannot fix.
     """
-    from kubernetes import client as k8s_client
-
     apps_api = k8s_client.AppsV1Api()
     try:
         deps = apps_api.list_namespaced_deployment(namespace)
@@ -1532,8 +829,6 @@ def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
         ]
         if not app_deps:
             return
-
-        from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).isoformat()
         patch_failures = 0

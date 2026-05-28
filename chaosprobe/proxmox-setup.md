@@ -131,7 +131,9 @@ This installs everything needed on the cluster and establishes port-forwards fro
 | Prometheus | 9090 | Cluster metrics queries |
 | Neo4j (bolt) | 7687 | Graph database storage |
 | Neo4j (HTTP) | 7474 | Neo4j browser |
-| ChaosCenter | 9091-9093 | Experiment submission + dashboard |
+| ChaosCenter frontend | 9091 | Dashboard UI |
+| ChaosCenter GraphQL server | 9002 | Experiment submission API |
+| ChaosCenter auth server | 9003 | Authentication API |
 
 ## Step 6: Run experiments
 

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from chaosprobe.collector.result_collector import calculate_resilience_score
 from chaosprobe.metrics.anomaly_labels import generate_anomaly_labels
 from chaosprobe.metrics.cascade import compute_cascade_timeline
+from chaosprobe.output import SCHEMA_VERSION as _SCHEMA_VERSION
 
 
 class OutputGenerator:
@@ -23,7 +24,10 @@ class OutputGenerator:
     - Summary with resilience score
     """
 
-    SCHEMA_VERSION = "2.0.0"
+    # Re-exported as a class attribute for backwards compatibility with
+    # any caller using ``OutputGenerator.SCHEMA_VERSION``.  New code should
+    # import ``chaosprobe.output.SCHEMA_VERSION`` directly.
+    SCHEMA_VERSION = _SCHEMA_VERSION
 
     def __init__(
         self,

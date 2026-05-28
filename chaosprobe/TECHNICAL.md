@@ -9,14 +9,14 @@ ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-
 ```
 ChaosProbe CLI
       │
-      ├── cli.py (~280 lines, thin shell)
+      ├── cli.py (~282 lines, thin shell)
       │     status, provision, compare, cleanup + command registrations
       │
       ├── commands/  (10 extracted command modules)
       │     run_cmd, init_cmd, delete_cmd, graph_cmd, visualize_cmd,
       │     placement_cmd, cluster_cmd, dashboard_cmd, probe_cmd, shared
       │
-      ├── Cluster Manager (provisioner/setup.py, ~1006 lines)
+      ├── Cluster Manager (provisioner/setup.py, ~1056 lines)
       │     LitmusSetup inherits: _VagrantMixin, _ComponentsMixin,
       │     _ChaosCenterAPIMixin, _ChaosCenterMixin
       │     ├── Vagrant (local dev: multi-node KVM/libvirt cluster)
@@ -53,8 +53,13 @@ ChaosProbe CLI
       ├── Orchestrator
       │     ├── strategy_runner.py — RunContext + execute_strategy()
       │     ├── run_phases.py — preflight, graph init, result writing
+      │     ├── preflight.py — pre-iteration scenario/cluster checks
       │     ├── probers.py — create/start/stop continuous probers
-      │     └── portforward.py — kubectl port-forward lifecycle
+      │     ├── portforward.py — kubectl port-forward lifecycle
+      │     ├── timeout.py — probe-timeout and chaos-duration arithmetic
+      │     ├── readiness.py — target-pod, app-ready, warmup gates
+      │     ├── recovery.py — K8s API recovery + control-plane SSH remediation
+      │     └── diagnostics.py — captures cluster state for Unknown probe verdicts
       │
       ├── Output
       │     ├── generator.py — structured JSON output (schema v2.0.0)
@@ -313,7 +318,7 @@ Neo4j is the **sole persistent store**. No SQLite.
 
 Thin shell composing `Neo4jWriterMixin` and `Neo4jReaderMixin`. Supports context manager protocol.
 
-#### neo4j_writer.py (~980 lines)
+#### neo4j_writer.py (~992 lines)
 
 All write operations: topology sync, run persistence, metrics samples, time-series data, anomaly labels, cascade events, pod snapshots.
 
@@ -351,10 +356,10 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 | Kubespray | `deploy_cluster()`, `generate_inventory()`, `get_kubeconfig()` |
 
 **Mixins** in separate files:
-- `provisioner/vagrant.py` — `_VagrantMixin` (~591 lines)
+- `provisioner/vagrant.py` — `_VagrantMixin` (~625 lines)
 - `provisioner/components.py` — `_ComponentsMixin` (~439 lines)
-- `provisioner/chaoscenter.py` — `_ChaosCenterMixin` (~542 lines)
-- `provisioner/chaoscenter_api.py` — `_ChaosCenterAPIMixin` (~802 lines)
+- `provisioner/chaoscenter.py` — `_ChaosCenterMixin` (~678 lines)
+- `provisioner/chaoscenter_api.py` — `_ChaosCenterAPIMixin` (~792 lines)
 
 **Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 4096MB RAM, Kubespray v2.24.0.
 
@@ -362,13 +367,15 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 
 ### 2.10 Orchestrator (`orchestrator/`)
 
-#### strategy_runner.py (~948 lines)
+#### strategy_runner.py (~1010 lines)
 
 **Dataclass: `RunContext`** — carries all state for a run: namespace, timeout, seed, settle_time, iterations, measurement flags, Neo4j credentials, shared scenario, service routes, `load_service` (entry-point service name derived from scenario), etc.
 
 **Function**: `execute_strategy(ctx, strategy_name, idx, total)` — executes one placement strategy: apply placement → settle → run iterations → collect results → clear placement.
 
-#### run_phases.py (~806 lines)
+Most of the supporting helpers were extracted into dedicated modules (see below). What remains here is the iteration loop, placement application, per-iteration metric stitching, and strategy aggregation.
+
+#### run_phases.py (~911 lines)
 
 Pre-flight checks, graph store initialization, result writing, iteration aggregation, stale resource cleanup. `_setup_load_target()` accepts a `load_service` parameter (derived from the scenario's httpProbe URLs) for port-forwarding to the application entry-point.
 
@@ -376,7 +383,7 @@ Pre-flight checks, graph store initialization, result writing, iteration aggrega
 
 `create_and_start_probers()`, `stop_and_collect_probers()` — manages continuous prober lifecycle in parallel. Passes `exclude_services=[target_deployment]` to the disk prober so it avoids benchmarking on the pod being deleted by chaos.
 
-#### preflight.py
+#### preflight.py (~316 lines)
 
 | Function | Purpose |
 |---|---|
@@ -386,7 +393,45 @@ Pre-flight checks, graph store initialization, result writing, iteration aggrega
 | `wait_for_healthy_deployments(namespace)` | Blocks until all deployments in the namespace are fully ready. |
 | `check_pods_ready(namespace, label)` | Checks that at least one matching pod is Running and Ready. |
 
-#### portforward.py (~122 lines)
+#### timeout.py (~75 lines)
+
+Pure helpers for the iteration timing budget; extracted from `strategy_runner` so they can be tested in isolation.
+
+| Function | Purpose |
+|---|---|
+| `parse_probe_timeout(s)` | Parses a Go-style duration string (`"15s"`, `"500ms"`, `"1m"`) to integer seconds. |
+| `extract_chaos_duration(scenario)` | Returns the max `TOTAL_CHAOS_DURATION` (seconds) declared in the scenario's experiments. |
+| `compute_effective_timeout(scenario, user_timeout)` | Computes the ChaosCenter poll timeout: `chaos_duration + 2 * total_probe_budget + 120s`, returning the larger of that and *user_timeout*. |
+
+#### readiness.py (~347 lines)
+
+Pre-iteration gates that verify the cluster is hot (connection pools warm, gRPC channels open, endpoints propagated) before chaos starts. K8s readiness is necessary but not sufficient.
+
+| Function | Purpose |
+|---|---|
+| `wait_for_target_pod(namespace, deployment_name, timeout=60, stable_secs=10)` | Waits for the target deployment to have a Running pod that stays Running for *stable_secs*. |
+| `wait_for_app_ready(namespace, target_deployment, timeout=180, http_routes=None, required_consecutive=5, sustained_period_s=15, latency_budget_ms=5000)` | Two-phase functional gate: consecutive-OK probe checks, then a sustained-clean phase, then a 20s warmup burst with a latency-convergence retry loop. |
+| `warmup_application(core, namespace, pod, urls_to_check, duration_s=10)` | Pumps concurrent `wget` load against every probed route to warm connection pools and JIT caches. |
+| `shell_escape(s)` | Escapes a string for safe interpolation inside single-quoted sh arguments. |
+
+#### recovery.py (~173 lines)
+
+Handles control-plane recovery after heavy strategies overwhelm the API server.
+
+| Function | Purpose |
+|---|---|
+| `wait_for_k8s_api(namespace, timeout=300)` | Waits up to *timeout* seconds for the K8s API to become reachable again. After 60s of passive waiting, falls back to active SSH remediation. Re-establishes port-forwards once recovered. |
+| `_attempt_control_plane_ssh_remediation()` (private) | SSHes into the control plane via Vagrant insecure key / `id_rsa` / `id_ed25519`, stops kubelet, force-kills containerd, restarts both. Best-effort. |
+
+#### diagnostics.py (~163 lines)
+
+Captures cluster state when LitmusChaos probe verdicts come back as `Unknown` so post-hoc analysis can distinguish "probe never ran" from "probe ran and the SUT was broken".
+
+| Function | Purpose |
+|---|---|
+| `capture_unknown_diagnostics(namespace, probe_verdicts, output_data, executed, experiment_start, experiment_end)` | Returns a dict with `unknownProbes`, `experimentWindow`, `crdProbeStatuses`, `chaosCenterProbeStatuses`, `chaosCenterVerdicts`, `probePodEvents`, `probePodSnapshot`. Every read is wrapped in try/except — a diagnostic capture failure must never break a run. |
+
+#### portforward.py (~170 lines)
 
 Module-level kubectl port-forward lifecycle management. Start/stop/ensure port-forwards for Neo4j, Prometheus, and the application entry-point service.
 
@@ -695,12 +740,12 @@ Microservice resilience under chaos varies with pod placement strategy due to di
 chaosprobe/
   chaosprobe/
     __init__.py              # version 0.1.0
-    cli.py                   # CLI entry point (~280 lines)
+    cli.py                   # CLI entry point (~282 lines)
     k8s.py                   # Singleton k8s config loader
     commands/
       shared.py              # Neo4j option decorators, shared helpers
-      run_cmd.py             # run command (~788 lines)
-      init_cmd.py            # init command (~313 lines)
+      run_cmd.py             # run command (~1023 lines)
+      init_cmd.py            # init command (~312 lines)
       delete_cmd.py          # delete command (~196 lines)
       graph_cmd.py           # graph subcommands
       visualize_cmd.py       # visualize + ml-export commands
@@ -713,8 +758,8 @@ chaosprobe/
       topology.py            # Service dependency extraction
       validator.py           # Validation
     chaos/
-      runner.py              # ChaosCenter GraphQL experiment execution (~601 lines)
-      manifest.py            # Argo Workflow manifest generation (~194 lines)
+      runner.py              # ChaosCenter GraphQL experiment execution (~699 lines)
+      manifest.py            # Argo Workflow manifest generation (~192 lines)
     collector/
       result_collector.py    # ChaosResult collection
     loadgen/
@@ -732,11 +777,15 @@ chaosprobe/
       timeseries.py          # Time-series alignment
       remediation.py         # Remediation action logs
     orchestrator/
-      strategy_runner.py     # RunContext + execute_strategy() (~948 lines)
-      run_phases.py          # Preflight, graph init, result writing (~806 lines)
+      strategy_runner.py     # RunContext + execute_strategy() (~1010 lines)
+      run_phases.py          # Preflight, graph init, result writing (~911 lines)
+      preflight.py           # Pre-flight checks (~316 lines)
       probers.py             # Continuous prober lifecycle (~235 lines)
-      portforward.py         # Port-forward management (~122 lines)
-      preflight.py           # Pre-flight checks
+      portforward.py         # Port-forward management (~170 lines)
+      timeout.py             # Probe-timeout + chaos-duration helpers (~75 lines)
+      readiness.py           # Target-pod / app-ready / warmup gates (~347 lines)
+      recovery.py            # K8s API recovery + SSH remediation (~173 lines)
+      diagnostics.py         # Unknown-probe-verdict diagnostics (~163 lines)
     output/
       generator.py           # Structured output generation
       comparison.py          # Run comparison
@@ -748,17 +797,17 @@ chaosprobe/
       mutator.py             # K8s patch operations
     provisioner/
       kubernetes.py          # Manifest application
-      setup.py               # LitmusSetup main class (~1006 lines)
-      vagrant.py             # _VagrantMixin (~591 lines)
+      setup.py               # LitmusSetup main class (~1056 lines)
+      vagrant.py             # _VagrantMixin (~625 lines)
       components.py          # _ComponentsMixin (~439 lines)
-      chaoscenter.py         # _ChaosCenterMixin (~542 lines)
-      chaoscenter_api.py     # _ChaosCenterAPIMixin (~802 lines)
+      chaoscenter.py         # _ChaosCenterMixin (~678 lines)
+      chaoscenter_api.py     # _ChaosCenterAPIMixin (~792 lines)
     probes/
       builder.py             # RustProbeBuilder
       templates.py           # Cargo.toml, main.rs, Dockerfile templates
     storage/
-      neo4j_store.py         # Neo4j graph store (~111 lines)
-      neo4j_writer.py        # Write operations (~980 lines)
+      neo4j_store.py         # Neo4j graph store (~110 lines)
+      neo4j_writer.py        # Write operations (~992 lines)
       neo4j_reader.py        # Read operations (~883 lines)
     graph/
       analysis.py            # High-level graph analysis functions
