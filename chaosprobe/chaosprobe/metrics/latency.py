@@ -68,6 +68,44 @@ class LatencySample:
     # a temporarily-down target.  Used by eviction logic to distinguish
     # "pod is gone" from "target is unreachable."
     exec_failed: bool = False
+    # Numeric HTTP status code returned by the target, or None when the
+    # probe never reached the application layer (connection error,
+    # timeout, exec failure).  Allows post-hoc analysis to distinguish
+    # 5xx (backend overload) from 4xx (request shape) from 0 (network).
+    status_code: Optional[int] = None
+
+
+# HTTP status-code buckets surfaced in `LatencyResult.summary`.  The keys
+# match the conventional `2xx` / `3xx` / `4xx` / `5xx` shorthand plus
+# `timeout` (probe timed out before reading a response) and `error`
+# (everything else — connection refused, exec failure, parse failure).
+# The order is fixed so consumers can rely on iteration order.
+_STATUS_CODE_BUCKETS = ("2xx", "3xx", "4xx", "5xx", "timeout", "error")
+
+
+def _bucket_for_sample(sample: "LatencySample") -> str:
+    """Classify a sample into one of `_STATUS_CODE_BUCKETS`.
+
+    A numeric status code wins (2xx / 3xx / 4xx / 5xx); samples with no
+    status code fall back to ``timeout`` if the textual status is
+    ``"timeout"``, otherwise ``error``.
+    """
+    code = sample.status_code
+    if code is not None:
+        if 200 <= code < 300:
+            return "2xx"
+        if 300 <= code < 400:
+            return "3xx"
+        if 400 <= code < 500:
+            return "4xx"
+        if 500 <= code < 600:
+            return "5xx"
+        # Sub-200 / 600+ codes are non-standard; surface as `error`
+        # so they don't get silently bucketed into the wrong tier.
+        return "error"
+    if sample.status == "timeout":
+        return "timeout"
+    return "error"
 
 
 @dataclass
@@ -81,9 +119,17 @@ class LatencyResult:
     description: str
     samples: List[LatencySample] = field(default_factory=list)
 
+    def _status_code_distribution(self) -> Dict[str, int]:
+        """Return a fixed-order counter of samples per status-code bucket."""
+        dist = {bucket: 0 for bucket in _STATUS_CODE_BUCKETS}
+        for sample in self.samples:
+            dist[_bucket_for_sample(sample)] += 1
+        return dist
+
     def summary(self) -> Dict[str, Any]:
         ok_latencies = [s.latency_ms for s in self.samples if s.status == "ok"]
         error_count = sum(1 for s in self.samples if s.status != "ok")
+        status_code_distribution = self._status_code_distribution()
 
         if not ok_latencies:
             return {
@@ -95,6 +141,7 @@ class LatencyResult:
                 "sampleCount": len(self.samples),
                 "errorCount": error_count,
                 "errorRate": 1.0 if self.samples else 0.0,
+                "statusCodeDistribution": status_code_distribution,
                 "mean_ms": None,
                 "median_ms": None,
                 "p95_ms": None,
@@ -117,6 +164,7 @@ class LatencyResult:
             "sampleCount": len(self.samples),
             "errorCount": error_count,
             "errorRate": round(error_count / len(self.samples), 4) if self.samples else 0.0,
+            "statusCodeDistribution": status_code_distribution,
             "mean_ms": round(statistics.mean(ok_latencies), 2),
             "median_ms": round(statistics.median(ok_latencies), 2),
             "p95_ms": round(sorted_latencies[p95_idx], 2),
@@ -475,6 +523,7 @@ class LatencyProber:
                         status="ok" if ok else "error",
                         timestamp=now,
                         error=None if ok else f"HTTP {status_code}",
+                        status_code=status_code,
                     )
 
             return LatencySample(
@@ -582,6 +631,7 @@ class LatencyProber:
                             status="ok" if ok else "error",
                             timestamp=now,
                             error=None if ok else f"HTTP {status_code}",
+                            status_code=status_code,
                         )
                 except (ValueError, OverflowError):
                     pass
