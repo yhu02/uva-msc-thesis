@@ -41,8 +41,12 @@ DEFAULT_QUERIES: Dict[str, str] = {
         'container!="",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
     ),
     "cpu_throttling": (
+        # `by (pod, container)` preserves the container dimension so the raw
+        # timeSeries entries can be sliced per app-container vs sidecar.  The
+        # phase summary still sums across the container dimension and matches
+        # the previous `by (pod)` output exactly (sum-of-sums = sum).
         'sum(rate(container_cpu_cfs_throttled_seconds_total{{namespace="{namespace}",'
-        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
+        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod, container)'
     ),
     "memory_usage": (
         'sum(container_memory_working_set_bytes{{namespace="{namespace}",'
@@ -70,25 +74,45 @@ DEFAULT_QUERIES: Dict[str, str] = {
     #   - kubernetes/kubernetes#100698 (conntrack not cleared on endpoint
     #     change) — direct primary source for the conntrack-churn mechanism
     "kubeproxy_network_programming_p99": (
-        'histogram_quantile(0.99, sum(rate('
-        'kubeproxy_network_programming_duration_seconds_bucket[5m])) by (le))'
+        "histogram_quantile(0.99, sum(rate("
+        "kubeproxy_network_programming_duration_seconds_bucket[5m])) by (le))"
     ),
     "kubeproxy_sync_proxy_rules_p99": (
-        'histogram_quantile(0.99, sum(rate('
-        'kubeproxy_sync_proxy_rules_duration_seconds_bucket[5m])) by (le))'
+        "histogram_quantile(0.99, sum(rate("
+        "kubeproxy_sync_proxy_rules_duration_seconds_bucket[5m])) by (le))"
     ),
     "coredns_request_duration_p99": (
-        'histogram_quantile(0.99, sum(rate('
-        'coredns_dns_request_duration_seconds_bucket[5m])) by (le))'
+        "histogram_quantile(0.99, sum(rate("
+        "coredns_dns_request_duration_seconds_bucket[5m])) by (le))"
     ),
-    "coredns_request_count_per_sec": (
-        'sum(rate(coredns_dns_requests_total[1m]))'
+    "coredns_request_count_per_sec": ("sum(rate(coredns_dns_requests_total[1m]))"),
+    "conntrack_entries_per_node": ("sum(node_nf_conntrack_entries) by (instance)"),
+    "tcp_retransmit_rate_per_node": ("sum(rate(node_netstat_Tcp_RetransSegs[1m])) by (instance)"),
+    # ── Extended churn-mechanism metrics ───────────────────────────────
+    # These augment the kube-proxy / conntrack / CoreDNS signals above:
+    #   * EndpointSlice churn — how many endpoint updates kube-proxy is
+    #     receiving (the layer above iptables / IPVS programming).  Issue
+    #     kubernetes/kubernetes#133474 documents that high EndpointSlice
+    #     churn drives reprogramming work even when iptables itself is fast.
+    #   * kubelet PLEG (Pod Lifecycle Event Generator) relist latency — a
+    #     spike here means the kubelet itself is struggling to track pod
+    #     state changes under churn, which is independent from kube-proxy
+    #     work and reveals load on the node agent.
+    #   * kube-proxy sync rate — how often the iptables/IPVS ruleset is
+    #     resynced during chaos.  Pairs with `kubeproxy_sync_proxy_rules_p99`
+    #     (already collected) to give both count and latency of syncs.
+    #
+    # All three are cluster-wide aggregations; the `{namespace}` placeholder
+    # is intentionally omitted so `_build_queries` `.format()` is a no-op.
+    "endpointslice_changes_per_sec": (
+        "sum(rate(kubeproxy_sync_proxy_rules_endpoint_changes_total[1m]))"
     ),
-    "conntrack_entries_per_node": (
-        'sum(node_nf_conntrack_entries) by (instance)'
+    "kubelet_pleg_relist_duration_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubelet_pleg_relist_duration_seconds_bucket[5m])) by (le))"
     ),
-    "tcp_retransmit_rate_per_node": (
-        'sum(rate(node_netstat_Tcp_RetransSegs[1m])) by (instance)'
+    "kube_proxy_rules_synced_per_sec": (
+        "sum(rate(kubeproxy_sync_proxy_rules_duration_seconds_count[1m]))"
     ),
 }
 

@@ -372,6 +372,49 @@ class TestPrometheusProberPhaseSplitting:
         assert phases["during-chaos"]["sampleCount"] == 1
         assert phases["during-chaos"]["metrics"] == {}
 
+    def test_metric_missing_from_some_samples(self):
+        """When an optional metric (e.g. `kubelet_pleg_relist_duration_p99`
+        on a cluster without kubelet metrics exposed) is absent from some
+        samples, the aggregator must still produce a phase summary for the
+        other metrics without raising."""
+        prober = _make_prober()
+        series = [
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "cpu_throttling": [
+                        {"metric": {"pod": "p1", "container": "app"}, "value": [1, "0.5"]},
+                    ],
+                    "kubelet_pleg_relist_duration_p99": [
+                        {"metric": {}, "value": [1, "0.01"]},
+                    ],
+                },
+            },
+            {
+                # PLEG metric absent (kubelet doesn't expose it / scrape failed)
+                "phase": "during-chaos",
+                "metrics": {
+                    "cpu_throttling": [
+                        {"metric": {"pod": "p1", "container": "app"}, "value": [2, "0.6"]},
+                    ],
+                },
+            },
+        ]
+
+        phases = prober._split_phases(series)
+        agg = phases["during-chaos"]["metrics"]
+
+        # cpu_throttling present in both samples → aggregated across both
+        assert agg["cpu_throttling"]["mean"] == pytest.approx(0.55, abs=0.001)
+        # pleg present in only one → the aggregator treats the missing
+        # sample as 0.0, so mean = (0.01 + 0.0) / 2 = 0.005.  The key
+        # invariant here is that the aggregator does NOT raise on partial
+        # coverage; the exact zero-fill semantics are a separate concern.
+        assert "kubelet_pleg_relist_duration_p99" in agg
+        assert agg["kubelet_pleg_relist_duration_p99"]["mean"] == pytest.approx(0.005, abs=0.0001)
+        # Both samples counted (no exception raised on the empty one)
+        assert phases["during-chaos"]["sampleCount"] == 2
+
 
 class TestPrometheusProberPhaseTransitions:
     def test_current_phase_transitions(self):
@@ -470,28 +513,92 @@ class TestPrometheusProberLifecycle:
 # ---------------------------------------------------------------------------
 
 
+# Namespace-scoped queries embed `{namespace}` and the LitmusChaos pod
+# exclusion filter; cluster-wide queries do neither (kube-proxy, CoreDNS,
+# conntrack, kubelet, etc. are per-node or per-cluster signals).  The
+# split lets the templating + filter tests check the right invariants
+# per class without listing every key inline.
+NAMESPACE_SCOPED_QUERIES = {
+    "pod_ready_count",
+    "cpu_usage",
+    "cpu_throttling",
+    "memory_usage",
+    "network_receive_bytes",
+}
+CLUSTER_WIDE_QUERIES = {
+    "kubeproxy_network_programming_p99",
+    "kubeproxy_sync_proxy_rules_p99",
+    "coredns_request_duration_p99",
+    "coredns_request_count_per_sec",
+    "conntrack_entries_per_node",
+    "tcp_retransmit_rate_per_node",
+    "endpointslice_changes_per_sec",
+    "kubelet_pleg_relist_duration_p99",
+    "kube_proxy_rules_synced_per_sec",
+}
+
+
 class TestDefaultQueries:
-    def test_namespace_templating(self):
-        """Verify all default queries can be formatted with namespace."""
-        for template in DEFAULT_QUERIES.values():
+    def test_namespace_templating_for_scoped_queries(self):
+        """Namespace-scoped templates expand `{namespace}` correctly."""
+        for label in NAMESPACE_SCOPED_QUERIES:
+            template = DEFAULT_QUERIES[label]
             formatted = template.format(namespace="test-ns")
-            assert "test-ns" in formatted
-            assert "{namespace}" not in formatted
+            assert "test-ns" in formatted, f"{label} did not substitute namespace"
+            assert "{namespace}" not in formatted, f"{label} left unsubstituted placeholder"
+
+    def test_cluster_wide_queries_have_no_namespace_placeholder(self):
+        """Cluster-wide templates intentionally omit `{namespace}` so they
+        format as no-ops without raising ``KeyError`` in `_build_queries`."""
+        for label in CLUSTER_WIDE_QUERIES:
+            template = DEFAULT_QUERIES[label]
+            assert "{namespace}" not in template, f"{label} unexpectedly references {{namespace}}"
+            assert template.format(namespace="test-ns") == template
 
     def test_all_queries_present(self):
-        expected = {
-            "pod_ready_count",
-            "cpu_usage",
-            "cpu_throttling",
-            "memory_usage",
-            "network_receive_bytes",
-        }
+        expected = NAMESPACE_SCOPED_QUERIES | CLUSTER_WIDE_QUERIES
         assert set(DEFAULT_QUERIES.keys()) == expected
 
-    def test_litmus_pod_filter_in_all_queries(self):
-        """All default queries exclude LitmusChaos experiment pods."""
-        for label, template in DEFAULT_QUERIES.items():
+    def test_litmus_pod_filter_in_namespace_scoped_queries(self):
+        """Namespace-scoped queries exclude LitmusChaos experiment pods."""
+        for label in NAMESPACE_SCOPED_QUERIES:
+            template = DEFAULT_QUERIES[label]
             formatted = template.format(namespace="test-ns")
             assert (
                 'pod!~"' in formatted
             ), f"Query {label!r} is missing the LitmusChaos pod exclusion filter"
+
+    def test_cluster_wide_queries_have_no_litmus_filter(self):
+        """Cluster-wide queries operate on node / cluster metrics with no
+        pod dimension, so the LitmusChaos pod filter does not apply."""
+        for label in CLUSTER_WIDE_QUERIES:
+            template = DEFAULT_QUERIES[label]
+            assert 'pod!~"' not in template, f"{label} has an unexpected pod filter"
+
+    def test_cpu_throttling_aggregates_by_pod_and_container(self):
+        """The cpu_throttling query preserves the container label so the raw
+        timeSeries can be sliced per-container; the phase summary still
+        collapses (sum-of-sums = sum)."""
+        tpl = DEFAULT_QUERIES["cpu_throttling"]
+        assert "by (pod, container)" in tpl
+        assert tpl.count("by (pod)") == 0
+
+    def test_new_extended_churn_queries_present(self):
+        """Extended churn-mechanism queries are part of the default set."""
+        assert "endpointslice_changes_per_sec" in DEFAULT_QUERIES
+        assert "kubelet_pleg_relist_duration_p99" in DEFAULT_QUERIES
+        assert "kube_proxy_rules_synced_per_sec" in DEFAULT_QUERIES
+
+    def test_extended_churn_queries_are_histograms_or_rates(self):
+        """Spec invariant: each new query is either a histogram_quantile or
+        a rate-based counter, never a bare gauge — otherwise the value over
+        the chaos window is meaningless."""
+        for label in (
+            "endpointslice_changes_per_sec",
+            "kubelet_pleg_relist_duration_p99",
+            "kube_proxy_rules_synced_per_sec",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert (
+                "rate(" in tpl or "histogram_quantile" in tpl
+            ), f"{label} must use rate() or histogram_quantile()"
