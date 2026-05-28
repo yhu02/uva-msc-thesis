@@ -1,6 +1,10 @@
 """Unit tests for orchestrator timeout and readiness helpers."""
 
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+
 from chaosprobe.orchestrator.readiness import shell_escape
+from chaosprobe.orchestrator.strategy_runner import _snapshot_cluster_state
 from chaosprobe.orchestrator.timeout import (
     compute_effective_timeout,
     extract_chaos_duration,
@@ -226,3 +230,203 @@ class TestShellEscape:
         url = "http://frontend.ns.svc.cluster.local/cart?user=test&qty=1"
         # No transformation needed — special chars are safe inside single quotes
         assert shell_escape(url) == url
+
+
+def _make_pod(name, node="worker-1", phase="Running", ready=True, restart_count=0):
+    """Build a fake V1Pod-like object for snapshot tests."""
+    pod = MagicMock()
+    pod.metadata = MagicMock()
+    pod.metadata.name = name
+    pod.spec = MagicMock()
+    pod.spec.node_name = node
+    pod.status = MagicMock()
+    pod.status.phase = phase
+
+    ready_cond = MagicMock()
+    ready_cond.type = "Ready"
+    ready_cond.status = "True" if ready else "False"
+    pod.status.conditions = [ready_cond]
+
+    cs = MagicMock()
+    cs.restart_count = restart_count
+    pod.status.container_statuses = [cs]
+    return pod
+
+
+def _make_node(name, conditions=None):
+    """Build a fake V1Node-like object for snapshot tests."""
+    node = MagicMock()
+    node.metadata = MagicMock()
+    node.metadata.name = name
+    node.status = MagicMock()
+    if conditions is None:
+        ready_cond = MagicMock()
+        ready_cond.type = "Ready"
+        ready_cond.status = "True"
+        node.status.conditions = [ready_cond]
+    else:
+        node.status.conditions = conditions
+    return node
+
+
+def _make_condition(type_, status):
+    cond = MagicMock()
+    cond.type = type_
+    cond.status = status
+    return cond
+
+
+class TestClusterStateSnapshot:
+    """`_snapshot_cluster_state` is the lightweight per-iteration drift-detection
+    surface for the n=3 statistical caveat in the thesis methodology critique."""
+
+    def test_healthy_namespace_with_two_pods_and_two_nodes(self):
+        core_api = MagicMock()
+        core_api.list_namespaced_pod.return_value = MagicMock(
+            items=[
+                _make_pod("frontend-abc", node="worker-1", restart_count=0),
+                _make_pod("checkout-xyz", node="worker-2", restart_count=1),
+            ]
+        )
+        core_api.list_node.return_value = MagicMock(
+            items=[
+                _make_node(
+                    "worker-1",
+                    conditions=[
+                        _make_condition("Ready", "True"),
+                        _make_condition("MemoryPressure", "False"),
+                    ],
+                ),
+                _make_node(
+                    "worker-2",
+                    conditions=[
+                        _make_condition("Ready", "True"),
+                        _make_condition("MemoryPressure", "True"),
+                    ],
+                ),
+            ]
+        )
+
+        ts = datetime(2026, 5, 28, 22, 0, 0, tzinfo=timezone.utc)
+        snap = _snapshot_cluster_state("online-boutique", core_api, now=ts)
+
+        assert snap["namespace"] == "online-boutique"
+        assert snap["timestamp"] == ts.isoformat()
+        assert "errors" not in snap
+
+        assert {p["name"] for p in snap["pods"]} == {"frontend-abc", "checkout-xyz"}
+        frontend = next(p for p in snap["pods"] if p["name"] == "frontend-abc")
+        assert frontend["node"] == "worker-1"
+        assert frontend["phase"] == "Running"
+        assert frontend["ready"] is True
+        assert frontend["restartCount"] == 0
+        checkout = next(p for p in snap["pods"] if p["name"] == "checkout-xyz")
+        assert checkout["restartCount"] == 1
+
+        assert {n["name"] for n in snap["nodes"]} == {"worker-1", "worker-2"}
+        w1 = next(n for n in snap["nodes"] if n["name"] == "worker-1")
+        assert w1["conditions"] == {"Ready": "True", "MemoryPressure": "False"}
+        w2 = next(n for n in snap["nodes"] if n["name"] == "worker-2")
+        # MemoryPressure=True on w2 is the kind of placement-vs-pressure
+        # signal the snapshot is designed to catch.
+        assert w2["conditions"]["MemoryPressure"] == "True"
+
+    def test_empty_namespace_returns_empty_pod_list(self):
+        core_api = MagicMock()
+        core_api.list_namespaced_pod.return_value = MagicMock(items=[])
+        core_api.list_node.return_value = MagicMock(items=[])
+
+        snap = _snapshot_cluster_state("empty-ns", core_api)
+        assert snap["pods"] == []
+        assert snap["nodes"] == []
+        assert "errors" not in snap
+
+    def test_partial_pressure_only_surfaces_known_condition_types(self):
+        """Non-standard condition types from node-problem-detector etc. are
+        intentionally NOT surfaced in the snapshot — the snapshot has a fixed
+        set of pressure flags; richer details belong in `_collect_node_info`."""
+        core_api = MagicMock()
+        core_api.list_namespaced_pod.return_value = MagicMock(items=[])
+        core_api.list_node.return_value = MagicMock(
+            items=[
+                _make_node(
+                    "worker-1",
+                    conditions=[
+                        _make_condition("Ready", "True"),
+                        _make_condition("DiskPressure", "True"),
+                        _make_condition("KernelDeadlock", "True"),  # custom type
+                    ],
+                )
+            ]
+        )
+        snap = _snapshot_cluster_state("ns", core_api)
+        conds = snap["nodes"][0]["conditions"]
+        assert "DiskPressure" in conds
+        assert "Ready" in conds
+        # Custom types are out — keep the snapshot lean
+        assert "KernelDeadlock" not in conds
+
+    def test_list_pod_api_failure_surfaces_in_errors(self):
+        core_api = MagicMock()
+        core_api.list_namespaced_pod.side_effect = RuntimeError("connection refused")
+        core_api.list_node.return_value = MagicMock(items=[])
+
+        snap = _snapshot_cluster_state("ns", core_api)
+        assert snap["pods"] == []
+        assert any("list_namespaced_pod" in e for e in snap["errors"])
+
+    def test_list_node_api_failure_surfaces_in_errors(self):
+        core_api = MagicMock()
+        core_api.list_namespaced_pod.return_value = MagicMock(items=[])
+        core_api.list_node.side_effect = RuntimeError("timeout")
+
+        snap = _snapshot_cluster_state("ns", core_api)
+        assert snap["nodes"] == []
+        assert any("list_node" in e for e in snap["errors"])
+
+    def test_malformed_pod_without_name_is_skipped(self):
+        """Defensive: a pod with no metadata.name (impossible from real K8s
+        API, possible from mocks/tests) is silently skipped."""
+        core_api = MagicMock()
+        bad_pod = MagicMock()
+        bad_pod.metadata.name = None
+        core_api.list_namespaced_pod.return_value = MagicMock(
+            items=[bad_pod, _make_pod("good-pod")]
+        )
+        core_api.list_node.return_value = MagicMock(items=[])
+
+        snap = _snapshot_cluster_state("ns", core_api)
+        names = [p["name"] for p in snap["pods"]]
+        assert names == ["good-pod"]
+
+    def test_pod_without_status_conditions_marked_not_ready(self):
+        """A pod with no Ready condition (e.g. still Pending) is reported as
+        ready=False without raising."""
+        core_api = MagicMock()
+        pod = MagicMock()
+        pod.metadata.name = "pending-pod"
+        pod.spec.node_name = None
+        pod.status.phase = "Pending"
+        pod.status.conditions = None
+        pod.status.container_statuses = None
+        core_api.list_namespaced_pod.return_value = MagicMock(items=[pod])
+        core_api.list_node.return_value = MagicMock(items=[])
+
+        snap = _snapshot_cluster_state("ns", core_api)
+        entry = snap["pods"][0]
+        assert entry["ready"] is False
+        assert entry["phase"] == "Pending"
+        assert entry["node"] is None
+        assert entry["restartCount"] == 0
+
+    def test_default_now_is_used_when_not_provided(self):
+        """`now=None` defaults to `datetime.now(timezone.utc)` so callers
+        don't have to thread a clock."""
+        core_api = MagicMock()
+        core_api.list_namespaced_pod.return_value = MagicMock(items=[])
+        core_api.list_node.return_value = MagicMock(items=[])
+        snap = _snapshot_cluster_state("ns", core_api)
+        # The string is in ISO 8601 with timezone — sufficient to confirm
+        # the default-now path executed without raising.
+        assert "T" in snap["timestamp"]
+        assert snap["timestamp"].endswith("+00:00") or snap["timestamp"].endswith("Z")
