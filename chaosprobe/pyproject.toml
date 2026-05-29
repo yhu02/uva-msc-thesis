@@ -91,4 +91,10 @@ files = [
     "chaosprobe/commands/report_cmd.py",
     "chaosprobe/commands/stats_cmd.py",
     "chaosprobe/commands/summarize_cmd.py",
+    # output/ — the schema-writing half of the analysis contract.
+    # charts.py / visualize.py / ml_export.py rely on matplotlib /
+    # pyarrow (untyped stubs); they need stub work first.
+    "chaosprobe/output/__init__.py",
+    "chaosprobe/output/comparison.py",
+    "chaosprobe/output/generator.py",
 ]

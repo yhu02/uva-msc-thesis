@@ -177,7 +177,7 @@ class OutputGenerator:
         run_id = f"run-{now.strftime('%Y-%m-%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         timestamp = now.isoformat()
 
-        output = {
+        output: Dict[str, Any] = {
             "schemaVersion": self.SCHEMA_VERSION,
             "runId": run_id,
             "timestamp": timestamp,
