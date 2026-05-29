@@ -57,6 +57,16 @@ def compare_runs(
         after_fix.get("metrics", {}),
     )
 
+    # Per-strategy CI overlap: when both runs carry the same strategy and
+    # both expose meanResilienceScore_ci95, check whether the intervals
+    # overlap.  Overlap → the point-estimate change is inside the noise
+    # floor and the comparison is "directional, not significant".  This
+    # is the one defence answer a reviewer most often asks for.
+    strategies_ci = _compare_strategies_ci_overlap(
+        baseline.get("strategies", {}),
+        after_fix.get("strategies", {}),
+    )
+
     # Evaluate improvement criteria
     criteria_met = _evaluate_improvement_criteria(
         score_change, experiment_improvements, improvement_criteria
@@ -101,6 +111,7 @@ def compare_runs(
             "experimentImprovements": experiment_improvements,
             "improvementCriteriaMet": criteria_met,
             "metrics": metrics_comparison,
+            **({"strategiesCIOverlap": strategies_ci} if strategies_ci else {}),
         },
         "conclusion": {
             "fixEffective": fix_effective,
@@ -350,6 +361,89 @@ def _summarize_experiments(
         }
         for e in experiments
     ]
+
+
+def _interval_overlap(a_low: float, a_high: float, b_low: float, b_high: float) -> Dict[str, Any]:
+    """Return whether two intervals overlap plus the gap or overlap amount.
+
+    Treats touching intervals (a_high == b_low) as overlapping — at the
+    sample sizes used here the difference is academic and the touch case
+    is the conservative call.
+    """
+    overlap = not (a_high < b_low or b_high < a_low)
+    if overlap:
+        overlap_len = min(a_high, b_high) - max(a_low, b_low)
+        return {"overlaps": True, "overlapAmount": round(overlap_len, 2), "gap": 0.0}
+    if a_high < b_low:
+        return {"overlaps": False, "overlapAmount": 0.0, "gap": round(b_low - a_high, 2)}
+    return {"overlaps": False, "overlapAmount": 0.0, "gap": round(a_low - b_high, 2)}
+
+
+def _compare_strategies_ci_overlap(
+    baseline_strategies: Dict[str, Any],
+    afterfix_strategies: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Per-strategy CI overlap on ``meanResilienceScore_ci95``.
+
+    Returns ``{strategy_name: {baselineCI, afterFixCI, intervalsOverlap,
+    overlapAmount, gap, interpretation}}`` for every strategy that has a
+    CI on both sides.  Strategies present on only one side are omitted.
+
+    ``interpretation`` is one of:
+      * ``"significant"`` — intervals do not overlap; the change is
+        defensible as a real improvement / regression.
+      * ``"indistinguishable"`` — intervals overlap heavily (>50% of the
+        smaller interval); the change is inside the noise floor.
+      * ``"directional"`` — intervals overlap a little; the change
+        points in a direction but is not significant at this n.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for name in set(baseline_strategies) & set(afterfix_strategies):
+        b_ci = (
+            (baseline_strategies.get(name) or {})
+            .get("aggregated", {})
+            .get("meanResilienceScore_ci95")
+        )
+        a_ci = (
+            (afterfix_strategies.get(name) or {})
+            .get("aggregated", {})
+            .get("meanResilienceScore_ci95")
+        )
+        if not (
+            isinstance(b_ci, dict)
+            and isinstance(a_ci, dict)
+            and b_ci.get("low") is not None
+            and b_ci.get("high") is not None
+            and a_ci.get("low") is not None
+            and a_ci.get("high") is not None
+        ):
+            continue
+        ov = _interval_overlap(
+            float(b_ci["low"]),
+            float(b_ci["high"]),
+            float(a_ci["low"]),
+            float(a_ci["high"]),
+        )
+        # Interpretation: 0% overlap → significant, >50% of smaller width
+        # → indistinguishable, else directional.
+        b_width = float(b_ci["high"]) - float(b_ci["low"])
+        a_width = float(a_ci["high"]) - float(a_ci["low"])
+        smaller = min(b_width, a_width)
+        if not ov["overlaps"]:
+            interp = "significant"
+        elif smaller > 0 and ov["overlapAmount"] / smaller > 0.5:
+            interp = "indistinguishable"
+        else:
+            interp = "directional"
+        out[name] = {
+            "baselineCI": b_ci,
+            "afterFixCI": a_ci,
+            "intervalsOverlap": ov["overlaps"],
+            "overlapAmount": ov["overlapAmount"],
+            "gap": ov["gap"],
+            "interpretation": interp,
+        }
+    return out
 
 
 def _generate_summary_text(
