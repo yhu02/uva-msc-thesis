@@ -976,9 +976,13 @@ class ContinuousLatencyProber(ContinuousProberBase):
         if not self._probe_points or not self._http_routes:
             return {}
 
+        # Bind to a local so the narrowed (non-None) type is visible inside
+        # the _probe_one closure below, where the attribute narrowing wouldn't.
+        http_routes = self._http_routes
+
         # per_route_samples[route] = [(pod, node, LatencySample), ...]
         per_route_samples: Dict[str, List[Tuple[str, str, LatencySample]]] = {
-            route: [] for _svc, route, _d, _m in self._http_routes
+            route: [] for _svc, route, _d, _m in http_routes
         }
 
         def _probe_one(
@@ -986,7 +990,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
             node: str,
         ) -> List[Tuple[str, str, LatencySample]]:
             results: List[Tuple[str, str, LatencySample]] = []
-            for service, route, _desc, method in self._http_routes:
+            for service, route, _desc, method in http_routes:
                 url = f"http://{service}.{self.namespace}.svc.cluster.local{route}"
                 sample = self._prober._measure_http_from_pod(
                     pod,
@@ -1092,12 +1096,12 @@ class ContinuousLatencyProber(ContinuousProberBase):
                     if data.get("maxLatency_ms") is not None:
                         route_maxes[route].append(data["maxLatency_ms"])
 
-            routes_summary = {}
+            routes_summary: Dict[str, Dict[str, Optional[float]]] = {}
             for route, latencies in route_latencies.items():
                 if latencies:
                     sorted_lats = sorted(latencies)
                     p95_idx = min(int(len(sorted_lats) * 0.95), len(sorted_lats) - 1)
-                    summary = {
+                    summary: Dict[str, Optional[float]] = {
                         "mean_ms": round(statistics.mean(latencies), 2),
                         "median_ms": round(statistics.median(latencies), 2),
                         "p95_ms": round(sorted_lats[p95_idx], 2),

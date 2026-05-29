@@ -14,14 +14,22 @@ import os
 import platform
 import subprocess
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TypedDict
 
 from chaosprobe import __version__ as CHAOSPROBE_VERSION
 
 _GIT_COMMAND_TIMEOUT = 5.0
 
 
-def _git_describe(repo_dir: Optional[str] = None) -> Dict[str, Optional[str]]:
+class GitInfo(TypedDict):
+    """Fixed-shape result of :func:`_git_describe`."""
+
+    commit: Optional[str]
+    shortCommit: Optional[str]
+    dirty: Optional[bool]
+
+
+def _git_describe(repo_dir: Optional[str] = None) -> GitInfo:
     """Capture the current git commit + dirty flag.
 
     Returns ``{commit, shortCommit, dirty}`` — any field may be ``None``
@@ -29,7 +37,7 @@ def _git_describe(repo_dir: Optional[str] = None) -> Dict[str, Optional[str]]:
     errors out.
     """
     cwd = repo_dir or os.getcwd()
-    out: Dict[str, Optional[str]] = {"commit": None, "shortCommit": None, "dirty": None}
+    out: GitInfo = {"commit": None, "shortCommit": None, "dirty": None}
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
