@@ -240,7 +240,10 @@ class _ChaosCenterMixin(_LitmusSetupBase):
             return None
 
         if svc_type == "LoadBalancer":
-            ingress = (svc.status.load_balancer or {}).ingress
+            # k8s load-balancer status is an opaque object; keep it Any so
+            # .ingress resolves (the ``or {}`` is only a None-guard fallback).
+            load_balancer: Any = svc.status.load_balancer or {}
+            ingress = load_balancer.ingress
             if ingress:
                 host = ingress[0].ip or ingress[0].hostname
                 return f"http://{host}:{port_obj.port}"
@@ -261,7 +264,9 @@ class _ChaosCenterMixin(_LitmusSetupBase):
             for node in nodes.items:
                 for addr in node.status.addresses:
                     if addr.type == "InternalIP":
-                        return addr.address
+                        # k8s address attr is opaque Any; pin the return type.
+                        address: Optional[str] = addr.address
+                        return address
         except Exception:
             pass
         return None
