@@ -688,7 +688,9 @@ Per-strategy checks: tainted iterations (with reason breakdown), all-iterations-
 
 Cross-strategy checks: every pair of CIs overlaps (analysis inconclusive), every strategy hit OOMKills (cluster undersized), every strategy tainted (cluster unstable), Locust offered RPS varies > 20% (load drift).
 
-`--strict` makes warn-level findings exit non-zero. Without `--strict`, only error-level findings exit non-zero. `--json` emits structured findings under `{strategiesChecked, errorCount, warnCount, findings}`; cross-strategy findings appear under `__cross_strategy__`.
+Run-level checks: `runMetadata` absent (older chaosprobe; reproducibility provenance incomplete), git commit unrecorded, dirty working tree (recorded commit doesn't represent the running code), Kubernetes server version unrecorded, CNI hint unrecorded, `schemaVersion` missing or mismatched (current is `2.0.0`).
+
+`--strict` makes warn-level findings exit non-zero. Without `--strict`, only error-level findings exit non-zero. `--json` emits structured findings under `{strategiesChecked, errorCount, warnCount, findings}`; cross-strategy findings appear under `__cross_strategy__`, run-metadata findings under `__run_metadata__`, schema-version findings under `__schema_version__`.
 
 ### Export
 
