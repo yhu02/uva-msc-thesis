@@ -74,6 +74,44 @@ _DETAIL_KEYS = [
 ]
 
 
+def _collect_worst(raw: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    """Return the ``limit`` lowest-score iterations across every strategy.
+
+    Each entry is ``{"strategy", "iteration", "score", "verdict"}``.
+    Sorted ascending by score (ties broken by strategy name, then
+    iteration number).  Iterations without a numeric ``resilienceScore``
+    are skipped.
+    """
+    rows: List[Dict[str, Any]] = []
+    for name, sdata in (raw.get("strategies") or {}).items():
+        for ir in sdata.get("iterations") or []:
+            score = ir.get("resilienceScore")
+            if not isinstance(score, (int, float)):
+                continue
+            rows.append(
+                {
+                    "strategy": name,
+                    "iteration": ir.get("iteration"),
+                    "score": score,
+                    "verdict": ir.get("verdict"),
+                }
+            )
+    rows.sort(key=lambda r: (r["score"], r["strategy"], r["iteration"] or 0))
+    return rows[:limit]
+
+
+def _format_worst(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return "no iterations with a numeric resilienceScore"
+    lines = [f"{'strategy':<20} {'iter':>5} {'score':>6}  verdict"]
+    for r in rows:
+        lines.append(
+            f"{r['strategy']:<20} {str(r['iteration']):>5} {r['score']:>6}  "
+            f"{r['verdict'] or '—'}"
+        )
+    return "\n".join(lines)
+
+
 def _format_iteration(strategy: str, ir: Dict[str, Any]) -> str:
     lines: List[str] = [f"strategy: {strategy}"]
     for key, label in _HEADLINE_KEYS:
@@ -111,15 +149,21 @@ def _format_iteration(strategy: str, ir: Dict[str, Any]) -> str:
 )
 @click.option(
     "--strategy",
-    required=True,
-    help="Strategy name (e.g. spread, colocate, random:42).",
+    default=None,
+    help="Strategy name (e.g. spread, colocate, random:42).  Required unless --worst is set.",
 )
 @click.option(
     "--iteration",
     "-i",
     type=int,
-    required=True,
-    help="1-based iteration number.",
+    default=None,
+    help="1-based iteration number.  Required unless --worst is set.",
+)
+@click.option(
+    "--worst",
+    type=int,
+    default=None,
+    help="List the N lowest-score iterations across all strategies instead of inspecting one.",
 )
 @click.option(
     "--json",
@@ -127,7 +171,13 @@ def _format_iteration(strategy: str, ir: Dict[str, Any]) -> str:
     is_flag=True,
     help="Dump the raw iteration record as JSON instead of the headline view.",
 )
-def inspect(summary: Path, strategy: str, iteration: int, json_out: bool):
+def inspect(
+    summary: Path,
+    strategy: Optional[str],
+    iteration: Optional[int],
+    worst: Optional[int],
+    json_out: bool,
+):
     """Pretty-print one iteration's record from a summary.json.
 
     Headline mode shows the fields a defender usually needs first:
@@ -135,12 +185,35 @@ def inspect(summary: Path, strategy: str, iteration: int, json_out: bool):
     recovery split, and which heavy detail sections exist.  ``--json``
     dumps the raw record for ``jq``/programmatic use.
 
+    With ``--worst N`` (and without ``--strategy``/``--iteration``), lists
+    the N lowest-score iterations across every strategy — useful for
+    finding outliers without knowing the iteration number up front.
+
     \b
     Examples:
       chaosprobe inspect -s summary.json --strategy spread -i 3
       chaosprobe inspect -s summary.json --strategy colocate -i 7 --json
+      chaosprobe inspect -s summary.json --worst 5
     """
     raw = json.loads(summary.read_text())
+
+    if worst is not None:
+        if strategy is not None or iteration is not None:
+            raise click.ClickException("--worst is exclusive with --strategy / --iteration")
+        if worst <= 0:
+            raise click.ClickException("--worst must be a positive integer")
+        rows = _collect_worst(raw, worst)
+        if json_out:
+            click.echo(json.dumps(rows, indent=2, default=str))
+        else:
+            click.echo(_format_worst(rows))
+        return
+
+    if strategy is None or iteration is None:
+        raise click.ClickException(
+            "either --worst N, or both --strategy and --iteration, are required"
+        )
+
     ir = _find_iteration(raw, strategy, iteration)
     if ir is None:
         raise click.ClickException(
