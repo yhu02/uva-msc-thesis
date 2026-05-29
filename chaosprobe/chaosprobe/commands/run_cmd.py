@@ -267,7 +267,7 @@ def _load_and_prepare_scenario(
     experiment: str,
     namespace: Optional[str],
     deploy: bool = True,
-) -> Tuple[dict, str, Path, Optional[List[dict]]]:
+) -> Tuple[Dict[str, Any], str, Path, Optional[List[Tuple[str, str, str, str, str]]]]:
     """Load, validate, deploy manifests, and discover topology.
 
     Args:
@@ -789,7 +789,7 @@ def run(
         if len(seed_list) < 1:
             click.echo("Error: --seeds needs at least one integer.", err=True)
             sys.exit(1)
-        expanded = []
+        expanded: List[str] = []
         for s in strategy_list:
             if s == "random":
                 expanded.extend(f"random:{seed_val}" for seed_val in seed_list)
@@ -817,7 +817,7 @@ def run(
 
     # Create output directory
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    results_dir = Path(output_dir) / ts
+    results_dir = Path(output_dir or "results") / ts
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Fail-fast: verify K8s API is reachable ──

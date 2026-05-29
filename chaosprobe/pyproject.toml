@@ -165,16 +165,22 @@ files = [
     "chaosprobe/storage/neo4j_writer.py",
     # placement/ — pod-placement strategy helpers (pure Python).
     "chaosprobe/placement/__init__.py",
+    "chaosprobe/placement/mutator.py",
     "chaosprobe/placement/strategy.py",
     # Package-level + small leaf utilities — no remaining errors.
     "chaosprobe/__init__.py",
     "chaosprobe/cli.py",
     "chaosprobe/k8s.py",
     "chaosprobe/commands/__init__.py",
+    "chaosprobe/commands/run_cmd.py",
     "chaosprobe/commands/shared.py",
+    "chaosprobe/commands/visualize_cmd.py",
     "chaosprobe/chaos/manifest.py",
+    "chaosprobe/chaos/runner.py",
     "chaosprobe/collector/__init__.py",
+    "chaosprobe/collector/result_collector.py",
     "chaosprobe/config/__init__.py",
+    "chaosprobe/config/loader.py",
     "chaosprobe/config/topology.py",
     "chaosprobe/config/validator.py",
 ]

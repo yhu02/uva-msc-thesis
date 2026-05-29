@@ -190,7 +190,7 @@ def ml_export(
 
     # Count columns (features)
     if rows:
-        cols = set()
+        cols: set[str] = set()
         for row in rows:
             cols.update(row.keys())
         meta_cols = {

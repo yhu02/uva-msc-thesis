@@ -114,7 +114,8 @@ class ResultCollector:
                 plural="chaosengines",
                 name=engine_name,
             )
-            return engine.get("status", {})
+            status: Dict[str, Any] = engine.get("status", {})
+            return status
         except ApiException as e:
             if e.status == 404:
                 return None
@@ -135,7 +136,7 @@ class ResultCollector:
         # Try exact name match: <engine-name>-<experiment-name>
         result_name = f"{engine_name}-{experiment_name}"
         try:
-            result = self.custom_api.get_namespaced_custom_object(
+            result: Dict[str, Any] = self.custom_api.get_namespaced_custom_object(
                 group="litmuschaos.io",
                 version="v1alpha1",
                 namespace=self.namespace,
@@ -249,7 +250,7 @@ class ResultCollector:
         """Determine the overall verdict for an experiment."""
         chaos_result = result.get("chaosResult", {})
         if chaos_result:
-            verdict = chaos_result.get("verdict", "Awaited")
+            verdict: str = chaos_result.get("verdict", "Awaited")
             if verdict in ["Pass", "Fail"]:
                 return verdict
 
@@ -257,7 +258,7 @@ class ResultCollector:
         if engine_status:
             experiments = engine_status.get("experiments", [])
             if experiments:
-                exp_verdict = experiments[0].get("verdict", "Awaited")
+                exp_verdict: str = experiments[0].get("verdict", "Awaited")
                 if exp_verdict in ["Pass", "Fail"]:
                     return exp_verdict
 
@@ -267,7 +268,8 @@ class ResultCollector:
         """Calculate overall probe success percentage."""
         chaos_result = result.get("chaosResult", {})
         if chaos_result:
-            return chaos_result.get("probeSuccessPercentage", 0.0)
+            pct: float = chaos_result.get("probeSuccessPercentage", 0.0)
+            return pct
         return 0.0
 
 
