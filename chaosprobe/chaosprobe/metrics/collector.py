@@ -8,7 +8,7 @@ Collects multiple categories of metrics during a chaos experiment window:
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
@@ -72,14 +72,24 @@ class MetricsCollector:
         """
         pod_status = self._collect_pod_status(deployment_name)
 
-        # Extract node name from already-fetched pod status to avoid a
-        # duplicate list_namespaced_pod API call.
-        node_name = None
+        # Collect every distinct node hosting a pod of the target
+        # deployment, preserving the order they first appear in
+        # pod_status.  A `colocate` run will have a single node; a
+        # `spread` run will list multiple.  Without this, leakage /
+        # cross-node variance analysis cannot tell whether one node was
+        # under pressure while its neighbour was idle.
+        hosting_nodes: List[str] = []
+        seen: set = set()
         for pod in pod_status.get("pods", []):
-            if pod.get("node"):
-                node_name = pod["node"]
-                break
-        node_info = self._collect_node_info(node_name)
+            n = pod.get("node")
+            if n and n not in seen:
+                seen.add(n)
+                hosting_nodes.append(n)
+
+        # Keep `nodeInfo` as the first hosting node for backwards compat
+        # (existing tooling indexes it as a single dict).
+        node_info = self._collect_node_info(hosting_nodes[0] if hosting_nodes else None)
+        node_info_all = self._collect_all_node_info(hosting_nodes)
 
         # Use watcher data if provided, otherwise empty
         if recovery_data is None:
@@ -114,6 +124,9 @@ class MetricsCollector:
             "eventTimeline": event_timeline,
             "nodeInfo": node_info,
         }
+
+        if node_info_all:
+            result["nodeInfoAll"] = node_info_all
 
         if latency_data is not None:
             result["latency"] = latency_data
@@ -297,6 +310,20 @@ class MetricsCollector:
             },
             "conditions": conditions,
         }
+
+    def _collect_all_node_info(self, node_names: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Collect per-node info for every distinct hosting node.
+
+        Skips nodes whose K8s API call fails — partial coverage is better
+        than no data, and the caller can detect missing nodes by
+        comparing the returned keys against the input list.
+        """
+        out: Dict[str, Dict[str, Any]] = {}
+        for name in node_names:
+            info = self._collect_node_info(name)
+            if info is not None:
+                out[name] = info
+        return out
 
     @staticmethod
     def _extract_node_conditions(node: Any) -> Dict[str, Dict[str, Any]]:

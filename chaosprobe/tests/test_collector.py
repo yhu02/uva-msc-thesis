@@ -425,6 +425,104 @@ def _make_pod_for_status(name: str, container_statuses, node: str = "worker-1"):
     return pod
 
 
+class TestCollectAllNodeInfo:
+    """`_collect_all_node_info` captures NodeInfo for every hosting
+    node — required for cross-node variance / leakage analysis (H6)."""
+
+    def test_returns_dict_for_each_named_node(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        node_a = _make_node()
+        node_b = _make_node()
+
+        def read(name):
+            return node_a if name == "worker-a" else node_b
+
+        mock_core.read_node.side_effect = read
+
+        info = collector._collect_all_node_info(["worker-a", "worker-b"])
+        assert set(info.keys()) == {"worker-a", "worker-b"}
+        assert info["worker-a"]["nodeName"] == "worker-a"
+        assert info["worker-b"]["nodeName"] == "worker-b"
+
+    def test_empty_input_returns_empty_dict(self):
+        collector, _ = _make_collector()
+        assert collector._collect_all_node_info([]) == {}
+
+    def test_partial_failure_returns_succeeded_nodes(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        good = _make_node()
+
+        def read(name):
+            if name == "broken":
+                raise ApiException(status=500)
+            return good
+
+        mock_core.read_node.side_effect = read
+
+        info = collector._collect_all_node_info(["broken", "worker-a"])
+        assert "broken" not in info
+        assert "worker-a" in info
+
+
+class TestCollectMultiNodeIntegration:
+    """End-to-end: `collect()` populates `nodeInfoAll` with one entry per
+    distinct hosting node."""
+
+    def test_collects_node_info_for_all_unique_hosting_nodes(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+
+        # Three pods on two distinct nodes.
+        def _mk_pod(name, node):
+            pod = MagicMock()
+            pod.metadata = MagicMock()
+            pod.metadata.name = name
+            pod.spec = MagicMock()
+            pod.spec.node_name = node
+            pod.spec.containers = []
+            pod.status = MagicMock()
+            pod.status.phase = "Running"
+            pod.status.container_statuses = []
+            pod.status.conditions = []
+            return pod
+
+        mock_core.list_namespaced_pod.return_value = MagicMock(
+            items=[
+                _mk_pod("svc-1", "worker-a"),
+                _mk_pod("svc-2", "worker-b"),
+                _mk_pod("svc-3", "worker-a"),  # duplicate node — must dedupe
+            ]
+        )
+        mock_core.read_node.return_value = _make_node()
+
+        result = collector.collect(
+            deployment_name="svc",
+            since_time=1000.0,
+            until_time=1060.0,
+        )
+
+        assert "nodeInfoAll" in result
+        assert set(result["nodeInfoAll"].keys()) == {"worker-a", "worker-b"}
+        # Backwards-compatible single-node field still populated.
+        assert result["nodeInfo"]["nodeName"] in {"worker-a", "worker-b"}
+
+    def test_no_pods_no_nodeinfoall_key(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[])
+
+        result = collector.collect(
+            deployment_name="svc",
+            since_time=1000.0,
+            until_time=1060.0,
+        )
+
+        assert "nodeInfoAll" not in result
+        assert result["nodeInfo"] is None
+
+
 class TestCollectPodStatusOOMKills:
     """`_collect_pod_status` aggregates OOMKill counts at the pod and
     podStatus level so iterations confounded by the chaos target being
