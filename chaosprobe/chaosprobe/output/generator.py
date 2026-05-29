@@ -13,6 +13,124 @@ from chaosprobe.metrics.anomaly_labels import generate_anomaly_labels
 from chaosprobe.metrics.cascade import compute_cascade_timeline
 from chaosprobe.output import SCHEMA_VERSION as _SCHEMA_VERSION
 
+_LATENCY_PHASE_NAMES = ("pre-chaos", "during-chaos", "post-chaos")
+
+
+def build_route_view(
+    locust_stats: Optional[Dict[str, Any]],
+    latency_phases: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Join per-route Locust stats with LatencyProber phase data on route path.
+
+    Locust is the outside-cluster view (HTTP probes from the load
+    generator); LatencyProber is the inside-pod view (``kubectl exec``
+    probes from every workload pod).  The two should agree per route;
+    if they don't, the in-pod measurement has a measurable bias and
+    that's a thesis-grade methodological finding.
+
+    Args:
+        locust_stats: The ``loadGeneration.stats`` dict from the Locust
+            runner.  Per-route entries live under ``endpoints``.
+            ``None`` or missing ``endpoints`` produces no Locust side.
+        latency_phases: The ``metrics.latency.phases`` dict.  Each phase
+            holds per-route sub-dicts keyed by route path.  ``None`` or
+            missing routes produces no LatencyProber side.
+
+    Returns:
+        List of join entries, one per route that appears on *either*
+        side.  Empty list when both inputs are missing or empty.
+
+        ::
+
+            [
+                {
+                    "route": "/",
+                    "locust": {"p50": ..., "p95": ..., "p99": ..., "rps": ...} | None,
+                    "latencyProber": {
+                        "pre-chaos":    {...} | None,
+                        "during-chaos": {...} | None,
+                        "post-chaos":   {...} | None,
+                    } | None,
+                },
+                ...
+            ]
+    """
+    locust_by_route = _index_locust_endpoints(locust_stats)
+    latency_by_route = _index_latency_routes(latency_phases)
+
+    if not locust_by_route and not latency_by_route:
+        return []
+
+    # Preserve a stable order: Locust routes first (the load
+    # generator's perspective), then LatencyProber-only routes
+    # sorted alphabetically.
+    seen: List[str] = []
+    for route in locust_by_route:
+        if route not in seen:
+            seen.append(route)
+    for route in sorted(latency_by_route):
+        if route not in seen:
+            seen.append(route)
+
+    return [
+        {
+            "route": route,
+            "locust": locust_by_route.get(route),
+            "latencyProber": latency_by_route.get(route),
+        }
+        for route in seen
+    ]
+
+
+def _index_locust_endpoints(
+    locust_stats: Optional[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Build a `{route_path: locust_view}` map from Locust's `endpoints` list."""
+    if not locust_stats:
+        return {}
+    endpoints = locust_stats.get("endpoints") or []
+    out: Dict[str, Dict[str, Any]] = {}
+    for entry in endpoints:
+        route = entry.get("name") or ""
+        if not route:
+            continue
+        # Locust exposes p95 per-endpoint but not p50/p99 in the CSV row,
+        # so we surface what we have and leave the rest unkeyed for the
+        # consumer to detect.
+        out[route] = {
+            "requests": entry.get("requests", 0),
+            "failures": entry.get("failures", 0),
+            "avgResponseTime_ms": entry.get("avgResponseTime_ms"),
+            "p95ResponseTime_ms": entry.get("p95ResponseTime_ms"),
+        }
+    return out
+
+
+def _index_latency_routes(
+    latency_phases: Optional[Dict[str, Any]],
+) -> Dict[str, Dict[str, Optional[Dict[str, Any]]]]:
+    """Build a `{route_path: {phase: route_summary}}` map from latency phases.
+
+    Routes that appear in any phase show up in the output; phases where
+    the route is absent map to ``None`` so a consumer can tell "route
+    didn't exist in this phase" from "route had zero samples."
+    """
+    if not latency_phases:
+        return {}
+    # Collect the union of route paths across all phases first
+    routes_seen: set = set()
+    phase_routes: Dict[str, Dict[str, Any]] = {}
+    for phase_name in _LATENCY_PHASE_NAMES:
+        phase = latency_phases.get(phase_name) or {}
+        per_route = phase.get("routes") or {}
+        phase_routes[phase_name] = per_route
+        routes_seen.update(per_route.keys())
+
+    out: Dict[str, Dict[str, Optional[Dict[str, Any]]]] = {}
+    for route in routes_seen:
+        out[route] = {phase: phase_routes[phase].get(route) for phase in _LATENCY_PHASE_NAMES}
+    return out
+
 
 class OutputGenerator:
     """Generates structured JSON output.
