@@ -65,7 +65,7 @@ def load_scenario(scenario_path: str) -> Dict[str, Any]:
     # Detect Rust cmdProbe sources
     rust_probes = _detect_rust_probes(Path(scenario_dir))
 
-    result = {
+    result: Dict[str, Any] = {
         "path": scenario_dir,
         "manifests": manifests,
         "experiments": experiments,
@@ -125,7 +125,7 @@ def _detect_namespace(experiments: List[Dict]) -> str:
     for exp in experiments:
         spec = exp["spec"]
         # Check metadata.namespace
-        ns = spec.get("metadata", {}).get("namespace")
+        ns: Optional[str] = spec.get("metadata", {}).get("namespace")
         if ns:
             return ns
         # Check spec.appinfo.appns
@@ -150,7 +150,8 @@ def _load_cluster_config(scenario_dir: Path) -> Optional[Dict[str, Any]]:
     if not data or not isinstance(data, dict):
         return None
 
-    return data.get("cluster", data)
+    cluster_data: Dict[str, Any] = data.get("cluster", data)
+    return cluster_data
 
 
 def _detect_rust_probes(scenario_dir: Path) -> List[Dict[str, Any]]:

@@ -96,7 +96,8 @@ def _extract_probe_verdicts_from_execution_data(
     execution_data: Any,
 ) -> Dict[str, str]:
     """Backwards-compatible verdicts-only accessor."""
-    return _parse_execution_data(execution_data)["verdicts"]
+    verdicts: Dict[str, str] = _parse_execution_data(execution_data)["verdicts"]
+    return verdicts
 
 
 class ChaosRunner:

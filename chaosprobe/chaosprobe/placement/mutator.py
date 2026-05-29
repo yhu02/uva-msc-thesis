@@ -614,7 +614,8 @@ class PlacementMutator:
             )
             for pod in pods.items:
                 if pod.spec.node_name:
-                    return pod.spec.node_name
+                    node_name: Optional[str] = pod.spec.node_name
+                    return node_name
         except ApiException:
             pass
         return None
