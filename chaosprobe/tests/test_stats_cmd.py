@@ -5,7 +5,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from chaosprobe.commands.stats_cmd import _load_strategies, stats
+from chaosprobe.commands.stats_cmd import _load_strategies, _resolve_path, stats
 
 
 def _make_summary(tmp_path: Path, strategies: dict) -> Path:
@@ -21,15 +21,59 @@ def _make_summary(tmp_path: Path, strategies: dict) -> Path:
     return path
 
 
+def _make_recovery_summary(tmp_path: Path, strategies: dict) -> Path:
+    """Write a summary.json with metrics.recovery.summary.meanRecovery_ms."""
+    payload = {
+        "strategies": {
+            name: {
+                "iterations": [
+                    {
+                        "metrics": {
+                            "recovery": {"summary": {"meanRecovery_ms": v}},
+                        },
+                    }
+                    for v in values
+                ]
+            }
+            for name, values in strategies.items()
+        }
+    }
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+class TestResolvePath:
+    def test_returns_value_for_deep_path(self):
+        d = {"a": {"b": {"c": 42}}}
+        assert _resolve_path(d, "a.b.c") == 42
+
+    def test_returns_none_on_missing_key(self):
+        d = {"a": {"b": {"c": 42}}}
+        assert _resolve_path(d, "a.b.x") is None
+
+    def test_returns_none_on_non_dict_midway(self):
+        d = {"a": {"b": 5}}
+        assert _resolve_path(d, "a.b.c") is None
+
+    def test_single_part_path(self):
+        assert _resolve_path({"x": 1}, "x") == 1
+
+
 class TestLoadStrategies:
     def test_extracts_per_strategy_scores(self, tmp_path):
         path = _make_summary(tmp_path, {"colocate": [70, 75, 80], "spread": [60, 65]})
-        out = _load_strategies(path)
+        out = _load_strategies(path, "resilienceScore")
         assert out == {"colocate": [70.0, 75.0, 80.0], "spread": [60.0, 65.0]}
+
+    def test_extracts_nested_recovery_metric(self, tmp_path):
+        path = _make_recovery_summary(tmp_path, {"colocate": [1200, 1500], "spread": [800, 900]})
+        out = _load_strategies(path, "metrics.recovery.summary.meanRecovery_ms")
+        assert out == {"colocate": [1200.0, 1500.0], "spread": [800.0, 900.0]}
 
     def test_skips_strategies_without_iterations(self, tmp_path):
         path = _make_summary(tmp_path, {"colocate": []})
-        out = _load_strategies(path)
+        out = _load_strategies(path, "resilienceScore")
         assert out == {}
 
     def test_skips_iterations_without_score(self, tmp_path):
@@ -46,14 +90,47 @@ class TestLoadStrategies:
         }
         path = tmp_path / "summary.json"
         path.write_text(json.dumps(payload))
-        out = _load_strategies(path)
+        out = _load_strategies(path, "resilienceScore")
         assert out == {"colocate": [70.0]}
+
+    def test_skips_iterations_where_path_missing(self, tmp_path):
+        payload = {
+            "strategies": {
+                "colocate": {
+                    "iterations": [
+                        {"metrics": {"recovery": {"summary": {"meanRecovery_ms": 100}}}},
+                        {"metrics": {}},
+                        {},
+                    ]
+                }
+            }
+        }
+        path = tmp_path / "summary.json"
+        path.write_text(json.dumps(payload))
+        out = _load_strategies(path, "metrics.recovery.summary.meanRecovery_ms")
+        assert out == {"colocate": [100.0]}
 
     def test_handles_missing_strategies_key(self, tmp_path):
         path = tmp_path / "summary.json"
         path.write_text(json.dumps({}))
-        out = _load_strategies(path)
+        out = _load_strategies(path, "resilienceScore")
         assert out == {}
+
+    def test_skips_non_numeric_value(self, tmp_path):
+        payload = {
+            "strategies": {
+                "a": {
+                    "iterations": [
+                        {"resilienceScore": 42},
+                        {"resilienceScore": "not-a-number"},
+                    ]
+                }
+            }
+        }
+        path = tmp_path / "summary.json"
+        path.write_text(json.dumps(payload))
+        out = _load_strategies(path, "resilienceScore")
+        assert out == {"a": [42.0]}
 
 
 class TestStatsCommand:
@@ -70,6 +147,7 @@ class TestStatsCommand:
 
         assert result.exit_code == 0
         assert "Bootstrap 95% CI" in result.output
+        assert "resilienceScore" in result.output
         assert "colocate" in result.output
         assert "spread" in result.output
         assert "Pairwise Mann-Whitney" in result.output
@@ -87,8 +165,38 @@ class TestStatsCommand:
         assert "ci" in payload
         assert "pairwise" in payload
         assert payload["confidence"] == 0.95
+        assert payload["metric"] == "resilienceScore"
         assert set(payload["ci"].keys()) == {"colocate", "spread"}
         assert len(payload["pairwise"]) == 1
+
+    def test_recovery_metric_flag(self, tmp_path):
+        summary = _make_recovery_summary(
+            tmp_path,
+            {
+                "colocate": [1200, 1500, 1800, 1700, 1300],
+                "spread": [800, 900, 850, 750, 820],
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--metric", "recovery"])
+        assert result.exit_code == 0
+        assert "meanRecovery_ms" in result.output
+        assert "colocate" in result.output
+
+    def test_recovery_metric_json(self, tmp_path):
+        summary = _make_recovery_summary(tmp_path, {"a": [100, 200, 300], "b": [400, 500, 600]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--metric", "recovery", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["metric"] == "meanRecovery_ms"
+
+    def test_invalid_metric_choice_rejected(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--metric", "bogus"])
+        assert result.exit_code != 0
+        assert "bogus" in result.output
 
     def test_writes_to_output_file(self, tmp_path):
         summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
@@ -108,6 +216,14 @@ class TestStatsCommand:
 
         assert result.exit_code == 1
         assert "no strategies" in result.output.lower()
+
+    def test_recovery_empty_summary_errors_with_recovery_label(self, tmp_path):
+        # Resilience scores present but no recovery metrics.
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--metric", "recovery"])
+        assert result.exit_code == 1
+        assert "meanRecovery_ms" in result.output
 
     def test_single_strategy_no_pairwise(self, tmp_path):
         summary = _make_summary(tmp_path, {"colocate": [70, 75, 80]})
