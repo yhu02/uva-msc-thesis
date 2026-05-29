@@ -1223,3 +1223,38 @@ def _aggregate_route_views(
     # then LatencyProber-only routes alphabetically — matches build_route_view.
     out.sort(key=lambda r: (0 if "locust" in r else 1, r["route"]))
     return out
+
+
+def summarise_placement_match_rates(
+    strategies: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Per-strategy intent-vs-actual placement match rate roll-up.
+
+    Surfaces ``placement.metadata.intendedActualDiff.matchRate`` for every
+    strategy that captured one — produced by ``PlacementMutator.apply_strategy``
+    after the rollout settles.  A strategy that returns matchRate=1.0
+    placed every deployment as intended; lower values mean the scheduler
+    overrode the nodeSelector (e.g. taint, resource fit, topology spread
+    failure).  The thesis's per-strategy ranking only holds if the
+    intended placement actually applied; this is the verification.
+
+    Returns ``{strategy_name: {matchRate, matched, mismatched}}`` — the
+    counts are convenient for downstream rendering.  Strategies without
+    an intent-vs-actual diff (baseline, default) are omitted.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for name, sdata in (strategies or {}).items():
+        placement = (sdata or {}).get("placement") or {}
+        metadata = placement.get("metadata") or {}
+        diff = metadata.get("intendedActualDiff")
+        if not isinstance(diff, dict):
+            continue
+        match_rate = diff.get("matchRate")
+        if match_rate is None:
+            continue
+        out[name] = {
+            "matchRate": match_rate,
+            "matched": len(diff.get("matched") or []),
+            "mismatched": len(diff.get("mismatched") or []),
+        }
+    return out
