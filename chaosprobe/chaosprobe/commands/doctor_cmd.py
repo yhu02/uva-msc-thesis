@@ -108,6 +108,103 @@ def _check_strategy(strategy_name: str, sdata: Dict[str, Any]) -> List[Tuple[str
     return issues
 
 
+def _check_cross_strategy(strategies: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Run checks that compare strategies against each other.
+
+    Surfaces inconclusive analyses (every CI overlaps with every other),
+    cluster-wide problems (all strategies hit OOMKills), and outlier
+    strategies (one strategy has wildly different load from the rest).
+    """
+    issues: List[Tuple[str, str]] = []
+    if len(strategies) < 2:
+        return issues
+
+    # All-CIs-overlap → analysis is inconclusive.
+    cis: Dict[str, Tuple[float, float]] = {}
+    for name, sdata in strategies.items():
+        ci = (sdata.get("aggregated") or {}).get("meanResilienceScore_ci95")
+        if isinstance(ci, dict) and ci.get("low") is not None and ci.get("high") is not None:
+            cis[name] = (float(ci["low"]), float(ci["high"]))
+    if len(cis) >= 2:
+        names = list(cis.keys())
+        all_overlap = True
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                a_low, a_high = cis[names[i]]
+                b_low, b_high = cis[names[j]]
+                if a_high < b_low or b_high < a_low:
+                    all_overlap = False
+                    break
+            if not all_overlap:
+                break
+        if all_overlap:
+            issues.append(
+                (
+                    "warn",
+                    f"every pair of strategy CIs overlaps across {len(cis)} "
+                    f"strategies — analysis is statistically inconclusive at "
+                    f"this n; consider more iterations or seed variance",
+                )
+            )
+
+    # Every strategy hit OOMKills → cluster is undersized or the workload
+    # itself OOMs, not the placement.
+    with_oom = [
+        name
+        for name, sdata in strategies.items()
+        if ((sdata.get("aggregated") or {}).get("totalOOMKills") or 0) > 0
+    ]
+    if len(with_oom) == len(strategies) and len(strategies) >= 3:
+        issues.append(
+            (
+                "warn",
+                f"every strategy hit OOMKills ({len(strategies)}/{len(strategies)}) "
+                f"— cluster likely undersized for the workload; not a "
+                f"placement-attributable signal",
+            )
+        )
+
+    # Every strategy had tainted iterations → cluster is unstable
+    # independent of placement.
+    all_tainted = [
+        name
+        for name, sdata in strategies.items()
+        if ((sdata.get("aggregated") or {}).get("taintedIterations") or 0) > 0
+    ]
+    if len(all_tainted) == len(strategies) and len(strategies) >= 3:
+        issues.append(
+            (
+                "warn",
+                "every strategy had tainted iterations — cluster is unstable "
+                "independent of placement",
+            )
+        )
+
+    # Locust offered RPS skew across strategies.
+    rps_means: Dict[str, float] = {}
+    for name, sdata in strategies.items():
+        load_agg = (sdata.get("aggregated") or {}).get("loadGenerationAggregate") or {}
+        mean_rps = load_agg.get("meanRequestsPerSecond")
+        if isinstance(mean_rps, (int, float)):
+            rps_means[name] = float(mean_rps)
+    if len(rps_means) >= 2:
+        vals = list(rps_means.values())
+        spread = (max(vals) - min(vals)) / max(max(vals), 0.1)
+        if spread > 0.20:
+            mn = min(rps_means, key=rps_means.get)
+            mx = max(rps_means, key=rps_means.get)
+            issues.append(
+                (
+                    "warn",
+                    f"Locust offered RPS varies by {spread:.0%} across strategies "
+                    f"(low: {mn}={rps_means[mn]:.1f}, high: {mx}={rps_means[mx]:.1f}) — "
+                    f"load drift may confound the resilience comparison",
+                )
+            )
+
+    return issues
+
+
 @click.command("doctor")
 @click.option(
     "--summary",
@@ -142,15 +239,24 @@ def doctor(summary: Path, strict: bool, as_json: bool):
     report: Dict[str, List[Dict[str, str]]] = {}
     error_count = 0
     warn_count = 0
+
+    def _tally(issues_list: List[Tuple[str, str]]) -> List[Dict[str, str]]:
+        nonlocal error_count, warn_count
+        for sev, _ in issues_list:
+            if sev == "error":
+                error_count += 1
+            elif sev == "warn":
+                warn_count += 1
+        return [{"severity": sev, "message": msg} for sev, msg in issues_list]
+
     for name in sorted(strategies.keys()):
         issues = _check_strategy(name, strategies[name])
         if issues:
-            report[name] = [{"severity": sev, "message": msg} for sev, msg in issues]
-            for sev, _ in issues:
-                if sev == "error":
-                    error_count += 1
-                elif sev == "warn":
-                    warn_count += 1
+            report[name] = _tally(issues)
+
+    cross = _check_cross_strategy(strategies)
+    if cross:
+        report["__cross_strategy__"] = _tally(cross)
 
     if as_json:
         click.echo(
@@ -170,7 +276,8 @@ def doctor(summary: Path, strict: bool, as_json: bool):
             click.echo(f"  ✓ no issues across {len(strategies)} strategies")
         else:
             for name, findings in report.items():
-                click.echo(f"\n  {name}")
+                heading = "cross-strategy" if name == "__cross_strategy__" else name
+                click.echo(f"\n  {heading}")
                 for finding in findings:
                     marker = "✗" if finding["severity"] == "error" else "!"
                     click.echo(f"    {marker} {finding['message']}")
