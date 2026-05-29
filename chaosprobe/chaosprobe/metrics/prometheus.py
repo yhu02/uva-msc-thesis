@@ -114,6 +114,36 @@ DEFAULT_QUERIES: Dict[str, str] = {
     "kube_proxy_rules_synced_per_sec": (
         "sum(rate(kubeproxy_sync_proxy_rules_duration_seconds_count[1m]))"
     ),
+    # ── Control-plane metrics ──────────────────────────────────────────
+    # These distinguish *control-plane* churn (scheduler queue depth,
+    # apiserver latency, etcd write latency) from kernel/networking
+    # churn (the kube-proxy / conntrack / CoreDNS bundle above).  Under
+    # pod-delete at CHAOS_INTERVAL=15s the API write rate is steady;
+    # if the apiserver or etcd starts dragging, the resulting recovery
+    # latency comes from a *different* mechanism than the thesis's
+    # kube-proxy reconvergence claim.  Collecting these makes the
+    # attribution defensible.
+    #
+    # All cluster-wide; `{namespace}` placeholder is intentionally
+    # omitted so `_build_queries` `.format()` is a no-op.
+    "scheduler_attempt_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "scheduler_scheduling_attempt_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "scheduler_pending_pods": ("sum(scheduler_pending_pods)"),
+    "apiserver_request_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        'apiserver_request_duration_seconds_bucket{{verb!="WATCH"}}[5m])) by (le))'
+    ),
+    "apiserver_inflight": ("sum(apiserver_current_inflight_requests)"),
+    "etcd_wal_fsync_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "etcd_disk_wal_fsync_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "etcd_backend_commit_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "etcd_disk_backend_commit_duration_seconds_bucket[5m])) by (le))"
+    ),
 }
 
 # Common service names / namespaces where Prometheus is typically deployed.
