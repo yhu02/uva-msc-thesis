@@ -1153,7 +1153,7 @@ def chart_heterogeneity_scatter(
 
     def _bytes_to_gib(b: Any) -> Optional[float]:
         try:
-            return float(b) / (1024 ** 3)
+            return float(b) / (1024**3)
         except (TypeError, ValueError):
             return None
 
@@ -1180,9 +1180,9 @@ def chart_heterogeneity_scatter(
                 if mem.endswith("Ki"):
                     bytes_ = float(mem[:-2]) * 1024
                 elif mem.endswith("Mi"):
-                    bytes_ = float(mem[:-2]) * 1024 ** 2
+                    bytes_ = float(mem[:-2]) * 1024**2
                 elif mem.endswith("Gi"):
-                    bytes_ = float(mem[:-2]) * 1024 ** 3
+                    bytes_ = float(mem[:-2]) * 1024**3
                 else:
                     try:
                         bytes_ = float(mem)
@@ -1208,11 +1208,18 @@ def chart_heterogeneity_scatter(
         # Small horizontal jitter so overlapping points (always 2.0 vs
         # 4.0 GiB) are visually separable.
         import random as _r
+
         _r.seed(hash(strat_name) % (2**32))
         jit = [x + _r.uniform(-0.08, 0.08) for x in xs]
         ax.scatter(
-            jit, ys, color=color, s=70, alpha=0.75,
-            edgecolor="black", linewidth=0.4, label=strat_name,
+            jit,
+            ys,
+            color=color,
+            s=70,
+            alpha=0.75,
+            edgecolor="black",
+            linewidth=0.4,
+            label=strat_name,
         )
 
     ax.set_xlabel("Max allocatable memory (GiB) of any node hosting an app pod")
@@ -1274,14 +1281,31 @@ def write_pairwise_stats_csv(
     out = output_path / "pairwise_stats.csv"
     with out.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "strategy_a", "strategy_b", "mean_a", "mean_b",
-            "u_statistic", "z", "p_raw", "p_holm", "significant_05",
-        ])
+        writer.writerow(
+            [
+                "strategy_a",
+                "strategy_b",
+                "mean_a",
+                "mean_b",
+                "u_statistic",
+                "z",
+                "p_raw",
+                "p_holm",
+                "significant_05",
+            ]
+        )
         for r in rows:
-            writer.writerow([
-                r["a"], r["b"], r["mean_a"], r["mean_b"],
-                r["u_statistic"], r["z"], r["p_raw"],
-                r.get("p_holm"), r["significant_05"],
-            ])
+            writer.writerow(
+                [
+                    r["a"],
+                    r["b"],
+                    r["mean_a"],
+                    r["mean_b"],
+                    r["u_statistic"],
+                    r["z"],
+                    r["p_raw"],
+                    r.get("p_holm"),
+                    r["significant_05"],
+                ]
+            )
     return str(out)

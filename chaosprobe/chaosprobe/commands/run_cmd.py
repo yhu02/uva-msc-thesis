@@ -820,8 +820,8 @@ def run(
         if exp_path == primary_experiment:
             scenario_dict = shared_scenario
         else:
-            scenario_dict, _ns_unused, _file_unused, _routes_unused = (
-                _load_and_prepare_scenario(exp_path, namespace, deploy=False)
+            scenario_dict, _ns_unused, _file_unused, _routes_unused = _load_and_prepare_scenario(
+                exp_path, namespace, deploy=False
             )
         fault_scenarios.append((label, scenario_dict, extract_experiment_types(scenario_dict)))
 
@@ -883,9 +883,6 @@ def run(
     frontend_pf_port = preflight["frontend_pf_port"]
 
     click.echo("")
-
-    # Extract target deployment from experiment spec for recovery metrics
-    target_deployment = extract_target_deployment(shared_scenario)
 
     overall_results: Dict[str, Any] = {
         "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
@@ -1070,9 +1067,7 @@ def run(
                 strategy_passed = False
             strategy_result["fault"] = fault_label
             overall_results["faults"][fault_label]["strategies"][strategy_name] = strategy_result
-            flat_key = (
-                f"{fault_label}__{strategy_name}" if _multi_fault else strategy_name
-            )
+            flat_key = f"{fault_label}__{strategy_name}" if _multi_fault else strategy_name
             overall_results["strategies"][flat_key] = strategy_result
             if strategy_result["status"] == "error":
                 failed += 1
