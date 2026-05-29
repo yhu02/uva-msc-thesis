@@ -914,6 +914,20 @@ def aggregate_iterations(
                 probe_tally[pname]["Unknown"] += 1
     if probe_tally:
         agg["probeVerdictTally"] = probe_tally
+        # Per-probe success-rate + Wilson 95% CI.  A defender comparing
+        # probe-level success between strategies needs intervals — a
+        # 4/5 Pass and a 80/100 Pass are both "80%" by point estimate
+        # but have very different uncertainty.
+        from chaosprobe.metrics.statistics import wilson_ci as _wilson_ci
+
+        success_rates: Dict[str, Dict[str, Any]] = {}
+        for pname, counts in probe_tally.items():
+            decided = counts["Pass"] + counts["Fail"]
+            success_rates[pname] = {
+                **_wilson_ci(counts["Pass"], decided),
+                "unknown": counts["Unknown"],
+            }
+        agg["probeSuccessRates"] = success_rates
 
     # Aggregate recovery metrics from metrics.recovery.summary
     all_recovery_times: List[float] = []
