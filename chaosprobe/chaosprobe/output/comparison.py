@@ -77,6 +77,12 @@ def compare_runs(
         baseline_strategies, afterfix_strategies, ci_key="meanScheduledToReady_ms_ci95"
     )
 
+    # Per-probe Wilson-CI overlap inside each strategy.  Lets a defender
+    # show "fix improved the cart probe's success rate on colocate but
+    # the frontend probe didn't move significantly" — probe-level
+    # diagnosis the strategy-aggregate CI cannot provide.
+    probe_success_overlap = _compare_probe_success_rates(baseline_strategies, afterfix_strategies)
+
     # Evaluate improvement criteria
     criteria_met = _evaluate_improvement_criteria(
         score_change, experiment_improvements, improvement_criteria
@@ -136,6 +142,9 @@ def compare_runs(
                 {"strategiesScheduledToReadyCIOverlap": strategies_ci_s2r}
                 if strategies_ci_s2r
                 else {}
+            ),
+            **(
+                {"probeSuccessRatesOverlap": probe_success_overlap} if probe_success_overlap else {}
             ),
         },
         "conclusion": {
@@ -464,6 +473,74 @@ def _compare_strategies_ci_overlap(
             "gap": ov["gap"],
             "interpretation": interp,
         }
+    return out
+
+
+def _compare_probe_success_rates(
+    baseline_strategies: Dict[str, Any],
+    afterfix_strategies: Dict[str, Any],
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Per-strategy, per-probe Wilson-CI overlap on probe success rates.
+
+    The strategy-level resilience CI tells us whether a strategy's
+    overall score moved; this drills into *which probes* moved.  A fix
+    that bumps the cart-availability probe from 60% to 90% while
+    leaving frontend-availability flat (or worse) is meaningfully
+    different from one that uniformly improved everything — and the
+    aggregate CI can hide that.
+
+    Reads ``strategy.aggregated.probeSuccessRates`` from both sides;
+    skips strategies and probes missing the block.  Returns
+    ``{strategy_name: {probe_name: {baselineCI, afterFixCI,
+    intervalsOverlap, overlapAmount, gap, interpretation}}}``.  Empty
+    dict when no strategy/probe pair has CIs on both sides.
+    """
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for name in set(baseline_strategies) & set(afterfix_strategies):
+        b_rates = (
+            (baseline_strategies.get(name) or {}).get("aggregated", {}).get("probeSuccessRates")
+        )
+        a_rates = (
+            (afterfix_strategies.get(name) or {}).get("aggregated", {}).get("probeSuccessRates")
+        )
+        if not isinstance(b_rates, dict) or not isinstance(a_rates, dict):
+            continue
+        per_strategy: Dict[str, Dict[str, Any]] = {}
+        for probe in set(b_rates) & set(a_rates):
+            b_ci = b_rates.get(probe) or {}
+            a_ci = a_rates.get(probe) or {}
+            if (
+                b_ci.get("ci_low") is None
+                or b_ci.get("ci_high") is None
+                or a_ci.get("ci_low") is None
+                or a_ci.get("ci_high") is None
+            ):
+                continue
+            ov = _interval_overlap(
+                float(b_ci["ci_low"]),
+                float(b_ci["ci_high"]),
+                float(a_ci["ci_low"]),
+                float(a_ci["ci_high"]),
+            )
+            b_width = float(b_ci["ci_high"]) - float(b_ci["ci_low"])
+            a_width = float(a_ci["ci_high"]) - float(a_ci["ci_low"])
+            smaller = min(b_width, a_width)
+            if not ov["overlaps"]:
+                interp = "significant"
+            elif smaller > 0 and ov["overlapAmount"] / smaller > 0.5:
+                interp = "indistinguishable"
+            else:
+                interp = "directional"
+            per_strategy[probe] = {
+                "baselineCI": b_ci,
+                "afterFixCI": a_ci,
+                "intervalsOverlap": ov["overlaps"],
+                "overlapAmount": ov["overlapAmount"],
+                "gap": ov["gap"],
+                "interpretation": interp,
+            }
+        if per_strategy:
+            out[name] = per_strategy
     return out
 
 
