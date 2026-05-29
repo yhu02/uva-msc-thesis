@@ -263,6 +263,7 @@ uv run chaosprobe stats -s examples/example-summary.json --metric resilience
 uv run chaosprobe stats -s examples/example-summary.json --all-metrics --markdown
 uv run chaosprobe stats -s examples/example-summary.json --baseline spread
 uv run chaosprobe stats -s examples/example-summary.json --effect-size-min medium
+uv run chaosprobe stats -s run1.json --merge run2.json --merge run3.json    # pool samples
 
 # Sample-size / power analysis for a target effect.
 uv run chaosprobe power -s examples/example-summary.json --metric resilience

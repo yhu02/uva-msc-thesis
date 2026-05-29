@@ -351,6 +351,31 @@ def _compute_baseline_relative(
     return out
 
 
+def _merge_summaries(raws: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Pool ``iterations`` per strategy across multiple summary dicts.
+
+    Strategies present in only some inputs are still included.  All
+    other top-level keys (schemaVersion, runMetadata, etc.) are taken
+    from the first input — they are not meaningful in the merged view
+    and stats only looks at ``strategies[*].iterations``.  Order of
+    iterations within a strategy is the input order; iteration numbers
+    are not rewritten (stats only consumes the per-iteration metric
+    values, not the iteration field).
+    """
+    if not raws:
+        return {"strategies": {}}
+    merged_strategies: Dict[str, Dict[str, Any]] = {}
+    for raw in raws:
+        for name, sdata in (raw.get("strategies") or {}).items():
+            if name not in merged_strategies:
+                merged_strategies[name] = {"iterations": []}
+            iters = sdata.get("iterations") or []
+            merged_strategies[name]["iterations"].extend(iters)
+    out = dict(raws[0])
+    out["strategies"] = merged_strategies
+    return out
+
+
 def _analyse_metric(
     raw_summary: Dict[str, Any],
     metric_path: str,
@@ -516,6 +541,19 @@ def _analyse_metric(
     ),
 )
 @click.option(
+    "--merge",
+    "merge_paths",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    multiple=True,
+    default=(),
+    help=(
+        "Additional summary.json files whose per-strategy iterations are "
+        "pooled with --summary's before CI / pairwise computation.  Use to "
+        "tighten CIs by combining multiple runs of the same experiment.  "
+        "Strategies present in only some inputs are still included."
+    ),
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -536,6 +574,7 @@ def stats(
     min_effect_size: Optional[str],
     sort_key: str,
     baseline: Optional[str],
+    merge_paths: Tuple[Path, ...],
     output: Optional[Path],
 ):
     """Compute CI and pairwise significance for a per-strategy metric.
@@ -549,6 +588,9 @@ def stats(
     """
     actual_seed = None if seed == -1 else seed
     raw_summary = json.loads(summary.read_text())
+    if merge_paths:
+        merged_raws = [raw_summary] + [json.loads(p.read_text()) for p in merge_paths]
+        raw_summary = _merge_summaries(merged_raws)
 
     pair_list: Optional[List[str]] = None
     if pair:
