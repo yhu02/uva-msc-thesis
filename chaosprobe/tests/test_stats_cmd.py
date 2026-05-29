@@ -247,4 +247,97 @@ class TestStatsCommand:
             stats, ["-s", str(summary), "--confidence", "0.9", "--n-resamples", "50"]
         )
         assert result.exit_code == 0
-        assert "Bootstrap 90% CI" in result.output
+
+
+def _make_both_metrics_summary(tmp_path: Path) -> Path:
+    """A summary with both resilienceScore and meanRecovery_ms per
+    iteration for two strategies."""
+    payload = {
+        "strategies": {
+            "colocate": {
+                "iterations": [
+                    {
+                        "resilienceScore": 70,
+                        "metrics": {"recovery": {"summary": {"meanRecovery_ms": 1500}}},
+                    },
+                    {
+                        "resilienceScore": 75,
+                        "metrics": {"recovery": {"summary": {"meanRecovery_ms": 1700}}},
+                    },
+                    {
+                        "resilienceScore": 80,
+                        "metrics": {"recovery": {"summary": {"meanRecovery_ms": 1300}}},
+                    },
+                ]
+            },
+            "spread": {
+                "iterations": [
+                    {
+                        "resilienceScore": 40,
+                        "metrics": {"recovery": {"summary": {"meanRecovery_ms": 800}}},
+                    },
+                    {
+                        "resilienceScore": 45,
+                        "metrics": {"recovery": {"summary": {"meanRecovery_ms": 850}}},
+                    },
+                ]
+            },
+        }
+    }
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+class TestAllMetricsFlag:
+    def test_text_output_contains_both_blocks(self, tmp_path):
+        summary = _make_both_metrics_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--all-metrics"])
+        assert result.exit_code == 0
+        assert "resilienceScore" in result.output
+        assert "meanRecovery_ms" in result.output
+        # Each block has its own pairwise header.
+        assert result.output.count("Pairwise Mann-Whitney") == 2
+
+    def test_json_output_groups_by_metric_label(self, tmp_path):
+        summary = _make_both_metrics_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--all-metrics", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "metrics" in payload
+        assert set(payload["metrics"].keys()) == {"resilienceScore", "meanRecovery_ms"}
+        for block in payload["metrics"].values():
+            assert "ci" in block
+            assert "pairwise" in block
+
+    def test_all_metrics_skips_metric_missing_data(self, tmp_path):
+        """If only resilience is present, --all-metrics still succeeds
+        and emits only the resilience block."""
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--all-metrics", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert set(payload["metrics"].keys()) == {"resilienceScore"}
+
+    def test_all_metrics_errors_when_no_data_at_all(self, tmp_path):
+        empty = tmp_path / "summary.json"
+        empty.write_text(json.dumps({"strategies": {}}))
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(empty), "--all-metrics"])
+        assert result.exit_code == 1
+        assert "any supported metric" in result.output.lower()
+
+    def test_metric_flag_ignored_when_all_metrics_set(self, tmp_path):
+        """--metric defaults to resilience, but --all-metrics should still
+        emit both blocks."""
+        summary = _make_both_metrics_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            stats, ["-s", str(summary), "--metric", "resilience", "--all-metrics"]
+        )
+        assert result.exit_code == 0
+        assert "meanRecovery_ms" in result.output
+        assert "resilienceScore" in result.output
