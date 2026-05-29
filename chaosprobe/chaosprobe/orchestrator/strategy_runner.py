@@ -544,6 +544,24 @@ def execute_strategy(
 # ---------------------------------------------------------------------------
 
 
+def _parse_strategy_name(name: str) -> Tuple[str, Optional[int]]:
+    """Split ``random:42`` into ``("random", 42)``.
+
+    Multi-seed runs (``chaosprobe run --seeds 42,137``) expand the
+    ``random`` strategy into ``random:42``, ``random:137``, ... so each
+    seed becomes a distinguishable "strategy" downstream.  This helper
+    extracts the base name (for enum lookup) and the seed override (for
+    apply_strategy).  Returns ``(name, None)`` for plain entries.
+    """
+    if ":" not in name:
+        return name, None
+    base, _, suffix = name.partition(":")
+    try:
+        return base, int(suffix)
+    except ValueError:
+        return name, None
+
+
 def _apply_placement(
     ctx: RunContext,
     strategy_name: str,
@@ -553,19 +571,21 @@ def _apply_placement(
     ctx.mutator.clear_placement(wait=True, timeout=120)
     click.echo("    Placement cleared.")
 
-    if strategy_name in ("baseline", "default"):
-        click.echo(f"\n  Step 2: {strategy_name.capitalize()} — using default scheduling")
+    base_name, seed_override = _parse_strategy_name(strategy_name)
+
+    if base_name in ("baseline", "default"):
+        click.echo(f"\n  Step 2: {base_name.capitalize()} — using default scheduling")
         strategy_result["placement"] = {
             "strategy": strategy_name,
             "description": (
                 "No-fault control — no chaos injected"
-                if strategy_name == "baseline"
+                if base_name == "baseline"
                 else "Default Kubernetes scheduling"
             ),
         }
     else:
         click.echo(f"\n  Step 2: Applying {strategy_name} placement...")
-        strat = PlacementStrategy(strategy_name)
+        strat = PlacementStrategy(base_name)
         _infra_prefixes = (
             "chaos-exporter",
             "chaos-operator",
@@ -582,9 +602,14 @@ def _apply_placement(
         # resource contention.  Use a generous timeout (5 min) instead
         # of the experiment timeout or an arbitrary 120s cap.
         rollout_timeout = max(300, ctx.timeout)
+        # Random strategy uses the per-name seed override when set
+        # (multi-seed mode), otherwise falls back to ctx.seed.
+        seed_value: Optional[int] = None
+        if base_name == "random":
+            seed_value = seed_override if seed_override is not None else ctx.seed
         assignment = ctx.mutator.apply_strategy(
             strategy=strat,
-            seed=ctx.seed if strategy_name == "random" else None,
+            seed=seed_value,
             deployments=app_deps if app_deps else None,
             wait=True,
             timeout=rollout_timeout,
@@ -820,9 +845,14 @@ def _run_single_iteration(
     )
 
     # Generate output
+    _base_name, _seed_override = _parse_strategy_name(strategy_name)
     placement_info = strategy_result.get("placement") or {
         "strategy": strategy_name,
-        "seed": ctx.seed if strategy_name == "random" else None,
+        "seed": (
+            (_seed_override if _seed_override is not None else ctx.seed)
+            if _base_name == "random"
+            else None
+        ),
         "assignments": {},
     }
     generator = OutputGenerator(
