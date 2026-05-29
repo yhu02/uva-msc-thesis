@@ -1254,6 +1254,14 @@ def aggregate_iterations(
             failure_totals.values(), key=lambda v: -v["totalOccurrences"]
         )
 
+    # Distribution-shape signal.  Fixed bucket boundaries make per-strategy
+    # histograms directly comparable.  Mean + stddev + CV tell us spread;
+    # the histogram tells us *shape* — bimodal (a few catastrophic recoveries
+    # on top of a steady fast tier) looks the same as unimodal-with-noise by
+    # stddev alone but very different here.
+    if all_recovery_times:
+        agg["recoveryTimeHistogram_ms"] = _bucket_recovery_times(all_recovery_times)
+
     return agg
 
 
@@ -1449,3 +1457,43 @@ def _aggregate_node_pressure_events(
     if not saw_any_node_info:
         return {}
     return by_condition
+
+
+def _bucket_recovery_times(values: List[float]) -> Dict[str, int]:
+    """Return ``{bucket_label: count}`` for recovery-time samples.
+
+    Bucket boundaries cover the realistic chaosprobe-recovery range:
+
+    * < 500ms             — pre-pulled image, healthy node, scheduler hot
+    * 500-1000ms          — typical kubelet bring-up
+    * 1000-2000ms         — modest scheduler stall or container init
+    * 2000-5000ms         — significant pull / mount / probe wait
+    * 5000-10000ms        — pathological pull, restart loop, eviction
+    * >= 10000ms          — failure mode (recovery effectively timed out)
+
+    Labels are returned in stable order so a downstream consumer
+    iterates them as histogram bars.
+    """
+    labels = (
+        "lt_500ms",
+        "500_to_1000ms",
+        "1000_to_2000ms",
+        "2000_to_5000ms",
+        "5000_to_10000ms",
+        "gte_10000ms",
+    )
+    counts = {label: 0 for label in labels}
+    for v in values:
+        if v < 500:
+            counts["lt_500ms"] += 1
+        elif v < 1000:
+            counts["500_to_1000ms"] += 1
+        elif v < 2000:
+            counts["1000_to_2000ms"] += 1
+        elif v < 5000:
+            counts["2000_to_5000ms"] += 1
+        elif v < 10000:
+            counts["5000_to_10000ms"] += 1
+        else:
+            counts["gte_10000ms"] += 1
+    return counts
