@@ -90,12 +90,16 @@ files = [
     "chaosprobe/commands/report_cmd.py",
     "chaosprobe/commands/stats_cmd.py",
     "chaosprobe/commands/summarize_cmd.py",
-    # output/ — the schema-writing half of the analysis contract.
-    # charts.py / visualize.py / ml_export.py rely on matplotlib /
-    # pyarrow (untyped stubs); they need stub work first.
+    # output/ — the schema-writing half of the analysis contract.  The
+    # matplotlib / pyarrow imports are handled by the ignore_missing_imports
+    # override below; ml_export's lazy neo4j import resolves through the
+    # storage/ layer without pulling its (still-ungated) errors into scope.
     "chaosprobe/output/__init__.py",
+    "chaosprobe/output/charts.py",
     "chaosprobe/output/comparison.py",
     "chaosprobe/output/generator.py",
+    "chaosprobe/output/ml_export.py",
+    "chaosprobe/output/visualize.py",
     # graph/ — pure-Python Neo4j-read helpers consumed by stats /
     # report / blast-radius commands.  Driver imports are isolated to
     # the storage/ layer, so this directory itself doesn't pull in
