@@ -3,7 +3,8 @@
 Reads per-strategy iteration samples from a ``summary.json`` produced by
 ``chaosprobe run`` and emits bootstrap confidence intervals plus pairwise
 Mann-Whitney comparisons with Holm-Bonferroni correction.  The metric
-under analysis is selectable via ``--metric``.
+under analysis is selectable via ``--metric``; ``--all-metrics`` runs
+every supported metric in one invocation.
 """
 
 import json
@@ -36,14 +37,14 @@ def _resolve_path(d: Dict[str, Any], path: str) -> Any:
 
 
 def _load_strategies(summary_path: Path, metric_path: str) -> Dict[str, List[float]]:
-    """Extract ``{strategy: [sample, ...]}`` from a summary file.
-
-    ``metric_path`` is a dotted path inside each iteration dict — e.g.
-    ``"resilienceScore"`` or ``"metrics.recovery.summary.meanRecovery_ms"``.
-    Iterations where the path resolves to ``None`` or a non-numeric value
-    are skipped.
-    """
+    """Extract ``{strategy: [sample, ...]}`` from a summary file."""
     raw = json.loads(summary_path.read_text())
+    return _load_strategies_from_dict(raw, metric_path)
+
+
+def _load_strategies_from_dict(raw: Dict[str, Any], metric_path: str) -> Dict[str, List[float]]:
+    """Same as ``_load_strategies`` but takes an already-parsed dict so the
+    file isn't re-read once per metric in ``--all-metrics`` mode."""
     strategies = raw.get("strategies") or {}
     out: Dict[str, List[float]] = {}
     for name, sdata in strategies.items():
@@ -102,6 +103,39 @@ def _format_text(
     return "\n".join(lines)
 
 
+def _analyse_metric(
+    raw_summary: Dict[str, Any],
+    metric_path: str,
+    metric_label: str,
+    confidence: float,
+    n_resamples: int,
+    seed: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    """Run CI + pairwise for a single metric.  Returns ``None`` when no
+    strategies carry the metric — caller decides whether to error or skip.
+    """
+    samples = _load_strategies_from_dict(raw_summary, metric_path)
+    if not samples:
+        return None
+    ci_rows = {
+        name: bootstrap_ci(
+            values,
+            statistic="mean",
+            confidence=confidence,
+            n_resamples=n_resamples,
+            seed=seed,
+        )
+        for name, values in samples.items()
+    }
+    pairwise_rows = pairwise_comparisons(samples, holm_bonferroni=True) if len(samples) >= 2 else []
+    return {
+        "samples": samples,
+        "ci": ci_rows,
+        "pairwise": pairwise_rows,
+        "metric_label": metric_label,
+    }
+
+
 @click.command("stats")
 @click.option(
     "--summary",
@@ -117,6 +151,12 @@ def _format_text(
     default="resilience",
     show_default=True,
     help="Metric to analyse: resilience (resilienceScore) or recovery (meanRecovery_ms).",
+)
+@click.option(
+    "--all-metrics",
+    "all_metrics",
+    is_flag=True,
+    help="Run every supported metric in one invocation; supersedes --metric.",
 )
 @click.option(
     "--confidence",
@@ -155,6 +195,7 @@ def _format_text(
 def stats(
     summary: Path,
     metric: str,
+    all_metrics: bool,
     confidence: float,
     n_resamples: int,
     seed: int,
@@ -167,39 +208,63 @@ def stats(
     Examples:
       chaosprobe stats -s results/20260530-142103/summary.json
       chaosprobe stats -s results/.../summary.json --metric recovery
+      chaosprobe stats -s results/.../summary.json --all-metrics
       chaosprobe stats -s results/.../summary.json --json -o stats.json
     """
-    metric_path, metric_label = _METRIC_SPECS[metric]
-    samples = _load_strategies(summary, metric_path)
-    if not samples:
-        click.echo(f"Error: no strategies with {metric_label} found.", err=True)
+    actual_seed = None if seed == -1 else seed
+    raw_summary = json.loads(summary.read_text())
+
+    metric_keys = sorted(_METRIC_SPECS.keys()) if all_metrics else [metric]
+    analyses: Dict[str, Dict[str, Any]] = {}
+    for key in metric_keys:
+        metric_path, metric_label = _METRIC_SPECS[key]
+        analysis = _analyse_metric(
+            raw_summary, metric_path, metric_label, confidence, n_resamples, actual_seed
+        )
+        if analysis is not None:
+            analyses[metric_label] = analysis
+
+    if not analyses:
+        if all_metrics:
+            click.echo(
+                "Error: summary has no strategies with any supported metric.",
+                err=True,
+            )
+        else:
+            _, label = _METRIC_SPECS[metric]
+            click.echo(f"Error: no strategies with {label} found.", err=True)
         sys.exit(1)
 
-    actual_seed = None if seed == -1 else seed
-    ci_rows = {
-        name: bootstrap_ci(
-            values,
-            statistic="mean",
-            confidence=confidence,
-            n_resamples=n_resamples,
-            seed=actual_seed,
-        )
-        for name, values in samples.items()
-    }
-    pairwise_rows = pairwise_comparisons(samples, holm_bonferroni=True) if len(samples) >= 2 else []
-
     if as_json:
-        payload = {
+        payload: Dict[str, Any] = {
             "source": str(summary),
-            "metric": metric_label,
             "confidence": confidence,
             "n_resamples": n_resamples,
-            "ci": ci_rows,
-            "pairwise": pairwise_rows,
         }
+        if all_metrics:
+            payload["metrics"] = {
+                label: {"ci": a["ci"], "pairwise": a["pairwise"]} for label, a in analyses.items()
+            }
+        else:
+            # Single-metric mode keeps the pre-existing shape.
+            single = next(iter(analyses.values()))
+            payload["metric"] = single["metric_label"]
+            payload["ci"] = single["ci"]
+            payload["pairwise"] = single["pairwise"]
         rendered = json.dumps(payload, indent=2)
     else:
-        rendered = _format_text(samples, ci_rows, pairwise_rows, confidence, metric_label)
+        parts: List[str] = []
+        for label, analysis in analyses.items():
+            parts.append(
+                _format_text(
+                    analysis["samples"],
+                    analysis["ci"],
+                    analysis["pairwise"],
+                    confidence,
+                    label,
+                )
+            )
+        rendered = "\n\n".join(parts)
 
     if output:
         output.write_text(rendered + "\n")
