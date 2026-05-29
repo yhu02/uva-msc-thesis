@@ -512,10 +512,21 @@ class ContinuousPrometheusProber(ContinuousProberBase):
 
         phases = self._split_phases(series)
 
+        # Distinguish "metric returned 0" from "metric was never available".
+        # Without this map, a cgroup-v1 cluster (no PSI), a non-Calico CNI
+        # (no Felix), or an etcd-version mismatch silently produces zeroed
+        # phase aggregates that are indistinguishable from "signal was flat
+        # under chaos." Required to defend portability claims in the thesis.
+        availability: Dict[str, bool] = {
+            label: any(entry.get("metrics", {}).get(label) for entry in series)
+            for label in self._queries.keys()
+        }
+
         data: Dict[str, Any] = {
             "available": True,
             "serverUrls": list(self._prometheus_urls),
             "queries": dict(self._queries),
+            "metricAvailability": availability,
             "timeSeries": series,
             "phases": phases,
             "config": {
