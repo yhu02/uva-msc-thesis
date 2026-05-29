@@ -30,6 +30,35 @@ def _strategy(low, high):
     }
 
 
+def _strategy_recovery(low, high):
+    return {
+        "aggregated": {
+            "meanRecoveryTime_ms_ci95": {"low": low, "high": high, "n": 5, "n_resamples": 2000}
+        }
+    }
+
+
+def _strategy_both(score_lh, recovery_lh):
+    s_low, s_high = score_lh
+    r_low, r_high = recovery_lh
+    return {
+        "aggregated": {
+            "meanResilienceScore_ci95": {
+                "low": s_low,
+                "high": s_high,
+                "n": 5,
+                "n_resamples": 2000,
+            },
+            "meanRecoveryTime_ms_ci95": {
+                "low": r_low,
+                "high": r_high,
+                "n": 5,
+                "n_resamples": 2000,
+            },
+        }
+    }
+
+
 class TestIntervalOverlap:
     def test_disjoint_a_below_b(self):
         out = _interval_overlap(10, 20, 30, 40)
@@ -117,3 +146,49 @@ class TestCompareStrategiesCIOverlap:
             _run_with_strategies({}),
         )
         assert "strategiesCIOverlap" not in out["comparison"]
+
+
+class TestCompareStrategiesRecoveryCIOverlap:
+    def test_ci_key_argument_targets_recovery(self):
+        baseline = {"colocate": _strategy_recovery(2000, 2500)}
+        after_fix = {"colocate": _strategy_recovery(800, 1100)}
+        out = _compare_strategies_ci_overlap(baseline, after_fix, ci_key="meanRecoveryTime_ms_ci95")
+        assert out["colocate"]["interpretation"] == "significant"
+        assert out["colocate"]["intervalsOverlap"] is False
+
+    def test_recovery_block_attached_to_full_compare(self):
+        baseline = {"colocate": _strategy_both((40, 50), (2000, 2500))}
+        after_fix = {"colocate": _strategy_both((70, 80), (800, 1100))}
+        out = compare_runs(
+            _run_with_strategies(baseline),
+            _run_with_strategies(after_fix),
+        )
+        assert "strategiesRecoveryCIOverlap" in out["comparison"]
+        recovery = out["comparison"]["strategiesRecoveryCIOverlap"]["colocate"]
+        assert recovery["interpretation"] == "significant"
+        # And the resilience-score block is still attached unchanged.
+        assert "strategiesCIOverlap" in out["comparison"]
+
+    def test_recovery_block_omitted_when_only_resilience_ci_present(self):
+        """Strategies with the resilience CI but no recovery CI should not
+        trigger the recovery block."""
+        baseline = {"colocate": _strategy(40, 50)}
+        after_fix = {"colocate": _strategy(70, 80)}
+        out = compare_runs(
+            _run_with_strategies(baseline),
+            _run_with_strategies(after_fix),
+        )
+        assert "strategiesCIOverlap" in out["comparison"]
+        assert "strategiesRecoveryCIOverlap" not in out["comparison"]
+
+    def test_recovery_overlap_indistinguishable_classification(self):
+        baseline = {"x": _strategy_recovery(1000, 1500)}
+        after_fix = {"x": _strategy_recovery(1100, 1400)}
+        out = _compare_strategies_ci_overlap(baseline, after_fix, ci_key="meanRecoveryTime_ms_ci95")
+        assert out["x"]["interpretation"] == "indistinguishable"
+
+    def test_strategy_missing_recovery_ci_on_one_side(self):
+        baseline = {"x": _strategy_both((40, 50), (1000, 1200))}
+        after_fix = {"x": _strategy(70, 80)}  # no recovery CI
+        out = _compare_strategies_ci_overlap(baseline, after_fix, ci_key="meanRecoveryTime_ms_ci95")
+        assert out == {}

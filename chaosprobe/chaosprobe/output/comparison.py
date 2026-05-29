@@ -57,14 +57,19 @@ def compare_runs(
         after_fix.get("metrics", {}),
     )
 
-    # Per-strategy CI overlap: when both runs carry the same strategy and
-    # both expose meanResilienceScore_ci95, check whether the intervals
-    # overlap.  Overlap → the point-estimate change is inside the noise
-    # floor and the comparison is "directional, not significant".  This
-    # is the one defence answer a reviewer most often asks for.
+    # Per-strategy CI overlap on the resilience score AND on recovery
+    # time.  The score is the headline metric; recovery is the mechanism
+    # one.  A defender who claims "the fix improved recovery" needs both
+    # to be statistically separable, not just point-estimate-different.
     strategies_ci = _compare_strategies_ci_overlap(
         baseline.get("strategies", {}),
         after_fix.get("strategies", {}),
+        ci_key="meanResilienceScore_ci95",
+    )
+    strategies_ci_recovery = _compare_strategies_ci_overlap(
+        baseline.get("strategies", {}),
+        after_fix.get("strategies", {}),
+        ci_key="meanRecoveryTime_ms_ci95",
     )
 
     # Evaluate improvement criteria
@@ -112,6 +117,11 @@ def compare_runs(
             "improvementCriteriaMet": criteria_met,
             "metrics": metrics_comparison,
             **({"strategiesCIOverlap": strategies_ci} if strategies_ci else {}),
+            **(
+                {"strategiesRecoveryCIOverlap": strategies_ci_recovery}
+                if strategies_ci_recovery
+                else {}
+            ),
         },
         "conclusion": {
             "fixEffective": fix_effective,
@@ -382,8 +392,9 @@ def _interval_overlap(a_low: float, a_high: float, b_low: float, b_high: float) 
 def _compare_strategies_ci_overlap(
     baseline_strategies: Dict[str, Any],
     afterfix_strategies: Dict[str, Any],
+    ci_key: str = "meanResilienceScore_ci95",
 ) -> Dict[str, Dict[str, Any]]:
-    """Per-strategy CI overlap on ``meanResilienceScore_ci95``.
+    """Per-strategy CI overlap on a given ``aggregated.<ci_key>`` block.
 
     Returns ``{strategy_name: {baselineCI, afterFixCI, intervalsOverlap,
     overlapAmount, gap, interpretation}}`` for every strategy that has a
@@ -396,19 +407,14 @@ def _compare_strategies_ci_overlap(
         smaller interval); the change is inside the noise floor.
       * ``"directional"`` — intervals overlap a little; the change
         points in a direction but is not significant at this n.
+
+    ``ci_key`` defaults to ``meanResilienceScore_ci95``; for the recovery
+    block pass ``"meanRecoveryTime_ms_ci95"`` (or the d2s/s2r variants).
     """
     out: Dict[str, Dict[str, Any]] = {}
     for name in set(baseline_strategies) & set(afterfix_strategies):
-        b_ci = (
-            (baseline_strategies.get(name) or {})
-            .get("aggregated", {})
-            .get("meanResilienceScore_ci95")
-        )
-        a_ci = (
-            (afterfix_strategies.get(name) or {})
-            .get("aggregated", {})
-            .get("meanResilienceScore_ci95")
-        )
+        b_ci = (baseline_strategies.get(name) or {}).get("aggregated", {}).get(ci_key)
+        a_ci = (afterfix_strategies.get(name) or {}).get("aggregated", {}).get(ci_key)
         if not (
             isinstance(b_ci, dict)
             and isinstance(a_ci, dict)
