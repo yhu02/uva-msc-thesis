@@ -205,7 +205,7 @@ class TestContinuousResourceProberPhaseSplitting:
             ),
         ]
 
-        phases = prober._split_phases(series)
+        phases = prober._aggregate_phases(series)
 
         assert phases["pre-chaos"]["sampleCount"] == 1
         assert phases["during-chaos"]["sampleCount"] == 2
@@ -227,7 +227,7 @@ class TestContinuousResourceProberPhaseSplitting:
 
     def test_phase_splitting_empty(self):
         prober = self._make_prober()
-        phases = prober._split_phases([])
+        phases = prober._aggregate_phases([])
 
         assert phases["pre-chaos"]["sampleCount"] == 0
         assert phases["during-chaos"]["sampleCount"] == 0
@@ -239,7 +239,7 @@ class TestContinuousResourceProberPhaseSplitting:
         series = [
             {"phase": "during-chaos", "pods": []},
         ]
-        phases = prober._split_phases(series)
+        phases = prober._aggregate_phases(series)
         assert phases["during-chaos"]["sampleCount"] == 1
         assert "usedNode" not in phases["during-chaos"]
 
@@ -255,7 +255,7 @@ class TestContinuousResourceProberPhaseSplitting:
                 ],
             ),
         ]
-        phases = prober._split_phases(series)
+        phases = prober._aggregate_phases(series)
         assert phases["during-chaos"]["usedNode"]["peakNodeCpu_percent"] == 95.0
         assert phases["during-chaos"]["usedNode"]["peakNodeMemory_percent"] == 90.0
 

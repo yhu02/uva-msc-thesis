@@ -396,7 +396,7 @@ class TestPrometheusProberPhaseSplitting:
             },
         ]
 
-        phases = prober._split_phases(series)
+        phases = prober._aggregate_phases(series)
 
         assert phases["pre-chaos"]["sampleCount"] == 1
         assert phases["during-chaos"]["sampleCount"] == 2
@@ -410,7 +410,7 @@ class TestPrometheusProberPhaseSplitting:
 
     def test_empty_phases(self):
         prober = _make_prober()
-        phases = prober._split_phases([])
+        phases = prober._aggregate_phases([])
 
         assert phases["pre-chaos"]["sampleCount"] == 0
         assert phases["during-chaos"]["sampleCount"] == 0
@@ -419,7 +419,7 @@ class TestPrometheusProberPhaseSplitting:
     def test_no_metrics_in_entry(self):
         prober = _make_prober()
         series = [{"phase": "during-chaos"}]
-        phases = prober._split_phases(series)
+        phases = prober._aggregate_phases(series)
         assert phases["during-chaos"]["sampleCount"] == 1
         assert phases["during-chaos"]["metrics"] == {}
 
@@ -452,7 +452,7 @@ class TestPrometheusProberPhaseSplitting:
             },
         ]
 
-        phases = prober._split_phases(series)
+        phases = prober._aggregate_phases(series)
         agg = phases["during-chaos"]["metrics"]
 
         # cpu_throttling present in both samples → aggregated across both

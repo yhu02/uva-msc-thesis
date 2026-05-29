@@ -552,7 +552,7 @@ class ContinuousPrometheusProber(ContinuousProberBase):
                 "reason": ("prometheus not found" if not self._available else "no data collected"),
             }
 
-        phases = self._split_phases(series)
+        phases = self._aggregate_phases(series)
 
         # Distinguish "metric returned 0" from "metric was never available".
         # Without this map, a cgroup-v1 cluster (no PSI), a non-Calico CNI
@@ -582,7 +582,7 @@ class ContinuousPrometheusProber(ContinuousProberBase):
 
     # -- phase aggregation --------------------------------------------------
 
-    def _split_phases(
+    def _aggregate_phases(
         self,
         series: List[Dict[str, Any]],
     ) -> Dict[str, Any]:

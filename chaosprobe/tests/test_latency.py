@@ -225,7 +225,7 @@ class TestContinuousLatencyProber:
             },
         ]
 
-        phases = prober._split_phases(series)
+        phases = prober._aggregate_phases(series)
         assert phases["pre-chaos"]["sampleCount"] == 2
         assert phases["during-chaos"]["sampleCount"] == 2
         assert phases["post-chaos"]["sampleCount"] == 1
@@ -242,7 +242,7 @@ class TestContinuousLatencyProber:
         prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
         prober._lock = __import__("threading").Lock()
 
-        phases = prober._split_phases([])
+        phases = prober._aggregate_phases([])
         assert phases["pre-chaos"]["sampleCount"] == 0
         assert phases["during-chaos"]["sampleCount"] == 0
         assert phases["post-chaos"]["sampleCount"] == 0
