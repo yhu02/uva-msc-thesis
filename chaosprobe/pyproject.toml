@@ -90,6 +90,15 @@ files = [
     "chaosprobe/commands/report_cmd.py",
     "chaosprobe/commands/stats_cmd.py",
     "chaosprobe/commands/summarize_cmd.py",
+    # CLI command modules for cluster / placement / probe management.
+    # Raw kubernetes calls are handled by the ignore_missing_imports override.
+    "chaosprobe/commands/cluster_cmd.py",
+    "chaosprobe/commands/dashboard_cmd.py",
+    "chaosprobe/commands/delete_cmd.py",
+    "chaosprobe/commands/graph_cmd.py",
+    "chaosprobe/commands/init_cmd.py",
+    "chaosprobe/commands/placement_cmd.py",
+    "chaosprobe/commands/probe_cmd.py",
     # output/ — the schema-writing half of the analysis contract.  The
     # matplotlib / pyarrow imports are handled by the ignore_missing_imports
     # override below; ml_export's lazy neo4j import resolves through the
@@ -154,14 +163,20 @@ files = [
     "chaosprobe/storage/neo4j_reader.py",
     "chaosprobe/storage/neo4j_store.py",
     "chaosprobe/storage/neo4j_writer.py",
+    # placement/ — pod-placement strategy helpers (pure Python).
+    "chaosprobe/placement/__init__.py",
+    "chaosprobe/placement/strategy.py",
     # Package-level + small leaf utilities — no remaining errors.
     "chaosprobe/__init__.py",
+    "chaosprobe/cli.py",
     "chaosprobe/k8s.py",
     "chaosprobe/commands/__init__.py",
     "chaosprobe/commands/shared.py",
     "chaosprobe/chaos/manifest.py",
     "chaosprobe/collector/__init__.py",
     "chaosprobe/config/__init__.py",
+    "chaosprobe/config/topology.py",
+    "chaosprobe/config/validator.py",
 ]
 
 # Third-party packages that ship without py.typed markers.  We treat
