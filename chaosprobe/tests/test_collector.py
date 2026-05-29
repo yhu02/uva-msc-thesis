@@ -368,3 +368,176 @@ class TestCollectNodeInfoConditions:
         info = collector._collect_node_info("worker-7")
 
         assert info["conditions"]["Ready"]["lastTransition"] == "2026-05-28T12:00:00Z"
+
+
+def _make_container_status(
+    name: str,
+    *,
+    restart_count: int = 0,
+    last_terminated_reason: object = None,
+    current_terminated_reason: object = None,
+    ready: bool = True,
+):
+    """Build a fake V1ContainerStatus-like object for OOM-aggregation tests."""
+    cs = MagicMock()
+    cs.name = name
+    cs.restart_count = restart_count
+    cs.ready = ready
+
+    cs.state = MagicMock()
+    if current_terminated_reason is not None:
+        cs.state.running = None
+        cs.state.waiting = None
+        cs.state.terminated = MagicMock()
+        cs.state.terminated.reason = current_terminated_reason
+        cs.state.terminated.exit_code = 137 if current_terminated_reason == "OOMKilled" else 1
+    else:
+        cs.state.running = MagicMock()
+        cs.state.running.started_at = None
+        cs.state.waiting = None
+        cs.state.terminated = None
+
+    cs.last_state = MagicMock()
+    if last_terminated_reason is not None:
+        cs.last_state.terminated = MagicMock()
+        cs.last_state.terminated.reason = last_terminated_reason
+        cs.last_state.terminated.exit_code = 137 if last_terminated_reason == "OOMKilled" else 1
+        cs.last_state.terminated.started_at = None
+        cs.last_state.terminated.finished_at = None
+        cs.last_state.terminated.message = ""
+    else:
+        cs.last_state.terminated = None
+    return cs
+
+
+def _make_pod_for_status(name: str, container_statuses, node: str = "worker-1"):
+    """Build a fake V1Pod-like object whose container_statuses we control."""
+    pod = MagicMock()
+    pod.metadata = MagicMock()
+    pod.metadata.name = name
+    pod.spec = MagicMock()
+    pod.spec.node_name = node
+    pod.spec.containers = []  # no resource specs needed for OOM tests
+    pod.status = MagicMock()
+    pod.status.phase = "Running"
+    pod.status.container_statuses = container_statuses
+    pod.status.conditions = []
+    return pod
+
+
+class TestCollectPodStatusOOMKills:
+    """`_collect_pod_status` aggregates OOMKill counts at the pod and
+    podStatus level so iterations confounded by the chaos target being
+    OOMed (e.g. colocate packing too many pods onto a 2 GiB worker) can
+    be flagged post-hoc."""
+
+    def test_no_oom_kills_emits_zero(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        pod = _make_pod_for_status("frontend-abc", [_make_container_status("app")])
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[pod])
+
+        result = collector._collect_pod_status("frontend")
+
+        assert result["totalOOMKills"] == 0
+        assert result["pods"][0]["containers"][0]["oomKillCount"] == 0
+
+    def test_oom_in_last_termination_counted(self):
+        """An OOMKill in `lastTermination.reason` (the canonical signal —
+        the prior container generation was OOMed and kubelet restarted)
+        increments the count."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        pod = _make_pod_for_status(
+            "frontend-abc",
+            [_make_container_status("app", restart_count=1, last_terminated_reason="OOMKilled")],
+        )
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[pod])
+
+        result = collector._collect_pod_status("frontend")
+
+        assert result["totalOOMKills"] == 1
+        assert result["pods"][0]["containers"][0]["oomKillCount"] == 1
+
+    def test_oom_in_current_terminated_state_also_counted(self):
+        """A container still in `state.terminated` with reason=OOMKilled
+        (caught the iteration mid-OOM) is counted too."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        pod = _make_pod_for_status(
+            "frontend-abc",
+            [_make_container_status("app", current_terminated_reason="OOMKilled")],
+        )
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[pod])
+
+        result = collector._collect_pod_status("frontend")
+        assert result["totalOOMKills"] == 1
+
+    def test_non_oom_termination_not_counted(self):
+        """A `lastTermination.reason` other than `OOMKilled` (e.g.
+        `Completed`, `Error`) does NOT increment the OOM count."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        pod = _make_pod_for_status(
+            "frontend-abc",
+            [_make_container_status("app", restart_count=1, last_terminated_reason="Error")],
+        )
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[pod])
+
+        result = collector._collect_pod_status("frontend")
+        assert result["totalOOMKills"] == 0
+        assert result["pods"][0]["containers"][0]["oomKillCount"] == 0
+
+    def test_multi_container_aggregation(self):
+        """Each OOMed container increments the pod-level and the top-level
+        aggregate; non-OOM containers don't."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        pod = _make_pod_for_status(
+            "frontend-abc",
+            [
+                _make_container_status("app", restart_count=2, last_terminated_reason="OOMKilled"),
+                _make_container_status("sidecar"),  # no OOM
+                _make_container_status(
+                    "init",
+                    current_terminated_reason="OOMKilled",
+                ),
+            ],
+        )
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[pod])
+
+        result = collector._collect_pod_status("frontend")
+
+        assert result["totalOOMKills"] == 2
+        # Per-container breakdown
+        container_oom = {c["name"]: c["oomKillCount"] for c in result["pods"][0]["containers"]}
+        assert container_oom == {"app": 1, "sidecar": 0, "init": 1}
+
+    def test_multi_pod_oom_aggregates_across_pods(self):
+        """A pod-delete burst can OOM the replacement on multiple pods;
+        the top-level totalOOMKills sums across the namespace."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        pods = [
+            _make_pod_for_status(
+                "frontend-1",
+                [
+                    _make_container_status(
+                        "app", restart_count=1, last_terminated_reason="OOMKilled"
+                    )
+                ],
+            ),
+            _make_pod_for_status(
+                "frontend-2",
+                [
+                    _make_container_status(
+                        "app", restart_count=1, last_terminated_reason="OOMKilled"
+                    )
+                ],
+            ),
+        ]
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=pods)
+
+        result = collector._collect_pod_status("frontend")
+
+        assert result["totalOOMKills"] == 2

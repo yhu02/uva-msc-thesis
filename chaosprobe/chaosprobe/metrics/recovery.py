@@ -34,6 +34,22 @@ class RecoveryWatcher:
     # events that explain *why* the scheduler made a decision, *why* a
     # scheduling attempt failed, or *why* a pod can't start — exactly the
     # signal the H9 "scheduling latency dominates recovery" hypothesis needs.
+    # The frozenset covers two sources:
+    #   * Scheduler events — Scheduled / FailedScheduling tell us when and
+    #     why the scheduler picked (or couldn't pick) a node for the
+    #     replacement pod, decomposing recovery time per H9.
+    #   * Kubelet events — Pulling / Pulled (image-pull start/end),
+    #     Failed (image-pull failure or container start failure), and
+    #     Killing (container teardown).  These let downstream analysis
+    #     attribute scheduledToReady_ms latency to image-pull vs
+    #     container startup vs readiness-probe.  Without them an
+    #     iteration that just happened to schedule on a node without
+    #     the image cached looks indistinguishable from one that
+    #     hit a slow readiness probe.
+    #
+    # Result key name is kept as `schedulerEvents` for backwards-compat
+    # with consumers shipped in slice 4 — kubelet events are part of the
+    # same per-pod event stream and the consumer just iterates the list.
     _SCHEDULER_EVENT_REASONS = frozenset(
         {
             "Scheduled",
@@ -41,6 +57,10 @@ class RecoveryWatcher:
             "BackOff",
             "FailedCreate",
             "FailedMount",
+            "Pulling",
+            "Pulled",
+            "Failed",
+            "Killing",
         }
     )
 
