@@ -205,6 +205,36 @@ def _check_cross_strategy(strategies: Dict[str, Any]) -> List[Tuple[str, str]]:
     return issues
 
 
+def _check_schema_version(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Check whether ``schemaVersion`` matches the current SCHEMA_VERSION.
+
+    A mismatch usually means the summary was produced by a chaosprobe
+    version with a different output shape — some doctor / stats / summarize
+    checks may silently miss fields that have been renamed or removed.
+    """
+    from chaosprobe.output import SCHEMA_VERSION
+
+    issues: List[Tuple[str, str]] = []
+    version = raw.get("schemaVersion")
+    if version is None:
+        issues.append(
+            (
+                "warn",
+                f"schemaVersion missing — current chaosprobe writes {SCHEMA_VERSION}; "
+                f"some analysis tools may miss renamed fields",
+            )
+        )
+    elif version != SCHEMA_VERSION:
+        issues.append(
+            (
+                "warn",
+                f"schemaVersion {version} differs from current {SCHEMA_VERSION} — "
+                f"analysis tools may miss renamed or removed fields",
+            )
+        )
+    return issues
+
+
 def _check_run_metadata(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
     """Check run-level reproducibility metadata.
 
@@ -313,6 +343,10 @@ def doctor(summary: Path, strict: bool, as_json: bool):
     if metadata:
         report["__run_metadata__"] = _tally(metadata)
 
+    schema = _check_schema_version(raw)
+    if schema:
+        report["__schema_version__"] = _tally(schema)
+
     if as_json:
         click.echo(
             json.dumps(
@@ -333,6 +367,7 @@ def doctor(summary: Path, strict: bool, as_json: bool):
             _heading_map = {
                 "__cross_strategy__": "cross-strategy",
                 "__run_metadata__": "run metadata",
+                "__schema_version__": "schema version",
             }
             for name, findings in report.items():
                 heading = _heading_map.get(name, name)

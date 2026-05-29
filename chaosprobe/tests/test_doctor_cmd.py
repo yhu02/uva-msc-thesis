@@ -8,22 +8,28 @@ from click.testing import CliRunner
 from chaosprobe.commands.doctor_cmd import (
     _check_cross_strategy,
     _check_run_metadata,
+    _check_schema_version,
     _check_strategy,
     doctor,
 )
+from chaosprobe.output import SCHEMA_VERSION
 
 
 def _write_summary(
     tmp_path: Path,
     strategies: dict,
     include_run_metadata: bool = True,
+    include_schema_version: bool = True,
 ) -> Path:
-    """Helper.  Includes a complete ``runMetadata`` block by default so
-    legacy doctor tests don't trip the new runMetadata checks (#85).
-    Tests that want to exercise the missing-metadata path pass
-    ``include_run_metadata=False``."""
+    """Helper.  Includes a complete ``runMetadata`` block and current
+    ``schemaVersion`` by default so legacy doctor tests don't trip the
+    metadata / schema-version checks (#85, #86)."""
+    from chaosprobe.output import SCHEMA_VERSION as _SCHEMA_VERSION
+
     path = tmp_path / "summary.json"
-    payload = {"strategies": strategies}
+    payload: dict = {"strategies": strategies}
+    if include_schema_version:
+        payload["schemaVersion"] = _SCHEMA_VERSION
     if include_run_metadata:
         payload["runMetadata"] = {
             "git": {"commit": "abc123", "shortCommit": "abc123", "dirty": False},
@@ -536,3 +542,71 @@ class TestDoctorRunMetadataIntegration:
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert "__run_metadata__" in payload["findings"]
+
+
+class TestCheckSchemaVersion:
+    def test_missing_schema_version_warned(self):
+        issues = _check_schema_version({})
+        assert any("schemaVersion missing" in msg for _, msg in issues)
+
+    def test_current_schema_version_no_issues(self):
+        assert _check_schema_version({"schemaVersion": SCHEMA_VERSION}) == []
+
+    def test_mismatched_version_warned(self):
+        issues = _check_schema_version({"schemaVersion": "1.0.0"})
+        assert any("differs from current" in msg for _, msg in issues)
+
+
+class TestDoctorSchemaVersionIntegration:
+    def test_schema_version_in_text_output(self, tmp_path):
+        # Build a summary that has runMetadata + good strategy, but no
+        # schemaVersion → only the schema warning fires.
+        path = tmp_path / "summary.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "strategies": {
+                        "colocate": {
+                            "iterations": [{}] * 5,
+                            "aggregated": {"meanRecoveryTime_ms": 1000},
+                        }
+                    },
+                    "runMetadata": {
+                        "git": {"commit": "abc", "shortCommit": "abc", "dirty": False},
+                        "kubernetes": {"serverVersion": "v1.28"},
+                        "cniHint": "calico",
+                    },
+                    # No schemaVersion.
+                }
+            )
+        )
+        runner = CliRunner()
+        result = runner.invoke(doctor, ["-s", str(path)])
+        assert result.exit_code == 0
+        assert "schema version" in result.output
+        assert "schemaVersion missing" in result.output
+
+    def test_current_schema_version_doesnt_fire(self, tmp_path):
+        path = tmp_path / "summary.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "strategies": {
+                        "colocate": {
+                            "iterations": [{}] * 5,
+                            "aggregated": {"meanRecoveryTime_ms": 1000},
+                        }
+                    },
+                    "runMetadata": {
+                        "git": {"commit": "abc", "shortCommit": "abc", "dirty": False},
+                        "kubernetes": {"serverVersion": "v1.28"},
+                        "cniHint": "calico",
+                    },
+                }
+            )
+        )
+        runner = CliRunner()
+        result = runner.invoke(doctor, ["-s", str(path)])
+        assert result.exit_code == 0
+        assert "schemaVersion" not in result.output
