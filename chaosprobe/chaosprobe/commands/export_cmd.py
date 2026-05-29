@@ -78,6 +78,17 @@ def _format_csv(rows: List[Dict[str, Any]]) -> str:
     return buf.getvalue().rstrip("\n")
 
 
+def _format_jsonl(rows: List[Dict[str, Any]]) -> str:
+    """One JSON object per line.
+
+    Compared to CSV: streamable (one row = one line), preserves numeric
+    types (so a 0 doesn't get confused with ""), and trivially supports
+    nested fields if we add them later.  This is what pandas, jq, and
+    most analysis pipelines actually want.
+    """
+    return "\n".join(json.dumps(row) for row in rows)
+
+
 @click.command("export")
 @click.option(
     "--summary",
@@ -92,14 +103,26 @@ def _format_csv(rows: List[Dict[str, Any]]) -> str:
     help="Only export iterations for this strategy.",
 )
 @click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["csv", "jsonl"]),
+    default="csv",
+    show_default=True,
+    help=(
+        "Output format.  ``csv`` is one row per iteration (good for R/SPSS/"
+        "Excel); ``jsonl`` is one JSON object per line (good for pandas / "
+        "jq / streaming analysis pipelines)."
+    ),
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
-    help="Write CSV to file (default: stdout).",
+    help="Write to file (default: stdout).",
 )
-def export(summary: Path, strategy: Optional[str], output: Optional[Path]):
-    """Export per-iteration metrics as a flat CSV.
+def export(summary: Path, strategy: Optional[str], fmt: str, output: Optional[Path]):
+    """Export per-iteration metrics as CSV or JSONL.
 
     One row per ``(strategy, iteration)`` with the headline iteration
     fields (resilience score, recovery times, recovery split, OOM /
@@ -109,6 +132,7 @@ def export(summary: Path, strategy: Optional[str], output: Optional[Path]):
     \b
     Examples:
       chaosprobe export -s summary.json -o iterations.csv
+      chaosprobe export -s summary.json --format jsonl -o iterations.jsonl
       chaosprobe export -s summary.json --strategy colocate -o colocate.csv
     """
     raw = json.loads(summary.read_text())
@@ -135,7 +159,10 @@ def export(summary: Path, strategy: Optional[str], output: Optional[Path]):
         click.echo("Error: no iterations found to export.", err=True)
         raise click.exceptions.Exit(code=1)
 
-    rendered = _format_csv(rows)
+    if fmt == "jsonl":
+        rendered = _format_jsonl(rows)
+    else:
+        rendered = _format_csv(rows)
     if output:
         output.write_text(rendered + "\n")
         click.echo(f"Wrote {len(rows)} row(s) to {output}")

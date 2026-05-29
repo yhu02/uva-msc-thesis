@@ -179,3 +179,95 @@ class TestExportCommand:
         assert result.exit_code == 0
         rows = list(csv.DictReader(StringIO(result.output)))
         assert [r["iteration"] for r in rows] == ["1", "2", "3", "4", "5"]
+
+
+class TestJSONLFormat:
+    def _make_summary(self, tmp_path, strategies):
+        path = tmp_path / "summary.json"
+        path.write_text(json.dumps({"strategies": strategies}))
+        return path
+
+    def test_jsonl_output_one_object_per_line(self, tmp_path):
+        path = self._make_summary(
+            tmp_path,
+            {
+                "colocate": {
+                    "iterations": [
+                        {
+                            "resilienceScore": 80,
+                            "metrics": {"recovery": {"summary": {"meanRecovery_ms": 1000}}},
+                        },
+                        {
+                            "resilienceScore": 85,
+                            "metrics": {"recovery": {"summary": {"meanRecovery_ms": 900}}},
+                        },
+                    ]
+                }
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path), "--format", "jsonl"])
+        assert result.exit_code == 0
+        lines = result.output.strip().split("\n")
+        assert len(lines) == 2
+        # Each line should be valid JSON.
+        rows = [json.loads(line) for line in lines]
+        assert rows[0]["strategy"] == "colocate"
+        assert rows[0]["resilience_score"] == 80
+        assert rows[0]["mean_recovery_ms"] == 1000
+
+    def test_jsonl_preserves_numeric_types(self, tmp_path):
+        """CSV stringifies everything; JSONL preserves int/float so
+        downstream consumers don't have to re-cast."""
+        path = self._make_summary(
+            tmp_path,
+            {
+                "colocate": {
+                    "iterations": [
+                        {"resilienceScore": 80, "loadGeneration": {"stats": {"errorRate": 0.025}}}
+                    ],
+                }
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path), "--format", "jsonl"])
+        row = json.loads(result.output.strip())
+        # Numeric type preserved.
+        assert isinstance(row["resilience_score"], int)
+        assert isinstance(row["error_rate"], float)
+
+    def test_jsonl_missing_fields_render_as_empty_string(self, tmp_path):
+        """Same convention as CSV: missing fields become "" so
+        consumers can distinguish "no data" from "zero"."""
+        path = self._make_summary(tmp_path, {"colocate": {"iterations": [{"resilienceScore": 80}]}})
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path), "--format", "jsonl"])
+        row = json.loads(result.output.strip())
+        assert row["mean_recovery_ms"] == ""
+        assert row["resilience_score"] == 80
+
+    def test_default_format_remains_csv(self, tmp_path):
+        path = self._make_summary(tmp_path, {"colocate": {"iterations": [{"resilienceScore": 80}]}})
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path)])
+        assert result.exit_code == 0
+        # CSV starts with the header.
+        assert result.output.startswith("strategy,iteration,resilience_score")
+
+    def test_invalid_format_rejected(self, tmp_path):
+        path = self._make_summary(tmp_path, {"colocate": {"iterations": [{"resilienceScore": 80}]}})
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path), "--format", "bogus"])
+        assert result.exit_code != 0
+
+    def test_jsonl_to_file(self, tmp_path):
+        path = self._make_summary(
+            tmp_path,
+            {"colocate": {"iterations": [{"resilienceScore": 80}, {"resilienceScore": 85}]}},
+        )
+        out_path = tmp_path / "out.jsonl"
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path), "--format", "jsonl", "-o", str(out_path)])
+        assert result.exit_code == 0
+        contents = out_path.read_text().strip()
+        assert len(contents.split("\n")) == 2
