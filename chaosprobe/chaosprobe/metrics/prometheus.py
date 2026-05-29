@@ -114,6 +114,14 @@ DEFAULT_QUERIES: Dict[str, str] = {
     "kube_proxy_rules_synced_per_sec": (
         "sum(rate(kubeproxy_sync_proxy_rules_duration_seconds_count[1m]))"
     ),
+    # ── Kernel TCP-drop counters ───────────────────────────────────────
+    # Direct signatures of in-flight TCP connections being killed by the
+    # kernel under chaos churn.  `tcp_retransmit_rate_per_node` (above)
+    # tells us how often the kernel retried; these two tell us how often
+    # the kernel gave up and how often new connections failed to handshake.
+    # Together they give a complete kernel-network picture for H8.
+    "tcp_aborts_per_node": ("sum(rate(node_netstat_TcpExtTCPAbortOnTimeout[1m])) by (instance)"),
+    "tcp_syn_retrans_per_node": ("sum(rate(node_netstat_TcpExtTCPSynRetrans[1m])) by (instance)"),
 }
 
 # Common service names / namespaces where Prometheus is typically deployed.
