@@ -579,9 +579,25 @@ All graph commands accept `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`.
 
 | Command | Purpose |
 |---|---|
-| `chaosprobe stats -s <summary.json> [--confidence 0.95] [--n-resamples 2000] [--seed 42] [--json] [-o <file>]` | Bootstrap CI for per-strategy mean resilienceScore + pairwise Mann-Whitney U with Holm-Bonferroni correction across every strategy pair. |
+| `chaosprobe stats -s <summary.json>` | Bootstrap CI for per-strategy means + pairwise Mann-Whitney U with Holm-Bonferroni correction + Cliff's delta effect size. |
 
-`--seed -1` for a nondeterministic bootstrap. JSON mode emits `{source, confidence, n_resamples, ci, pairwise}` for downstream tooling.
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--metric, -m {resilience,recovery,d2s,s2r}` | `resilience` | Which iteration field to analyse. `d2s` = `meanDeletionToScheduled_ms`, `s2r` = `meanScheduledToReady_ms`. |
+| `--all-metrics` | off | Run every supported metric in one invocation; supersedes `--metric`. |
+| `--pair colocate,spread` | — | Restrict CI + pairwise output to a specific strategy pair (≥2 comma-separated names). |
+| `--confidence` | `0.95` | Bootstrap confidence level. |
+| `--n-resamples` | `2000` | Bootstrap resample count. |
+| `--seed` | `42` | Bootstrap RNG seed. Use `-1` for nondeterministic. |
+| `--json` | text | Emit full analysis as JSON. |
+| `--csv` | text | Emit CI + pairwise rows as a single CSV. Mutually exclusive with `--json`. |
+| `-o, --output <file>` | stdout | Write rendered output to file. |
+
+JSON shape: `{source, metric (single mode) or metrics (--all-metrics), confidence, n_resamples, ci, pairwise}`. Each pairwise row carries `p_raw`, `p_holm`, `cliffs_delta`, `effect_size_magnitude`, `significant_05`.
+
+CSV columns: `section,metric,strategy,a,b,n,mean,mean_a,mean_b,ci_low,ci_high,p_raw,p_holm,cliffs_delta,effect_size_magnitude,significant_05`. `section=ci` rows leave the pairwise fields blank; `section=pairwise` rows leave the CI fields blank.
 
 ### ML Export
 
@@ -706,6 +722,38 @@ Each strategy iteration in `strategies.<name>.iterations[]` additionally carries
 | `metrics.prometheus.metricAvailability` | `ContinuousPrometheusProber.result` | `{label: bool}` map flagging which PromQL queries returned non-empty data at least once — distinguishes "metric returned 0" from "metric was never collected" (PSI / Felix / etcd_debugging_* portability). |
 | `metrics.latency.summary.statusCodeDistribution` | `LatencyProber` | HTTP status-code bucket counts (`2xx`/`3xx`/`4xx`/`5xx`/`timeout`/`error`) so error-rate spikes are attributable to category. |
 | `metrics.latency.summary.meanCrossNodeStddev_ms` | `LatencyProber` | Per-pod cross-node latency stddev — pod-vs-pod variance signal for leakage analysis (H6). |
+| `experimentDuration_s` | `_run_single_iteration` | Wall-clock of the chaos window (`experiment_end - experiment_start`). Lets analysis correlate iteration latency with strategy behaviour. |
+| `preChaosTaintReasons` | `_run_single_iteration` | List of taint reasons that fired in pre-chaos baseline: `pre_chaos_errors_high`, `pre_chaos_latency_degraded`, `iteration_exception`. Replaces the previous bare `preChaosHealthy: bool`. |
+
+### Per-strategy aggregate fields
+
+`aggregate_iterations` returns the per-strategy summary (`strategies.<name>.aggregated`). Beyond the headline `meanResilienceScore` and `meanRecoveryTime_ms` point estimates:
+
+| Field | Purpose |
+|---|---|
+| `meanResilienceScore_ci95` / `meanRecoveryTime_ms_ci95` | Bootstrap 95% CI on the headline + mechanism metric. Defends against "the gap is inside the noise" objections. |
+| `meanDeletionToScheduled_ms_ci95` / `meanScheduledToReady_ms_ci95` | Bootstrap CIs on the recovery split — answers which leg moved. |
+| `recoveryTimeCV` / `deletionToScheduledCV` / `scheduledToReadyCV` | Coefficient of variation. Decouples spread from scale: a low-CV strategy is "predictably fast" rather than just "fast on average". |
+| `recoveryTimeHistogram_ms` | Six fixed buckets (`lt_500ms` → `gte_10000ms`). Surfaces *shape* — bimodal vs unimodal — that mean/stddev hide. |
+| `loadGenerationAggregate.{meanRequestsPerSecond,meanErrorRate,meanResponseTime_ms}_ci95` | CIs on Locust offered load — rules out load drift as the cause of inter-strategy score differences. |
+| `loadFailureClasses` | List of `{error, name, totalOccurrences, iterationsObserved}` from Locust's `stats_failures.csv`. Distinguishes timeouts (network programming SLO breach) from `ConnectionError` (conntrack churn) from HTTP 5xx (app circuit breaker). |
+| `schedulerEventCounts` | `{reason: {total, meanPerIteration, maxPerIteration, iterationsObserved}}` keyed by `Scheduled` / `FailedScheduling` / `BackOff` / etc. Direct per-strategy attribution for H9. |
+| `routeViewAggregate` | Per-route Locust+LatencyProber roll-up. "/cart p95 ran 3× higher under colocate than spread" as a single number. |
+| `probeSuccessRates` | `{probe: {successes, total, point, ci_low, ci_high, unknown}}` with Wilson intervals — well-defined at boundary cases (p̂=0 or p̂=1) where the normal approximation collapses. |
+| `nodePressureEvents` | Per condition (`MemoryPressure` / `DiskPressure` / `PIDPressure` / `NetworkUnavailable`): `iterationsWithEvent` + `totalNodeEvents`. Counts fan-out across hosting nodes within an iteration. |
+| `nodeInfoAll` | (Per iteration, surfaced into the strategy aggregate via `nodePressureEvents`) Every hosting node's `nodeInfo`, not just the first. |
+| `totalOOMKills` / `meanOOMKillsPerIteration` / `maxOOMKillsPerIteration` / `iterationsWithOOMKills` | Per-strategy OOMKill roll-up. Same shape for `totalRestarts`. |
+| `placementMatchRates` (in run-level `summary`) | `{strategy: {matchRate, matched, mismatched}}` — the thesis ranking only holds if the intended placement actually applied. |
+| `taintReasonCounts` | `{reason: count}` aggregated from per-iteration `preChaosTaintReasons` — distinguishes consistent root cause from cluster noise. |
+| `meanExperimentDuration_s` / `minExperimentDuration_s` / `maxExperimentDuration_s` / `stddevExperimentDuration_s` | Per-strategy wall-clock distribution. Surfaces between-iteration cluster slow-down. |
+
+The pairwise table emitted by `pairwise_comparisons` carries `cliffs_delta` + `effect_size_magnitude` (Romano et al. thresholds: negligible / small / medium / large) alongside `p_raw` and `p_holm` — required for the "statistical vs practical significance" defence.
+
+`compare_runs` exposes parallel CI-overlap blocks under `comparison`:
+- `strategiesCIOverlap` (resilience), `strategiesRecoveryCIOverlap`, `strategiesDeletionToScheduledCIOverlap`, `strategiesScheduledToReadyCIOverlap` — each interpreted as `significant` / `directional` / `indistinguishable`.
+- `probeSuccessRatesOverlap` — per-probe Wilson-CI overlap, drilling into which probes actually moved.
+
+`overall_results.runMetadata` (best-effort) captures `chaosprobeVersion`, `pythonVersion`, `platform`, `hostname`, `git.{commit, shortCommit, dirty}`, `kubernetes.{serverVersion, containerRuntimeOnFirstNode, firstNodeOS}`, `cniHint`. Defends "reproducible on a comparable cluster" claims with the actual environment fingerprint.
 
 ---
 
