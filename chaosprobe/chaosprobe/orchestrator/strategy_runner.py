@@ -6,6 +6,7 @@ Extracted from ``cli.py run()`` to keep the top-level command lean.
 from __future__ import annotations
 
 import copy
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -44,6 +45,8 @@ from chaosprobe.orchestrator.timeout import (
 from chaosprobe.output.generator import OutputGenerator
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
+
+logger = logging.getLogger(__name__)
 
 # Environment variables for the baseline trivial fault (pod-cpu-hog).
 # 1% CPU stress on 1 core for 1 second — imperceptible, no pods deleted.
@@ -125,6 +128,87 @@ def _extract_http_routes(
                 name = probe.get("name", path)
 
                 routes.append((service, path, name, method))
+
+    return routes
+
+
+# Service-name fragments that indicate a non-HTTP target.  These services
+# expose only TCP / database protocols (Redis, Postgres, etc.) so a
+# `/healthz`-style HTTP probe would always fail.  Skip them when generating
+# east-west routes from dependency edges.
+_NON_HTTP_SERVICE_FRAGMENTS = ("redis", "memcached", "postgres", "mysql", "mongo", "kafka")
+
+
+def _is_non_http_target(service: str) -> bool:
+    """Return True for services that don't speak HTTP."""
+    name = service.lower()
+    return any(fragment in name for fragment in _NON_HTTP_SERVICE_FRAGMENTS)
+
+
+def _generate_east_west_routes(
+    dependencies: List[tuple],
+    healthz_path: str = "/healthz",
+) -> List[tuple]:
+    """Generate east-west latency routes from a service-dependency edge list.
+
+    Each ``(source, target)`` edge becomes a route tuple
+    ``(target, healthz_path, f"{source}->{target}", "GET")`` so the
+    ContinuousLatencyProber can sample target-side health from every probe
+    pod.  Non-HTTP targets (Redis, etc.) are skipped with a logged reason;
+    duplicate targets are emitted only once but the description records
+    every edge that contributed.
+
+    Args:
+        dependencies: List of (source, target) tuples from the placement
+            dependency edge list.  Typically produced by
+            ``PlacementMutator.get_service_dependencies``.
+        healthz_path: Path to probe on each target service.  Defaults to
+            ``/healthz`` which Online Boutique's frontend exposes and most
+            backend services implement as well.
+
+    Returns:
+        List of ``(service, path, description, method)`` tuples in the
+        same shape as ``_extract_http_routes``.  Empty list if
+        ``dependencies`` is empty.
+    """
+    if not dependencies:
+        return []
+
+    routes: List[tuple] = []
+    targets_seen: Dict[str, str] = {}
+    skipped: Dict[str, str] = {}
+
+    for edge in dependencies:
+        if not edge or len(edge) < 2:
+            continue
+        source, target = edge[0], edge[1]
+        if not source or not target:
+            continue
+        if _is_non_http_target(target):
+            skipped.setdefault(target, source)
+            continue
+
+        edge_label = f"{source}->{target}"
+        existing = targets_seen.get(target)
+        if existing is not None:
+            # Already emitted a route for this target; extend the description
+            # so the edge attribution stays visible.
+            targets_seen[target] = f"{existing},{edge_label}"
+            continue
+        targets_seen[target] = edge_label
+        routes.append((target, healthz_path, edge_label, "GET"))
+
+    # Rewrite descriptions for any targets that accumulated multiple edges.
+    routes = [
+        (target, path, targets_seen[target], method) for target, path, _desc, method in routes
+    ]
+
+    if skipped:
+        logger.info(
+            "Skipped %d non-HTTP east-west target(s) when generating routes: %s",
+            len(skipped),
+            sorted(skipped.keys()),
+        )
 
     return routes
 
@@ -756,7 +840,8 @@ def _run_iterations(
                     "workflow-controller",
                 )
                 app_deps = [
-                    d.name for d in all_deps
+                    d.name
+                    for d in all_deps
                     if not d.name.startswith(_infra_prefixes) and d.replicas > 0
                 ]
                 rollout_timeout = max(300, ctx.timeout)
@@ -768,11 +853,13 @@ def _run_iterations(
                     timeout=rollout_timeout,
                 )
                 # Stash so the aggregated result records the seed series.
-                strategy_result.setdefault("perIterationPlacements", []).append({
-                    "iteration": i,
-                    "seed": iter_seed,
-                    "assignments": dict(assignment.assignments),
-                })
+                strategy_result.setdefault("perIterationPlacements", []).append(
+                    {
+                        "iteration": i,
+                        "seed": iter_seed,
+                        "assignments": dict(assignment.assignments),
+                    }
+                )
             except Exception as e:
                 click.echo(
                     f"    WARN: random-reseed failed at iter {i}: {e} "
