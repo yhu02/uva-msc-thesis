@@ -200,11 +200,17 @@ def _analyse_metric(
     confidence: float,
     n_resamples: int,
     seed: Optional[int],
+    pair: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Run CI + pairwise for a single metric.  Returns ``None`` when no
     strategies carry the metric — caller decides whether to error or skip.
+
+    When ``pair`` is set, only strategies whose name is in the list are
+    included in the analysis.
     """
     samples = _load_strategies_from_dict(raw_summary, metric_path)
+    if pair:
+        samples = {name: values for name, values in samples.items() if name in pair}
     if not samples:
         return None
     ci_rows = {
@@ -282,6 +288,17 @@ def _analyse_metric(
     help="Emit CI + pairwise rows as a single CSV for thesis tables.",
 )
 @click.option(
+    "--pair",
+    "pair",
+    type=str,
+    default=None,
+    help=(
+        "Filter analysis to a comma-separated strategy pair "
+        "(e.g. 'colocate,spread').  Useful for focused defence "
+        "answers — drops everything else from CI + pairwise output."
+    ),
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -297,6 +314,7 @@ def stats(
     seed: int,
     as_json: bool,
     as_csv: bool,
+    pair: Optional[str],
     output: Optional[Path],
 ):
     """Compute CI and pairwise significance for a per-strategy metric.
@@ -311,18 +329,40 @@ def stats(
     actual_seed = None if seed == -1 else seed
     raw_summary = json.loads(summary.read_text())
 
+    pair_list: Optional[List[str]] = None
+    if pair:
+        pair_list = [s.strip() for s in pair.split(",") if s.strip()]
+        if len(pair_list) < 2:
+            click.echo(
+                "Error: --pair needs at least two comma-separated strategy names.",
+                err=True,
+            )
+            sys.exit(2)
+
     metric_keys = sorted(_METRIC_SPECS.keys()) if all_metrics else [metric]
     analyses: Dict[str, Dict[str, Any]] = {}
     for key in metric_keys:
         metric_path, metric_label = _METRIC_SPECS[key]
         analysis = _analyse_metric(
-            raw_summary, metric_path, metric_label, confidence, n_resamples, actual_seed
+            raw_summary,
+            metric_path,
+            metric_label,
+            confidence,
+            n_resamples,
+            actual_seed,
+            pair=pair_list,
         )
         if analysis is not None:
             analyses[metric_label] = analysis
 
     if not analyses:
-        if all_metrics:
+        if pair_list:
+            click.echo(
+                f"Error: no strategies in --pair set "
+                f"({', '.join(pair_list)}) carry the requested metric.",
+                err=True,
+            )
+        elif all_metrics:
             click.echo(
                 "Error: summary has no strategies with any supported metric.",
                 err=True,
