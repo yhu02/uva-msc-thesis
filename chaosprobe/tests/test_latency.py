@@ -7,6 +7,7 @@ from chaosprobe.metrics.latency import (
     LatencyResult,
     LatencySample,
     _aggregate_latency_samples,
+    _bucket_for_sample,
 )
 
 
@@ -533,3 +534,182 @@ class TestEvictionLogic:
             prober._run_all_probes()
 
         assert len(prober._probe_points) == 2  # not evicted
+
+
+def _mk_sample_with_code(status_code, status="ok"):
+    return LatencySample(
+        source="frontend",
+        target="productcatalogservice",
+        route="/",
+        protocol="http",
+        latency_ms=12.3,
+        status=status,
+        timestamp="2026-03-24T12:00:00+00:00",
+        status_code=status_code,
+    )
+
+
+class TestStatusCodeField:
+    """The new `status_code` field round-trips through LatencySample and
+    feeds the per-route statusCodeDistribution in `LatencyResult.summary`."""
+
+    def test_status_code_round_trips_through_sample(self):
+        sample = _mk_sample_with_code(200)
+        assert sample.status_code == 200
+
+    def test_status_code_defaults_to_none_for_backwards_compat(self):
+        """Callers that construct LatencySample without the new field — e.g.
+        the TCP-probe path, or any external caller pinned to the prior
+        signature — still get a valid sample with status_code=None."""
+        sample = LatencySample(
+            source="frontend",
+            target="checkoutservice",
+            route="/cart",
+            protocol="http",
+            latency_ms=42.0,
+            status="ok",
+            timestamp="2026-03-24T12:00:00+00:00",
+        )
+        assert sample.status_code is None
+
+
+class TestBucketForSample:
+    """`_bucket_for_sample` classifies into the six fixed buckets used by
+    `LatencyResult._status_code_distribution`."""
+
+    def test_2xx_bucket(self):
+        assert _bucket_for_sample(_mk_sample_with_code(200)) == "2xx"
+        assert _bucket_for_sample(_mk_sample_with_code(299)) == "2xx"
+
+    def test_3xx_bucket(self):
+        assert _bucket_for_sample(_mk_sample_with_code(301)) == "3xx"
+
+    def test_4xx_bucket(self):
+        assert _bucket_for_sample(_mk_sample_with_code(404, status="error")) == "4xx"
+
+    def test_5xx_bucket(self):
+        assert _bucket_for_sample(_mk_sample_with_code(503, status="error")) == "5xx"
+
+    def test_non_standard_code_buckets_as_error(self):
+        """Sub-200 / 600+ codes are non-standard HTTP — surface them as
+        `error` instead of silently grouping into the wrong tier."""
+        assert _bucket_for_sample(_mk_sample_with_code(100)) == "error"
+        assert _bucket_for_sample(_mk_sample_with_code(700, status="error")) == "error"
+
+    def test_timeout_status_without_code_buckets_as_timeout(self):
+        sample = LatencySample(
+            source="x",
+            target="y",
+            route="/",
+            protocol="http",
+            latency_ms=0,
+            status="timeout",
+            timestamp="2026-03-24T12:00:00+00:00",
+        )
+        assert _bucket_for_sample(sample) == "timeout"
+
+    def test_other_status_without_code_buckets_as_error(self):
+        sample = LatencySample(
+            source="x",
+            target="y",
+            route="/",
+            protocol="http",
+            latency_ms=0,
+            status="error",
+            timestamp="2026-03-24T12:00:00+00:00",
+            error="connection refused",
+        )
+        assert _bucket_for_sample(sample) == "error"
+
+
+class TestStatusCodeDistribution:
+    """The summary surface exposes a fixed-order counter so consumers can
+    correlate per-strategy 5xx rates against placement decisions."""
+
+    def test_distribution_keys_are_fixed_order(self):
+        """Six buckets, fixed key order — consumers should be able to iterate
+        the dict deterministically."""
+        result = LatencyResult(
+            source="frontend",
+            target="productcatalogservice",
+            route="/",
+            protocol="http",
+            description="Homepage",
+        )
+        result.samples.append(_mk_sample_with_code(200))
+        keys = list(result.summary()["statusCodeDistribution"].keys())
+        assert keys == ["2xx", "3xx", "4xx", "5xx", "timeout", "error"]
+
+    def test_distribution_counts_mixed_samples(self):
+        result = LatencyResult(
+            source="frontend",
+            target="productcatalogservice",
+            route="/",
+            protocol="http",
+            description="Homepage",
+        )
+        # 3x 200, 1x 503, 1x 404, 1x timeout, 1x error-without-code
+        for _ in range(3):
+            result.samples.append(_mk_sample_with_code(200))
+        result.samples.append(_mk_sample_with_code(503, status="error"))
+        result.samples.append(_mk_sample_with_code(404, status="error"))
+        result.samples.append(
+            LatencySample(
+                source="frontend",
+                target="productcatalogservice",
+                route="/",
+                protocol="http",
+                latency_ms=0,
+                status="timeout",
+                timestamp="2026-03-24T12:00:00+00:00",
+            )
+        )
+        result.samples.append(
+            LatencySample(
+                source="frontend",
+                target="productcatalogservice",
+                route="/",
+                protocol="http",
+                latency_ms=0,
+                status="error",
+                timestamp="2026-03-24T12:00:00+00:00",
+                error="exec failed",
+            )
+        )
+
+        dist = result.summary()["statusCodeDistribution"]
+        assert dist == {
+            "2xx": 3,
+            "3xx": 0,
+            "4xx": 1,
+            "5xx": 1,
+            "timeout": 1,
+            "error": 1,
+        }
+
+    def test_distribution_with_no_samples(self):
+        result = LatencyResult(
+            source="frontend",
+            target="productcatalogservice",
+            route="/",
+            protocol="http",
+            description="Homepage",
+        )
+        # No samples → all buckets zero, no exception
+        dist = result.summary()["statusCodeDistribution"]
+        assert dist == {b: 0 for b in ("2xx", "3xx", "4xx", "5xx", "timeout", "error")}
+
+    def test_distribution_present_in_empty_ok_path(self):
+        """When the only samples are errors (no OK latencies), the early
+        return path still includes statusCodeDistribution."""
+        result = LatencyResult(
+            source="frontend",
+            target="productcatalogservice",
+            route="/",
+            protocol="http",
+            description="Homepage",
+        )
+        result.samples.append(_mk_sample_with_code(503, status="error"))
+        summary = result.summary()
+        assert summary["mean_ms"] is None  # no OK samples
+        assert summary["statusCodeDistribution"]["5xx"] == 1
