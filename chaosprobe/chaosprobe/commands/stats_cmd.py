@@ -7,6 +7,8 @@ under analysis is selectable via ``--metric``; ``--all-metrics`` runs
 every supported metric in one invocation.
 """
 
+import csv
+import io
 import json
 import sys
 from pathlib import Path
@@ -103,6 +105,81 @@ def _format_text(
     return "\n".join(lines)
 
 
+def _format_csv(analyses: Dict[str, Dict[str, Any]]) -> str:
+    """Emit one CSV with two sections: CI rows then pairwise rows.
+
+    CSV columns:
+      * section=ci: metric, strategy, n, mean, ci_low, ci_high
+      * section=pairwise: metric, a, b, mean_a, mean_b, p_raw, p_holm,
+        significant_05
+
+    A ``section`` column lets a single file carry both blocks for
+    ingestion in thesis tables / spreadsheets without juggling multiple
+    output files.
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "section",
+            "metric",
+            "strategy",
+            "a",
+            "b",
+            "n",
+            "mean",
+            "mean_a",
+            "mean_b",
+            "ci_low",
+            "ci_high",
+            "p_raw",
+            "p_holm",
+            "significant_05",
+        ]
+    )
+    for label, analysis in analyses.items():
+        for name in sorted(analysis["ci"].keys()):
+            ci = analysis["ci"][name]
+            writer.writerow(
+                [
+                    "ci",
+                    label,
+                    name,
+                    "",
+                    "",
+                    ci["n"],
+                    ci["point"],
+                    "",
+                    "",
+                    ci["ci_low"],
+                    ci["ci_high"],
+                    "",
+                    "",
+                    "",
+                ]
+            )
+        for row in analysis["pairwise"]:
+            writer.writerow(
+                [
+                    "pairwise",
+                    label,
+                    "",
+                    row["a"],
+                    row["b"],
+                    "",
+                    "",
+                    row.get("mean_a"),
+                    row.get("mean_b"),
+                    "",
+                    "",
+                    row.get("p_raw"),
+                    row.get("p_holm", ""),
+                    row.get("significant_05", ""),
+                ]
+            )
+    return buf.getvalue().rstrip("\n")
+
+
 def _analyse_metric(
     raw_summary: Dict[str, Any],
     metric_path: str,
@@ -186,6 +263,12 @@ def _analyse_metric(
     help="Emit the full analysis as JSON instead of text.",
 )
 @click.option(
+    "--csv",
+    "as_csv",
+    is_flag=True,
+    help="Emit CI + pairwise rows as a single CSV for thesis tables.",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -200,6 +283,7 @@ def stats(
     n_resamples: int,
     seed: int,
     as_json: bool,
+    as_csv: bool,
     output: Optional[Path],
 ):
     """Compute CI and pairwise significance for a per-strategy metric.
@@ -235,6 +319,10 @@ def stats(
             click.echo(f"Error: no strategies with {label} found.", err=True)
         sys.exit(1)
 
+    if as_json and as_csv:
+        click.echo("Error: --json and --csv are mutually exclusive.", err=True)
+        sys.exit(2)
+
     if as_json:
         payload: Dict[str, Any] = {
             "source": str(summary),
@@ -252,6 +340,8 @@ def stats(
             payload["ci"] = single["ci"]
             payload["pairwise"] = single["pairwise"]
         rendered = json.dumps(payload, indent=2)
+    elif as_csv:
+        rendered = _format_csv(analyses)
     else:
         parts: List[str] = []
         for label, analysis in analyses.items():
