@@ -20,6 +20,8 @@ from chaosprobe.output.charts import (
     strategy_colors,
 )
 from chaosprobe.output.visualize import (
+    _build_placement_table,
+    _compute_pass_rate,
     _generate_html_summary,
     generate_from_summary,
 )
@@ -730,3 +732,33 @@ class TestStrategyComparisonHeatmap:
         )
         # Only resilience column, recovery is None for both → only 1 column → None
         assert path is None
+
+
+class TestComputePassRate:
+    def test_uses_explicit_pass_rate(self):
+        assert _compute_pass_rate({"passRate": 0.75}) == 0.75
+
+    def test_verdict_pass_is_full(self):
+        assert _compute_pass_rate({"overallVerdict": "PASS"}) == 1.0
+
+    def test_derives_from_counts(self):
+        assert _compute_pass_rate({"passed": 3, "totalExperiments": 4}) == 0.75
+
+    def test_zero_when_no_signal(self):
+        assert _compute_pass_rate({}) == 0.0
+
+
+class TestBuildPlacementTable:
+    def test_renders_placement_matrix(self):
+        raw = {
+            "colocate": {"placement": {"assignments": {"frontend": "node-a", "cart": "node-a"}}},
+            "spread": {"placement": {"assignments": {"frontend": "node-a", "cart": "node-b"}}},
+        }
+        html = _build_placement_table(raw)
+        assert "Placement Topology" in html
+        assert "node-a" in html and "node-b" in html
+        assert "frontend" in html and "cart" in html
+
+    def test_empty_when_no_placements(self):
+        assert _build_placement_table({}) == ""
+        assert _build_placement_table({"s": {"placement": {"assignments": {}}}}) == ""

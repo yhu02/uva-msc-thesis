@@ -46,14 +46,14 @@ def check_matplotlib():
 
 def _compute_pass_rate(exp: Dict[str, Any]) -> float:
     """Compute pass rate from experiment data, handling single-iteration runs."""
-    pr = exp.get("passRate")
+    pr: Optional[float] = exp.get("passRate")
     if pr is not None:
         return pr
     verdict = exp.get("overallVerdict", "")
     if verdict == "PASS":
         return 1.0
-    passed = exp.get("passed", 0)
-    total = exp.get("totalExperiments", 0)
+    passed: float = exp.get("passed", 0)
+    total: float = exp.get("totalExperiments", 0)
     if total > 0:
         return round(passed / total, 2)
     return 0.0
@@ -549,7 +549,7 @@ def _build_placement_table(raw_strategies: Dict[str, Any]) -> str:
     strat_names = sorted(strategy_placements.keys())
 
     # Build node color map for visual grouping
-    all_nodes = set()
+    all_nodes: set[str] = set()
     for assigns in strategy_placements.values():
         all_nodes.update(assigns.values())
     node_list = sorted(all_nodes)
