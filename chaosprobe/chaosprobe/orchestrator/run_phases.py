@@ -1206,6 +1206,54 @@ def aggregate_iterations(
         if len(durations) > 1:
             agg["stddevExperimentDuration_s"] = round(statistics.stdev(durations), 1)
 
+    # Locust failure-class roll-up: aggregate errorRate already tells
+    # us *how often* requests failed; failureClasses tells us *why*.
+    # Connection refused vs timeout vs HTTP 5xx have very different
+    # mechanisms (network programming SLO breach, kernel conntrack
+    # churn, app circuit breaker).  Aggregating per (error, name) key
+    # across iterations makes "colocate hit conntrack-timeouts on every
+    # iteration, spread never did" a single number per strategy.
+    failure_totals: Dict[str, Dict[str, Any]] = {}
+    failure_iters_observed: Dict[str, int] = {}
+    for ir in iteration_results:
+        lg = ir.get("loadGeneration") or {}
+        stats_block = lg.get("stats") or {}
+        classes = stats_block.get("failureClasses") or []
+        if not isinstance(classes, list):
+            continue
+        per_iter_seen: set = set()
+        for entry in classes:
+            if not isinstance(entry, dict):
+                continue
+            error = entry.get("error") or ""
+            name = entry.get("name") or ""
+            occ = entry.get("occurrences")
+            if not isinstance(occ, (int, float)):
+                continue
+            key_str = f"{error} | {name}" if name else error
+            if not key_str:
+                continue
+            bucket = failure_totals.setdefault(
+                key_str,
+                {
+                    "error": error,
+                    "name": name,
+                    "totalOccurrences": 0,
+                    "iterationsObserved": 0,
+                },
+            )
+            bucket["totalOccurrences"] += int(occ)
+            per_iter_seen.add(key_str)
+        for key_str in per_iter_seen:
+            failure_iters_observed[key_str] = failure_iters_observed.get(key_str, 0) + 1
+
+    if failure_totals:
+        for key_str, count in failure_iters_observed.items():
+            failure_totals[key_str]["iterationsObserved"] = count
+        agg["loadFailureClasses"] = sorted(
+            failure_totals.values(), key=lambda v: -v["totalOccurrences"]
+        )
+
     return agg
 
 
