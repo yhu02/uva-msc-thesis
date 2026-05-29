@@ -341,3 +341,65 @@ class TestAllMetricsFlag:
         assert result.exit_code == 0
         assert "meanRecovery_ms" in result.output
         assert "resilienceScore" in result.output
+
+
+class TestCSVOutput:
+    def test_csv_header_and_ci_rows(self, tmp_path):
+        import csv
+        from io import StringIO
+
+        summary = _make_summary(tmp_path, {"colocate": [70, 75, 80], "spread": [40, 45, 50]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--csv"])
+        assert result.exit_code == 0
+
+        rows = list(csv.reader(StringIO(result.output)))
+        header = rows[0]
+        assert header[:6] == ["section", "metric", "strategy", "a", "b", "n"]
+
+        ci_rows = [r for r in rows[1:] if r[0] == "ci"]
+        assert {r[2] for r in ci_rows} == {"colocate", "spread"}
+        for r in ci_rows:
+            assert r[1] == "resilienceScore"
+
+    def test_csv_pairwise_section(self, tmp_path):
+        import csv
+        from io import StringIO
+
+        summary = _make_summary(tmp_path, {"colocate": [70, 75, 80], "spread": [40, 45, 50]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--csv"])
+        rows = list(csv.reader(StringIO(result.output)))
+        pairwise_rows = [r for r in rows[1:] if r[0] == "pairwise"]
+        assert len(pairwise_rows) == 1
+        assert {pairwise_rows[0][3], pairwise_rows[0][4]} == {"colocate", "spread"}
+
+    def test_csv_all_metrics_carries_metric_column(self, tmp_path):
+        import csv
+        from io import StringIO
+
+        summary = _make_both_metrics_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--all-metrics", "--csv"])
+        assert result.exit_code == 0
+        rows = list(csv.reader(StringIO(result.output)))
+        metrics_in_data = {r[1] for r in rows[1:]}
+        assert metrics_in_data == {"resilienceScore", "meanRecovery_ms"}
+
+    def test_csv_and_json_mutually_exclusive(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--csv", "--json"])
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.output.lower()
+
+    def test_csv_writes_to_output_file(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
+        out_path = tmp_path / "stats.csv"
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--csv", "-o", str(out_path)])
+        assert result.exit_code == 0
+        contents = out_path.read_text()
+        assert contents.startswith("section,metric,strategy")
+        assert "ci" in contents
+        assert "pairwise" in contents
