@@ -535,6 +535,8 @@ CLUSTER_WIDE_QUERIES = {
     "endpointslice_changes_per_sec",
     "kubelet_pleg_relist_duration_p99",
     "kube_proxy_rules_synced_per_sec",
+    "tcp_aborts_per_node",
+    "tcp_syn_retrans_per_node",
 }
 
 
@@ -602,3 +604,20 @@ class TestDefaultQueries:
             assert (
                 "rate(" in tpl or "histogram_quantile" in tpl
             ), f"{label} must use rate() or histogram_quantile()"
+
+    def test_tcp_drop_queries_present(self):
+        """Kernel TCP-drop counters pair with `tcp_retransmit_rate_per_node`
+        (slice 1) to give a complete kernel-network picture for H8: how
+        often the kernel retried, gave up, and how often new connections
+        failed to handshake."""
+        assert "tcp_aborts_per_node" in DEFAULT_QUERIES
+        assert "tcp_syn_retrans_per_node" in DEFAULT_QUERIES
+
+    def test_tcp_drop_queries_use_rate(self):
+        """The kernel-counter shape is a monotonically-increasing total;
+        wrapping in `rate(...)` is the only way to get a meaningful
+        per-second value across the chaos window."""
+        for label in ("tcp_aborts_per_node", "tcp_syn_retrans_per_node"):
+            tpl = DEFAULT_QUERIES[label]
+            assert "rate(" in tpl, f"{label} must wrap the kernel counter in rate()"
+            assert "by (instance)" in tpl, f"{label} must aggregate per-node"
