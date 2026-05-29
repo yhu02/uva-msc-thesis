@@ -6,6 +6,7 @@ Uses the Kubernetes API to:
 - Query current placement state
 """
 
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +25,8 @@ from chaosprobe.placement.strategy import (
     PlacementStrategy,
     compute_assignments,
 )
+
+logger = logging.getLogger(__name__)
 
 # Built-in Kubernetes label for targeting nodes by hostname
 PLACEMENT_LABEL_KEY = "kubernetes.io/hostname"
@@ -301,7 +304,102 @@ class PlacementMutator:
         if wait:
             self._wait_for_rollouts(list(assignment.assignments.keys()), timeout)
 
+        # Once the rollouts settle (or the wait was skipped), record where
+        # the pods actually landed so a non-1.0 match rate is visible in
+        # the run's metadata.  Strategies like topology-spread can fail to
+        # satisfy their constraint silently when the cluster doesn't have
+        # enough fault domains; without this diff, the run looks identical
+        # to a successful application.
+        diff = self._compute_intent_actual_diff(assignment)
+        assignment.metadata["intendedActualDiff"] = diff
+        if diff is not None and diff["matchRate"] < 1.0:
+            logger.warning(
+                "Placement intent-vs-actual mismatch for %s: %d/%d matched (rate %.2f)",
+                assignment.strategy.value,
+                len(diff["matched"]),
+                len(diff["matched"]) + len(diff["mismatched"]),
+                diff["matchRate"],
+            )
+
         return assignment
+
+    # ── Intent-vs-actual diff ────────────────────────────────────
+
+    def _get_deployment_pod_nodes(self, deployment_name: str) -> List[str]:
+        """Return the distinct, non-empty node names hosting the deployment's
+        active pods.  Excludes pods in ``Succeeded`` / ``Failed`` terminal
+        phases (those represent prior rollout generations).
+
+        Distinct from `_get_pod_node` which returns the first match; for
+        multi-replica deployments we want every node currently in use so
+        the intent-vs-actual diff catches partial mismatches.
+        """
+        try:
+            pods = self.core_api.list_namespaced_pod(
+                self.namespace,
+                label_selector=f"app={deployment_name}",
+            )
+        except ApiException:
+            return []
+
+        nodes: List[str] = []
+        for pod in pods.items:
+            phase = (pod.status.phase or "").lower() if pod.status else ""
+            if phase in ("succeeded", "failed"):
+                continue
+            node = getattr(pod.spec, "node_name", None) if pod.spec else None
+            if node and node not in nodes:
+                nodes.append(node)
+        return nodes
+
+    def _compute_intent_actual_diff(
+        self,
+        assignment: NodeAssignment,
+    ) -> Optional[Dict[str, Any]]:
+        """Build the `intendedActualDiff` metadata block.
+
+        Returns ``None`` when there is nothing to compare (no assignments —
+        e.g. the baseline / default-scheduler runs which leave placement
+        unspecified).  Otherwise returns::
+
+            {
+                "matched":    [{"deployment", "node"}, ...],
+                "mismatched": [{"deployment", "intendedNode", "actualNodes"}, ...],
+                "matchRate":  float in [0.0, 1.0],
+            }
+
+        A deployment is considered matched when every active pod it owns
+        is on the intended node.  Pods on a different node, multiple pods
+        on multiple nodes, or no observable pod at all all count as
+        mismatches — the latter is recorded with an empty ``actualNodes``
+        list so the caller can distinguish "scheduled elsewhere" from
+        "didn't schedule at all".
+        """
+        if not assignment.assignments:
+            return None
+
+        matched: List[Dict[str, Any]] = []
+        mismatched: List[Dict[str, Any]] = []
+        for dep_name, intended in assignment.assignments.items():
+            actual_nodes = self._get_deployment_pod_nodes(dep_name)
+            if actual_nodes == [intended]:
+                matched.append({"deployment": dep_name, "node": intended})
+            else:
+                mismatched.append(
+                    {
+                        "deployment": dep_name,
+                        "intendedNode": intended,
+                        "actualNodes": actual_nodes,
+                    }
+                )
+
+        total = len(matched) + len(mismatched)
+        match_rate = (len(matched) / total) if total else 0.0
+        return {
+            "matched": matched,
+            "mismatched": mismatched,
+            "matchRate": round(match_rate, 4),
+        }
 
     def clear_placement(
         self,

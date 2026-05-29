@@ -816,3 +816,192 @@ class TestStrategyDescriptions:
         assert PlacementStrategy.SPREAD.value == "spread"
         assert PlacementStrategy.RANDOM.value == "random"
         assert PlacementStrategy.ADVERSARIAL.value == "adversarial"
+
+
+# ── Intent-vs-actual placement diff ────────────────────────────
+
+
+from unittest.mock import MagicMock, patch  # noqa: E402
+
+from chaosprobe.placement.mutator import PlacementMutator  # noqa: E402
+
+
+def _make_mutator():
+    """Build a PlacementMutator with mocked K8s clients."""
+    with (
+        patch("chaosprobe.placement.mutator.ensure_k8s_config"),
+        patch("chaosprobe.placement.mutator.client") as mock_client,
+    ):
+        mock_client.CoreV1Api.return_value = MagicMock()
+        mock_client.AppsV1Api.return_value = MagicMock()
+        mutator = PlacementMutator("online-boutique")
+    return mutator
+
+
+def _make_pod(node, phase="Running"):
+    pod = MagicMock()
+    pod.spec = MagicMock()
+    pod.spec.node_name = node
+    pod.status = MagicMock()
+    pod.status.phase = phase
+    return pod
+
+
+class TestIntentVsActualDiff:
+    """`_compute_intent_actual_diff` records where pods *actually* landed
+    so silent failures of `topologySpreadConstraints` or `podAffinity` —
+    e.g. a cluster with too few fault domains — surface as a non-1.0
+    matchRate instead of being indistinguishable from a clean apply."""
+
+    def test_empty_assignment_returns_none(self):
+        """Baseline / default-scheduler runs leave `assignments` empty;
+        there's nothing to compare so the diff is None — which is distinct
+        from a 1.0 matchRate (perfect match) so consumers can tell them
+        apart."""
+        mutator = _make_mutator()
+        assignment = NodeAssignment(strategy=PlacementStrategy.COLOCATE, assignments={})
+        assert mutator._compute_intent_actual_diff(assignment) is None
+
+    def test_all_matched(self):
+        mutator = _make_mutator()
+        mutator.core_api.list_namespaced_pod.side_effect = [
+            MagicMock(items=[_make_pod("worker-1")]),
+            MagicMock(items=[_make_pod("worker-1")]),
+        ]
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.COLOCATE,
+            assignments={"frontend": "worker-1", "checkout": "worker-1"},
+        )
+
+        diff = mutator._compute_intent_actual_diff(assignment)
+
+        assert diff is not None
+        assert len(diff["matched"]) == 2
+        assert diff["mismatched"] == []
+        assert diff["matchRate"] == 1.0
+
+    def test_all_mismatched_records_intended_and_actual(self):
+        """When every pod landed on the wrong node, every entry shows up
+        in `mismatched` with its `intendedNode` + `actualNodes` list so
+        post-hoc analysis can attribute the failure."""
+        mutator = _make_mutator()
+        mutator.core_api.list_namespaced_pod.side_effect = [
+            MagicMock(items=[_make_pod("worker-2")]),
+            MagicMock(items=[_make_pod("worker-3")]),
+        ]
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.SPREAD,
+            assignments={"frontend": "worker-1", "checkout": "worker-1"},
+        )
+
+        diff = mutator._compute_intent_actual_diff(assignment)
+
+        assert diff is not None
+        assert diff["matched"] == []
+        assert len(diff["mismatched"]) == 2
+        intents = {(m["deployment"], m["intendedNode"]) for m in diff["mismatched"]}
+        assert intents == {("frontend", "worker-1"), ("checkout", "worker-1")}
+        # Each mismatch records the actual nodes observed
+        for entry in diff["mismatched"]:
+            assert entry["actualNodes"] in (["worker-2"], ["worker-3"])
+        assert diff["matchRate"] == 0.0
+
+    def test_partial_match(self):
+        mutator = _make_mutator()
+        mutator.core_api.list_namespaced_pod.side_effect = [
+            MagicMock(items=[_make_pod("worker-1")]),  # matches
+            MagicMock(items=[_make_pod("worker-3")]),  # doesn't match
+            MagicMock(items=[_make_pod("worker-2")]),  # matches
+        ]
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.SPREAD,
+            assignments={
+                "frontend": "worker-1",
+                "checkout": "worker-1",
+                "cart": "worker-2",
+            },
+        )
+
+        diff = mutator._compute_intent_actual_diff(assignment)
+
+        assert len(diff["matched"]) == 2
+        assert len(diff["mismatched"]) == 1
+        assert diff["matchRate"] == round(2 / 3, 4)
+
+    def test_deployment_with_no_pods_counts_as_mismatch_with_empty_actual(self):
+        """A deployment whose pods never scheduled (or have all terminated)
+        is recorded as a mismatch with `actualNodes=[]` so 'never scheduled'
+        is distinguishable from 'scheduled on wrong node'."""
+        mutator = _make_mutator()
+        mutator.core_api.list_namespaced_pod.side_effect = [
+            MagicMock(items=[]),
+        ]
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.COLOCATE,
+            assignments={"frontend": "worker-1"},
+        )
+
+        diff = mutator._compute_intent_actual_diff(assignment)
+
+        assert diff["matched"] == []
+        assert diff["mismatched"][0]["actualNodes"] == []
+
+    def test_terminated_pods_ignored(self):
+        """Succeeded / Failed pods (prior rollout generations) are skipped
+        so they don't shadow the current active pod."""
+        mutator = _make_mutator()
+        mutator.core_api.list_namespaced_pod.side_effect = [
+            MagicMock(
+                items=[
+                    _make_pod("worker-2", phase="Succeeded"),  # old generation
+                    _make_pod("worker-1", phase="Running"),  # current
+                ]
+            ),
+        ]
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.COLOCATE,
+            assignments={"frontend": "worker-1"},
+        )
+
+        diff = mutator._compute_intent_actual_diff(assignment)
+
+        assert diff["matchRate"] == 1.0
+        assert diff["matched"][0]["node"] == "worker-1"
+
+    def test_multi_replica_split_across_nodes_is_mismatch(self):
+        """A deployment whose replicas span multiple nodes (even if one
+        of them is the intended one) is a mismatch — the strategy
+        contract was 'all pods on intended_node'."""
+        mutator = _make_mutator()
+        mutator.core_api.list_namespaced_pod.side_effect = [
+            MagicMock(items=[_make_pod("worker-1"), _make_pod("worker-2")]),
+        ]
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.COLOCATE,
+            assignments={"frontend": "worker-1"},
+        )
+
+        diff = mutator._compute_intent_actual_diff(assignment)
+
+        assert diff["mismatched"][0]["actualNodes"] == ["worker-1", "worker-2"]
+        assert diff["matchRate"] == 0.0
+
+    def test_api_exception_yields_empty_actual_nodes(self):
+        """If the K8s pod-list call fails, the deployment has no observable
+        pods → counts as a mismatch with `actualNodes=[]` rather than
+        bubbling up the exception."""
+        mutator = _make_mutator()
+        mutator.core_api.list_namespaced_pod.side_effect = ApiException(status=503)
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.COLOCATE,
+            assignments={"frontend": "worker-1"},
+        )
+
+        diff = mutator._compute_intent_actual_diff(assignment)
+
+        assert diff["mismatched"][0]["actualNodes"] == []
+        assert diff["matchRate"] == 0.0
+
+
+# Need ApiException for the last test — re-import at module scope above
+from kubernetes.client.rest import ApiException  # noqa: E402, F401
