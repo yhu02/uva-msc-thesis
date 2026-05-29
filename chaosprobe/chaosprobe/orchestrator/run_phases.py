@@ -1100,4 +1100,95 @@ def aggregate_iterations(
         }
         agg["schedulerEventIterationsCovered"] = iterations_with_events
 
+    route_view_agg = _aggregate_route_views(iteration_results)
+    if route_view_agg:
+        agg["routeViewAggregate"] = route_view_agg
+
     return agg
+
+
+def _aggregate_route_views(
+    iteration_results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Per-route aggregation of ``routeView`` across iterations.
+
+    Each iteration's ``routeView`` carries a Locust (outside-cluster) and
+    a LatencyProber (in-pod) view per route.  This roll-up sums Locust
+    request/failure counts, averages Locust + LatencyProber p95s, and
+    reports how many iterations each route was observed in — so
+    "during-chaos /cart p95 ran 3× higher under colocate than spread"
+    becomes a directly readable per-strategy number.
+    """
+    by_route: Dict[str, Dict[str, Any]] = {}
+    for ir in iteration_results:
+        rv = ir.get("routeView") or []
+        for entry in rv:
+            if not isinstance(entry, dict):
+                continue
+            route = entry.get("route")
+            if not route:
+                continue
+            bucket = by_route.setdefault(
+                route,
+                {
+                    "locust_requests": [],
+                    "locust_failures": [],
+                    "locust_p95": [],
+                    "lp_phase_p95": {},
+                    "iterations": 0,
+                },
+            )
+            bucket["iterations"] += 1
+
+            loc = entry.get("locust")
+            if isinstance(loc, dict):
+                req = loc.get("requests")
+                if isinstance(req, (int, float)):
+                    bucket["locust_requests"].append(float(req))
+                fail = loc.get("failures")
+                if isinstance(fail, (int, float)):
+                    bucket["locust_failures"].append(float(fail))
+                p95 = loc.get("p95ResponseTime_ms")
+                if isinstance(p95, (int, float)):
+                    bucket["locust_p95"].append(float(p95))
+
+            lp = entry.get("latencyProber")
+            if isinstance(lp, dict):
+                for phase_name, phase_data in lp.items():
+                    if not isinstance(phase_data, dict):
+                        continue
+                    p95 = phase_data.get("p95_ms") or phase_data.get("p95ResponseTime_ms")
+                    if isinstance(p95, (int, float)):
+                        bucket["lp_phase_p95"].setdefault(phase_name, []).append(float(p95))
+
+    out: List[Dict[str, Any]] = []
+    for route, bucket in by_route.items():
+        entry_out: Dict[str, Any] = {
+            "route": route,
+            "iterations": bucket["iterations"],
+        }
+        if bucket["locust_requests"] or bucket["locust_failures"] or bucket["locust_p95"]:
+            locust_out: Dict[str, Any] = {}
+            if bucket["locust_requests"]:
+                locust_out["totalRequests"] = int(sum(bucket["locust_requests"]))
+            if bucket["locust_failures"]:
+                locust_out["totalFailures"] = int(sum(bucket["locust_failures"]))
+            if bucket["locust_p95"]:
+                locust_out["meanP95_ms"] = round(statistics.mean(bucket["locust_p95"]), 1)
+                locust_out["iterationsObserved"] = len(bucket["locust_p95"])
+            entry_out["locust"] = locust_out
+
+        if bucket["lp_phase_p95"]:
+            lp_out: Dict[str, Any] = {}
+            for phase_name, values in bucket["lp_phase_p95"].items():
+                lp_out[phase_name] = {
+                    "meanP95_ms": round(statistics.mean(values), 1),
+                    "iterationsObserved": len(values),
+                }
+            entry_out["latencyProber"] = lp_out
+        out.append(entry_out)
+
+    # Stable order: Locust-side routes first (load-generator perspective),
+    # then LatencyProber-only routes alphabetically — matches build_route_view.
+    out.sort(key=lambda r: (0 if "locust" in r else 1, r["route"]))
+    return out
