@@ -213,6 +213,58 @@ def _generate_east_west_routes(
     return routes
 
 
+# Maximum number of routes the LatencyProber probes per sampling round.
+# Combined north-south (scenario httpProbes) + east-west (dependency-graph)
+# routes are capped here because each route costs one `kubectl exec` per
+# probe pod per tick.  15 is generous for Online Boutique (7 scenario
+# probes + ~10 dependency edges, with non-HTTP targets like redis-cart
+# already filtered) and small enough to keep per-tick latency bounded
+# on a 4-worker VM cluster.
+_PROBE_BUDGET_CAP = 15
+
+
+def _build_iteration_routes(
+    scenario: Dict[str, Any],
+    ctx: "RunContext",
+) -> List[tuple]:
+    """Combine scenario httpProbe routes with dependency-graph east-west
+    routes, trimming to the probe budget if necessary.
+
+    North-south routes (from the scenario YAML) are always preserved;
+    when the combined list exceeds ``_PROBE_BUDGET_CAP`` only the
+    east-west routes are trimmed, with a WARN log so the trimming is
+    visible.  This keeps the user-defined probes intact while still
+    bounding the per-tick cost.
+    """
+    north_south = _extract_http_routes(scenario, ctx.namespace)
+
+    try:
+        dependencies = ctx.mutator.get_service_dependencies()
+    except Exception as exc:  # noqa: BLE001 — K8s client raises broad set
+        logger.warning("Failed to fetch service dependencies for east-west routes: %s", exc)
+        dependencies = []
+
+    east_west = _generate_east_west_routes(dependencies)
+    combined = list(north_south) + list(east_west)
+
+    if len(combined) <= _PROBE_BUDGET_CAP:
+        return combined
+
+    # Preserve every scenario probe; trim east-west routes from the end.
+    headroom = max(0, _PROBE_BUDGET_CAP - len(north_south))
+    trimmed_east_west = east_west[:headroom]
+    dropped = len(east_west) - len(trimmed_east_west)
+    logger.warning(
+        "Probe-budget cap (%d) reached: keeping %d scenario routes + %d east-west routes; "
+        "dropping %d east-west route(s)",
+        _PROBE_BUDGET_CAP,
+        len(north_south),
+        len(trimmed_east_west),
+        dropped,
+    )
+    return list(north_south) + trimmed_east_west
+
+
 # ---------------------------------------------------------------------------
 # Cluster-state snapshot
 # ---------------------------------------------------------------------------
@@ -571,11 +623,26 @@ def _run_single_iteration(
         orig_name = exp["spec"].get("metadata", {}).get("name", "placement-pod-delete")
         exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}"
 
-    # Extract HTTP routes from scenario probes for latency measurement
-    http_routes = _extract_http_routes(scenario, ctx.namespace)
+    # Extract HTTP routes from scenario probes for latency measurement,
+    # then extend with east-west routes generated from the service-dependency
+    # graph (slice 5 of the coverage work).  Each backend → backend edge
+    # becomes a `<source>-><target>` route the LatencyProber samples in
+    # parallel with the existing north-south frontend routes — turning
+    # the "interactions" axis of the thesis from a hand-wave into a
+    # measured surface.  The combined list is trimmed to a probe budget
+    # so the per-tick `kubectl exec` cost stays bounded.
+    http_routes = _build_iteration_routes(scenario, ctx)
 
     # Extract chaos duration for prober phase labeling
     chaos_duration = extract_chaos_duration(scenario)
+
+    # Capture a lightweight cluster-state snapshot just before this
+    # iteration's prober window opens.  Compared against the post-
+    # iteration snapshot, this exposes between-iteration drift (a
+    # sidecar restart, a node load shift, a Locust process leak) that
+    # would otherwise be silently confounded with placement-driven
+    # variance in the n=3 result analysis.
+    pre_iteration_snapshot = _snapshot_cluster_state(ctx.namespace, ctx.core_api)
 
     # Verify app-level HTTP readiness across ALL probed routes before
     # starting probers.  This prevents cascading poisoning where a
@@ -701,6 +768,13 @@ def _run_single_iteration(
             time.sleep(post_chaos_window)
     finally:
         prober_results = stop_and_collect_probers(probers, iter_locust_runner)
+
+    # Capture the post-iteration cluster-state snapshot in the same
+    # try-finally region as the prober shutdown so it always fires —
+    # even when the iteration errors out partway through, the snapshot
+    # records the cluster state at the failure point for post-hoc
+    # analysis of what went wrong.
+    post_iteration_snapshot = _snapshot_cluster_state(ctx.namespace, ctx.core_api)
 
     # Collect results & metrics
     collector = ResultCollector(ctx.namespace)
@@ -894,6 +968,8 @@ def _run_single_iteration(
         "anomalyLabels": output_data.get("anomalyLabels"),
         "cascadeTimeline": output_data.get("cascadeTimeline"),
         "podPlacements": iter_pod_placements,
+        "preIterationSnapshot": pre_iteration_snapshot,
+        "postIterationSnapshot": post_iteration_snapshot,
     }
 
     # Surface Locust load-generation stats at the iteration level so the

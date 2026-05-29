@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 from chaosprobe.orchestrator.readiness import shell_escape
 from chaosprobe.orchestrator.strategy_runner import (
+    _PROBE_BUDGET_CAP,
+    _build_iteration_routes,
     _generate_east_west_routes,
     _is_non_http_target,
     _snapshot_cluster_state,
@@ -564,3 +566,128 @@ class TestClusterStateSnapshot:
         # the default-now path executed without raising.
         assert "T" in snap["timestamp"]
         assert snap["timestamp"].endswith("+00:00") or snap["timestamp"].endswith("Z")
+
+
+def _make_scenario(probe_paths):
+    """Build a minimal scenario dict with N httpProbes for the budget-cap tests."""
+    probes = []
+    for i, path in enumerate(probe_paths):
+        probes.append(
+            {
+                "name": f"frontend-probe-{i}",
+                "type": "httpProbe",
+                "httpProbe/inputs": {
+                    "url": f"http://frontend.online-boutique.svc.cluster.local{path}",
+                    "method": {"get": {"criteria": "==", "responseCode": "200"}},
+                },
+            }
+        )
+    return {
+        "experiments": [
+            {
+                "spec": {
+                    "spec": {
+                        "experiments": [
+                            {
+                                "spec": {
+                                    "probe": probes,
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+
+
+def _make_ctx(mutator):
+    """Build a stand-in RunContext exposing only the fields
+    `_build_iteration_routes` reads."""
+    ctx = MagicMock()
+    ctx.namespace = "online-boutique"
+    ctx.mutator = mutator
+    return ctx
+
+
+class TestBuildIterationRoutes:
+    """`_build_iteration_routes` is the single integration point that
+    activates slice 5's east-west generator on the live run path.  These
+    tests pin the contract: north-south always preserved; east-west
+    appended; the combined list capped at the probe budget."""
+
+    def test_combines_north_south_and_east_west(self):
+        scenario = _make_scenario(["/", "/cart"])
+        mutator = MagicMock()
+        mutator.get_service_dependencies.return_value = [
+            ("checkout", "currency"),
+            ("frontend", "checkout"),
+        ]
+        ctx = _make_ctx(mutator)
+
+        routes = _build_iteration_routes(scenario, ctx)
+
+        # 2 north-south + 2 east-west = 4 entries
+        assert len(routes) == 4
+        targets = [r[0] for r in routes]
+        # North-south are scenario-extracted (target = "frontend")
+        assert targets[0] == "frontend"
+        assert targets[1] == "frontend"
+        # East-west are dependency-graph generated
+        assert "currency" in targets
+        assert "checkout" in targets
+
+    def test_no_dependencies_returns_only_north_south(self):
+        scenario = _make_scenario(["/", "/cart"])
+        mutator = MagicMock()
+        mutator.get_service_dependencies.return_value = []
+        ctx = _make_ctx(mutator)
+
+        routes = _build_iteration_routes(scenario, ctx)
+        assert len(routes) == 2  # only the scenario probes
+
+    def test_dependency_fetch_failure_falls_back_to_north_south(self):
+        """A K8s API failure when fetching dependencies must not break the
+        iteration — log the warning, fall back to north-south only."""
+        scenario = _make_scenario(["/"])
+        mutator = MagicMock()
+        mutator.get_service_dependencies.side_effect = RuntimeError("timeout")
+        ctx = _make_ctx(mutator)
+
+        routes = _build_iteration_routes(scenario, ctx)
+        assert len(routes) == 1  # north-south survives
+
+    def test_budget_cap_trims_east_west_preserving_north_south(self):
+        """With the cap at 15, supplying 7 scenario probes and 12 dep-graph
+        edges should keep all 7 scenario probes and trim east-west to 8."""
+        scenario = _make_scenario([f"/p{i}" for i in range(7)])
+        mutator = MagicMock()
+        mutator.get_service_dependencies.return_value = [
+            (f"src{i}", f"target{i}") for i in range(12)
+        ]
+        ctx = _make_ctx(mutator)
+
+        routes = _build_iteration_routes(scenario, ctx)
+
+        assert len(routes) == _PROBE_BUDGET_CAP
+        north_south_targets = [r[0] for r in routes[:7]]
+        # All 7 scenario probes preserved
+        assert all(t == "frontend" for t in north_south_targets)
+        # Exactly headroom-many east-west routes survive
+        east_west_targets = [r[0] for r in routes[7:]]
+        assert len(east_west_targets) == _PROBE_BUDGET_CAP - 7
+
+    def test_budget_cap_with_oversized_north_south_only_drops_east_west(self):
+        """If the scenario alone exceeds the budget (pathological config),
+        keep every scenario probe and emit zero east-west routes — never
+        trim a user-defined probe."""
+        scenario = _make_scenario([f"/p{i}" for i in range(_PROBE_BUDGET_CAP + 3)])
+        mutator = MagicMock()
+        mutator.get_service_dependencies.return_value = [("a", "b"), ("c", "d")]
+        ctx = _make_ctx(mutator)
+
+        routes = _build_iteration_routes(scenario, ctx)
+
+        # Every scenario probe survives; no east-west snuck in
+        assert len(routes) == _PROBE_BUDGET_CAP + 3
+        assert all(r[0] == "frontend" for r in routes)
