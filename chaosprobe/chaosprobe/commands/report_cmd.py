@@ -19,6 +19,8 @@ from typing import Optional
 
 import click
 
+from chaosprobe.commands.diff_cmd import _build_report as _build_diff_report
+from chaosprobe.commands.diff_cmd import _format_text as _format_diff_text
 from chaosprobe.commands.doctor_cmd import (
     _check_cross_strategy,
     _check_run_metadata,
@@ -90,6 +92,26 @@ def _render_summarize_section(raw: dict) -> str:
     return "\n".join(parts)
 
 
+def _render_diff_section(raw: dict, baseline_raw: dict, baseline_path: Path) -> str:
+    """Format the baseline-vs-current diff as a markdown subsection.
+
+    Wraps the existing diff_cmd ``_format_text`` output in a fenced block
+    so per-strategy deltas render verbatim across markdown engines.
+    """
+    report = _build_diff_report(baseline_raw, raw)
+    parts = [
+        "## Diff vs. baseline",
+        "",
+        f"Baseline: `{baseline_path}`",
+        "",
+        "```",
+        _format_diff_text(report),
+        "```",
+        "",
+    ]
+    return "\n".join(parts)
+
+
 def _render_stats_section(raw: dict, confidence: float, seed: Optional[int]) -> str:
     """Format the stats CLI markdown output for every available metric."""
     analyses: dict = {}
@@ -138,23 +160,41 @@ def _render_stats_section(raw: dict, confidence: float, seed: Optional[int]) -> 
     help="Bootstrap RNG seed for the stats section.  Use -1 for nondeterministic.",
 )
 @click.option(
+    "--diff",
+    "baseline",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Compare summary against this baseline summary.json — adds a 'Diff vs. baseline' section.",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
     help="Write to file (default: stdout).",
 )
-def report(summary: Path, confidence: float, seed: int, output: Optional[Path]):
+def report(
+    summary: Path,
+    confidence: float,
+    seed: int,
+    baseline: Optional[Path],
+    output: Optional[Path],
+):
     """Generate a thesis-appendix markdown report.
 
     Bundles ``doctor`` + ``summarize`` + ``stats --markdown`` against the
     same summary.json, in one file ready to paste into a thesis document
     or include via ``\\input{report.md}`` after a pandoc conversion.
 
+    When ``--diff baseline.json`` is supplied, a 'Diff vs. baseline'
+    section is appended showing per-strategy deltas + CI-overlap
+    stability flags from ``chaosprobe diff``.
+
     \b
     Examples:
       chaosprobe report -s summary.json -o report.md
       chaosprobe report -s summary.json --confidence 0.99 -o appendix.md
+      chaosprobe report -s rerun.json --diff baseline.json -o report.md
     """
     raw = json.loads(summary.read_text())
     actual_seed = None if seed == -1 else seed
@@ -165,6 +205,10 @@ def report(summary: Path, confidence: float, seed: int, output: Optional[Path]):
         _render_summarize_section(raw),
         _render_stats_section(raw, confidence, actual_seed),
     ]
+    if baseline is not None:
+        baseline_raw = json.loads(baseline.read_text())
+        sections.append(_render_diff_section(raw, baseline_raw, baseline))
+
     rendered = "\n".join(sections).rstrip("\n")
     if output:
         output.write_text(rendered + "\n")
