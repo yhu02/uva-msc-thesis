@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 class Neo4jReaderMixin:
     """Methods that query/read data from the Neo4j graph."""
 
+    # The neo4j Driver, supplied by the concrete Neo4jStore subclass.
+    # neo4j is an opaque third-party dependency (no stubs), so it's Any.
+    _driver: Any
+
     # ------------------------------------------------------------------
     # Graph queries
     # ------------------------------------------------------------------
@@ -753,7 +757,7 @@ class Neo4jReaderMixin:
                 }
             else:
                 # Multi-iteration: aggregate
-                iter_data = []
+                iter_data: List[Dict[str, Any]] = []
                 for rd in run_details:
                     iter_data.append(
                         {
