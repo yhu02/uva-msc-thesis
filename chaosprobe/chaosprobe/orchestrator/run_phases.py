@@ -1168,6 +1168,10 @@ def aggregate_iterations(
         agg["maxRestartsPerIteration"] = max(restart_per_iter)
         agg["iterationsWithRestarts"] = iters_with_restart
 
+    node_pressure = _aggregate_node_pressure_events(iteration_results)
+    if node_pressure:
+        agg["nodePressureEvents"] = node_pressure
+
     return agg
 
 
@@ -1291,3 +1295,75 @@ def summarise_placement_match_rates(
             "mismatched": len(diff.get("mismatched") or []),
         }
     return out
+
+
+# K8s kubelet conditions that fire ``status="True"`` when the node is
+# under pressure.  ``Ready`` is intentionally excluded — it's the
+# inverse of an event (False means trouble).
+_NODE_PRESSURE_CONDITIONS = (
+    "MemoryPressure",
+    "DiskPressure",
+    "PIDPressure",
+    "NetworkUnavailable",
+)
+
+
+def _aggregate_node_pressure_events(
+    iteration_results: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, int]]:
+    """Per-strategy node-pressure event counts.
+
+    A condition fires when its ``status`` field equals ``"True"`` on the
+    kubelet's node-status report.  Counts two things per condition:
+
+    * ``iterationsWithEvent`` — number of iterations where *at least one*
+      hosting node had this condition firing.  Distinguishes "one bad
+      iteration" from "every iteration was under memory pressure".
+    * ``totalNodeEvents`` — total ``(iteration, node)`` pairs where the
+      condition fired.  Captures fan-out across nodes within an iteration
+      (a `spread` placement under pressure on all 4 workers is worse
+      than a `colocate` placement under pressure on just one).
+
+    Reads from both ``metrics.nodeInfo`` (single hosting node, the
+    pre-existing field) and ``metrics.nodeInfoAll`` (every hosting node,
+    added separately).  Returns ``{}`` when no iteration carried either —
+    the caller omits the block in that case.
+    """
+    by_condition: Dict[str, Dict[str, int]] = {
+        c: {"iterationsWithEvent": 0, "totalNodeEvents": 0} for c in _NODE_PRESSURE_CONDITIONS
+    }
+    saw_any_node_info = False
+    for ir in iteration_results:
+        metrics = ir.get("metrics") or {}
+        nodes: List[Dict[str, Any]] = []
+        node_info_all = metrics.get("nodeInfoAll")
+        if isinstance(node_info_all, dict) and node_info_all:
+            saw_any_node_info = True
+            for entry in node_info_all.values():
+                if isinstance(entry, dict):
+                    nodes.append(entry)
+        else:
+            single = metrics.get("nodeInfo")
+            if isinstance(single, dict) and single:
+                saw_any_node_info = True
+                nodes.append(single)
+
+        if not nodes:
+            continue
+
+        fired_this_iter: set = set()
+        for entry in nodes:
+            conditions = entry.get("conditions") or {}
+            if not isinstance(conditions, dict):
+                continue
+            for cond_name in _NODE_PRESSURE_CONDITIONS:
+                cond = conditions.get(cond_name)
+                if isinstance(cond, dict) and cond.get("status") == "True":
+                    by_condition[cond_name]["totalNodeEvents"] += 1
+                    fired_this_iter.add(cond_name)
+        for cond_name in fired_this_iter:
+            by_condition[cond_name]["iterationsWithEvent"] += 1
+
+    if not saw_any_node_info:
+        return {}
+    return by_condition
