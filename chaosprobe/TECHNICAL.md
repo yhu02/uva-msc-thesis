@@ -565,6 +565,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 | `-e, --experiment` | `scenarios/online-boutique/placement-experiment.yaml` | Experiment YAML file |
 | `-t, --timeout` | 300 | Timeout per experiment (seconds) |
 | `--seed` | 42 | Random strategy seed |
+| `--seeds 42,137,271` | — | Multi-seed: expand `random` into one entry per seed (e.g. `random:42`, `random:137`). Each runs the full iteration count. Downstream tooling sees them as separate strategies. Overrides `--seed`. |
 | `--settle-time` | 30 | Wait after placement before experiment |
 | `--load-profile` | `steady` | Locust profile: steady/ramp/spike |
 | `--locustfile` | built-in | Custom locustfile path |
@@ -634,16 +635,59 @@ Flags:
 | `--metric, -m {resilience,recovery,d2s,s2r}` | `resilience` | Which iteration field to analyse. `d2s` = `meanDeletionToScheduled_ms`, `s2r` = `meanScheduledToReady_ms`. |
 | `--all-metrics` | off | Run every supported metric in one invocation; supersedes `--metric`. |
 | `--pair colocate,spread` | — | Restrict CI + pairwise output to a specific strategy pair (≥2 comma-separated names). |
+| `--effect-size-min {negligible,small,medium,large}` | — | Drop pairwise rows whose Cliff's delta magnitude is below this threshold. |
+| `--sort {p_holm,p_raw,delta}` | `p_holm` | Pairwise sort key. `delta` sorts by absolute Cliff's delta descending. |
 | `--confidence` | `0.95` | Bootstrap confidence level. |
 | `--n-resamples` | `2000` | Bootstrap resample count. |
 | `--seed` | `42` | Bootstrap RNG seed. Use `-1` for nondeterministic. |
 | `--json` | text | Emit full analysis as JSON. |
-| `--csv` | text | Emit CI + pairwise rows as a single CSV. Mutually exclusive with `--json`. |
+| `--csv` | text | Emit CI + pairwise rows as a single CSV. |
+| `--markdown` | text | Emit GitHub-flavored markdown tables for thesis documents. |
 | `-o, --output <file>` | stdout | Write rendered output to file. |
+
+`--json`, `--csv`, and `--markdown` are mutually exclusive.
 
 JSON shape: `{source, metric (single mode) or metrics (--all-metrics), confidence, n_resamples, ci, pairwise}`. Each pairwise row carries `p_raw`, `p_holm`, `cliffs_delta`, `effect_size_magnitude`, `significant_05`.
 
 CSV columns: `section,metric,strategy,a,b,n,mean,mean_a,mean_b,ci_low,ci_high,p_raw,p_holm,cliffs_delta,effect_size_magnitude,significant_05`. `section=ci` rows leave the pairwise fields blank; `section=pairwise` rows leave the CI fields blank.
+
+### Summarize
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe summarize -s <summary.json> [--strategy <name>] [-o <file>]` | Pretty-print the per-strategy aggregate block. |
+
+Read-only view of the ~30 fields `aggregate_iterations` produces per strategy: resilience CI, recovery CI + CV, recovery histogram (ASCII bars), recovery split (d2s + s2r), load aggregates + failure classes, scheduler event counts, OOMKills / restarts, node-pressure events, taint reasons, experiment duration. Sections only render when their source field is present. `--strategy` restricts output to one strategy.
+
+### Power
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe power -s <summary.json> --target-delta <d>` | Required sample size per strategy to detect a target effect at α=0.05, power=0.80. |
+
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--metric, -m {resilience,recovery}` | `resilience` | Which metric to compute power for. |
+| `--target-delta, -d` | `10.0` | Smallest difference (in metric units) to detect. |
+| `--alpha {0.01,0.05,0.10}` | `0.05` | Two-sided significance level. |
+| `--power {0.80,0.90,0.95}` | `0.80` | Target statistical power (1 − β). |
+| `--json` | text | Emit per-strategy results as JSON. |
+
+Per strategy: `currentN`, `currentMean`, `currentStddev`, `requiredN`, `status` (`achieved` / `insufficient` / `no-data` / `trivial`). Uses the two-sample t-test sample-size approximation; explicitly labelled as approximate in output.
+
+### Doctor
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe doctor -s <summary.json> [--strict] [--json]` | Report data-quality issues in a summary. |
+
+Per-strategy checks: tainted iterations (with reason breakdown), all-iterations-tainted (error), error iterations, placement match rate < 1.0 (warn) / < 0.8 (error), OOMKills, node-pressure conditions firing, missing recovery times, n < 3.
+
+Cross-strategy checks: every pair of CIs overlaps (analysis inconclusive), every strategy hit OOMKills (cluster undersized), every strategy tainted (cluster unstable), Locust offered RPS varies > 20% (load drift).
+
+`--strict` makes warn-level findings exit non-zero. Without `--strict`, only error-level findings exit non-zero. `--json` emits structured findings under `{strategiesChecked, errorCount, warnCount, findings}`; cross-strategy findings appear under `__cross_strategy__`.
 
 ### ML Export
 
