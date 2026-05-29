@@ -208,6 +208,52 @@ def _format_csv(analyses: Dict[str, Dict[str, Any]]) -> str:
     return buf.getvalue().rstrip("\n")
 
 
+def _format_markdown(analyses: Dict[str, Dict[str, Any]], confidence: float) -> str:
+    """Render the analysis as GFM markdown tables — suitable for
+    pasting into a thesis document or slide notes.
+
+    One CI table + one pairwise table per metric.  Pairwise table
+    includes Cliff's delta and effect-size magnitude alongside the
+    p-values so a defender can defend both statistical and practical
+    significance from a single artifact.
+    """
+    parts: List[str] = []
+    pct = int(confidence * 100)
+    for label, analysis in analyses.items():
+        parts.append(f"### {label}\n")
+        parts.append(f"**Bootstrap {pct}% CI (mean):**\n")
+        parts.append("| strategy | n | mean | CI low | CI high |")
+        parts.append("|---|---:|---:|---:|---:|")
+        for name in sorted(analysis["ci"].keys()):
+            ci = analysis["ci"][name]
+            parts.append(
+                f"| {name} | {ci['n']} | {ci['point']} | " f"{ci['ci_low']} | {ci['ci_high']} |"
+            )
+        parts.append("")
+        parts.append("**Pairwise Mann-Whitney U (Holm-Bonferroni adjusted):**\n")
+        if not analysis["pairwise"]:
+            parts.append("_(no pairs — need at least two strategies with samples)_")
+        else:
+            parts.append(
+                "| a | b | mean_a | mean_b | p_raw | p_holm | "
+                "Cliff's δ | magnitude | sig (α=.05) |"
+            )
+            parts.append("|---|---|---:|---:|---:|---:|---:|---|---:|")
+            for row in analysis["pairwise"]:
+                sig = "✓" if row.get("significant_05") else ""
+                delta = row.get("cliffs_delta")
+                delta_cell = f"{delta}" if delta is not None else "—"
+                magnitude = row.get("effect_size_magnitude") or "—"
+                parts.append(
+                    f"| {row['a']} | {row['b']} | "
+                    f"{row.get('mean_a', '—')} | {row.get('mean_b', '—')} | "
+                    f"{row.get('p_raw', '—')} | {row.get('p_holm', '—')} | "
+                    f"{delta_cell} | {magnitude} | {sig} |"
+                )
+        parts.append("")
+    return "\n".join(parts).rstrip("\n")
+
+
 # Ordered worst-to-best for ">= threshold" filtering.
 _EFFECT_SIZE_ORDER = ("negligible", "small", "medium", "large")
 
@@ -361,6 +407,16 @@ def _analyse_metric(
     help="Emit CI + pairwise rows as a single CSV for thesis tables.",
 )
 @click.option(
+    "--markdown",
+    "as_markdown",
+    is_flag=True,
+    help=(
+        "Emit GitHub-flavored markdown tables (one CI + one pairwise per "
+        "metric).  Convenient for pasting into thesis documents or slide "
+        "notes.  Mutually exclusive with --json and --csv."
+    ),
+)
+@click.option(
     "--pair",
     "pair",
     type=str,
@@ -410,6 +466,7 @@ def stats(
     seed: int,
     as_json: bool,
     as_csv: bool,
+    as_markdown: bool,
     pair: Optional[str],
     min_effect_size: Optional[str],
     sort_key: str,
@@ -472,8 +529,12 @@ def stats(
             click.echo(f"Error: no strategies with {label} found.", err=True)
         sys.exit(1)
 
-    if as_json and as_csv:
-        click.echo("Error: --json and --csv are mutually exclusive.", err=True)
+    exclusive_flags = sum([as_json, as_csv, as_markdown])
+    if exclusive_flags > 1:
+        click.echo(
+            "Error: --json, --csv, and --markdown are mutually exclusive.",
+            err=True,
+        )
         sys.exit(2)
 
     if as_json:
@@ -495,6 +556,8 @@ def stats(
         rendered = json.dumps(payload, indent=2)
     elif as_csv:
         rendered = _format_csv(analyses)
+    elif as_markdown:
+        rendered = _format_markdown(analyses, confidence)
     else:
         parts: List[str] = []
         for label, analysis in analyses.items():
