@@ -39,6 +39,7 @@ def _percentile(sorted_values: List[float], p: float) -> float:
         return float(sorted_values[int(k)])
     return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
 
+
 # ---------------------------------------------------------------------------
 # 1.  Pre-flight sub-steps
 # ---------------------------------------------------------------------------
@@ -999,16 +1000,29 @@ def aggregate_iterations(
             if v is not None:
                 resp_vals.append(float(v))
         if rps_vals or err_vals or resp_vals:
+
+            def _ci_block(values: List[float]) -> Dict[str, Any]:
+                ci = bootstrap_ci(values, statistic="mean")
+                return {
+                    "low": ci["ci_low"],
+                    "high": ci["ci_high"],
+                    "n": ci["n"],
+                    "n_resamples": ci["n_resamples"],
+                }
+
             load_agg: Dict[str, Any] = {}
             if rps_vals:
                 load_agg["meanRequestsPerSecond"] = round(statistics.mean(rps_vals), 2)
                 load_agg["stddevRequestsPerSecond"] = (
                     round(statistics.stdev(rps_vals), 2) if len(rps_vals) > 1 else 0.0
                 )
+                load_agg["meanRequestsPerSecond_ci95"] = _ci_block(rps_vals)
             if err_vals:
                 load_agg["meanErrorRate"] = round(statistics.mean(err_vals), 4)
+                load_agg["meanErrorRate_ci95"] = _ci_block(err_vals)
             if resp_vals:
                 load_agg["meanResponseTime_ms"] = round(statistics.mean(resp_vals), 1)
+                load_agg["meanResponseTime_ms_ci95"] = _ci_block(resp_vals)
             agg["loadGenerationAggregate"] = load_agg
     else:
         agg["meanRecoveryTime_ms"] = None
