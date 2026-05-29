@@ -223,7 +223,7 @@ class ContinuousResourceProber(ContinuousProberBase):
                 ),
             }
 
-        phases = self._split_phases(series)
+        phases = self._aggregate_phases(series)
 
         # Build a sorted list of observed nodes and their last-seen capacity
         # so downstream analysis has a stable reference.
@@ -254,7 +254,7 @@ class ContinuousResourceProber(ContinuousProberBase):
 
     # -- phase aggregation --------------------------------------------------
 
-    def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _aggregate_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
         phases: Dict[str, List[Dict[str, Any]]] = {
             "pre-chaos": [],
             "during-chaos": [],

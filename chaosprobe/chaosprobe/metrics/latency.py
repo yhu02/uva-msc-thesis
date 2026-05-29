@@ -921,7 +921,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
             series = list(self._time_series)
             errors = self._probe_errors
 
-        phases = self._split_phases(series)
+        phases = self._aggregate_phases(series)
         data: Dict[str, Any] = {
             "timeSeries": series,
             "phases": phases,
@@ -1052,7 +1052,7 @@ class ContinuousLatencyProber(ContinuousProberBase):
             if samples
         }
 
-    def _split_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _aggregate_phases(self, series: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Split time series into phases with per-route latency statistics."""
         phases: Dict[str, List[Dict[str, Any]]] = {
             "pre-chaos": [],
