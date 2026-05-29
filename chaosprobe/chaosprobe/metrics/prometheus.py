@@ -196,6 +196,34 @@ DEFAULT_QUERIES: Dict[str, str] = {
         "histogram_quantile(0.99, sum(rate("
         "etcd_disk_backend_commit_duration_seconds_bucket[5m])) by (le))"
     ),
+    # ── Calico / Felix CNI metrics ─────────────────────────────────────
+    # Proxmox-deployed clusters run Calico per `chaosprobe/proxmox-setup.md`.
+    # Felix's dataplane-apply time is the Calico equivalent of the kube-proxy
+    # network-programming SLO.  Missing on Cilium / Flannel / kindnet clusters;
+    # graceful-missing-metric path in the aggregator covers it.
+    "felix_active_local_endpoints": ("sum(felix_active_local_endpoints) by (instance)"),
+    "felix_int_dataplane_apply_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "felix_int_dataplane_apply_time_seconds_bucket[5m])) by (le))"
+    ),
+    "felix_iptables_save_p99": (
+        "histogram_quantile(0.99, sum(rate(felix_iptables_save_seconds_bucket[5m])) by (le))"
+    ),
+    # ── Kernel TCP-drop counters ───────────────────────────────────────
+    # Direct signatures of in-flight TCP connections killed by kernel under
+    # churn.  Pairs with `tcp_retransmit_rate_per_node` for a complete picture.
+    "tcp_aborts_per_node": ("sum(rate(node_netstat_TcpExtTCPAbortOnTimeout[1m])) by (instance)"),
+    "tcp_syn_retrans_per_node": ("sum(rate(node_netstat_TcpExtTCPSynRetrans[1m])) by (instance)"),
+    # ── CoreDNS cache + etcd compaction ────────────────────────────────
+    # Cache hit/miss split distinguishes pod-IP-churn-driven cache misses
+    # from query load.  etcd compaction lets us distinguish a slow etcd
+    # under chaos load from one routinely compacting.
+    "coredns_cache_hit_rate_per_sec": ("sum(rate(coredns_cache_hits_total[1m]))"),
+    "coredns_cache_miss_rate_per_sec": ("sum(rate(coredns_cache_misses_total[1m]))"),
+    "etcd_compaction_duration_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "etcd_debugging_mvcc_db_compaction_total_duration_seconds_bucket[5m])) by (le))"
+    ),
 }
 
 # Common service names / namespaces where Prometheus is typically deployed.
