@@ -82,7 +82,7 @@ def _load_strategies_from_dict(raw: Dict[str, Any], metric_path: str) -> Dict[st
 
 def _format_text(
     samples: Dict[str, List[float]],
-    ci_rows: Dict[str, Dict[str, float]],
+    ci_rows: Dict[str, Dict[str, object]],
     pairwise_rows: List[Dict[str, object]],
     confidence: float,
     metric_label: str,

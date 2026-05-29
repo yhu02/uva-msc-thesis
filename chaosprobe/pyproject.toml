@@ -102,9 +102,8 @@ files = [
     # neo4j or pyarrow.
     "chaosprobe/graph/__init__.py",
     "chaosprobe/graph/analysis.py",
-    # metrics/ — files that pass cleanly under the kubernetes / matplotlib
-    # ignore_missing_imports override below.  statistics.py still has real
-    # type errors and needs its own slice.
+    # metrics/ — all modules pass cleanly under the kubernetes / matplotlib
+    # ignore_missing_imports override below.
     "chaosprobe/metrics/__init__.py",
     "chaosprobe/metrics/anomaly_labels.py",
     "chaosprobe/metrics/base.py",
@@ -116,6 +115,7 @@ files = [
     "chaosprobe/metrics/remediation.py",
     "chaosprobe/metrics/reproducibility.py",
     "chaosprobe/metrics/resources.py",
+    "chaosprobe/metrics/statistics.py",
     "chaosprobe/metrics/throughput.py",
     "chaosprobe/metrics/timeseries.py",
     "chaosprobe/metrics/utilization.py",
