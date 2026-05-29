@@ -158,6 +158,7 @@ files = [
     "chaosprobe/provisioner/kubernetes.py",
     "chaosprobe/provisioner/_setup_base.py",
     "chaosprobe/provisioner/chaoscenter.py",
+    "chaosprobe/provisioner/chaoscenter_api.py",
     "chaosprobe/provisioner/components.py",
     "chaosprobe/provisioner/setup.py",
     "chaosprobe/provisioner/vagrant.py",
