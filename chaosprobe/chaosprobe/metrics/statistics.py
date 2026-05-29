@@ -177,7 +177,7 @@ def mann_whitney_u(
     n = n_a + n_b
     for cnt in rank_counts.values():
         if cnt > 1:
-            ties_correction += (cnt ** 3 - cnt) / (n * (n - 1))
+            ties_correction += (cnt**3 - cnt) / (n * (n - 1))
     var_u = n_a * n_b / 12.0 * ((n + 1) - ties_correction)
 
     if var_u <= 0:
@@ -195,6 +195,58 @@ def mann_whitney_u(
         "n_a": n_a,
         "n_b": n_b,
         "method": "mann_whitney_u",
+    }
+
+
+# z values for common two-sided confidence levels.
+_Z_FOR_CONFIDENCE = {0.80: 1.282, 0.90: 1.645, 0.95: 1.96, 0.99: 2.576}
+
+
+def wilson_ci(
+    successes: int,
+    total: int,
+    confidence: float = 0.95,
+) -> Dict[str, Optional[float]]:
+    """Wilson score interval for a Bernoulli proportion.
+
+    The textbook normal-approximation interval (``p̂ ± z·SE``) collapses
+    at boundary cases (p̂=0 or p̂=1 give zero-width intervals) and at
+    small n.  Wilson stays well-defined in both regimes — the right
+    default for thesis-level probe-success-rate reporting where n is in
+    the single digits per probe per strategy.
+
+    Returns ``{successes, total, point, ci_low, ci_high, confidence}``;
+    ``point`` / ``ci_low`` / ``ci_high`` are ``None`` when ``total == 0``.
+    """
+    z = _Z_FOR_CONFIDENCE.get(confidence)
+    if z is None:
+        # Fall back to 95% if the caller asks for a confidence we don't
+        # have a tabulated z for, rather than silently producing wrong
+        # numbers.
+        z = 1.96
+        confidence = 0.95
+
+    if total <= 0:
+        return {
+            "successes": successes,
+            "total": total,
+            "point": None,
+            "ci_low": None,
+            "ci_high": None,
+            "confidence": confidence,
+        }
+
+    p_hat = successes / total
+    denom = 1.0 + z * z / total
+    center = (p_hat + z * z / (2.0 * total)) / denom
+    half = (z * math.sqrt(p_hat * (1.0 - p_hat) / total + z * z / (4.0 * total * total))) / denom
+    return {
+        "successes": successes,
+        "total": total,
+        "point": round(p_hat, 4),
+        "ci_low": round(max(0.0, center - half), 4),
+        "ci_high": round(min(1.0, center + half), 4),
+        "confidence": confidence,
     }
 
 
@@ -220,7 +272,7 @@ def pairwise_comparisons(
     labels = list(samples_by_label.keys())
     out: List[Dict[str, object]] = []
     for i, la in enumerate(labels):
-        for lb in labels[i + 1:]:
+        for lb in labels[i + 1 :]:
             sa = list(samples_by_label[la])
             sb = list(samples_by_label[lb])
             t = mann_whitney_u(sa, sb)
