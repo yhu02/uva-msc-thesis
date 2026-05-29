@@ -39,6 +39,7 @@ def _percentile(sorted_values: List[float], p: float) -> float:
         return float(sorted_values[int(k)])
     return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
 
+
 # ---------------------------------------------------------------------------
 # 1.  Pre-flight sub-steps
 # ---------------------------------------------------------------------------

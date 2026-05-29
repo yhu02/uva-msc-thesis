@@ -177,7 +177,7 @@ def mann_whitney_u(
     n = n_a + n_b
     for cnt in rank_counts.values():
         if cnt > 1:
-            ties_correction += (cnt ** 3 - cnt) / (n * (n - 1))
+            ties_correction += (cnt**3 - cnt) / (n * (n - 1))
     var_u = n_a * n_b / 12.0 * ((n + 1) - ties_correction)
 
     if var_u <= 0:
@@ -220,7 +220,7 @@ def pairwise_comparisons(
     labels = list(samples_by_label.keys())
     out: List[Dict[str, object]] = []
     for i, la in enumerate(labels):
-        for lb in labels[i + 1:]:
+        for lb in labels[i + 1 :]:
             sa = list(samples_by_label[la])
             sb = list(samples_by_label[lb])
             t = mann_whitney_u(sa, sb)
