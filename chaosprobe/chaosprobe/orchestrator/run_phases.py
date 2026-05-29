@@ -39,6 +39,7 @@ def _percentile(sorted_values: List[float], p: float) -> float:
         return float(sorted_values[int(k)])
     return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
 
+
 # ---------------------------------------------------------------------------
 # 1.  Pre-flight sub-steps
 # ---------------------------------------------------------------------------
@@ -901,6 +902,23 @@ def aggregate_iterations(
         "allIterationsTainted": all_tainted,
         "perIterationScores": scores,
     }
+
+    # Taint reason taxonomy across iterations.  preChaosTaintReasons is
+    # a list (multiple gates can fire on one iteration); counting per
+    # reason answers "is the taint pattern consistent" — same reason
+    # every time suggests a clear root cause; mixed reasons usually
+    # reflect cluster noise.
+    taint_reason_counts: Dict[str, int] = {}
+    for ir in iteration_results:
+        reasons = ir.get("preChaosTaintReasons") or []
+        if not isinstance(reasons, list):
+            continue
+        for reason in reasons:
+            if not isinstance(reason, str):
+                continue
+            taint_reason_counts[reason] = taint_reason_counts.get(reason, 0) + 1
+    if taint_reason_counts:
+        agg["taintReasonCounts"] = taint_reason_counts
 
     # Collect per-probe verdict tallies across iterations
     probe_tally: Dict[str, Dict[str, int]] = {}

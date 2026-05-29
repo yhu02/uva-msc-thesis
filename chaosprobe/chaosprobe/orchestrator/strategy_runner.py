@@ -861,7 +861,12 @@ def _run_single_iteration(
     # If most routes had errors before chaos even started, the iteration
     # is "tainted" — its score reflects accumulated damage from a previous
     # iteration rather than the placement strategy's actual resilience.
-    pre_chaos_tainted = False
+    #
+    # Reasons accumulate into a list rather than a single bool so the
+    # per-strategy aggregator can distinguish "every tainted iteration
+    # was caused by lingering errors" from "every tainted iteration was
+    # latency-degraded" — different root causes, different fixes.
+    pre_chaos_taint_reasons: List[str] = []
     latency_phases = (prober_results.get("latency") or {}).get("phases", {})
     pre_chaos = latency_phases.get("pre-chaos", {})
     if pre_chaos.get("sampleCount", 0) > 0:
@@ -880,7 +885,7 @@ def _run_single_iteration(
         # _wait_for_app_ready is the main defence.
         total_attempts = total_ok + total_errors
         if total_attempts > 0 and total_errors / total_attempts > 0.1:
-            pre_chaos_tainted = True
+            pre_chaos_taint_reasons.append("pre_chaos_errors_high")
             click.echo(
                 f"    WARNING: Pre-chaos baseline was degraded "
                 f"({total_errors}/{total_attempts} samples had errors). "
@@ -908,7 +913,7 @@ def _run_single_iteration(
             ):
                 slow_routes.append((route_name, p95, mean))
         if slow_routes:
-            pre_chaos_tainted = True
+            pre_chaos_taint_reasons.append("pre_chaos_latency_degraded")
             slow_summary = ", ".join(f"{r}=p95:{p:.0f}/mean:{m:.0f}ms" for r, p, m in slow_routes)
             click.echo(
                 f"    WARNING: Pre-chaos baseline latency degraded on "
@@ -988,7 +993,8 @@ def _run_single_iteration(
         "unknownProbeCount": unknown_probe_count,
         "metrics": recovery,
         "runId": output_data.get("runId", ""),
-        "preChaosHealthy": not pre_chaos_tainted,
+        "preChaosHealthy": not pre_chaos_taint_reasons,
+        "preChaosTaintReasons": pre_chaos_taint_reasons,
         "anomalyLabels": output_data.get("anomalyLabels"),
         "cascadeTimeline": output_data.get("cascadeTimeline"),
         "podPlacements": iter_pod_placements,
@@ -1117,6 +1123,7 @@ def _run_iterations(
                 "metrics": {},
                 "runId": "",
                 "preChaosHealthy": False,
+                "preChaosTaintReasons": ["iteration_exception"],
                 "error": str(e),
                 "podPlacements": {},
             }
