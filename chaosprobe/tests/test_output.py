@@ -1,7 +1,7 @@
 """Tests for output generation and comparison."""
 
 from chaosprobe.output.comparison import compare_runs
-from chaosprobe.output.generator import OutputGenerator
+from chaosprobe.output.generator import OutputGenerator, build_route_view
 
 
 class TestOutputGenerator:
@@ -351,3 +351,201 @@ class TestComparison:
         }
         comparison = compare_runs(baseline, after_fix)
         assert comparison["comparison"]["metrics"] == {}
+
+
+# ── build_route_view (Locust ↔ LatencyProber join) ─────────────
+
+
+def _make_locust_stats(endpoints):
+    return {
+        "endpoints": endpoints,
+        "totalRequests": sum(e.get("requests", 0) for e in endpoints),
+    }
+
+
+def _make_latency_phases(routes_by_phase):
+    return {
+        phase: {
+            "sampleCount": sum(len(v) for v in routes.values()),
+            "routes": routes,
+        }
+        for phase, routes in routes_by_phase.items()
+    }
+
+
+class TestBuildRouteView:
+    """`build_route_view` joins outside-cluster (Locust) and in-pod
+    (LatencyProber) per-route stats so the two perspectives can be
+    cross-validated.  Disagreement is itself a thesis-grade finding
+    (the in-pod kubectl-exec measurement has a measurable bias)."""
+
+    def test_empty_when_both_inputs_missing(self):
+        assert build_route_view(None, None) == []
+        assert build_route_view({}, {}) == []
+
+    def test_locust_only(self):
+        locust = _make_locust_stats(
+            [
+                {
+                    "name": "/",
+                    "requests": 100,
+                    "failures": 1,
+                    "avgResponseTime_ms": 50.0,
+                    "p95ResponseTime_ms": 120.0,
+                }
+            ]
+        )
+        view = build_route_view(locust, None)
+        assert len(view) == 1
+        entry = view[0]
+        assert entry["route"] == "/"
+        assert entry["latencyProber"] is None
+        assert entry["locust"]["requests"] == 100
+        assert entry["locust"]["p95ResponseTime_ms"] == 120.0
+
+    def test_latency_only(self):
+        latency = _make_latency_phases(
+            {
+                "pre-chaos": {"/": {"mean_ms": 50, "p95_ms": 100}},
+                "during-chaos": {"/": {"mean_ms": 120, "p95_ms": 250}},
+                "post-chaos": {"/": {"mean_ms": 70, "p95_ms": 130}},
+            }
+        )
+        view = build_route_view(None, latency)
+        assert len(view) == 1
+        entry = view[0]
+        assert entry["route"] == "/"
+        assert entry["locust"] is None
+        assert entry["latencyProber"]["during-chaos"]["p95_ms"] == 250
+
+    def test_both_present_join_by_path(self):
+        locust = _make_locust_stats(
+            [
+                {
+                    "name": "/",
+                    "requests": 100,
+                    "failures": 1,
+                    "avgResponseTime_ms": 50,
+                    "p95ResponseTime_ms": 120,
+                },
+                {
+                    "name": "/cart",
+                    "requests": 30,
+                    "failures": 0,
+                    "avgResponseTime_ms": 35,
+                    "p95ResponseTime_ms": 70,
+                },
+            ]
+        )
+        latency = _make_latency_phases(
+            {
+                "pre-chaos": {"/": {"mean_ms": 48}, "/cart": {"mean_ms": 32}},
+                "during-chaos": {"/": {"mean_ms": 110}, "/cart": {"mean_ms": 65}},
+                "post-chaos": {"/": {"mean_ms": 60}, "/cart": {"mean_ms": 38}},
+            }
+        )
+
+        view = build_route_view(locust, latency)
+
+        # Both routes present, both sources joined
+        assert {e["route"] for e in view} == {"/", "/cart"}
+        for entry in view:
+            assert entry["locust"] is not None
+            assert entry["latencyProber"] is not None
+            assert entry["latencyProber"]["during-chaos"]["mean_ms"] in (110, 65)
+
+    def test_route_in_latency_only_still_emitted(self):
+        """A route the LatencyProber probes (e.g. east-west `checkout->currency`)
+        that Locust doesn't hit must still appear in the view, with `locust=None`."""
+        locust = _make_locust_stats([])  # no Locust routes
+        latency = _make_latency_phases(
+            {
+                "pre-chaos": {"checkout->currency": {"mean_ms": 5}},
+                "during-chaos": {"checkout->currency": {"mean_ms": 8}},
+                "post-chaos": {"checkout->currency": {"mean_ms": 6}},
+            }
+        )
+        view = build_route_view(locust, latency)
+        assert len(view) == 1
+        assert view[0]["route"] == "checkout->currency"
+        assert view[0]["locust"] is None
+        assert view[0]["latencyProber"]["pre-chaos"]["mean_ms"] == 5
+
+    def test_route_missing_from_one_phase(self):
+        """A route present in pre-chaos but missing during chaos (e.g. probe
+        was added mid-experiment) maps to `None` for that phase so the
+        consumer can distinguish 'no samples' from 'phase didn't run'."""
+        latency = _make_latency_phases(
+            {
+                "pre-chaos": {"/": {"mean_ms": 50}},
+                "during-chaos": {},  # / missing here
+                "post-chaos": {"/": {"mean_ms": 55}},
+            }
+        )
+        view = build_route_view(None, latency)
+        entry = view[0]
+        assert entry["latencyProber"]["pre-chaos"] is not None
+        assert entry["latencyProber"]["during-chaos"] is None
+        assert entry["latencyProber"]["post-chaos"] is not None
+
+    def test_locust_endpoint_without_name_is_skipped(self):
+        """A Locust endpoint missing the `name` field (defensive against
+        malformed CSV) is silently skipped without raising."""
+        locust = _make_locust_stats(
+            [
+                {
+                    "name": "",
+                    "requests": 5,
+                    "failures": 0,
+                    "avgResponseTime_ms": 0,
+                    "p95ResponseTime_ms": 0,
+                },
+                {
+                    "name": "/",
+                    "requests": 100,
+                    "failures": 0,
+                    "avgResponseTime_ms": 50,
+                    "p95ResponseTime_ms": 120,
+                },
+            ]
+        )
+        view = build_route_view(locust, None)
+        assert [e["route"] for e in view] == ["/"]
+
+    def test_locust_order_preserved_then_latency_sorted(self):
+        """Stable ordering: Locust routes first in the order Locust reports
+        them; LatencyProber-only routes sorted alphabetically after."""
+        locust = _make_locust_stats(
+            [
+                {
+                    "name": "/cart",
+                    "requests": 1,
+                    "failures": 0,
+                    "avgResponseTime_ms": 1,
+                    "p95ResponseTime_ms": 1,
+                },
+                {
+                    "name": "/",
+                    "requests": 1,
+                    "failures": 0,
+                    "avgResponseTime_ms": 1,
+                    "p95ResponseTime_ms": 1,
+                },
+            ]
+        )
+        latency = _make_latency_phases(
+            {
+                "pre-chaos": {
+                    "/": {"mean_ms": 1},
+                    "/cart": {"mean_ms": 1},
+                    "/payment": {"mean_ms": 1},
+                    "/healthz": {"mean_ms": 1},
+                },
+                "during-chaos": {},
+                "post-chaos": {},
+            }
+        )
+        view = build_route_view(locust, latency)
+        routes = [e["route"] for e in view]
+        # Locust's order first (/cart, /), then alphabetical for the rest
+        assert routes == ["/cart", "/", "/healthz", "/payment"]
