@@ -451,9 +451,9 @@ add_text_box(slide, 0.7, 1.55, 3.4, 0.35, "Pod Placement & Scheduling",
 add_bullet_frame(slide, 0.7, 2.0, 3.4, 3.8, [
     "• Borg (Verma et al., 2015)\n  Resource-aware bin-packing",
     "• Medea (Garefalakis et al., 2018)\n  Topology spread constraints",
-    "• Sparrow (Ousterhout et al., 2013)\n  Decentralized random scheduling",
     "• DeathStarBench (Gan et al., 2019)\n  Dependency-graph-aware placement",
     "• Mars (2011); Delimitrou (2014)\n  Contention-aware co-scheduling",
+    "• Liu et al. (arXiv 2507.16109, 2025)\n  Cloud-edge placement under churn",
 ], font_size=11, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 4.6, 1.5, 3.8, 4.5, VERY_DARK,
@@ -464,7 +464,7 @@ add_bullet_frame(slide, 4.8, 2.0, 3.4, 3.8, [
     "• Principles of Chaos Engineering\n  (Basiri et al., 2016)",
     "• LitmusChaos — CNCF sandbox\n  ChaosEngine CRDs + ChaosCenter",
     "• Chaos Monkey (Netflix, 2011)\n  Random instance termination",
-    "• Gremlin — fault injection SaaS\n  Commercial chaos platform",
+    "• Mutiny! K8s churn injection\n  (DSN 2024) — closest peer",
     "• Tail at Scale (Dean & Barroso,\n  2013) — latency sensitivity",
 ], font_size=11, color=LIGHT_GRAY)
 
@@ -633,7 +633,7 @@ add_rounded_box(slide, 7.0, 1.9, 1.7, 0.7, RGBColor(0x22, 0x33, 0x55),
 add_text_box(slide, 7.1, 1.9, 1.5, 0.2, "cp1", font_size=10, bold=True, color=ACCENT_BLUE)
 add_text_box(slide, 7.1, 2.15, 1.5, 0.4, "2 vCPU\n2 GiB", font_size=9, color=LIGHT_GRAY)
 
-worker_specs = [("w1", "2 GiB", 8.8), ("w2", "2 GiB", 9.7),
+worker_specs = [("w1", "4 GiB", 8.8), ("w2", "4 GiB", 9.7),
                 ("w3", "4 GiB", 10.6), ("w4", "4 GiB", 11.5)]
 for name, ram, x in worker_specs:
     add_rounded_box(slide, x, 1.9, 0.8, 0.7, RGBColor(0x22, 0x44, 0x22),
@@ -644,7 +644,7 @@ for name, ram, x in worker_specs:
                  font_size=8, color=LIGHT_GRAY)
 
 add_text_box(slide, 7.0, 2.7, 5.4, 0.3,
-    "K8s v1.28.6 • Calico CNI • containerd 1.7.11 • Total: 10 vCPU, 14 GiB",
+    "K8s v1.28.6 • Calico CNI • containerd 1.7.11 • Total: 10 vCPU, 18 GiB",
     font_size=9, color=MID_GRAY)
 
 # Experiment configurations — bottom
@@ -1137,14 +1137,17 @@ threats = [
     ]),
     ("External Validity", ACCENT_ORANGE, [
         ("Cluster scale",
-         "5-node cluster (1 control plane + 4 workers, 10 vCPU, 14 GiB). Larger clusters "
-         "with more nodes and resources may show different placement effects."),
+         "5-node cluster (1 control plane + 4 uniform 4-GiB workers, 10 vCPU, 18 GiB). "
+         "Larger clusters may show different placement effects."),
         ("Fault types",
          "Only pod-delete and pod-cpu-hog tested. Network partitions, disk faults, "
-         "and memory pressure faults may reveal different strategy rankings."),
+         "and memory pressure may reveal different strategy rankings."),
         ("Traffic pattern",
          "Steady-state load (50 users, 10/s). Bursty, ramping, or production-like "
          "traffic patterns may affect results differently."),
+        ("Metric portability",
+         "PSI requires cgroup-v2, Felix requires Calico, etcd_debugging_* is K8s-version-"
+         "fragile. metricAvailability surfaces which metrics were collected per run."),
     ]),
 ]
 
@@ -1155,11 +1158,13 @@ for col, (category, clr, items) in enumerate(threats):
     add_text_box(slide, x + 0.2, 1.55, 5.6, 0.35, category,
                  font_size=16, bold=True, color=clr)
 
+    spacing = 1.6 if len(items) <= 3 else 1.3
+    desc_height = 1.0 if len(items) <= 3 else 0.85
     for j, (threat_title, threat_desc) in enumerate(items):
-        ty = 2.1 + j * 1.6
+        ty = 2.1 + j * spacing
         add_text_box(slide, x + 0.2, ty, 5.6, 0.3, threat_title,
                      font_size=13, bold=True, color=WHITE)
-        add_text_box(slide, x + 0.2, ty + 0.35, 5.6, 1.0, threat_desc,
+        add_text_box(slide, x + 0.2, ty + 0.35, 5.6, desc_height, threat_desc,
                      font_size=11, color=LIGHT_GRAY)
 
 

@@ -100,9 +100,8 @@ Speaker notes for the thesis defense presentation.
 >
 > The cluster runs on Proxmox with KVM/QEMU virtualization. We have 5 nodes:
 > - **cp1**: the control plane, 2 vCPU and 2 GiB RAM -- it only runs infrastructure (Prometheus, Neo4j, ChaosCenter, metrics-server)
-> - **w1 and w2**: 2 vCPU, 2 GiB RAM each -- smaller workers
-> - **w3 and w4**: 2 vCPU, 4 GiB RAM each -- larger workers
-> - Total: 10 vCPU, 14 GiB across the cluster
+> - **w1 through w4**: 2 vCPU, 4 GiB RAM each -- uniform workers
+> - Total: 10 vCPU, 18 GiB across the cluster
 > - Running Kubernetes v1.28.6 with Calico CNI and containerd 1.7.11
 >
 > The placement matrix uses a single fault: **pod-delete** targeting productcatalogservice -- a central service in the dependency graph. Total chaos duration is 120 seconds, with deletions every 15 seconds (CHAOS_INTERVAL), FORCE=true, and PODS_AFFECTED_PERC=100. Resilience is evaluated by 7 httpProbes across 4 sensitivity tiers, plus 5 Rust cmdProbes for orthogonal signals.
@@ -253,11 +252,13 @@ Speaker notes for the thesis defense presentation.
 >
 > For external validity:
 >
-> Our cluster has 5 nodes (1 control plane, 4 workers) with a total of 10 vCPU and 14 GiB. The workers have heterogeneous memory -- w1 and w2 have 2 GiB while w3 and w4 have 4 GiB. Larger clusters with more uniform resources may show different placement effects.
+> Our cluster has 5 nodes (1 control plane, 4 uniform 4-GiB workers) with a total of 10 vCPU and 18 GiB. Larger clusters may show different placement effects.
 >
 > We only tested pod-delete and pod-cpu-hog. Network partitions, disk faults, and memory pressure faults may reveal different strategy rankings.
 >
 > We used steady-state load at 50 users and 10 requests per second. Bursty or production-like traffic patterns may affect results differently.
+>
+> Metric portability is also a threat -- PSI requires cgroup-v2, Felix metrics require Calico, and the etcd_debugging_* names are K8s-version-fragile. The `metricAvailability` map in our Prometheus prober surfaces which of these were collected on a given run, so the same analysis is honest about what data was actually available.
 
 ---
 
