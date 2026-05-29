@@ -14,6 +14,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.utilization import compute_per_pod_utilization
 
 
 class MetricsCollector:
@@ -128,6 +129,9 @@ class MetricsCollector:
 
         if prometheus_data is not None:
             result["prometheus"] = prometheus_data
+            utilization = compute_per_pod_utilization(pod_status, prometheus_data)
+            if utilization.get("pods"):
+                result["utilization"] = utilization
 
         if collect_logs:
             duration = until_time - since_time
