@@ -86,8 +86,14 @@ def _format_text(
     pairwise_rows: List[Dict[str, object]],
     confidence: float,
     metric_label: str,
+    baseline_relative: Optional[Dict[str, Dict[str, float]]] = None,
+    baseline_name: Optional[str] = None,
 ) -> str:
-    """Render the analysis as a fixed-width text report."""
+    """Render the analysis as a fixed-width text report.
+
+    When ``baseline_relative`` is provided, also emits a per-strategy
+    "vs <baseline>" block with the mean delta and percent change.
+    """
     lines: List[str] = []
     lines.append(f"Bootstrap {int(confidence * 100)}% CI for {metric_label} (mean):")
     lines.append(f"  {'strategy':<20} {'n':>3}  {'mean':>10}  {'CI low':>10}  {'CI high':>10}")
@@ -97,6 +103,14 @@ def _format_text(
             f"  {name:<20} {ci['n']:>3}  "
             f"{ci['point']!s:>10}  {ci['ci_low']!s:>10}  {ci['ci_high']!s:>10}"
         )
+
+    if baseline_relative and baseline_name:
+        lines.append("")
+        lines.append(f"Relative to {baseline_name} (mean delta, percent change):")
+        lines.append(f"  {'strategy':<20} {'delta':>10} {'percent':>10}")
+        for name in sorted(baseline_relative.keys()):
+            rel = baseline_relative[name]
+            lines.append(f"  {name:<20} {rel['delta']!s:>10} {rel['percent']!s:>9}%")
 
     lines.append("")
     lines.append(f"Pairwise Mann-Whitney U on {metric_label} (Holm-Bonferroni adjusted):")
@@ -304,6 +318,39 @@ def _sort_pairwise(rows: List[Dict[str, object]], sort_key: str) -> List[Dict[st
     return sorted(rows, key=key_fn, reverse=reverse)
 
 
+def _compute_baseline_relative(
+    samples: Dict[str, List[float]],
+    baseline_name: str,
+) -> Optional[Dict[str, Dict[str, float]]]:
+    """For each strategy, compute the mean delta and percent change
+    relative to ``baseline_name``.
+
+    Returns ``{strategy: {delta, percent}}`` for every strategy that has
+    samples and is not the baseline itself.  Returns ``None`` if the
+    baseline strategy isn't present in ``samples`` — caller decides
+    whether to error or skip.
+    """
+    if baseline_name not in samples:
+        return None
+    baseline_vals = samples[baseline_name]
+    if not baseline_vals:
+        return None
+    baseline_mean = sum(baseline_vals) / len(baseline_vals)
+    if baseline_mean == 0:
+        return None
+    out: Dict[str, Dict[str, float]] = {}
+    for name, values in samples.items():
+        if name == baseline_name or not values:
+            continue
+        mean = sum(values) / len(values)
+        delta = mean - baseline_mean
+        out[name] = {
+            "delta": round(delta, 2),
+            "percent": round(100.0 * delta / abs(baseline_mean), 2),
+        }
+    return out
+
+
 def _analyse_metric(
     raw_summary: Dict[str, Any],
     metric_path: str,
@@ -314,6 +361,7 @@ def _analyse_metric(
     pair: Optional[List[str]] = None,
     min_effect_size: Optional[str] = None,
     sort_key: str = "p_holm",
+    baseline: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Run CI + pairwise for a single metric.  Returns ``None`` when no
     strategies carry the metric — caller decides whether to error or skip.
@@ -322,7 +370,8 @@ def _analyse_metric(
     included in the analysis.  When ``min_effect_size`` is set, pairwise
     rows below that Cliff's delta magnitude are dropped.  ``sort_key``
     reorders pairwise rows; defaults to ``p_holm`` ascending (matches the
-    library default).
+    library default).  When ``baseline`` is set, the analysis also
+    includes per-strategy ``baselineRelative`` deltas + percent change.
     """
     samples = _load_strategies_from_dict(raw_summary, metric_path)
     if pair:
@@ -343,12 +392,18 @@ def _analyse_metric(
     if min_effect_size:
         pairwise_rows = _filter_pairwise_by_effect_size(pairwise_rows, min_effect_size)
     pairwise_rows = _sort_pairwise(pairwise_rows, sort_key)
-    return {
+    out: Dict[str, Any] = {
         "samples": samples,
         "ci": ci_rows,
         "pairwise": pairwise_rows,
         "metric_label": metric_label,
     }
+    if baseline:
+        rel = _compute_baseline_relative(samples, baseline)
+        if rel is not None:
+            out["baselineRelative"] = rel
+            out["baselineName"] = baseline
+    return out
 
 
 @click.command("stats")
@@ -451,6 +506,16 @@ def _analyse_metric(
     ),
 )
 @click.option(
+    "--baseline",
+    default=None,
+    type=str,
+    help=(
+        "Strategy name to use as the baseline for relative comparisons "
+        "(typically 'baseline').  When set, output includes the per-"
+        "strategy delta + percent change vs the baseline's mean."
+    ),
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -470,6 +535,7 @@ def stats(
     pair: Optional[str],
     min_effect_size: Optional[str],
     sort_key: str,
+    baseline: Optional[str],
     output: Optional[Path],
 ):
     """Compute CI and pairwise significance for a per-strategy metric.
@@ -508,6 +574,7 @@ def stats(
             pair=pair_list,
             min_effect_size=min_effect_size,
             sort_key=sort_key,
+            baseline=baseline,
         )
         if analysis is not None:
             analyses[metric_label] = analysis
@@ -544,15 +611,23 @@ def stats(
             "n_resamples": n_resamples,
         }
         if all_metrics:
-            payload["metrics"] = {
-                label: {"ci": a["ci"], "pairwise": a["pairwise"]} for label, a in analyses.items()
-            }
+            metrics_block: Dict[str, Any] = {}
+            for label, a in analyses.items():
+                block = {"ci": a["ci"], "pairwise": a["pairwise"]}
+                if "baselineRelative" in a:
+                    block["baselineRelative"] = a["baselineRelative"]
+                    block["baselineName"] = a["baselineName"]
+                metrics_block[label] = block
+            payload["metrics"] = metrics_block
         else:
             # Single-metric mode keeps the pre-existing shape.
             single = next(iter(analyses.values()))
             payload["metric"] = single["metric_label"]
             payload["ci"] = single["ci"]
             payload["pairwise"] = single["pairwise"]
+            if "baselineRelative" in single:
+                payload["baselineRelative"] = single["baselineRelative"]
+                payload["baselineName"] = single["baselineName"]
         rendered = json.dumps(payload, indent=2)
     elif as_csv:
         rendered = _format_csv(analyses)
@@ -568,6 +643,8 @@ def stats(
                     analysis["pairwise"],
                     confidence,
                     label,
+                    baseline_relative=analysis.get("baselineRelative"),
+                    baseline_name=analysis.get("baselineName"),
                 )
             )
         rendered = "\n\n".join(parts)

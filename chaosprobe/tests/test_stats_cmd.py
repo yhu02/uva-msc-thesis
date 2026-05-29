@@ -889,3 +889,68 @@ class TestMarkdownOutput:
         result = runner.invoke(stats, ["-s", str(summary), "--markdown"])
         assert result.exit_code == 0
         assert "no pairs" in result.output
+
+
+class TestBaselineRelative:
+    def test_baseline_relative_in_json_output(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {
+                "baseline": [100, 100, 100],
+                "colocate": [70, 75, 80],
+                "spread": [90, 95, 100],
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--baseline", "baseline", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        rel = payload["baselineRelative"]
+        # baseline mean = 100
+        # colocate mean = 75 → delta = -25, percent = -25
+        assert rel["colocate"]["delta"] == -25.0
+        assert rel["colocate"]["percent"] == -25.0
+        # spread mean ≈ 95 → delta = -5, percent = -5
+        assert rel["spread"]["delta"] == -5.0
+        assert rel["spread"]["percent"] == -5.0
+        # baseline itself is not in the relative output.
+        assert "baseline" not in rel
+
+    def test_baseline_relative_in_text_output(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {"baseline": [100, 100], "colocate": [70, 75]},
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--baseline", "baseline"])
+        assert result.exit_code == 0
+        assert "Relative to baseline" in result.output
+        assert "colocate" in result.output
+
+    def test_baseline_missing_from_summary_no_block(self, tmp_path):
+        """Baseline strategy not present → block silently omitted (no
+        error; caller can still use other output)."""
+        summary = _make_summary(tmp_path, {"colocate": [70, 75], "spread": [40, 45]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--baseline", "baseline", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "baselineRelative" not in payload
+
+    def test_baseline_zero_mean_no_block(self, tmp_path):
+        """When the baseline mean is exactly zero, percent change is
+        undefined → block omitted."""
+        summary = _make_summary(tmp_path, {"baseline": [0, 0, 0], "colocate": [70, 75]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--baseline", "baseline", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "baselineRelative" not in payload
+
+    def test_no_baseline_flag_no_block(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [50, 51], "b": [40, 41]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "baselineRelative" not in payload
