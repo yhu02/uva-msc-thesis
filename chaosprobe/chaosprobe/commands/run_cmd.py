@@ -36,6 +36,7 @@ from chaosprobe.orchestrator.preflight import (
 from chaosprobe.orchestrator.run_phases import (
     init_graph_store,
     run_preflight_checks,
+    summarise_placement_match_rates,
     write_run_results,
 )
 from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
@@ -1098,6 +1099,9 @@ def run(
         "failed": failed,
         "completedAt": datetime.now(timezone.utc).isoformat(),
     }
+    placement_match = summarise_placement_match_rates(overall_results.get("strategies", {}))
+    if placement_match:
+        overall_results["summary"]["placementMatchRates"] = placement_match
     overall_results["iterations"] = iterations
 
     write_run_results(
