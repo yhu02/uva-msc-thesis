@@ -251,7 +251,8 @@ def extract_target_deployment(scenario: Dict[str, Any]) -> str:
     """Extract the target deployment name from experiment appinfo."""
     for exp in scenario.get("experiments", []):
         appinfo = exp.get("spec", {}).get("spec", {}).get("appinfo", {})
-        applabel = appinfo.get("applabel", "")
+        # appinfo comes from the Dict[str, Any] scenario, so .get() is Any
+        applabel: str = appinfo.get("applabel", "")
         if applabel.startswith("app="):
             return applabel.split("=", 1)[1]
     raise ValueError(
