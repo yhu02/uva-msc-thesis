@@ -1135,6 +1135,39 @@ def aggregate_iterations(
     if route_view_agg:
         agg["routeViewAggregate"] = route_view_agg
 
+    # ── OOMKill / restart roll-up across iterations ──────────────────────
+    # _collect_pod_status records totalOOMKills and totalRestarts per
+    # iteration.  Without a per-strategy total, "colocate produced 4×
+    # more OOMKills than spread" cannot be read off the summary — a
+    # reader had to walk the iterations list by hand.
+    oom_per_iter: List[int] = []
+    restart_per_iter: List[int] = []
+    iters_with_oom = 0
+    iters_with_restart = 0
+    for ir in iteration_results:
+        ps = (ir.get("metrics") or {}).get("podStatus") or {}
+        oom = ps.get("totalOOMKills")
+        if isinstance(oom, (int, float)):
+            oom_per_iter.append(int(oom))
+            if int(oom) > 0:
+                iters_with_oom += 1
+        restarts = ps.get("totalRestarts")
+        if isinstance(restarts, (int, float)):
+            restart_per_iter.append(int(restarts))
+            if int(restarts) > 0:
+                iters_with_restart += 1
+
+    if oom_per_iter:
+        agg["totalOOMKills"] = sum(oom_per_iter)
+        agg["meanOOMKillsPerIteration"] = round(statistics.mean(oom_per_iter), 2)
+        agg["maxOOMKillsPerIteration"] = max(oom_per_iter)
+        agg["iterationsWithOOMKills"] = iters_with_oom
+    if restart_per_iter:
+        agg["totalRestarts"] = sum(restart_per_iter)
+        agg["meanRestartsPerIteration"] = round(statistics.mean(restart_per_iter), 2)
+        agg["maxRestartsPerIteration"] = max(restart_per_iter)
+        agg["iterationsWithRestarts"] = iters_with_restart
+
     return agg
 
 
