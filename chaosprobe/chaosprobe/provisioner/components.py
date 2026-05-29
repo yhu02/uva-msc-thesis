@@ -3,13 +3,170 @@
 Covers metrics-server, Prometheus, Neo4j, and local-path-provisioner.
 """
 
+import os
 import subprocess
+import tempfile
 import time
+from typing import Any, Optional
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from chaosprobe.probes.builder import DEFAULT_REGISTRY
 from chaosprobe.provisioner._setup_base import _LitmusSetupBase
+
+# In-cluster container registry for ChaosProbe probe images. Runs registry:2 on
+# the control plane and is reachable at <control-plane-node-ip>:REGISTRY_NODEPORT
+# from both the build host (docker push) and every node (containerd pull).
+REGISTRY_NAMESPACE = "registry"
+REGISTRY_NODEPORT = 30500
+
+REGISTRY_MANIFEST = f"""\
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {REGISTRY_NAMESPACE}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: {REGISTRY_NAMESPACE}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: {REGISTRY_NAMESPACE}
+  labels:
+    app: registry
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: registry
+          image: registry:2
+          ports:
+            - containerPort: 5000
+          env:
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+            - name: REGISTRY_HTTP_ADDR
+              value: ":5000"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: registry-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: {REGISTRY_NAMESPACE}
+spec:
+  type: NodePort
+  selector:
+    app: registry
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: 5000
+      nodePort: {REGISTRY_NODEPORT}
+"""
+
+
+def get_registry_address(core_api: Any) -> Optional[str]:
+    """Return the in-cluster registry address ``<node-ip>:<nodePort>``, or None.
+
+    Resolves the node the registry pod runs on and that node's InternalIP, so
+    the build host and the cluster nodes reach the registry at the same address.
+    ``core_api`` is the opaque (untyped) kubernetes CoreV1Api client.
+    """
+    try:
+        svc = core_api.read_namespaced_service("registry", REGISTRY_NAMESPACE)
+    except ApiException:
+        return None
+    node_port: Optional[int] = None
+    for port in svc.spec.ports or []:
+        if port.node_port:
+            node_port = port.node_port
+            break
+    if node_port is None:
+        return None
+    try:
+        pods = core_api.list_namespaced_pod(REGISTRY_NAMESPACE, label_selector="app=registry")
+    except ApiException:
+        return None
+    node_name: Optional[str] = None
+    for pod in pods.items:
+        if pod.status.phase == "Running" and pod.spec.node_name:
+            node_name = pod.spec.node_name
+            break
+    if node_name is None:
+        return None
+    try:
+        node = core_api.read_node(node_name)
+    except ApiException:
+        return None
+    for addr in node.status.addresses or []:
+        if addr.type == "InternalIP":
+            return f"{addr.address}:{node_port}"
+    return None
+
+
+def resolve_probe_registry(core_api: Any) -> str:
+    """Pick the registry for probe images: explicit ``CHAOSPROBE_REGISTRY`` env
+    override, else the in-cluster registry if installed, else the GHCR default."""
+    return (
+        os.environ.get("CHAOSPROBE_REGISTRY") or get_registry_address(core_api) or DEFAULT_REGISTRY
+    )
 
 
 class _ComponentsMixin(_LitmusSetupBase):
@@ -278,6 +435,50 @@ class _ComponentsMixin(_LitmusSetupBase):
             check=True,
         )
         print("  local-path-provisioner installed")
+
+    def is_registry_installed(self) -> bool:
+        """Return True if the in-cluster registry Deployment exists."""
+        try:
+            self.apps_api.read_namespaced_deployment("registry", REGISTRY_NAMESPACE)
+            return True
+        except ApiException:
+            return False
+
+    def install_registry(self, wait: bool = True, timeout: int = 180) -> bool:
+        """Deploy the in-cluster container registry (registry:2) on the control plane.
+
+        Idempotent — applies the manifest and (optionally) waits for the pod to be
+        ready. Nodes and the build host must still be configured to trust it as an
+        insecure registry (containerd / docker); see ``manifests/README.md``.
+        """
+        print("Installing in-cluster registry (registry:2)...")
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as handle:
+            handle.write(REGISTRY_MANIFEST)
+            manifest_path = handle.name
+        try:
+            subprocess.run(["kubectl", "apply", "-f", manifest_path], check=True)
+        finally:
+            os.unlink(manifest_path)
+        if not wait:
+            return True
+        return self._wait_for_registry(timeout)
+
+    def _wait_for_registry(self, timeout: int) -> bool:
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                pods = self.core_api.list_namespaced_pod(
+                    REGISTRY_NAMESPACE, label_selector="app=registry"
+                )
+                for pod in pods.items:
+                    if pod.status.phase == "Running" and all(
+                        cs.ready for cs in (pod.status.container_statuses or [])
+                    ):
+                        return True
+            except ApiException:
+                pass
+            time.sleep(5)
+        return False
 
     def install_neo4j(self, wait: bool = True, timeout: int = 300) -> bool:
         """Install Neo4j as a lightweight Deployment.

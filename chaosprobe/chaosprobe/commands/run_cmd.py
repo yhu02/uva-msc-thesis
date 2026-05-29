@@ -1,7 +1,6 @@
 """CLI command: chaosprobe run — automated full experiment matrix."""
 
 import json
-import os
 import subprocess
 import sys
 import time
@@ -43,13 +42,13 @@ from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
 from chaosprobe.probes.builder import (
-    DEFAULT_REGISTRY,
     RustProbeBuilder,
     ensure_image_pull_secret,
     extract_cmdprobe_images,
     patch_probe_images,
     prepull_probe_images,
 )
+from chaosprobe.provisioner.components import resolve_probe_registry
 from chaosprobe.provisioner.setup import LitmusSetup, UnknownExperimentType
 
 
@@ -347,12 +346,13 @@ def _load_and_prepare_scenario(
     else:
         click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
 
-    # Auto-build Rust cmdProbes if probes/ directory exists.
-    # Always pushes to the configured registry — cluster nodes can only pull
-    # the image via `docker pull`, so push is unconditionally required.
+    # Auto-build Rust cmdProbes if probes/ directory exists. Always pushes to a
+    # registry — cluster nodes can only pull the image via `docker pull`. The
+    # registry is the CHAOSPROBE_REGISTRY override, else the in-cluster registry
+    # installed by `chaosprobe init`, else the GHCR default.
     if shared_scenario.get("probes"):
         click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
-        registry = os.environ.get("CHAOSPROBE_REGISTRY", DEFAULT_REGISTRY)
+        registry = resolve_probe_registry(k8s_client.CoreV1Api())
         builder = RustProbeBuilder(registry=registry, push=True)
 
         # Build failures must abort the run.  Silently swallowing them
