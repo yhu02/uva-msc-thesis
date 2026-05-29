@@ -302,6 +302,52 @@ class TestPrometheusProberResult:
         result = prober.result()
         assert result["probeErrors"] == 2
 
+    def test_result_includes_metric_availability_map(self):
+        """`metricAvailability` flags every configured query as available
+        when at least one sample carried non-empty data for it."""
+        prober = _make_prober(
+            queries={
+                "always_present": "up",
+                "never_present": "noop",
+                "intermittent": "blip",
+            }
+        )
+        prober._time_series = [
+            {
+                "phase": "pre-chaos",
+                "metrics": {
+                    "always_present": [{"metric": {}, "value": [1, "1.0"]}],
+                    # `never_present` and `intermittent` missing here
+                },
+            },
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "always_present": [{"metric": {}, "value": [2, "2.0"]}],
+                    "intermittent": [{"metric": {}, "value": [2, "3.0"]}],
+                },
+            },
+        ]
+
+        result = prober.result()
+        availability = result["metricAvailability"]
+
+        assert availability["always_present"] is True
+        assert availability["intermittent"] is True
+        assert availability["never_present"] is False
+
+    def test_metric_availability_treats_empty_list_as_unavailable(self):
+        """An entry that carries the key but with an empty list still counts
+        as unavailable — empty results mean the query returned nothing."""
+        prober = _make_prober(queries={"only_metric": "up"})
+        prober._time_series = [
+            {"phase": "pre-chaos", "metrics": {"only_metric": []}},
+            {"phase": "during-chaos", "metrics": {"only_metric": []}},
+        ]
+
+        result = prober.result()
+        assert result["metricAvailability"]["only_metric"] is False
+
 
 class TestPrometheusProberPhaseSplitting:
     def test_phase_aggregation(self):
