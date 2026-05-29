@@ -57,19 +57,24 @@ def compare_runs(
         after_fix.get("metrics", {}),
     )
 
-    # Per-strategy CI overlap on the resilience score AND on recovery
-    # time.  The score is the headline metric; recovery is the mechanism
-    # one.  A defender who claims "the fix improved recovery" needs both
-    # to be statistically separable, not just point-estimate-different.
+    # Per-strategy CI overlap on the resilience score, on recovery time,
+    # AND on the recovery split (deletionToScheduled + scheduledToReady).
+    # Score is the headline; recovery is the mechanism; the split tells
+    # us *which part* of recovery moved.  All four come from the same
+    # helper with a different ci_key.
+    baseline_strategies = baseline.get("strategies", {})
+    afterfix_strategies = after_fix.get("strategies", {})
     strategies_ci = _compare_strategies_ci_overlap(
-        baseline.get("strategies", {}),
-        after_fix.get("strategies", {}),
-        ci_key="meanResilienceScore_ci95",
+        baseline_strategies, afterfix_strategies, ci_key="meanResilienceScore_ci95"
     )
     strategies_ci_recovery = _compare_strategies_ci_overlap(
-        baseline.get("strategies", {}),
-        after_fix.get("strategies", {}),
-        ci_key="meanRecoveryTime_ms_ci95",
+        baseline_strategies, afterfix_strategies, ci_key="meanRecoveryTime_ms_ci95"
+    )
+    strategies_ci_d2s = _compare_strategies_ci_overlap(
+        baseline_strategies, afterfix_strategies, ci_key="meanDeletionToScheduled_ms_ci95"
+    )
+    strategies_ci_s2r = _compare_strategies_ci_overlap(
+        baseline_strategies, afterfix_strategies, ci_key="meanScheduledToReady_ms_ci95"
     )
 
     # Evaluate improvement criteria
@@ -120,6 +125,16 @@ def compare_runs(
             **(
                 {"strategiesRecoveryCIOverlap": strategies_ci_recovery}
                 if strategies_ci_recovery
+                else {}
+            ),
+            **(
+                {"strategiesDeletionToScheduledCIOverlap": strategies_ci_d2s}
+                if strategies_ci_d2s
+                else {}
+            ),
+            **(
+                {"strategiesScheduledToReadyCIOverlap": strategies_ci_s2r}
+                if strategies_ci_s2r
                 else {}
             ),
         },

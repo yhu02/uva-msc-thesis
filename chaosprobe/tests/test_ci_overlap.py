@@ -192,3 +192,118 @@ class TestCompareStrategiesRecoveryCIOverlap:
         after_fix = {"x": _strategy(70, 80)}  # no recovery CI
         out = _compare_strategies_ci_overlap(baseline, after_fix, ci_key="meanRecoveryTime_ms_ci95")
         assert out == {}
+
+
+def _strategy_d2s(low, high):
+    return {
+        "aggregated": {
+            "meanDeletionToScheduled_ms_ci95": {
+                "low": low,
+                "high": high,
+                "n": 5,
+                "n_resamples": 2000,
+            }
+        }
+    }
+
+
+def _strategy_s2r(low, high):
+    return {
+        "aggregated": {
+            "meanScheduledToReady_ms_ci95": {
+                "low": low,
+                "high": high,
+                "n": 5,
+                "n_resamples": 2000,
+            }
+        }
+    }
+
+
+def _strategy_full_recovery_split(score_lh, d2s_lh, s2r_lh):
+    s_low, s_high = score_lh
+    d_low, d_high = d2s_lh
+    r_low, r_high = s2r_lh
+    return {
+        "aggregated": {
+            "meanResilienceScore_ci95": {
+                "low": s_low,
+                "high": s_high,
+                "n": 5,
+                "n_resamples": 2000,
+            },
+            "meanDeletionToScheduled_ms_ci95": {
+                "low": d_low,
+                "high": d_high,
+                "n": 5,
+                "n_resamples": 2000,
+            },
+            "meanScheduledToReady_ms_ci95": {
+                "low": r_low,
+                "high": r_high,
+                "n": 5,
+                "n_resamples": 2000,
+            },
+        }
+    }
+
+
+class TestCompareStrategiesD2SAndS2RCIOverlap:
+    def test_d2s_block_attached_when_present(self):
+        baseline = {"colocate": _strategy_d2s(300, 400)}
+        after_fix = {"colocate": _strategy_d2s(100, 200)}
+        out = compare_runs(
+            _run_with_strategies(baseline),
+            _run_with_strategies(after_fix),
+        )
+        assert "strategiesDeletionToScheduledCIOverlap" in out["comparison"]
+        d2s = out["comparison"]["strategiesDeletionToScheduledCIOverlap"]["colocate"]
+        assert d2s["interpretation"] == "significant"
+
+    def test_s2r_block_attached_when_present(self):
+        baseline = {"colocate": _strategy_s2r(800, 1000)}
+        after_fix = {"colocate": _strategy_s2r(900, 950)}
+        out = compare_runs(
+            _run_with_strategies(baseline),
+            _run_with_strategies(after_fix),
+        )
+        assert "strategiesScheduledToReadyCIOverlap" in out["comparison"]
+        s2r = out["comparison"]["strategiesScheduledToReadyCIOverlap"]["colocate"]
+        # Heavy overlap → indistinguishable.
+        assert s2r["interpretation"] == "indistinguishable"
+
+    def test_both_blocks_attached_independently(self):
+        baseline = {
+            "x": _strategy_full_recovery_split((40, 50), (300, 400), (800, 900)),
+        }
+        after_fix = {
+            "x": _strategy_full_recovery_split((70, 80), (100, 200), (810, 880)),
+        }
+        out = compare_runs(
+            _run_with_strategies(baseline),
+            _run_with_strategies(after_fix),
+        )
+        assert "strategiesDeletionToScheduledCIOverlap" in out["comparison"]
+        assert "strategiesScheduledToReadyCIOverlap" in out["comparison"]
+        # Score still attached.
+        assert "strategiesCIOverlap" in out["comparison"]
+
+    def test_blocks_omitted_when_no_split_cis(self):
+        baseline = {"x": _strategy(40, 50)}
+        after_fix = {"x": _strategy(70, 80)}
+        out = compare_runs(
+            _run_with_strategies(baseline),
+            _run_with_strategies(after_fix),
+        )
+        assert "strategiesDeletionToScheduledCIOverlap" not in out["comparison"]
+        assert "strategiesScheduledToReadyCIOverlap" not in out["comparison"]
+
+    def test_d2s_present_but_s2r_missing_only_d2s_attached(self):
+        baseline = {"x": _strategy_d2s(300, 400)}
+        after_fix = {"x": _strategy_d2s(100, 200)}
+        out = compare_runs(
+            _run_with_strategies(baseline),
+            _run_with_strategies(after_fix),
+        )
+        assert "strategiesDeletionToScheduledCIOverlap" in out["comparison"]
+        assert "strategiesScheduledToReadyCIOverlap" not in out["comparison"]
