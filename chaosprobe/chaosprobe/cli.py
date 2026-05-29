@@ -266,6 +266,7 @@ from chaosprobe.commands.placement_cmd import placement  # noqa: E402
 from chaosprobe.commands.probe_cmd import probe  # noqa: E402
 from chaosprobe.commands.run_cmd import run  # noqa: E402
 from chaosprobe.commands.stats_cmd import stats  # noqa: E402
+from chaosprobe.commands.summarize_cmd import summarize  # noqa: E402
 from chaosprobe.commands.visualize_cmd import ml_export, visualize  # noqa: E402
 
 main.add_command(cluster)
@@ -278,6 +279,7 @@ main.add_command(placement)
 main.add_command(probe)
 main.add_command(run)
 main.add_command(stats)
+main.add_command(summarize)
 main.add_command(visualize)
 main.add_command(ml_export)
 
