@@ -817,3 +817,75 @@ class TestSortKey:
         runner = CliRunner()
         result = runner.invoke(stats, ["-s", str(summary), "--sort", "bogus"])
         assert result.exit_code != 0
+
+
+class TestMarkdownOutput:
+    """`--markdown` emits GFM tables suitable for thesis documents."""
+
+    def test_markdown_emits_ci_and_pairwise_tables(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {"colocate": [70, 75, 80], "spread": [40, 45, 50]},
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--markdown"])
+        assert result.exit_code == 0
+        assert "### resilienceScore" in result.output
+        assert "Bootstrap 95% CI" in result.output
+        assert "| strategy | n | mean | CI low | CI high |" in result.output
+        assert "Pairwise Mann-Whitney U" in result.output
+        # GFM separator row.
+        assert "|---|---:|---:|---:|---:|" in result.output
+        assert "colocate" in result.output
+        assert "spread" in result.output
+
+    def test_markdown_writes_to_output_file(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
+        out_path = tmp_path / "stats.md"
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--markdown", "-o", str(out_path)])
+        assert result.exit_code == 0
+        contents = out_path.read_text()
+        assert contents.startswith("### resilienceScore")
+
+    def test_markdown_and_json_mutually_exclusive(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--markdown", "--json"])
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.output.lower()
+
+    def test_markdown_and_csv_mutually_exclusive(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--markdown", "--csv"])
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.output.lower()
+
+    def test_markdown_handles_all_metrics(self, tmp_path):
+        summary = _make_both_metrics_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--all-metrics", "--markdown"])
+        assert result.exit_code == 0
+        # Both metric headings present.
+        assert "### resilienceScore" in result.output
+        assert "### meanRecovery_ms" in result.output
+
+    def test_markdown_includes_effect_size_columns(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {"colocate": [70, 75, 80, 78, 72], "spread": [40, 45, 50, 48, 42]},
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--markdown"])
+        assert result.exit_code == 0
+        assert "Cliff's δ" in result.output
+        assert "magnitude" in result.output
+        assert "large" in result.output  # all colocate > all spread
+
+    def test_markdown_no_pairs_placeholder(self, tmp_path):
+        summary = _make_summary(tmp_path, {"colocate": [70, 75, 80]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--markdown"])
+        assert result.exit_code == 0
+        assert "no pairs" in result.output
