@@ -26,6 +26,7 @@ from chaosprobe.config.topology import parse_topology_from_scenario
 from chaosprobe.config.validator import validate_scenario
 from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.collector import MetricsCollector
+from chaosprobe.metrics.reproducibility import gather_run_metadata
 from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
     extract_experiment_types,
@@ -820,8 +821,8 @@ def run(
         if exp_path == primary_experiment:
             scenario_dict = shared_scenario
         else:
-            scenario_dict, _ns_unused, _file_unused, _routes_unused = (
-                _load_and_prepare_scenario(exp_path, namespace, deploy=False)
+            scenario_dict, _ns_unused, _file_unused, _routes_unused = _load_and_prepare_scenario(
+                exp_path, namespace, deploy=False
             )
         fault_scenarios.append((label, scenario_dict, extract_experiment_types(scenario_dict)))
 
@@ -884,12 +885,10 @@ def run(
 
     click.echo("")
 
-    # Extract target deployment from experiment spec for recovery metrics
-    target_deployment = extract_target_deployment(shared_scenario)
-
     overall_results: Dict[str, Any] = {
         "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "runMetadata": gather_run_metadata(core_api=core_api),
         "namespace": namespace,
         "iterations": iterations,
         # Multi-fault matrix: keyed as ``faults[label][strategy]``.  When
@@ -1070,9 +1069,7 @@ def run(
                 strategy_passed = False
             strategy_result["fault"] = fault_label
             overall_results["faults"][fault_label]["strategies"][strategy_name] = strategy_result
-            flat_key = (
-                f"{fault_label}__{strategy_name}" if _multi_fault else strategy_name
-            )
+            flat_key = f"{fault_label}__{strategy_name}" if _multi_fault else strategy_name
             overall_results["strategies"][flat_key] = strategy_result
             if strategy_result["status"] == "error":
                 failed += 1
