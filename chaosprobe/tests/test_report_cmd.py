@@ -6,6 +6,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from chaosprobe.commands.report_cmd import (
+    _render_diff_section,
     _render_doctor_section,
     _render_stats_section,
     _render_summarize_section,
@@ -168,3 +169,61 @@ class TestReportCommand:
         contents = out_path.read_text()
         # _format_markdown labels the CI column with the confidence pct.
         assert "99%" in contents or "0.99" in contents
+
+
+class TestRenderDiffSection:
+    def test_emits_fenced_diff_block(self, tmp_path):
+        baseline_path = tmp_path / "baseline.json"
+        out = _render_diff_section(_summary_payload(), _summary_payload(), baseline_path)
+        assert "## Diff vs. baseline" in out
+        assert f"Baseline: `{baseline_path}`" in out
+        # spread/colocate strategies are identical → all stable
+        assert "stable" in out
+        assert "```" in out
+
+    def test_reports_changed_when_baseline_differs(self, tmp_path):
+        current = _summary_payload()
+        # Mutate the baseline so its spread CI is disjoint from current's.
+        baseline = _summary_payload()
+        baseline["strategies"]["spread"]["aggregated"]["meanResilienceScore"] = 50
+        baseline["strategies"]["spread"]["aggregated"]["meanResilienceScore_ci95"] = {
+            "low": 48,
+            "high": 52,
+        }
+        out = _render_diff_section(current, baseline, tmp_path / "b.json")
+        assert "CHANGED" in out
+
+
+class TestReportDiffIntegration:
+    def test_diff_flag_appends_diff_section(self, tmp_path):
+        summary = _write_summary(tmp_path, _summary_payload())
+        baseline = tmp_path / "baseline.json"
+        baseline.write_text(json.dumps(_summary_payload()))
+        out_path = tmp_path / "report.md"
+        result = CliRunner().invoke(
+            report,
+            [
+                "-s",
+                str(summary),
+                "--diff",
+                str(baseline),
+                "-o",
+                str(out_path),
+                "--seed",
+                "0",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        contents = out_path.read_text()
+        assert "## Diff vs. baseline" in contents
+        assert f"Baseline: `{baseline}`" in contents
+        # All other sections still present.
+        assert "## Data quality (doctor)" in contents
+        assert "## Per-strategy aggregate (summarize)" in contents
+        assert "## Statistical analysis (stats)" in contents
+
+    def test_no_diff_flag_omits_diff_section(self, tmp_path):
+        summary = _write_summary(tmp_path, _summary_payload())
+        result = CliRunner().invoke(report, ["-s", str(summary), "--seed", "0"])
+        assert result.exit_code == 0, result.output
+        assert "## Diff vs. baseline" not in result.output
