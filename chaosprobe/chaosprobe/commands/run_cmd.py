@@ -588,6 +588,17 @@ def _print_run_banner(
 @click.option("--timeout", "-t", default=300, type=int, help="Timeout per experiment in seconds")
 @click.option("--seed", default=42, type=int, help="Seed for the random strategy")
 @click.option(
+    "--seeds",
+    default=None,
+    type=str,
+    help=(
+        "Comma-separated seed list (e.g. '42,137,271') for multi-seed random "
+        "runs.  Expands the random strategy into one per seed (named "
+        "'random:42', 'random:137', ...).  Overrides --seed.  All other "
+        "strategies are unaffected."
+    ),
+)
+@click.option(
     "--settle-time",
     default=60,
     type=int,
@@ -711,6 +722,7 @@ def run(
     strategies: str,
     timeout: int,
     seed: int,
+    seeds: Optional[str],
     settle_time: int,
     experiment: Tuple[str, ...],
     iterations: int,
@@ -755,14 +767,47 @@ def run(
             )
             sys.exit(1)
 
+    # Multi-seed: when --seeds is set, expand the `random` strategy into
+    # one entry per seed.  Each gets a name like 'random:42' so downstream
+    # tooling (stats, doctor, compare) sees them as separate strategies
+    # and can statistically distinguish per-seed variance from cross-
+    # strategy variance.
+    if seeds and "random" in strategy_list:
+        seed_list: List[int] = []
+        for tok in seeds.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                seed_list.append(int(tok))
+            except ValueError:
+                click.echo(
+                    f"Error: --seeds entry '{tok}' is not an integer.",
+                    err=True,
+                )
+                sys.exit(1)
+        if len(seed_list) < 1:
+            click.echo("Error: --seeds needs at least one integer.", err=True)
+            sys.exit(1)
+        expanded = []
+        for s in strategy_list:
+            if s == "random":
+                expanded.extend(f"random:{seed_val}" for seed_val in seed_list)
+            else:
+                expanded.append(s)
+        strategy_list = expanded
+
     # Sort by contention severity: low-contention strategies first so
     # lingering node pressure from heavy strategies doesn't skew results.
     # baseline/default (not in the enum) get order 0/-1 to run first.
     def _sort_key(name: str) -> int:
+        # Strip ':seed' suffix so the enum lookup works for multi-seed
+        # variants like 'random:42'.
+        base = name.split(":", 1)[0]
         try:
-            return PlacementStrategy(name).execution_order
+            return PlacementStrategy(base).execution_order
         except ValueError:
-            return -1 if name == "baseline" else 0
+            return -1 if base == "baseline" else 0
 
     strategy_list.sort(key=_sort_key)
 
