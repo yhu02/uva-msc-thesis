@@ -156,6 +156,7 @@ files = [
     # provisioner/ — kubernetes manifest application (raw k8s API).
     "chaosprobe/provisioner/__init__.py",
     "chaosprobe/provisioner/kubernetes.py",
+    "chaosprobe/provisioner/_setup_base.py",
     # storage/ — the neo4j graph store.  The reader / writer mixins
     # declare the shared ``_driver`` attribute (an opaque neo4j Driver)
     # supplied by the concrete Neo4jStore, so they type-check standalone.

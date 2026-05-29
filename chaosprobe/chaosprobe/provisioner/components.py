@@ -9,8 +9,10 @@ import time
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 
-class _ComponentsMixin:
+
+class _ComponentsMixin(_LitmusSetupBase):
     """Metrics-server, Prometheus, Neo4j installation methods."""
 
     # -- metrics-server -----------------------------------------------------

@@ -14,8 +14,10 @@ from typing import Any, Optional
 
 from kubernetes.client.rest import ApiException
 
+from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 
-class _ChaosCenterMixin:
+
+class _ChaosCenterMixin(_LitmusSetupBase):
     """ChaosCenter installation & configuration methods mixed into LitmusSetup."""
 
     def is_chaoscenter_installed(self) -> bool:
