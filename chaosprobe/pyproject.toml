@@ -123,14 +123,16 @@ files = [
     "chaosprobe/metrics/throughput.py",
     "chaosprobe/metrics/timeseries.py",
     "chaosprobe/metrics/utilization.py",
-    # orchestrator/ — small pure-Python helpers that depend only on
-    # kubernetes (handled by the override).  Larger files
-    # (strategy_runner, run_phases, readiness, preflight) still have
-    # real type errors.
+    # orchestrator/ — kubernetes deps are handled by the override.
+    # strategy_runner / readiness still have real type errors (their own
+    # slice); the rest are clean.
     "chaosprobe/orchestrator/__init__.py",
     "chaosprobe/orchestrator/diagnostics.py",
     "chaosprobe/orchestrator/portforward.py",
+    "chaosprobe/orchestrator/preflight.py",
+    "chaosprobe/orchestrator/probers.py",
     "chaosprobe/orchestrator/recovery.py",
+    "chaosprobe/orchestrator/run_phases.py",
     "chaosprobe/orchestrator/timeout.py",
     # loadgen/ — Locust runner + headless wrapper.
     "chaosprobe/loadgen/__init__.py",
