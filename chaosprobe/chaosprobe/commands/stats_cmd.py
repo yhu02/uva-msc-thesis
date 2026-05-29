@@ -237,6 +237,27 @@ def _filter_pairwise_by_effect_size(
     return out
 
 
+_SORT_KEYS = {
+    "p_holm": (lambda r: r.get("p_holm", float("inf")), False),
+    "p_raw": (lambda r: r.get("p_raw", float("inf")), False),
+    "delta": (lambda r: abs(r.get("cliffs_delta") or 0.0), True),
+}
+
+
+def _sort_pairwise(rows: List[Dict[str, object]], sort_key: str) -> List[Dict[str, object]]:
+    """Reorder pairwise rows by the requested key.
+
+    Default for callers is ``p_holm`` ascending (matches the library
+    default).  ``delta`` sorts by absolute Cliff's delta descending —
+    largest practical effect first.  Unknown keys are no-ops.
+    """
+    spec = _SORT_KEYS.get(sort_key)
+    if spec is None:
+        return rows
+    key_fn, reverse = spec
+    return sorted(rows, key=key_fn, reverse=reverse)
+
+
 def _analyse_metric(
     raw_summary: Dict[str, Any],
     metric_path: str,
@@ -246,13 +267,16 @@ def _analyse_metric(
     seed: Optional[int],
     pair: Optional[List[str]] = None,
     min_effect_size: Optional[str] = None,
+    sort_key: str = "p_holm",
 ) -> Optional[Dict[str, Any]]:
     """Run CI + pairwise for a single metric.  Returns ``None`` when no
     strategies carry the metric — caller decides whether to error or skip.
 
     When ``pair`` is set, only strategies whose name is in the list are
     included in the analysis.  When ``min_effect_size`` is set, pairwise
-    rows below that Cliff's delta magnitude are dropped.
+    rows below that Cliff's delta magnitude are dropped.  ``sort_key``
+    reorders pairwise rows; defaults to ``p_holm`` ascending (matches the
+    library default).
     """
     samples = _load_strategies_from_dict(raw_summary, metric_path)
     if pair:
@@ -272,6 +296,7 @@ def _analyse_metric(
     pairwise_rows = pairwise_comparisons(samples, holm_bonferroni=True) if len(samples) >= 2 else []
     if min_effect_size:
         pairwise_rows = _filter_pairwise_by_effect_size(pairwise_rows, min_effect_size)
+    pairwise_rows = _sort_pairwise(pairwise_rows, sort_key)
     return {
         "samples": samples,
         "ci": ci_rows,
@@ -358,6 +383,18 @@ def _analyse_metric(
     ),
 )
 @click.option(
+    "--sort",
+    "sort_key",
+    type=click.Choice(["p_holm", "p_raw", "delta"]),
+    default="p_holm",
+    show_default=True,
+    help=(
+        "Pairwise sort key.  ``p_holm`` / ``p_raw`` ascending (smallest p "
+        "first); ``delta`` sorts by absolute Cliff's delta descending "
+        "(largest practical effect first)."
+    ),
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -375,6 +412,7 @@ def stats(
     as_csv: bool,
     pair: Optional[str],
     min_effect_size: Optional[str],
+    sort_key: str,
     output: Optional[Path],
 ):
     """Compute CI and pairwise significance for a per-strategy metric.
@@ -412,6 +450,7 @@ def stats(
             actual_seed,
             pair=pair_list,
             min_effect_size=min_effect_size,
+            sort_key=sort_key,
         )
         if analysis is not None:
             analyses[metric_label] = analysis

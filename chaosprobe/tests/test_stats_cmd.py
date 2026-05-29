@@ -764,3 +764,56 @@ class TestEffectSizeMinFilter:
         block = next(iter(payload["metrics"].values()))
         for row in block["pairwise"]:
             assert row["effect_size_magnitude"] == "large"
+
+
+class TestSortKey:
+    """``--sort`` reorders the pairwise table.  Default p_holm matches
+    the library; ``delta`` puts the largest practical effects first."""
+
+    def test_default_sort_is_p_holm_ascending(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {
+                "a": [50, 51, 50],
+                "b": [50, 51, 50],
+                "c": [10, 11, 9],
+                "d": [40, 41, 39],
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        ps = [r["p_holm"] for r in payload["pairwise"]]
+        assert ps == sorted(ps)
+
+    def test_delta_sort_descending_by_abs_cliffs_delta(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {
+                "a": [50, 51, 50],
+                "b": [50, 51, 50],
+                "c": [10, 11, 9],
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--sort", "delta", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        deltas = [abs(r["cliffs_delta"]) for r in payload["pairwise"]]
+        assert deltas == sorted(deltas, reverse=True)
+
+    def test_p_raw_sort(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [50, 51], "b": [40, 41], "c": [10, 11]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--sort", "p_raw", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        ps = [r["p_raw"] for r in payload["pairwise"]]
+        assert ps == sorted(ps)
+
+    def test_invalid_sort_rejected(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2], "b": [3, 4]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--sort", "bogus"])
+        assert result.exit_code != 0
