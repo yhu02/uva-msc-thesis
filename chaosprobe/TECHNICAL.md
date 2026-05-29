@@ -24,7 +24,7 @@ flowchart TD
     AGG["aggregate_iterations<br/>(orchestrator/run_phases.py)"]
     OUT["OutputGenerator<br/>summary.json"]
     NEO[("Neo4j")]
-    STATS["chaosprobe stats / doctor / compare"]
+    STATS["chaosprobe stats / doctor / summarize / power / inspect / diff / report / export"]
 
     CLI --> PF
     PF -->|per strategy| PM
@@ -638,6 +638,7 @@ Flags:
 | `--effect-size-min {negligible,small,medium,large}` | — | Drop pairwise rows whose Cliff's delta magnitude is below this threshold. |
 | `--sort {p_holm,p_raw,delta}` | `p_holm` | Pairwise sort key. `delta` sorts by absolute Cliff's delta descending. |
 | `--baseline <name>` | — | Strategy name to use as the anchor for relative-to-baseline comparisons. Output includes `baselineRelative: {strategy: {delta, percent}}`. |
+| `--merge <file>` (repeatable) | — | Additional `summary.json` files whose per-strategy iterations are pooled with `--summary`'s before CI / pairwise computation. Use to tighten CIs by combining repeated runs. Strategies present in only some inputs are kept with their available samples. Top-level metadata (`schemaVersion`, `runMetadata`) is taken from `-s`. |
 | `--confidence` | `0.95` | Bootstrap confidence level. |
 | `--n-resamples` | `2000` | Bootstrap resample count. |
 | `--seed` | `42` | Bootstrap RNG seed. Use `-1` for nondeterministic. |
@@ -691,6 +692,44 @@ Cross-strategy checks: every pair of CIs overlaps (analysis inconclusive), every
 Run-level checks: `runMetadata` absent (older chaosprobe; reproducibility provenance incomplete), git commit unrecorded, dirty working tree (recorded commit doesn't represent the running code), Kubernetes server version unrecorded, CNI hint unrecorded, `schemaVersion` missing or mismatched (current is `2.0.0`).
 
 `--strict` makes warn-level findings exit non-zero. Without `--strict`, only error-level findings exit non-zero. `--json` emits structured findings under `{strategiesChecked, errorCount, warnCount, findings}`; cross-strategy findings appear under `__cross_strategy__`, run-metadata findings under `__run_metadata__`, schema-version findings under `__schema_version__`.
+
+### Inspect
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe inspect -s <summary.json> --strategy <name> -i <n>` | Pretty-print one iteration's record (verdict, score, pre-chaos health, probe verdict counts, recovery split, list of heavy detail sections present). |
+| `chaosprobe inspect -s <summary.json> --worst <N>` | List the `N` lowest-resilience iterations across every strategy — useful for finding outliers when the iteration number isn't known up front. |
+
+`--strategy` + `--iteration` and `--worst` are mutually exclusive. `--json` dumps the raw iteration record (single-iteration mode) or the worst-list as an array of `{strategy, iteration, score, verdict}` records. Iterations without a numeric `resilienceScore` are skipped in `--worst` mode.
+
+### Diff
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe diff --a <baseline.json> --b <rerun.json>` | Two-summary stability comparison — per-strategy deltas with a qualitative flag derived from 95% CI overlap. |
+
+For each strategy present in both summaries, reports `resilience` and `recovery (ms)` mean in A and B, the absolute delta and percent change, and a stability flag — `stable (CIs overlap)`, `CHANGED (CIs disjoint)`, or `no CI` when either summary lacks the CI block. Strategies only in A or only in B are surfaced at the top so they're not silently dropped.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--json` | text | Emit `{onlyInA, onlyInB, common: {strategy: [rows]}}`. |
+| `--strict` | off | Exit non-zero when any metric's CIs are disjoint between A and B. |
+| `-o, --output <file>` | stdout | Write to file. |
+
+### Report
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe report -s <summary.json> [-o <file.md>]` | One-shot thesis-appendix markdown: `doctor` (data quality) + `summarize` (per-strategy aggregate) + `stats --markdown` (CI / pairwise / Cliff's delta) against the same summary. |
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--diff <baseline.json>` | — | Append a *Diff vs. baseline* section using `chaosprobe diff` against the supplied summary. |
+| `--confidence` | `0.95` | Bootstrap confidence level for the stats section. |
+| `--seed` | `42` | Bootstrap RNG seed. `-1` for nondeterministic. |
+| `-o, --output <file>` | stdout | Write the rendered report to a file. |
+
+Output sections in order: report title + source path, `## Data quality (doctor)`, `## Per-strategy aggregate (summarize)` (each strategy as a fenced code block so structure survives every markdown engine), `## Statistical analysis (stats)`, and `## Diff vs. baseline` when `--diff` is set.
 
 ### Export
 
@@ -1042,6 +1081,12 @@ chaosprobe/
       nginx-all-probes/
       nginx-pod-delete-strict/
       nginx-rust-probe/
+  examples/
+    example-summary.json     # Worked-example fixture — every analysis
+                             # command (doctor/summarize/stats/power/
+                             # inspect/diff/report/export) demoable
+                             # against this without standing up a cluster
+    README.md
   tests/
     conftest.py
     test_config.py           test_placement.py
