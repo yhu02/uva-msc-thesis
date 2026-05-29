@@ -547,6 +547,14 @@ CLUSTER_WIDE_QUERIES = {
     "apiserver_inflight",
     "etcd_wal_fsync_p99",
     "etcd_backend_commit_p99",
+    "felix_active_local_endpoints",
+    "felix_int_dataplane_apply_p99",
+    "felix_iptables_save_p99",
+    "tcp_aborts_per_node",
+    "tcp_syn_retrans_per_node",
+    "coredns_cache_hit_rate_per_sec",
+    "coredns_cache_miss_rate_per_sec",
+    "etcd_compaction_duration_p99",
 }
 
 

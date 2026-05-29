@@ -277,9 +277,15 @@ class TestSchedulerEventCapture:
         assert parsed is not None  # kind not enforced by the parser
 
     def test_unrelated_reason_filtered(self):
-        """Reasons outside `_SCHEDULER_EVENT_REASONS` are ignored."""
+        """Reasons outside `_SCHEDULER_EVENT_REASONS` are ignored.
+
+        Slice D extended the set with kubelet events (Pulling / Pulled /
+        Failed / Killing), so the example here uses ``Started`` — a
+        kubelet event that we *don't* capture because it would create
+        N events per replacement pod with no diagnostic value beyond
+        what `Pulled` already conveys."""
         watcher = _make_watcher()
-        event = _make_event(reason="Pulled", pod_name="nginx-abc")
+        event = _make_event(reason="Started", pod_name="nginx-abc")
         assert watcher._parse_scheduler_event(event) is None
 
     def test_malformed_event_no_involved_object_returns_none(self):
@@ -373,3 +379,23 @@ class TestSchedulerEventCapture:
             parsed = watcher._parse_scheduler_event(event)
             assert parsed is not None, f"reason {reason} should be captured"
             assert parsed["reason"] == reason
+
+    def test_kubelet_event_reasons_accepted(self):
+        """Slice D extends the captured event set with kubelet events so the
+        scheduledToReady_ms latency can be attributed to image-pull vs
+        container startup vs teardown.  The result key name is kept
+        unchanged (`schedulerEvents`) for backwards-compat."""
+        watcher = _make_watcher()
+        for reason in ("Pulling", "Pulled", "Failed", "Killing"):
+            event = _make_event(reason=reason, pod_name="nginx-abc")
+            parsed = watcher._parse_scheduler_event(event)
+            assert parsed is not None, f"reason {reason} should be captured"
+            assert parsed["reason"] == reason
+
+    def test_unrelated_kubelet_event_reason_still_filtered(self):
+        """Reasons outside the extended set (e.g. `Started`, `Created`) must
+        still be filtered out — only the targeted events join the stream."""
+        watcher = _make_watcher()
+        for reason in ("Started", "Created", "SandboxChanged"):
+            event = _make_event(reason=reason, pod_name="nginx-abc")
+            assert watcher._parse_scheduler_event(event) is None
