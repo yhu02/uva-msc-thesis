@@ -17,11 +17,11 @@ Create at least 1 VM (combined control plane + worker) or ideally 5 VMs on your 
 | Node | Role | vCPU | RAM | Disk | OS |
 |------|------|------|-----|------|----|
 | cp1 | Control plane | 2 | 2 GiB | 20 GB | Ubuntu 22.04 Server |
-| w1 | Worker | 2 | 2 GiB | 20 GB | Ubuntu 22.04 Server |
-| w2 | Worker | 2 | 2 GiB | 20 GB | Ubuntu 22.04 Server |
+| w1 | Worker | 2 | 4 GiB | 20 GB | Ubuntu 22.04 Server |
+| w2 | Worker | 2 | 4 GiB | 20 GB | Ubuntu 22.04 Server |
 | w3 | Worker | 2 | 4 GiB | 20 GB | Ubuntu 22.04 Server |
 | w4 | Worker | 2 | 4 GiB | 20 GB | Ubuntu 22.04 Server |
-| **Total** | | **10** | **14 GiB** | | |
+| **Total** | | **10** | **18 GiB** | | |
 
 K8s v1.28.6 -- Calico CNI -- containerd 1.7.11
 

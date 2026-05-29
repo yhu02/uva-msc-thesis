@@ -332,57 +332,108 @@ slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
 slide_title(slide, "Research Question & Hypotheses")
 
-# Research question — prominent
-add_rounded_box(slide, 0.6, 1.5, 12.1, 1.3, VERY_DARK,
+# Research question — compact
+add_rounded_box(slide, 0.6, 1.3, 12.1, 0.85, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(3))
-add_text_box(slide, 0.8, 1.55, 11.7, 0.35, "Research Question",
-             font_size=14, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 0.8, 2.0, 11.7, 0.6,
-    "How does pod placement topology affect microservice resilience\n"
-    "under fault injection in Kubernetes?",
-    font_size=22, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
+add_text_box(slide, 0.8, 1.4, 11.7, 0.65,
+    "How do multi-dimensional metrics decompose chaos response across pod-placement strategies in Kubernetes?",
+    font_size=16, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
 
-# Hypotheses
-add_text_box(slide, 0.6, 3.1, 12, 0.35, "Hypotheses",
-             font_size=18, bold=True, color=ACCENT_GREEN)
-
-hypotheses = [
-    ("H1", "Maximum contention degrades resilience",
-     "Colocating all pods on a single node maximizes resource contention "
-     "(CPU, memory, disk, network) and produces the worst resilience scores.",
-     ACCENT_RED),
-    ("H2", "Spreading improves fault isolation",
-     "Distributing pods evenly across nodes minimizes per-node contention "
-     "and limits fault blast radius, yielding the best resilience scores.",
-     ACCENT_GREEN),
-    ("H3", "Recovery time predicts resilience",
-     "Faster pod recovery yields higher resilience scores — shorter unavailability "
-     "windows mean fewer probe checks fall inside the fault window (Dean–Barroso 2013).",
-     ACCENT_ORANGE),
+# Theme group labels (above each row's first 3 columns)
+group_labels = [
+    ("Instrument design", ACCENT_BLUE, 0.2, 2.25),
+    ("Baseline & tail", ACCENT_ORANGE, 7.85, 2.25),
+    ("Mechanism", ACCENT_RED, 0.2, 4.6),
+    ("Recovery dynamics", ACCENT_PURPLE, 7.85, 4.6),
 ]
+for label, clr, x, y in group_labels:
+    add_text_box(slide, x, y, 5, 0.25, label,
+                 font_size=11, bold=True, color=clr)
+
+# Ten hypothesis cards — 2 rows × 5 columns, themed by group
+hypotheses = [
+    # Row 1: Instrument design (H1-H3, blue), Baseline & tail (H4-H5, orange)
+    ("H1", "Metrics carry disjoint info",
+     "No single metric captures full chaos response. "
+     "Best-fit and spread tie on aggregate (66.3) but "
+     "diverge on recovery (1452 vs 1617 ms) and "
+     "latency (100 vs 150 ms during chaos).",
+     ACCENT_BLUE),
+    ("H2", "Phase decomposition is necessary",
+     "Pre-chaos baselines vary by placement (spread 231 ms "
+     "vs colocate 78 ms on /). During-chaos absolutes are "
+     "uninterpretable without phase-aware normalisation.",
+     ACCENT_BLUE),
+    ("H3", "Per-pod granularity reveals heterogeneity",
+     "Cross-pod stddev within a single service is non-zero "
+     "and placement-dependent. Aggregate cluster metrics miss it; "
+     "per-pod LatencyProber sampling exposes it.",
+     ACCENT_BLUE),
+    ("H4", "Baseline predicts resilience",
+     "Strategies with lower pre-chaos latency variance score "
+     "higher under chaos. The resting-state fingerprint predicts "
+     "the failure response before any fault is injected.",
+     ACCENT_ORANGE),
+    ("H5", "Mean masks tail",
+     "p95 latency ranking across strategies differs from mean "
+     "ranking. Tail percentiles concentrate placement effects "
+     "(Dean & Barroso, CACM 2013).",
+     ACCENT_ORANGE),
+    # Row 2: Mechanism (H6-H8, red), Recovery dynamics (H9-H10, purple)
+    ("H6", "Cross-pod variance → leakage",
+     "Pre-chaos cross-node stddev predicts whether a strategy "
+     "lands in the containment cluster (3-17% conntrack drop) "
+     "or the leakage cluster (30-49% drop).",
+     ACCENT_RED),
+    ("H7", "CPU throttling refutes contention model",
+     "Under pod-delete, colocate throttles less (0.89) than "
+     "spread (1.52) — opposite of Bubble-Up's contention "
+     "prediction. Mars 2011 doesn't fit churn-based faults.",
+     ACCENT_RED),
+    ("H8", "SLO + conntrack signals leakage",
+     "Conntrack flushing during chaos correlates with leakage: "
+     "spread 49%, dep-aware 3%. The K8s Network Programming "
+     "Latency SLO measures the churn mechanism directly.",
+     ACCENT_RED),
+    ("H9", "Scheduling latency dominates recovery",
+     "Recovery time = (deletion→scheduled) + (scheduled→ready). "
+     "Placement affects only the first term; the second is "
+     "application-bound and ~constant across strategies.",
+     ACCENT_PURPLE),
+    ("H10", "Post-chaos asymmetry as fingerprint",
+     "Post-chaos metrics overshoot, undershoot, or stabilise per "
+     "strategy. Redis throughput varies 50-450% post-chaos; the "
+     "asymmetry pattern is itself a placement fingerprint.",
+     ACCENT_PURPLE),
+]
+
+# Layout: 5 columns × 2 rows. Cards 2.55" wide × 2.05" tall.
+card_w, card_h = 2.55, 2.05
+col_x = [0.2 + i * (card_w + 0.05) for i in range(5)]
+row_y = [2.55, 4.9]
 
 for i, (label, title, desc, clr) in enumerate(hypotheses):
-    y = 3.6 + i * 1.3
-    add_rounded_box(slide, 0.6, y, 1.0, 0.9, clr, label, 18, WHITE, True)
-    add_rounded_box(slide, 1.8, y, 10.9, 0.9, VERY_DARK,
+    col = i % 5
+    row = i // 5
+    x, y = col_x[col], row_y[row]
+    # Card border box
+    add_rounded_box(slide, x, y, card_w, card_h, VERY_DARK,
                     border_color=clr, border_width=Pt(2))
-    add_text_box(slide, 2.0, y + 0.02, 10.5, 0.3, title,
-                 font_size=15, bold=True, color=clr)
-    add_text_box(slide, 2.0, y + 0.38, 10.5, 0.5, desc,
-                 font_size=12, color=LIGHT_GRAY)
+    # Coloured header strip with H-number
+    add_rounded_box(slide, x, y, card_w, 0.35, clr, label,
+                    13, WHITE, True)
+    # Title
+    add_text_box(slide, x + 0.1, y + 0.4, card_w - 0.2, 0.4, title,
+                 font_size=11, bold=True, color=clr)
+    # Description
+    add_text_box(slide, x + 0.1, y + 0.85, card_w - 0.2, card_h - 0.95, desc,
+                 font_size=9, color=LIGHT_GRAY)
 
-# Measured dimensions
-add_text_box(slide, 0.6, 7.0, 12, 0.3, "Measured Dimensions:",
-             font_size=12, bold=True, color=MID_GRAY)
-dims = [
-    ("Recovery Time", CLR_CHAOS),
-    ("Inter-Service Latency", CLR_METRICS),
-    ("Resource Utilization", CLR_ORCH),
-    ("I/O Throughput", CLR_OUTPUT),
-]
-for j, (name, clr) in enumerate(dims):
-    add_rounded_box(slide, 3.0 + j * 2.3, 6.95, 2.1, 0.35, clr,
-                    name, 11, WHITE, True)
+# Footer
+add_text_box(slide, 0.6, 7.05, 12.1, 0.35,
+    "Each hypothesis is testable from ChaosProbe-collected metrics; "
+    "the data column reports current evidence.",
+    font_size=10, color=MID_GRAY, alignment=PP_ALIGN.CENTER)
 
 
 # ══════════════════════════════════════════════════════════════════════
