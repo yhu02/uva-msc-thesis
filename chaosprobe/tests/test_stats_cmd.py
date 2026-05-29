@@ -5,7 +5,12 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from chaosprobe.commands.stats_cmd import _load_strategies, _resolve_path, stats
+from chaosprobe.commands.stats_cmd import (
+    _load_strategies,
+    _merge_summaries,
+    _resolve_path,
+    stats,
+)
 
 
 def _make_summary(tmp_path: Path, strategies: dict) -> Path:
@@ -954,3 +959,106 @@ class TestBaselineRelative:
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert "baselineRelative" not in payload
+
+
+class TestMergeSummaries:
+    def test_concatenates_iterations_per_strategy(self):
+        a = {
+            "strategies": {
+                "spread": {"iterations": [{"resilienceScore": 80}, {"resilienceScore": 82}]}
+            }
+        }
+        b = {
+            "strategies": {
+                "spread": {"iterations": [{"resilienceScore": 85}, {"resilienceScore": 86}]}
+            }
+        }
+        merged = _merge_summaries([a, b])
+        scores = [it["resilienceScore"] for it in merged["strategies"]["spread"]["iterations"]]
+        assert scores == [80, 82, 85, 86]
+
+    def test_strategies_in_only_some_inputs_are_kept(self):
+        a = {"strategies": {"spread": {"iterations": [{"resilienceScore": 80}]}}}
+        b = {"strategies": {"colocate": {"iterations": [{"resilienceScore": 60}]}}}
+        merged = _merge_summaries([a, b])
+        assert set(merged["strategies"]) == {"spread", "colocate"}
+        assert len(merged["strategies"]["spread"]["iterations"]) == 1
+        assert len(merged["strategies"]["colocate"]["iterations"]) == 1
+
+    def test_empty_input_is_empty_strategies(self):
+        merged = _merge_summaries([])
+        assert merged == {"strategies": {}}
+
+    def test_preserves_top_level_keys_from_first_input(self):
+        a = {
+            "schemaVersion": "2.0.0",
+            "runMetadata": {"git": {"commit": "abc"}},
+            "strategies": {"spread": {"iterations": [{"resilienceScore": 80}]}},
+        }
+        b = {"strategies": {"spread": {"iterations": [{"resilienceScore": 85}]}}}
+        merged = _merge_summaries([a, b])
+        assert merged["schemaVersion"] == "2.0.0"
+        assert merged["runMetadata"] == {"git": {"commit": "abc"}}
+
+
+class TestMergeFlag:
+    def test_merge_pools_iterations_into_one_analysis(self, tmp_path):
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        a = _make_summary(tmp_path / "a", {"spread": [80, 82], "colocate": [60, 62]})
+        b = _make_summary(tmp_path / "b", {"spread": [85, 86], "colocate": [58, 61]})
+        result = CliRunner().invoke(
+            stats,
+            ["-s", str(a), "--merge", str(b), "--metric", "resilience", "--seed", "0"],
+        )
+        assert result.exit_code == 0, result.output
+        # Combined n=4 per strategy.
+        assert "spread" in result.output and "colocate" in result.output
+        # Header shows the n column populated with 4 (post-merge).
+        assert "  4 " in result.output
+
+    def test_merge_multiple_files_chains(self, tmp_path):
+        for sub in ("a", "b", "c"):
+            (tmp_path / sub).mkdir()
+        a = _make_summary(tmp_path / "a", {"spread": [80], "colocate": [60]})
+        b = _make_summary(tmp_path / "b", {"spread": [82], "colocate": [62]})
+        c = _make_summary(tmp_path / "c", {"spread": [85], "colocate": [58]})
+        result = CliRunner().invoke(
+            stats,
+            [
+                "-s",
+                str(a),
+                "--merge",
+                str(b),
+                "--merge",
+                str(c),
+                "--metric",
+                "resilience",
+                "--seed",
+                "0",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "  3 " in result.output  # n=3 per strategy
+
+    def test_merge_with_strategy_only_in_secondary(self, tmp_path):
+        (tmp_path / "a2").mkdir()
+        (tmp_path / "b2").mkdir()
+        a = _make_summary(tmp_path / "a2", {"spread": [80, 82]})
+        b = _make_summary(tmp_path / "b2", {"colocate": [60, 62]})
+        result = CliRunner().invoke(
+            stats,
+            ["-s", str(a), "--merge", str(b), "--metric", "resilience", "--seed", "0"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "spread" in result.output
+        assert "colocate" in result.output
+
+    def test_no_merge_keeps_original_n(self, tmp_path):
+        a = _make_summary(tmp_path, {"spread": [80, 82, 84], "colocate": [60, 62, 64]})
+        result = CliRunner().invoke(
+            stats,
+            ["-s", str(a), "--metric", "resilience", "--seed", "0"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "  3 " in result.output  # original n=3 preserved
