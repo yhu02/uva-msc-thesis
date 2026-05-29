@@ -181,6 +181,7 @@ files = [
     "chaosprobe/commands/run_cmd.py",
     "chaosprobe/commands/shared.py",
     "chaosprobe/commands/visualize_cmd.py",
+    "chaosprobe/chaos/__init__.py",
     "chaosprobe/chaos/manifest.py",
     "chaosprobe/chaos/runner.py",
     "chaosprobe/collector/__init__.py",
