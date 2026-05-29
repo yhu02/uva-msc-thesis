@@ -11,7 +11,7 @@ mode.
 
 import csv
 
-from chaosprobe.loadgen.runner import LocustRunner, LoadStats
+from chaosprobe.loadgen.runner import LoadStats, LocustRunner
 from chaosprobe.orchestrator.run_phases import aggregate_iterations
 
 
