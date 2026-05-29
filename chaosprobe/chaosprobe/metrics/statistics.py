@@ -37,7 +37,7 @@ def bootstrap_ci(
     confidence: float = 0.95,
     n_resamples: int = 2000,
     seed: Optional[int] = 42,
-) -> Dict[str, float]:
+) -> Dict[str, object]:
     """Compute a bootstrap confidence interval for a statistic.
 
     Args:
@@ -140,7 +140,7 @@ def _standard_normal_sf(z: float) -> float:
 def mann_whitney_u(
     a: Sequence[float],
     b: Sequence[float],
-) -> Dict[str, float]:
+) -> Dict[str, object]:
     """Two-sided Mann-Whitney U test with normal-approximation p-value.
 
     Returns ``u_statistic``, ``z``, ``p_two_sided``, ``n_a``, ``n_b``.
@@ -307,6 +307,17 @@ def cliffs_delta(
     }
 
 
+def _as_float(value: object) -> float:
+    """Narrow a heterogeneous-row value known to be numeric to ``float``.
+
+    Pairwise rows are typed ``Dict[str, object]`` (mixed str / float / bool
+    values); the p-value fields used for sorting are always numbers, so this
+    asserts that at the boundary and coerces.
+    """
+    assert isinstance(value, (int, float)), f"expected numeric p-value, got {value!r}"
+    return float(value)
+
+
 def pairwise_comparisons(
     samples_by_label: Mapping[str, Sequence[float]],
     holm_bonferroni: bool = True,
@@ -350,19 +361,19 @@ def pairwise_comparisons(
 
     if holm_bonferroni:
         # Holm-Bonferroni step-down correction
-        sorted_rows = sorted(out, key=lambda r: r["p_raw"])
+        sorted_rows = sorted(out, key=lambda r: _as_float(r["p_raw"]))
         m = len(sorted_rows)
         prev_adj = 0.0
         for i, row in enumerate(sorted_rows):
-            adj = min(1.0, (m - i) * float(row["p_raw"]))
+            adj = min(1.0, (m - i) * _as_float(row["p_raw"]))
             adj = max(adj, prev_adj)  # enforce monotonicity
             prev_adj = adj
             row["p_holm"] = round(adj, 4)
             row["significant_05"] = adj < 0.05
-        out = sorted(out, key=lambda r: r["p_holm"])  # type: ignore[arg-type]
+        out = sorted(out, key=lambda r: _as_float(r["p_holm"]))
     else:
         for row in out:
-            row["significant_05"] = float(row["p_raw"]) < 0.05
-        out = sorted(out, key=lambda r: r["p_raw"])  # type: ignore[arg-type]
+            row["significant_05"] = _as_float(row["p_raw"]) < 0.05
+        out = sorted(out, key=lambda r: _as_float(r["p_raw"]))
 
     return out
