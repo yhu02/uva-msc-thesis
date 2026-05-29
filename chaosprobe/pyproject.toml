@@ -142,9 +142,13 @@ files = [
     # provisioner/ — kubernetes manifest application (raw k8s API).
     "chaosprobe/provisioner/__init__.py",
     "chaosprobe/provisioner/kubernetes.py",
-    # storage/ — neo4j_reader / neo4j_writer have outstanding mypy
-    # errors (attribute access through a mixin), keep out for now.
+    # storage/ — the neo4j graph store.  The reader / writer mixins
+    # declare the shared ``_driver`` attribute (an opaque neo4j Driver)
+    # supplied by the concrete Neo4jStore, so they type-check standalone.
     "chaosprobe/storage/__init__.py",
+    "chaosprobe/storage/neo4j_reader.py",
+    "chaosprobe/storage/neo4j_store.py",
+    "chaosprobe/storage/neo4j_writer.py",
     # Package-level + small leaf utilities — no remaining errors.
     "chaosprobe/__init__.py",
     "chaosprobe/k8s.py",

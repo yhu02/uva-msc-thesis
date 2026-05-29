@@ -811,3 +811,75 @@ class TestScenarioStorage:
 
         scenario_calls = _get_tx_calls(tx, "scenario_json")
         assert len(scenario_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# get_session_visualization_data (reader aggregation)
+# ---------------------------------------------------------------------------
+
+
+def _viz_store():
+    """Neo4jStore with a mocked driver; read helpers are overridden per-test."""
+    with patch("chaosprobe.storage.neo4j_store._require_neo4j") as mock_req:
+        mock_req.return_value = MagicMock()
+        from chaosprobe.storage.neo4j_store import Neo4jStore
+
+        return Neo4jStore("bolt://x", "u", "p")
+
+
+class TestSessionVisualizationData:
+    def test_empty_when_no_runs(self):
+        store = _viz_store()
+        store.get_session_runs = MagicMock(return_value=[])
+        assert store.get_session_visualization_data("sess") == {}
+
+    def test_single_iteration_passthrough(self):
+        store = _viz_store()
+        store.get_session_runs = MagicMock(return_value=[{"strategy": "spread", "run_id": "r1"}])
+        store.get_run_output = MagicMock(
+            return_value={
+                "summary": {"overallVerdict": "PASS", "resilienceScore": 90},
+                "metrics": {"recovery": {}},
+            }
+        )
+        data = store.get_session_visualization_data("sess")
+        strat = data["strategies"]["spread"]
+        assert strat["status"] == "completed"
+        assert strat["experiment"]["resilienceScore"] == 90
+
+    def test_multi_iteration_aggregates(self):
+        store = _viz_store()
+        store.get_session_runs = MagicMock(
+            return_value=[
+                {"strategy": "colocate", "run_id": "r1"},
+                {"strategy": "colocate", "run_id": "r2"},
+            ]
+        )
+        outputs = {
+            "r1": {
+                "summary": {"overallVerdict": "PASS", "resilienceScore": 80},
+                "metrics": {"recovery": {"summary": {"meanRecovery_ms": 1000}}},
+            },
+            "r2": {
+                "summary": {"overallVerdict": "FAIL", "resilienceScore": 60},
+                "metrics": {"recovery": {"summary": {"meanRecovery_ms": 2000}}},
+            },
+        }
+        store.get_run_output = MagicMock(side_effect=lambda rid: outputs[rid])
+
+        data = store.get_session_visualization_data("sess", iterations=2)
+        strat = data["strategies"]["colocate"]
+        agg = strat["aggregated"]
+        assert agg["meanResilienceScore"] == 70.0
+        assert agg["passRate"] == 0.5
+        assert agg["totalExperiments"] == 2
+        assert agg["meanRecoveryTime_ms"] == 1500.0
+        assert agg["maxRecoveryTime_ms"] == 2000
+        assert len(strat["iterations"]) == 2
+
+    def test_skips_runs_without_output(self):
+        store = _viz_store()
+        store.get_session_runs = MagicMock(return_value=[{"strategy": "spread", "run_id": "r1"}])
+        store.get_run_output = MagicMock(return_value=None)
+        data = store.get_session_visualization_data("sess")
+        assert data["strategies"] == {}
