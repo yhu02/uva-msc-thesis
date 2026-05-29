@@ -535,6 +535,9 @@ CLUSTER_WIDE_QUERIES = {
     "endpointslice_changes_per_sec",
     "kubelet_pleg_relist_duration_p99",
     "kube_proxy_rules_synced_per_sec",
+    "coredns_cache_hit_rate_per_sec",
+    "coredns_cache_miss_rate_per_sec",
+    "etcd_compaction_duration_p99",
 }
 
 
@@ -602,3 +605,28 @@ class TestDefaultQueries:
             assert (
                 "rate(" in tpl or "histogram_quantile" in tpl
             ), f"{label} must use rate() or histogram_quantile()"
+
+    def test_coredns_cache_queries_present(self):
+        """CoreDNS cache hit/miss split distinguishes pod-IP churn-driven
+        cache misses (H8) from query-load-driven slowdown."""
+        assert "coredns_cache_hit_rate_per_sec" in DEFAULT_QUERIES
+        assert "coredns_cache_miss_rate_per_sec" in DEFAULT_QUERIES
+
+    def test_etcd_compaction_query_present(self):
+        """etcd compaction duration is captured so slow-etcd readings from
+        slice C can be attributed to chaos load vs routine MVCC compaction."""
+        assert "etcd_compaction_duration_p99" in DEFAULT_QUERIES
+
+    def test_coredns_cache_uses_rate_not_histogram(self):
+        """The CoreDNS cache counters are monotonically-increasing totals;
+        rate() is the only way to get a meaningful per-second value."""
+        for label in ("coredns_cache_hit_rate_per_sec", "coredns_cache_miss_rate_per_sec"):
+            tpl = DEFAULT_QUERIES[label]
+            assert "rate(" in tpl
+            assert "histogram_quantile" not in tpl, f"{label} should not wrap in histogram_quantile"
+
+    def test_etcd_compaction_uses_histogram(self):
+        """etcd compaction is a latency histogram; histogram_quantile is
+        the only correct way to read p99."""
+        tpl = DEFAULT_QUERIES["etcd_compaction_duration_p99"]
+        assert "histogram_quantile" in tpl

@@ -114,6 +114,24 @@ DEFAULT_QUERIES: Dict[str, str] = {
     "kube_proxy_rules_synced_per_sec": (
         "sum(rate(kubeproxy_sync_proxy_rules_duration_seconds_count[1m]))"
     ),
+    # ── CoreDNS cache + etcd compaction ────────────────────────────────
+    # The CoreDNS cache hit/miss split distinguishes whether DNS slowdown
+    # under chaos is from cache misses driven by pod-IP churn (the thesis's
+    # H8 claim — every kill-cycle invalidates cached records) or from
+    # query load.  `coredns_request_duration_p99` (above) tells us "DNS
+    # is slow"; these two tell us *why*.
+    #
+    # etcd compaction is captured separately so a high etcd p99 from
+    # slice C can be attributed to either chaos load (interesting) or
+    # routine MVCC compaction (a false positive).  If the compaction
+    # duration spikes at the same time as the etcd p99, the slow etcd
+    # is just compacting, not under chaos load.
+    "coredns_cache_hit_rate_per_sec": ("sum(rate(coredns_cache_hits_total[1m]))"),
+    "coredns_cache_miss_rate_per_sec": ("sum(rate(coredns_cache_misses_total[1m]))"),
+    "etcd_compaction_duration_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "etcd_debugging_mvcc_db_compaction_total_duration_seconds_bucket[5m])) by (le))"
+    ),
 }
 
 # Common service names / namespaces where Prometheus is typically deployed.
