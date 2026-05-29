@@ -105,15 +105,24 @@ def _format_text(
     else:
         header = (
             f"  {'a':<20} {'b':<20} {'mean_a':>10} {'mean_b':>10} "
-            f"{'p_raw':>8} {'p_holm':>8}  sig"
+            f"{'p_raw':>8} {'p_holm':>8} {'delta':>7}  {'magnitude':<11}  sig"
         )
         lines.append(header)
         for row in pairwise_rows:
             sig = "✓" if row.get("significant_05") else " "
+            # cliffs_delta / effect_size_magnitude are added by
+            # pairwise_comparisons when available (see PR #53).  Render
+            # "-" when absent so this code degrades gracefully against
+            # older library versions.
+            delta_str = (
+                f"{row['cliffs_delta']:>7}" if row.get("cliffs_delta") is not None else f"{'-':>7}"
+            )
+            magnitude = row.get("effect_size_magnitude") or "-"
             lines.append(
                 f"  {row['a']!s:<20} {row['b']!s:<20} "
                 f"{row['mean_a']!s:>10} {row['mean_b']!s:>10} "
-                f"{row['p_raw']!s:>8} {row.get('p_holm', '-')!s:>8}  {sig}"
+                f"{row['p_raw']!s:>8} {row.get('p_holm', '-')!s:>8} "
+                f"{delta_str} {magnitude:<11}  {sig}"
             )
     return "\n".join(lines)
 
@@ -147,6 +156,8 @@ def _format_csv(analyses: Dict[str, Dict[str, Any]]) -> str:
             "ci_high",
             "p_raw",
             "p_holm",
+            "cliffs_delta",
+            "effect_size_magnitude",
             "significant_05",
         ]
     )
@@ -169,6 +180,8 @@ def _format_csv(analyses: Dict[str, Dict[str, Any]]) -> str:
                     "",
                     "",
                     "",
+                    "",
+                    "",
                 ]
             )
         for row in analysis["pairwise"]:
@@ -187,6 +200,8 @@ def _format_csv(analyses: Dict[str, Dict[str, Any]]) -> str:
                     "",
                     row.get("p_raw"),
                     row.get("p_holm", ""),
+                    row.get("cliffs_delta", ""),
+                    row.get("effect_size_magnitude", ""),
                     row.get("significant_05", ""),
                 ]
             )
