@@ -159,6 +159,7 @@ files = [
     "chaosprobe/provisioner/_setup_base.py",
     "chaosprobe/provisioner/chaoscenter.py",
     "chaosprobe/provisioner/components.py",
+    "chaosprobe/provisioner/setup.py",
     "chaosprobe/provisioner/vagrant.py",
     # storage/ — the neo4j graph store.  The reader / writer mixins
     # declare the shared ``_driver`` attribute (an opaque neo4j Driver)

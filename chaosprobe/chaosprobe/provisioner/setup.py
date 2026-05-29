@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -163,7 +163,7 @@ end
         Returns:
             Dictionary with cluster information.
         """
-        info = {
+        info: Dict[str, Any] = {
             "in_cluster": self._in_cluster,
             "context": None,
             "cluster": None,
@@ -383,7 +383,7 @@ end
                     shutil.copytree(src, dst)
 
         # Generate hosts.yaml
-        inventory = {
+        inventory: Dict[str, Any] = {
             "all": {
                 "hosts": {},
                 "children": {
