@@ -366,7 +366,8 @@ class RecoveryWatcher:
             return None
         for cond in pod.status.conditions:
             if cond.type == "PodScheduled" and cond.last_transition_time:
-                ts = cond.last_transition_time
+                # pod is an untyped kubernetes object, so the condition field is Any
+                ts: datetime = cond.last_transition_time
                 if hasattr(ts, "tzinfo") and ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 return ts

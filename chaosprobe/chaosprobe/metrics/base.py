@@ -38,7 +38,9 @@ def find_ready_pod(core_api: Any, namespace: str, service_name: str) -> Optional
         if pod.status.conditions:
             for cond in pod.status.conditions:
                 if cond.type == "Ready" and cond.status == "True":
-                    return pod.metadata.name
+                    # core_api is an untyped kubernetes client, so .name is Any
+                    pod_name: Optional[str] = pod.metadata.name
+                    return pod_name
     return None
 
 
@@ -305,7 +307,8 @@ def exec_in_pod(core_api: Any, namespace: str, pod_name: str, command: List[str]
     try:
         from kubernetes.stream import stream
 
-        return stream(
+        # stream() is untyped (kubernetes); _preload_content=True returns stdout as str
+        output: str = stream(
             core_api.connect_get_namespaced_pod_exec,
             pod_name,
             namespace,
@@ -316,6 +319,7 @@ def exec_in_pod(core_api: Any, namespace: str, pod_name: str, command: List[str]
             tty=False,
             _preload_content=True,
         )
+        return output
     except Exception as e:
         return f"ERROR:{e}"
 

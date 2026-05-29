@@ -248,7 +248,7 @@ def align_time_series(
 
     # Forward-fill: carry the last observed value into empty buckets
     if rows:
-        fill_cols = set()
+        fill_cols: set[str] = set()
         for row in rows:
             fill_cols.update(
                 k

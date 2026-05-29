@@ -103,16 +103,21 @@ files = [
     "chaosprobe/graph/__init__.py",
     "chaosprobe/graph/analysis.py",
     # metrics/ — files that pass cleanly under the kubernetes / matplotlib
-    # ignore_missing_imports override below.  statistics.py / latency.py /
-    # prometheus.py / reproducibility.py / recovery.py / base.py still have
-    # real type errors and need their own slices.
+    # ignore_missing_imports override below.  statistics.py still has real
+    # type errors and needs its own slice.
     "chaosprobe/metrics/__init__.py",
     "chaosprobe/metrics/anomaly_labels.py",
+    "chaosprobe/metrics/base.py",
     "chaosprobe/metrics/cascade.py",
     "chaosprobe/metrics/collector.py",
+    "chaosprobe/metrics/latency.py",
+    "chaosprobe/metrics/prometheus.py",
+    "chaosprobe/metrics/recovery.py",
     "chaosprobe/metrics/remediation.py",
+    "chaosprobe/metrics/reproducibility.py",
     "chaosprobe/metrics/resources.py",
     "chaosprobe/metrics/throughput.py",
+    "chaosprobe/metrics/timeseries.py",
     "chaosprobe/metrics/utilization.py",
     # orchestrator/ — small pure-Python helpers that depend only on
     # kubernetes (handled by the override).  Larger files

@@ -11,6 +11,8 @@ import pytest
 from chaosprobe.metrics.prometheus import (
     DEFAULT_QUERIES,
     ContinuousPrometheusProber,
+    _check_prometheus_url,
+    _find_free_port,
     _find_prometheus_service,
     _query_prometheus,
     discover_prometheus_urls,
@@ -845,3 +847,33 @@ class TestDefaultQueries:
         tpl = DEFAULT_QUERIES["kubelet_runtime_ops_p99"]
         assert "histogram_quantile(0.99" in tpl
         assert "operation_type" in tpl
+
+
+# ---------------------------------------------------------------------------
+# _find_free_port / _check_prometheus_url
+# ---------------------------------------------------------------------------
+
+
+class TestFindFreePort:
+    def test_returns_valid_tcp_port(self):
+        port = _find_free_port()
+        assert isinstance(port, int)
+        assert 0 < port < 65536
+
+
+class TestCheckPrometheusUrl:
+    def test_true_on_http_200(self):
+        cm = MagicMock()
+        cm.__enter__.return_value.status = 200
+        with patch("urllib.request.urlopen", return_value=cm):
+            assert _check_prometheus_url("http://prometheus:9090") is True
+
+    def test_false_on_non_200(self):
+        cm = MagicMock()
+        cm.__enter__.return_value.status = 503
+        with patch("urllib.request.urlopen", return_value=cm):
+            assert _check_prometheus_url("http://prometheus:9090") is False
+
+    def test_false_on_connection_error(self):
+        with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+            assert _check_prometheus_url("http://prometheus:9090") is False

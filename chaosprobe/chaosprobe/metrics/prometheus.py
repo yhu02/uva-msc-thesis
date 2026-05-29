@@ -302,7 +302,9 @@ def _query_prometheus(
         logger.debug("Prometheus returned non-success: %s", body.get("error"))
         return None
 
-    return body.get("data", {}).get("result", [])
+    # body is decoded JSON (Any); coerce the result vector at this boundary
+    result: List[Dict[str, Any]] = body.get("data", {}).get("result", [])
+    return result
 
 
 def _find_prometheus_service() -> List[Tuple[str, str, int]]:
@@ -341,7 +343,8 @@ def _find_free_port() -> int:
     """Return an available local TCP port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
-        return s.getsockname()[1]
+        port: int = s.getsockname()[1]
+        return port
 
 
 def _check_prometheus_url(url: str, timeout: float = 5.0) -> bool:
@@ -352,7 +355,7 @@ def _check_prometheus_url(url: str, timeout: float = 5.0) -> bool:
             method="GET",
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status == 200
+            return bool(resp.status == 200)
     except Exception:
         return False
 
