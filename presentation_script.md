@@ -24,19 +24,39 @@ Speaker notes for the thesis defense presentation.
 
 ## Slide 3 -- Research Question & Hypotheses
 
-> Our research question is: *How does pod placement topology affect microservice resilience under fault injection in Kubernetes?*
+> Our research question is: *How do multi-dimensional metrics decompose chaos response across pod-placement strategies in Kubernetes?*
 >
-> We test three hypotheses, derived from the placement and chaos-engineering literature:
+> The framing is deliberate. Earlier work asks which placement strategy is most resilient and collapses the answer into a single aggregate score. We instead ask what each metric dimension uniquely reveals -- and what we can claim with confidence at this scale. We test ten hypotheses, grouped into four themes. I will walk each theme at a high level; the results slides take them one at a time.
 >
-> **H1** -- Colocating all pods on a single node maximizes resource contention and produces the worst resilience scores. All services compete for shared CPU, memory, disk, and network on one machine. This is the prediction from Mars (2011) and Delimitrou (2014) on contention-aware co-scheduling.
+> **Theme 1 -- Instrument design (H1 through H3).** These hypotheses justify ChaosProbe's measurement architecture from first principles.
 >
-> **H2** -- Spreading pods evenly across nodes minimizes per-node contention and limits the blast radius of a fault, yielding the best resilience scores. This is the topology-spread argument from Medea (Garefalakis 2018) and Borg's anti-affinity defaults (Verma 2015).
+> **H1: Metrics carry disjoint information.** No single metric captures the full chaos response. Best-fit and spread tie on aggregate at 66.3, but they diverge on recovery time -- 1452 versus 1617 milliseconds -- and on during-chaos latency -- 100 versus 150 milliseconds. A single-metric framework would mis-classify them as equivalent.
 >
-> **H3** -- Recovery time predicts resilience. Faster pod recovery yields higher resilience scores, because shorter unavailability windows mean fewer probe checks fall inside the fault window. This is the intuition behind Dean and Barroso's "Tail at Scale" (2013) and the Basiri chaos-engineering principles.
+> **H2: Phase decomposition is necessary.** Pre-chaos baselines themselves vary by placement. The spread strategy has a homepage latency of 231 milliseconds before chaos starts; colocate sits at 78. That is a 3× gap with no fault injected at all. During-chaos absolute values are uninterpretable without phase-aware normalisation.
 >
-> The baseline run with a trivial pod-cpu-hog sits outside the hypothesis set -- it is a methodology control. A 100% baseline score validates the probes and scoring; any degradation would mean we cannot trust the measurement instrument.
+> **H3: Per-pod granularity reveals heterogeneity.** Cross-pod stddev within a single service is non-zero and placement-dependent. Aggregate cluster metrics hide this; ChaosProbe's per-pod sampling exposes it via the LatencyProber's `meanCrossNodeStddev_ms` field.
 >
-> We measure across four dimensions: recovery time, inter-service latency, resource utilization, and I/O throughput. Spoiler -- as you will see in the results, all three hypotheses are refuted, and the three refutations point at the same mechanism.
+> **Theme 2 -- Baseline and tail (H4 and H5).**
+>
+> **H4: Baseline predicts resilience.** Strategies with lower pre-chaos variance score higher under chaos. The resting-state fingerprint predicts the failure response before any fault is injected -- a result with real operational value, since operators can run the diagnostic without paying the cost of a chaos experiment.
+>
+> **H5: Mean masks tail.** p95 latency ranking across strategies differs from mean ranking. Tail percentiles concentrate placement effects -- this is exactly the warning from Dean and Barroso's *Tail at Scale*. Aggregate-mean reasoning would mislead operators about which strategies are at risk.
+>
+> **Theme 3 -- Mechanism (H6, H7, H8).** These hypotheses test the churn-vs-contention story directly with primary-source metrics.
+>
+> **H6: Cross-pod variance predicts leakage.** Pre-chaos cross-node stddev forecasts whether a strategy lands in the containment cluster -- with 3 to 17 percent conntrack flushing during chaos -- or the leakage cluster, with 30 to 49 percent.
+>
+> **H7: CPU throttling refutes the contention model.** Under pod-delete, colocate throttles less (0.89) than spread (1.52), the opposite of what Bubble-Up's contention prediction expects. Mars 2011 does not fit churn-based faults. This is a clean refutation of the contention model using the contention literature's own metric.
+>
+> **H8: SLO and conntrack signal leakage.** The Kubernetes Network Programming Latency SLO measures the churn mechanism directly. Conntrack flushing during chaos correlates one-to-one with the cluster split: spread loses 49 percent of pre-chaos entries, dependency-aware loses just 3 percent.
+>
+> **Theme 4 -- Recovery dynamics (H9 and H10).**
+>
+> **H9: Scheduling latency dominates recovery.** Recovery time decomposes into (deletion → scheduled) plus (scheduled → ready). Placement affects only the first term; the second is application-bound and approximately constant across strategies. This explains why aggregate recovery time is a poor predictor of resilience -- the placement-sensitive component is buried inside a larger placement-invariant one.
+>
+> **H10: Post-chaos asymmetry is a placement fingerprint.** Post-chaos metrics overshoot, undershoot, or stabilise differently per strategy. Redis throughput varies between 50 percent and 450 percent of pre-chaos values across strategies post-recovery. The pattern of asymmetry is itself a fingerprint of how each placement responds to fault recovery -- and most chaos work measures only during-fault impact, missing this entirely.
+>
+> All ten hypotheses are testable from data ChaosProbe already collects. The baseline run -- a trivial pod-cpu-hog under default scheduling -- sits outside the hypothesis set as a methodology control: a 100 percent score with zero variance validates the probes and scoring before any of these claims can be evaluated.
 
 ---
 
