@@ -264,6 +264,7 @@ from chaosprobe.commands.doctor_cmd import doctor  # noqa: E402
 from chaosprobe.commands.export_cmd import export  # noqa: E402
 from chaosprobe.commands.graph_cmd import graph  # noqa: E402
 from chaosprobe.commands.init_cmd import init  # noqa: E402
+from chaosprobe.commands.inspect_cmd import inspect  # noqa: E402
 from chaosprobe.commands.placement_cmd import placement  # noqa: E402
 from chaosprobe.commands.power_cmd import power  # noqa: E402
 from chaosprobe.commands.probe_cmd import probe  # noqa: E402
@@ -281,6 +282,7 @@ main.add_command(doctor)
 main.add_command(export)
 main.add_command(graph)
 main.add_command(init)
+main.add_command(inspect)
 main.add_command(placement)
 main.add_command(power)
 main.add_command(probe)
