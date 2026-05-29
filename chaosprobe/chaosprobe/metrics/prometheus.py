@@ -56,6 +56,58 @@ DEFAULT_QUERIES: Dict[str, str] = {
         'sum(rate(container_network_receive_bytes_total{{namespace="{namespace}",'
         'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
     ),
+    # ── PSI (Pressure Stall Information) — cgroup-v2 only ──────────────
+    # PSI measures *how much real time the workload spent stalled* waiting
+    # for a resource, independent of whether a cgroup limit is set.  This
+    # is a cleaner contention signal than `cpu_throttling` (which only
+    # fires when the cgroup CFS quota is hit) — PSI fires under any kind
+    # of contention pressure.  Used together with cpu_throttling to test
+    # H7 ("CPU throttling refutes the contention model"): if both PSI and
+    # throttling agree under pod-delete, the contention story is doubly
+    # refuted.
+    #
+    # `some` variant counts time when at least one task in the cgroup is
+    # waiting; `full` (not collected here) counts time when *every* task
+    # is waiting — too restrictive for our per-pod analysis.
+    #
+    # Requires cgroup-v2 + a node-exporter / cAdvisor build that exposes
+    # `container_pressure_*_waiting_seconds_total`.  Missing on cgroup-v1
+    # hosts; existing graceful-missing-metric path covers it.
+    "cpu_pressure_some": (
+        "sum(rate(container_pressure_cpu_waiting_seconds_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod, container)"
+    ),
+    "memory_pressure_some": (
+        "sum(rate(container_pressure_memory_waiting_seconds_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod, container)"
+    ),
+    "io_pressure_some": (
+        "sum(rate(container_pressure_io_waiting_seconds_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod, container)"
+    ),
+    # ── Per-pod network — moves the conntrack-mechanism story from
+    # per-node to per-pod attribution.  The existing
+    # `conntrack_entries_per_node` and `tcp_retransmit_rate_per_node`
+    # tell us *how much* churn each node sees; these tell us *which
+    # pods* are creating it.
+    "tcp_sockets_per_pod": (
+        "sum(container_network_tcp_usage_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}})'
+        " by (pod)"
+    ),
+    "network_transmit_bytes": (
+        "sum(rate(container_network_transmit_bytes_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod)"
+    ),
+    "network_packets": (
+        "sum(rate(container_network_receive_packets_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod)"
+    ),
     # ── Churn-mechanism metrics (cluster-wide) ─────────────────────────
     # These directly measure the reconvergence behaviour the thesis
     # identifies as the dominant resilience-degrading mechanism under

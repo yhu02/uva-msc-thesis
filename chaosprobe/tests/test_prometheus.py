@@ -524,6 +524,12 @@ NAMESPACE_SCOPED_QUERIES = {
     "cpu_throttling",
     "memory_usage",
     "network_receive_bytes",
+    "cpu_pressure_some",
+    "memory_pressure_some",
+    "io_pressure_some",
+    "tcp_sockets_per_pod",
+    "network_transmit_bytes",
+    "network_packets",
 }
 CLUSTER_WIDE_QUERIES = {
     "kubeproxy_network_programming_p99",
@@ -682,3 +688,46 @@ class TestDefaultQueries:
             formatted = tpl.format(namespace="test-ns")
             assert "{{" not in formatted, f"{label} has unescaped double-braces"
             assert "}}" not in formatted, f"{label} has unescaped double-braces"
+
+    def test_psi_queries_present(self):
+        """PSI (Pressure Stall Information) queries are part of the default
+        set so H7's contention refutation has a cleaner signal than
+        cpu_throttling alone."""
+        for label in ("cpu_pressure_some", "memory_pressure_some", "io_pressure_some"):
+            assert label in DEFAULT_QUERIES, f"{label} missing from DEFAULT_QUERIES"
+
+    def test_psi_queries_aggregate_by_pod_and_container(self):
+        """PSI is a per-cgroup signal; aggregating `by (pod, container)`
+        preserves the dimension needed to distinguish app-container from
+        sidecar stalls."""
+        for label in ("cpu_pressure_some", "memory_pressure_some", "io_pressure_some"):
+            tpl = DEFAULT_QUERIES[label]
+            assert "by (pod, container)" in tpl, f"{label} should be aggregated per container"
+
+    def test_per_pod_network_queries_present(self):
+        """Per-pod network queries move the conntrack-mechanism story from
+        per-node to per-pod attribution."""
+        for label in ("tcp_sockets_per_pod", "network_transmit_bytes", "network_packets"):
+            assert label in DEFAULT_QUERIES, f"{label} missing from DEFAULT_QUERIES"
+
+    def test_contention_rate_queries_use_rate_not_gauge(self):
+        """PSI counters and the byte-rate queries must use `rate(...)` over
+        the counter — otherwise the value over the chaos window is just
+        the latest counter sample, which is meaningless."""
+        for label in (
+            "cpu_pressure_some",
+            "memory_pressure_some",
+            "io_pressure_some",
+            "network_transmit_bytes",
+            "network_packets",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert "rate(" in tpl, f"{label} must use rate()"
+
+    def test_tcp_sockets_is_a_gauge(self):
+        """`container_network_tcp_usage_total` is exposed as a gauge of
+        currently-open sockets — wrapping it in rate() would be wrong.
+        Pin the gauge shape so a future edit can't silently change it."""
+        tpl = DEFAULT_QUERIES["tcp_sockets_per_pod"]
+        assert "rate(" not in tpl
+        assert "histogram_quantile" not in tpl
