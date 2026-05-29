@@ -7,6 +7,7 @@ from chaosprobe.orchestrator.readiness import shell_escape
 from chaosprobe.orchestrator.strategy_runner import (
     _PROBE_BUDGET_CAP,
     _build_iteration_routes,
+    _build_route_view_for_iteration,
     _generate_east_west_routes,
     _is_non_http_target,
     _snapshot_cluster_state,
@@ -691,3 +692,115 @@ class TestBuildIterationRoutes:
         # Every scenario probe survives; no east-west snuck in
         assert len(routes) == _PROBE_BUDGET_CAP + 3
         assert all(r[0] == "frontend" for r in routes)
+
+
+class TestBuildRouteViewForIteration:
+    """`_build_route_view_for_iteration` is the extraction-plus-dispatch
+    layer that turns iteration-level data (load_gen + recovery) into the
+    inputs that build_route_view expects.  Pins the contract so the
+    wiring in _run_single_iteration can't silently regress."""
+
+    def test_both_sources_present_dispatches_to_build_route_view(self):
+        load_gen = {
+            "stats": {
+                "endpoints": [
+                    {
+                        "name": "/",
+                        "requests": 100,
+                        "failures": 0,
+                        "avgResponseTime_ms": 50.0,
+                        "p95ResponseTime_ms": 120.0,
+                    }
+                ],
+            },
+        }
+        recovery = {
+            "latency": {
+                "phases": {
+                    "pre-chaos": {"routes": {"/": {"mean_ms": 48}}},
+                    "during-chaos": {"routes": {"/": {"mean_ms": 110}}},
+                    "post-chaos": {"routes": {"/": {"mean_ms": 60}}},
+                },
+            },
+        }
+        view = _build_route_view_for_iteration(load_gen, recovery)
+        assert len(view) == 1
+        entry = view[0]
+        assert entry["route"] == "/"
+        assert entry["locust"] is not None
+        assert entry["latencyProber"]["pre-chaos"]["mean_ms"] == 48
+
+    def test_load_gen_missing_yields_locust_none(self):
+        recovery = {
+            "latency": {
+                "phases": {
+                    "pre-chaos": {"routes": {"/": {"mean_ms": 50}}},
+                    "during-chaos": {"routes": {}},
+                    "post-chaos": {"routes": {}},
+                },
+            },
+        }
+        view = _build_route_view_for_iteration(None, recovery)
+        assert len(view) == 1
+        assert view[0]["locust"] is None
+
+    def test_recovery_missing_yields_latency_none(self):
+        load_gen = {
+            "stats": {
+                "endpoints": [
+                    {
+                        "name": "/",
+                        "requests": 1,
+                        "failures": 0,
+                        "avgResponseTime_ms": 1,
+                        "p95ResponseTime_ms": 1,
+                    }
+                ],
+            },
+        }
+        view = _build_route_view_for_iteration(load_gen, None)
+        assert len(view) == 1
+        assert view[0]["latencyProber"] is None
+
+    def test_recovery_without_latency_key_yields_latency_none(self):
+        """A recovery dict without the `latency` key (e.g. a probe-only
+        iteration where the LatencyProber was disabled) maps to None,
+        not to an empty-phases dict — distinguishes 'prober off' from
+        'prober ran with no samples'."""
+        load_gen = {
+            "stats": {
+                "endpoints": [
+                    {
+                        "name": "/",
+                        "requests": 1,
+                        "failures": 0,
+                        "avgResponseTime_ms": 1,
+                        "p95ResponseTime_ms": 1,
+                    }
+                ],
+            },
+        }
+        view = _build_route_view_for_iteration(load_gen, {"recovery": {}})
+        assert view[0]["latencyProber"] is None
+
+    def test_recovery_with_latency_but_no_phases_yields_latency_none(self):
+        load_gen = {
+            "stats": {
+                "endpoints": [
+                    {
+                        "name": "/",
+                        "requests": 1,
+                        "failures": 0,
+                        "avgResponseTime_ms": 1,
+                        "p95ResponseTime_ms": 1,
+                    }
+                ],
+            },
+        }
+        view = _build_route_view_for_iteration(load_gen, {"latency": {}})
+        assert view[0]["latencyProber"] is None
+
+    def test_both_missing_returns_empty(self):
+        assert _build_route_view_for_iteration(None, None) == []
+        assert _build_route_view_for_iteration(None, {}) == []
+        assert _build_route_view_for_iteration({}, None) == []
