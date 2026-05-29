@@ -341,3 +341,100 @@ class TestAllMetricsFlag:
         assert result.exit_code == 0
         assert "meanRecovery_ms" in result.output
         assert "resilienceScore" in result.output
+
+
+def _make_split_summary(tmp_path: Path) -> Path:
+    """summary.json with d2s + s2r split metrics per iteration."""
+    payload = {
+        "strategies": {
+            "colocate": {
+                "iterations": [
+                    {
+                        "metrics": {
+                            "recovery": {
+                                "summary": {
+                                    "meanDeletionToScheduled_ms": 500,
+                                    "meanScheduledToReady_ms": 900,
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "metrics": {
+                            "recovery": {
+                                "summary": {
+                                    "meanDeletionToScheduled_ms": 700,
+                                    "meanScheduledToReady_ms": 1100,
+                                }
+                            }
+                        }
+                    },
+                ]
+            },
+            "spread": {
+                "iterations": [
+                    {
+                        "metrics": {
+                            "recovery": {
+                                "summary": {
+                                    "meanDeletionToScheduled_ms": 200,
+                                    "meanScheduledToReady_ms": 600,
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "metrics": {
+                            "recovery": {
+                                "summary": {
+                                    "meanDeletionToScheduled_ms": 250,
+                                    "meanScheduledToReady_ms": 650,
+                                }
+                            }
+                        }
+                    },
+                ]
+            },
+        }
+    }
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+class TestSplitMetrics:
+    def test_d2s_metric_emits_correct_label(self, tmp_path):
+        summary = _make_split_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--metric", "d2s", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["metric"] == "meanDeletionToScheduled_ms"
+        assert set(payload["ci"].keys()) == {"colocate", "spread"}
+
+    def test_s2r_metric_emits_correct_label(self, tmp_path):
+        summary = _make_split_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--metric", "s2r", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["metric"] == "meanScheduledToReady_ms"
+
+    def test_all_metrics_includes_split_when_present(self, tmp_path):
+        """A summary with both split metrics → --all-metrics emits both
+        split blocks; the other two are silently skipped."""
+        summary = _make_split_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--all-metrics", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        present = set(payload["metrics"].keys())
+        assert "meanDeletionToScheduled_ms" in present
+        assert "meanScheduledToReady_ms" in present
+
+    def test_d2s_against_summary_without_d2s_errors_with_correct_label(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--metric", "d2s"])
+        assert result.exit_code == 1
+        assert "meanDeletionToScheduled_ms" in result.output

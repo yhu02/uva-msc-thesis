@@ -20,6 +20,19 @@ from chaosprobe.metrics.statistics import bootstrap_ci, pairwise_comparisons
 _METRIC_SPECS: Dict[str, Tuple[str, str]] = {
     "resilience": ("resilienceScore", "resilienceScore"),
     "recovery": ("metrics.recovery.summary.meanRecovery_ms", "meanRecovery_ms"),
+    # The recovery split — d2s is the scheduler-decision leg, s2r is the
+    # kubelet+CRI bring-up leg.  Exposing them as first-class metric keys
+    # lets a defender run the same bootstrap + Holm-corrected pairwise
+    # pipeline directly against the mechanism breakdown instead of only
+    # the combined recovery total.
+    "d2s": (
+        "metrics.recovery.summary.meanDeletionToScheduled_ms",
+        "meanDeletionToScheduled_ms",
+    ),
+    "s2r": (
+        "metrics.recovery.summary.meanScheduledToReady_ms",
+        "meanScheduledToReady_ms",
+    ),
 }
 
 
