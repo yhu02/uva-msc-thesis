@@ -65,6 +65,13 @@ class LoadStats:
     error_rate: float = 0.0
     duration_seconds: float = 0.0
     endpoints: List[Dict[str, Any]] = field(default_factory=list)
+    # Per-failure-class counts parsed from Locust's stats_failures.csv:
+    # one entry per (method, name, error message) tuple.  Aggregated
+    # error rate alone hides whether a strategy's load drift is from
+    # timeouts vs connection refused vs HTTP 5xx — each implies a
+    # different mechanism (network programming SLO breach, kernel
+    # conntrack churn, app-side circuit breaker).
+    failure_classes: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -81,6 +88,7 @@ class LoadStats:
             "errorRate": self.error_rate,
             "duration_seconds": self.duration_seconds,
             "endpoints": self.endpoints,
+            "failureClasses": self.failure_classes,
         }
 
 
@@ -289,6 +297,14 @@ class LocustRunner:
         duration = (self._end_time or time.time()) - (self._start_time or time.time())
         stats.duration_seconds = round(duration, 1)
 
+        # Parse failures CSV (Locust generates stats_failures.csv) — best
+        # effort, leave the list empty if the file isn't there (no
+        # failures during the run, or an older Locust that doesn't
+        # emit it).
+        failures_file = os.path.join(self._stats_dir, "stats_failures.csv")
+        if os.path.exists(failures_file):
+            stats.failure_classes = self._parse_failures_csv(failures_file)
+
         # Parse stats CSV (Locust generates stats_stats.csv)
         stats_file = os.path.join(self._stats_dir, "stats_stats.csv")
         if os.path.exists(stats_file):
@@ -333,6 +349,36 @@ class LocustRunner:
 
         stats.endpoints = endpoints
         return stats
+
+    def _parse_failures_csv(self, filepath: str) -> List[Dict[str, Any]]:
+        """Parse Locust's failure CSV: one row per (method, name, error).
+
+        Columns: Method, Name, Error, Occurrences.  Missing or malformed
+        Occurrences values default to 0 so a single bad row doesn't drop
+        the rest.
+        """
+        import csv
+
+        out: List[Dict[str, Any]] = []
+        try:
+            with open(filepath, newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        occurrences = int(row.get("Occurrences", 0))
+                    except (TypeError, ValueError):
+                        occurrences = 0
+                    out.append(
+                        {
+                            "method": row.get("Method", ""),
+                            "name": row.get("Name", ""),
+                            "error": row.get("Error", ""),
+                            "occurrences": occurrences,
+                        }
+                    )
+        except OSError:
+            return []
+        return out
 
     def cleanup(self) -> None:
         """Remove temporary directories created during load tests."""
