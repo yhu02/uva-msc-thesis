@@ -13,8 +13,10 @@ import urllib.error
 import urllib.request
 from typing import Any, Optional
 
+from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 
-class _ChaosCenterAPIMixin:
+
+class _ChaosCenterAPIMixin(_LitmusSetupBase):
     """ChaosCenter API methods mixed into LitmusSetup."""
 
     CHAOSCENTER_AUTH_PORT = 9003

@@ -6,8 +6,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 
-class _VagrantMixin:
+
+class _VagrantMixin(_LitmusSetupBase):
     """Vagrant and libvirt methods mixed into LitmusSetup."""
 
     def _check_vagrant(self) -> bool:
