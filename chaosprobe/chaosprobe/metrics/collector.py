@@ -243,10 +243,17 @@ class MetricsCollector:
         }
 
     def _collect_node_info(self, node_name: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Collect resource info for a node.
+        """Collect resource info and pressure conditions for a node.
 
         Args:
             node_name: Name of the node to query, or None to skip.
+
+        Returns:
+            ``None`` if ``node_name`` is falsy or the K8s API call fails.
+            Otherwise a dict with ``allocatable``, ``capacity``, and
+            ``conditions`` keys.  ``conditions`` may be empty (``{}``) if
+            the node returned no condition data — surfaced explicitly so
+            callers can distinguish "no pressure" from "missing data".
         """
         if not node_name:
             return None
@@ -256,8 +263,13 @@ class MetricsCollector:
         except ApiException:
             return None
 
-        alloc = node.status.allocatable or {}
-        capacity = node.status.capacity or {}
+        # Freshly-registered nodes can briefly have ``status=None`` until
+        # the kubelet posts its first status update.  Defend against that
+        # so a momentary registration race doesn't crash the collector.
+        status = getattr(node, "status", None)
+        alloc = (getattr(status, "allocatable", None) if status is not None else None) or {}
+        capacity = (getattr(status, "capacity", None) if status is not None else None) or {}
+        conditions = self._extract_node_conditions(node)
 
         return {
             "nodeName": node_name,
@@ -269,7 +281,45 @@ class MetricsCollector:
                 "cpu": capacity.get("cpu", "0"),
                 "memory": capacity.get("memory", "0"),
             },
+            "conditions": conditions,
         }
+
+    @staticmethod
+    def _extract_node_conditions(node: Any) -> Dict[str, Dict[str, Any]]:
+        """Build a `{condition_type: {status, reason, message, lastTransition}}`
+        map from a K8s node object.
+
+        Always emits every condition type the node reports — both the
+        standard kubelet pressure flags and any custom ones (e.g. from
+        node-problem-detector).  Returns an empty dict if the node
+        reports no conditions or the status field is missing entirely.
+        """
+        status = getattr(node, "status", None)
+        if status is None:
+            return {}
+        raw = getattr(status, "conditions", None) or []
+        out: Dict[str, Dict[str, Any]] = {}
+        for cond in raw:
+            cond_type = getattr(cond, "type", None)
+            if not cond_type:
+                continue
+            entry: Dict[str, Any] = {
+                "status": getattr(cond, "status", None),
+            }
+            reason = getattr(cond, "reason", None)
+            message = getattr(cond, "message", None)
+            transition = getattr(cond, "last_transition_time", None)
+            if reason:
+                entry["reason"] = reason
+            if message:
+                entry["message"] = message
+            if transition is not None:
+                # Datetime objects expose .isoformat(); strings pass through.
+                entry["lastTransition"] = (
+                    transition.isoformat() if hasattr(transition, "isoformat") else str(transition)
+                )
+            out[cond_type] = entry
+        return out
 
     def _collect_container_logs(
         self,

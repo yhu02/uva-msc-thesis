@@ -1,10 +1,38 @@
 """Tests for the MetricsCollector container log collection."""
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.metrics.collector import MetricsCollector
+
+
+def _make_node_condition(
+    type_: str,
+    status: str = "False",
+    reason: str = "",
+    message: str = "",
+    last_transition: object = None,
+):
+    """Build a fake kubernetes.client.V1NodeCondition-like object."""
+    cond = MagicMock()
+    cond.type = type_
+    cond.status = status
+    cond.reason = reason
+    cond.message = message
+    cond.last_transition_time = last_transition
+    return cond
+
+
+def _make_node(conditions=None, allocatable=None, capacity=None):
+    """Build a fake kubernetes.client.V1Node-like object."""
+    node = MagicMock()
+    node.status = MagicMock()
+    node.status.conditions = conditions
+    node.status.allocatable = allocatable or {"cpu": "2", "memory": "4Gi"}
+    node.status.capacity = capacity or {"cpu": "2", "memory": "4Gi"}
+    return node
 
 
 def _make_collector():
@@ -177,3 +205,166 @@ class TestCollectIntegration:
 
         assert "containerLogs" in result
         assert "config" in result["containerLogs"]
+
+
+class TestCollectNodeInfoConditions:
+    """`_collect_node_info` surfaces node pressure conditions for the
+    placement-vs-pressure analysis path of the thesis."""
+
+    def test_returns_none_when_node_name_missing(self):
+        collector, _ = _make_collector()
+        assert collector._collect_node_info(None) is None
+        assert collector._collect_node_info("") is None
+
+    def test_returns_none_on_api_error(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        mock_core.read_node.side_effect = ApiException(status=404)
+        assert collector._collect_node_info("worker-1") is None
+
+    def test_healthy_node_emits_all_false_pressure_flags(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        ts = datetime(2026, 5, 28, 12, 0, 0, tzinfo=timezone.utc)
+        node = _make_node(
+            conditions=[
+                _make_node_condition("Ready", "True", "KubeletReady", "ready", ts),
+                _make_node_condition("MemoryPressure", "False", "KubeletHasSufficientMemory"),
+                _make_node_condition("DiskPressure", "False", "KubeletHasNoDiskPressure"),
+                _make_node_condition("PIDPressure", "False", "KubeletHasSufficientPID"),
+                _make_node_condition("NetworkUnavailable", "False"),
+            ],
+        )
+        mock_core.read_node.return_value = node
+
+        info = collector._collect_node_info("worker-1")
+
+        assert info is not None
+        assert info["nodeName"] == "worker-1"
+        assert info["conditions"]["Ready"]["status"] == "True"
+        assert info["conditions"]["Ready"]["reason"] == "KubeletReady"
+        assert info["conditions"]["Ready"]["message"] == "ready"
+        assert info["conditions"]["Ready"]["lastTransition"] == ts.isoformat()
+        for pressure in ("MemoryPressure", "DiskPressure", "PIDPressure", "NetworkUnavailable"):
+            assert info["conditions"][pressure]["status"] == "False"
+
+    def test_single_pressure_condition_surfaces(self):
+        """A node under MemoryPressure has its condition flag flipped to True
+        with the kubelet's reason captured, so placement-driven contention
+        can be distinguished from healthy nodes."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        node = _make_node(
+            conditions=[
+                _make_node_condition("Ready", "True"),
+                _make_node_condition(
+                    "MemoryPressure",
+                    "True",
+                    reason="KubeletHasInsufficientMemory",
+                    message="node has insufficient memory available",
+                ),
+            ],
+        )
+        mock_core.read_node.return_value = node
+
+        info = collector._collect_node_info("worker-2")
+
+        assert info["conditions"]["MemoryPressure"]["status"] == "True"
+        assert info["conditions"]["MemoryPressure"]["reason"] == "KubeletHasInsufficientMemory"
+        assert "insufficient memory" in info["conditions"]["MemoryPressure"]["message"]
+        # Conditions not reported by the node are absent from the dict so
+        # consumers can distinguish "False" (kubelet says fine) from absent
+        # (kubelet didn't report it).
+        assert "DiskPressure" not in info["conditions"]
+
+    def test_node_with_no_conditions_yields_empty_dict(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        node = _make_node(conditions=None)
+        mock_core.read_node.return_value = node
+
+        info = collector._collect_node_info("worker-3")
+
+        # Explicit empty dict (not absent / None) so callers can tell
+        # "node returned no condition data" from "field doesn't exist"
+        assert info["conditions"] == {}
+
+    def test_node_with_no_status_yields_empty_dict(self):
+        """When the K8s client returns a node object whose status field is
+        entirely absent (rare, but real on freshly-registered nodes), the
+        condition extraction returns `{}` without raising."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        node = MagicMock()
+        node.status = None  # the edge case under test
+        mock_core.read_node.return_value = node
+
+        info = collector._collect_node_info("worker-4")
+
+        assert info is not None
+        assert info["conditions"] == {}
+
+    def test_custom_condition_type_passes_through(self):
+        """node-problem-detector and similar agents add custom condition
+        types; surface them unchanged so any post-hoc analysis can pick
+        them up."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        node = _make_node(
+            conditions=[
+                _make_node_condition("Ready", "True"),
+                _make_node_condition(
+                    "KernelDeadlock",
+                    status="True",
+                    reason="DockerHung",
+                    message="task X blocked for more than 120 seconds",
+                ),
+            ],
+        )
+        mock_core.read_node.return_value = node
+
+        info = collector._collect_node_info("worker-5")
+
+        assert info["conditions"]["KernelDeadlock"]["status"] == "True"
+        assert info["conditions"]["KernelDeadlock"]["reason"] == "DockerHung"
+
+    def test_condition_without_type_is_skipped(self):
+        """Malformed condition entries (defensive: type is required by the
+        K8s API but we shouldn't crash if a mock returns one without it)."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        bad = MagicMock()
+        bad.type = None  # malformed
+        bad.status = "True"
+        bad.reason = ""
+        bad.message = ""
+        bad.last_transition_time = None
+        node = _make_node(
+            conditions=[
+                bad,
+                _make_node_condition("Ready", "True"),
+            ],
+        )
+        mock_core.read_node.return_value = node
+
+        info = collector._collect_node_info("worker-6")
+
+        assert "Ready" in info["conditions"]
+        assert len(info["conditions"]) == 1  # the malformed one was dropped
+
+    def test_lasttransition_str_passes_through_unchanged(self):
+        """If a mock returns lastTransition as an already-formatted string
+        (instead of a datetime), the extractor passes it through with
+        str() coercion rather than calling .isoformat()."""
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        node = _make_node(
+            conditions=[
+                _make_node_condition("Ready", "True", last_transition="2026-05-28T12:00:00Z"),
+            ],
+        )
+        mock_core.read_node.return_value = node
+
+        info = collector._collect_node_info("worker-7")
+
+        assert info["conditions"]["Ready"]["lastTransition"] == "2026-05-28T12:00:00Z"
