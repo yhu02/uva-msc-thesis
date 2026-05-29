@@ -1000,6 +1000,11 @@ def _run_single_iteration(
         "podPlacements": iter_pod_placements,
         "preIterationSnapshot": pre_iteration_snapshot,
         "postIterationSnapshot": post_iteration_snapshot,
+        # End-to-end wall-clock of the experiment window (chaos start →
+        # chaos end + post-chaos settle).  Lets analysis correlate
+        # iteration latency with strategy behaviour — e.g. did the
+        # cluster get slower between iterations 1 and 5 of `colocate`?
+        "experimentDuration_s": round(experiment_end - experiment_start, 1),
     }
 
     # Surface Locust load-generation stats at the iteration level so the
