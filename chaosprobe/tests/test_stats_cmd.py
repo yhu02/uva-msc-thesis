@@ -403,3 +403,80 @@ class TestCSVOutput:
         assert contents.startswith("section,metric,strategy")
         assert "ci" in contents
         assert "pairwise" in contents
+
+
+class TestPairFilter:
+    def test_pair_restricts_ci_to_named_strategies(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {
+                "colocate": [70, 75, 80],
+                "spread": [40, 45, 50],
+                "adversarial": [30, 35, 40],
+                "random": [50, 55, 60],
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--pair", "colocate,spread", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert set(payload["ci"].keys()) == {"colocate", "spread"}
+        assert len(payload["pairwise"]) == 1
+        assert {payload["pairwise"][0]["a"], payload["pairwise"][0]["b"]} == {
+            "colocate",
+            "spread",
+        }
+
+    def test_pair_with_only_one_known_strategy_still_emits_ci(self, tmp_path):
+        """Only one of the named strategies actually present in the
+        summary → analyses dict still non-empty, exit 0, CI block has
+        one strategy and no pairwise."""
+        summary = _make_summary(tmp_path, {"colocate": [70, 75, 80]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--pair", "colocate,spread"])
+        assert result.exit_code == 0
+        assert "colocate" in result.output
+        assert "(no pairs" in result.output
+
+    def test_pair_with_no_matching_strategies_errors_out(self, tmp_path):
+        summary = _make_summary(tmp_path, {"colocate": [70, 75, 80]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--pair", "spread,adversarial"])
+        assert result.exit_code == 1
+        assert "--pair" in result.output
+
+    def test_pair_with_single_name_rejected(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2, 3], "b": [4, 5, 6]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--pair", "a"])
+        assert result.exit_code == 2
+        assert "at least two" in result.output.lower()
+
+    def test_pair_whitespace_tolerated(self, tmp_path):
+        summary = _make_summary(tmp_path, {"colocate": [70, 75], "spread": [40, 45], "x": [10, 20]})
+        runner = CliRunner()
+        result = runner.invoke(
+            stats, ["-s", str(summary), "--pair", " colocate , spread ", "--json"]
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert set(payload["ci"].keys()) == {"colocate", "spread"}
+
+    def test_pair_filters_all_metrics_mode_too(self, tmp_path):
+        summary = _make_both_metrics_summary(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            stats,
+            [
+                "-s",
+                str(summary),
+                "--all-metrics",
+                "--pair",
+                "colocate,spread",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        for block in payload["metrics"].values():
+            assert set(block["ci"].keys()) <= {"colocate", "spread"}
