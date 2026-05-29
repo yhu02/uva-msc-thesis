@@ -6,6 +6,7 @@ import click
 
 from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.preflight import check_pods_ready
+from chaosprobe.provisioner.components import get_registry_address
 from chaosprobe.provisioner.setup import LitmusSetup
 
 
@@ -26,7 +27,12 @@ def _pf_ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> boo
     is_flag=True,
     help="Skip ChaosCenter dashboard installation",
 )
-def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
+@click.option(
+    "--skip-registry",
+    is_flag=True,
+    help="Skip the in-cluster probe-image registry installation",
+)
+def init(namespace: str, skip_litmus: bool, skip_dashboard: bool, skip_registry: bool):
     """Initialize ChaosProbe and install all infrastructure on existing cluster.
 
     This command sets up all prerequisites for running chaos experiments:
@@ -196,6 +202,27 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool):
                 click.echo(f"  {name}: {status}")
             except Exception as e:
                 click.echo(f"  WARNING: Failed to install {label}: {e}", err=True)
+
+    if not skip_registry:
+        click.echo("\nInstalling in-cluster registry for probe images...")
+        try:
+            if setup.is_registry_installed():
+                click.echo("  registry: already installed")
+            elif setup.install_registry(wait=True):
+                click.echo("  registry: installed")
+            else:
+                click.echo("  registry: installed but not yet ready", err=True)
+            registry_addr = get_registry_address(setup.core_api)
+            if registry_addr:
+                click.echo(f"  registry address: {registry_addr}")
+                click.echo(
+                    "  One-time node setup required (init can't do this — it's node-level):\n"
+                    "  trust this insecure registry on the build host (docker) and every node\n"
+                    "  (containerd). ChaosProbe then pushes/pulls probe images here\n"
+                    "  automatically — see chaosprobe/manifests/README.md."
+                )
+        except Exception as e:
+            click.echo(f"  WARNING: registry install failed: {e}", err=True)
 
     click.echo("\nChaosProbe initialized successfully!")
 

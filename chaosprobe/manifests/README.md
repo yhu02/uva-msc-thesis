@@ -1,0 +1,86 @@
+# In-cluster registry for ChaosProbe probe images
+
+ChaosProbe's Rust `cmdProbe` images have to live in a registry the cluster can
+`docker pull` from. Instead of depending on an external registry (GHCR auth +
+package visibility), `chaosprobe init` installs a small private `registry:2` on
+the control-plane node and `chaosprobe run` pushes/pulls probe images there
+automatically.
+
+`init` deploys the registry and prints its address; `run` discovers it and uses
+it with no credentials (no `docker login`). The **one thing neither can do** is
+mark the registry as *trusted* on the build host and the nodes — that's
+node-level config outside the Kubernetes API, so you do it once (steps 2–3).
+
+> ⚠️ Always target the thesis kubeconfig. The machine's *default* `KUBECONFIG`
+> may point at an unrelated cluster. In every shell:
+> ```bash
+> export KUBECONFIG=~/.kube/config-chaosprobe
+> kubectl config current-context   # confirm it's the thesis cluster
+> ```
+
+## 1. Install the registry
+
+```bash
+export KUBECONFIG=~/.kube/config-chaosprobe
+chaosprobe init                 # installs + wires the registry (use --skip-registry to opt out)
+```
+`init` prints the registry address, e.g. `192.168.56.11:30500` (control-plane
+node IP + NodePort). To install/inspect it without full init:
+`kubectl apply -f manifests/registry.yaml`. Sanity check (should print `{}`):
+```bash
+curl http://<registry-address>/v2/
+```
+
+## 2. Trust it on the build host (Docker) — so `docker push` over HTTP works
+
+Without this, push fails with *"http: server gave HTTP response to HTTPS client."*
+
+- **Native dockerd:** add to `/etc/docker/daemon.json`, then `sudo systemctl restart docker`:
+  ```json
+  { "insecure-registries": ["<registry-address>"] }
+  ```
+- **Docker Desktop (WSL):** Settings → Docker Engine → add the same
+  `insecure-registries` array → Apply & Restart.
+
+## 3. Trust it on every node (containerd) — so the kubelet can pull over HTTP
+
+containerd verifies TLS by default, so each node needs the registry marked
+insecure. containerd must have `config_path = "/etc/containerd/certs.d"`
+(Kubespray sets this). Then on each node (`chaosprobe cluster vagrant ssh <node>`):
+```bash
+sudo mkdir -p /etc/containerd/certs.d/<registry-address>
+sudo tee /etc/containerd/certs.d/<registry-address>/hosts.toml >/dev/null <<EOF
+server = "http://<registry-address>"
+[host."http://<registry-address>"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
+sudo systemctl restart containerd
+```
+Reproducible alternative (Kubespray) — put this in inventory `group_vars` and
+re-run the containerd role so it survives rebuilds:
+```yaml
+containerd_insecure_registries:
+  "<registry-address>": "http://<registry-address>"
+```
+
+## 4. Run
+
+```bash
+export KUBECONFIG=~/.kube/config-chaosprobe
+uv run chaosprobe run -i 1 --strategies baseline,default,colocate,spread
+```
+`run` resolves the registry as: `CHAOSPROBE_REGISTRY` env override → the
+in-cluster registry → the GHCR default. With the in-cluster registry installed
+and no `CHAOSPROBE_REGISTRY_USER`/`PASSWORD` set, it pushes locally and skips
+`docker login`. Verify the push landed:
+```bash
+curl http://<registry-address>/v2/_catalog
+```
+
+## Troubleshooting
+
+- **`docker push` → "HTTP response to HTTPS client"** → step 2 not done (or daemon not restarted).
+- **Pods `ImagePullBackOff` with the same HTTP/HTTPS error** → step 3 not done on the node that scheduled the probe pod.
+- **`docker login ... denied`** → leftover `CHAOSPROBE_REGISTRY_USER`+`PASSWORD` in `.env`; unset them so the in-cluster registry path is used.
+- **`run` still pushes to ghcr.io** → registry not installed/ready (`kubectl -n registry get pods`) or `CHAOSPROBE_REGISTRY` is set to something else.

@@ -7,7 +7,7 @@ A framework for running LitmusChaos experiments against Kubernetes deployments, 
 ChaosProbe enables automated chaos testing with an AI feedback loop:
 
 1. **Cluster Deployment**: Deploy Kubernetes clusters via Vagrant (local) or Kubespray (production)
-2. **Auto-Setup**: Installs Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, and Neo4j
+2. **Auto-Setup**: Installs Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, Neo4j, and an in-cluster image registry for probe images
 3. **Deploy Manifests**: Applies standard K8s manifests to the cluster
 4. **Run Experiments**: Executes ChaosEngine experiments via the ChaosCenter GraphQL API across placement strategies
 5. **Collect to Neo4j**: Stores results, metrics, anomaly labels, and time-series in a Neo4j graph database
@@ -39,7 +39,7 @@ ChaosProbe loads a `.env` file automatically (via python-dotenv). Create a `.env
 | `NEO4J_USER` | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | `chaosprobe` | Neo4j password |
 | `KUBECONFIG` | `~/.kube/config` | Path to kubeconfig |
-| `CHAOSPROBE_REGISTRY` | `ghcr.io` | Container registry host for Rust probe images |
+| `CHAOSPROBE_REGISTRY` | *(in-cluster registry, else `ghcr.io`)* | Override the registry host for Rust probe images. Unset, ChaosProbe uses the in-cluster registry from `chaosprobe init` if present, otherwise `ghcr.io` |
 | `CHAOSPROBE_REGISTRY_USER` | *(empty)* | Registry namespace / login user (e.g. `yhu02`) |
 
 ### Rust Probe Runtime Variables
@@ -339,6 +339,8 @@ uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 --strategy colocat
 ### Probe (Rust cmdProbes)
 
 Custom Rust probes are compiled to static Linux binaries, packaged into minimal (`scratch`) container images, and automatically injected into ChaosEngine `cmdProbe` specs at run time.
+
+`chaosprobe init` installs a private in-cluster registry on the control-plane node, and `chaosprobe run` builds + pushes probe images there automatically — no external registry (GHCR) login required. `run` resolves the push/pull registry as `CHAOSPROBE_REGISTRY` (env override) → the in-cluster registry → the `ghcr.io` default. The in-cluster registry serves plain HTTP, so a one-time per-node containerd / build-host docker "insecure registry" trust step is required — see [manifests/README.md](manifests/README.md). Use `chaosprobe init --skip-registry` to opt out (e.g. when using GHCR or an external registry via `CHAOSPROBE_REGISTRY`).
 
 ```bash
 # Scaffold a new probe (full Cargo project)
