@@ -976,6 +976,18 @@ def aggregate_iterations(
         )
         agg["medianRecoveryTime_ms"] = round(statistics.median(all_recovery_times), 1)
         agg["maxRecoveryTime_ms"] = max(all_max) if all_max else None
+        # Coefficient of variation = stddev / mean.  Decouples spread
+        # from scale: a strategy that always recovers in 1000±100 ms
+        # (CV=0.10) is steadier than one at 200±100 ms (CV=0.50) even
+        # though their stddevs are identical.  Pure within-strategy
+        # jitter signal — a defender pointing at a low-CV strategy can
+        # claim "predictable recovery", not just "fast on average".
+        if agg["meanRecoveryTime_ms"] and agg["meanRecoveryTime_ms"] > 0:
+            agg["recoveryTimeCV"] = round(
+                agg["stddevRecoveryTime_ms"] / agg["meanRecoveryTime_ms"], 3
+            )
+        else:
+            agg["recoveryTimeCV"] = None
         # Aggregate p95: use mean of per-iteration p95 values.
         # Each all_p95 element is already a p95 from that iteration;
         # averaging them gives a representative cross-iteration p95.
@@ -1014,9 +1026,12 @@ def aggregate_iterations(
                 all_s2r.append(v)
 
         if all_d2s:
-            agg["meanDeletionToScheduled_ms"] = round(statistics.mean(all_d2s), 1)
-            agg["stddevDeletionToScheduled_ms"] = (
-                round(statistics.stdev(all_d2s), 1) if len(all_d2s) > 1 else 0.0
+            mean_d2s = round(statistics.mean(all_d2s), 1)
+            stddev_d2s = round(statistics.stdev(all_d2s), 1) if len(all_d2s) > 1 else 0.0
+            agg["meanDeletionToScheduled_ms"] = mean_d2s
+            agg["stddevDeletionToScheduled_ms"] = stddev_d2s
+            agg["deletionToScheduledCV"] = (
+                round(stddev_d2s / mean_d2s, 3) if mean_d2s > 0 else None
             )
             d2s_ci = bootstrap_ci(all_d2s, statistic="mean")
             agg["meanDeletionToScheduled_ms_ci95"] = {
@@ -1026,9 +1041,12 @@ def aggregate_iterations(
                 "n_resamples": d2s_ci["n_resamples"],
             }
         if all_s2r:
-            agg["meanScheduledToReady_ms"] = round(statistics.mean(all_s2r), 1)
-            agg["stddevScheduledToReady_ms"] = (
-                round(statistics.stdev(all_s2r), 1) if len(all_s2r) > 1 else 0.0
+            mean_s2r = round(statistics.mean(all_s2r), 1)
+            stddev_s2r = round(statistics.stdev(all_s2r), 1) if len(all_s2r) > 1 else 0.0
+            agg["meanScheduledToReady_ms"] = mean_s2r
+            agg["stddevScheduledToReady_ms"] = stddev_s2r
+            agg["scheduledToReadyCV"] = (
+                round(stddev_s2r / mean_s2r, 3) if mean_s2r > 0 else None
             )
             s2r_ci = bootstrap_ci(all_s2r, statistic="mean")
             agg["meanScheduledToReady_ms_ci95"] = {
