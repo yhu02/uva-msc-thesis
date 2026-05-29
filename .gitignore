@@ -41,4 +41,5 @@ coverage.xml
 # Output files
 *.json
 !scenarios/**/*.json
+!chaosprobe/examples/**/*.json
 **/chaosprobe/results/**
