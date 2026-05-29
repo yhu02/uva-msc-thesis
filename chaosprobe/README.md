@@ -403,6 +403,10 @@ uv run black --check .      # Check formatting
 uv run black .              # Format code
 ```
 
+## Reproducing the thesis results
+
+Exact cluster spec, workload, fault matrix, and CLI invocations are in [docs/reproducing-thesis-results.md](docs/reproducing-thesis-results.md). For the underlying mechanism docs see [TECHNICAL.md](TECHNICAL.md); for cluster provisioning see [proxmox-setup.md](proxmox-setup.md).
+
 ## License
 
 MIT

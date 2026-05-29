@@ -210,7 +210,34 @@ Used internally by `aggregate_iterations` (CI for the mean score) and by `chaosp
 
 Orchestrates post-experiment data collection and merges with pre-collected watcher data.
 
-Output includes: `deploymentName`, `timeWindow`, `recovery`, `podStatus`, `eventTimeline`, `nodeInfo`, plus continuous prober data (latency, throughput, resources, prometheus).
+Output includes: `deploymentName`, `timeWindow`, `recovery`, `podStatus`, `eventTimeline`, `nodeInfo`, plus continuous prober data (`latency`, `redis`, `disk`, `resources`, `prometheus`). When Prometheus data is present, also attaches `utilization` (see `utilization.py` below).
+
+`podStatus.pods[].containers[]` carries `oomKillCount` (current + last-termination OOMKills); the pod-status object also exposes `totalOOMKills` summed across containers. `nodeInfo.conditions` includes `Ready` / `MemoryPressure` / `DiskPressure` / `PIDPressure` / `NetworkUnavailable` so pressure-driven evictions can be correlated with recovery latency.
+
+#### prometheus.py — ContinuousPrometheusProber
+
+**Class: `ContinuousPrometheusProber(namespace, prometheus_url=None, prometheus_urls=None, interval=10.0, queries=None)`**
+
+Queries one or more in-cluster Prometheus instances during the run. Auto-discovers `prometheus-server` services in the `prometheus` namespace; falls back to `kubectl port-forward` if direct service URLs are unreachable.
+
+`DEFAULT_QUERIES` covers six bundles:
+
+| Bundle | Labels |
+|---|---|
+| App-side | `pod_ready_count`, `cpu_usage`, `cpu_throttling` (by pod+container), `memory_usage`, `network_receive_bytes`, `network_transmit_bytes`, `network_packets`, `tcp_sockets_per_pod` |
+| PSI (cgroup-v2) | `cpu_pressure_some`, `memory_pressure_some`, `io_pressure_some` (by pod+container) |
+| Churn mechanism | `kubeproxy_network_programming_p99`, `kubeproxy_sync_proxy_rules_p99`, `coredns_request_duration_p99`, `coredns_request_count_per_sec`, `conntrack_entries_per_node`, `tcp_retransmit_rate_per_node` |
+| Extended churn | `endpointslice_changes_per_sec`, `kubelet_pleg_relist_duration_p99`, `kube_proxy_rules_synced_per_sec` |
+| Control plane | `scheduler_attempt_p99`, `scheduler_pending_pods`, `apiserver_request_p99`, `apiserver_inflight`, `etcd_wal_fsync_p99`, `etcd_backend_commit_p99` |
+| Calico / Felix | `felix_active_local_endpoints`, `felix_int_dataplane_apply_p99`, `felix_iptables_save_p99` |
+| Kernel TCP drops | `tcp_aborts_per_node`, `tcp_syn_retrans_per_node` |
+| CoreDNS cache + etcd | `coredns_cache_hit_rate_per_sec`, `coredns_cache_miss_rate_per_sec`, `etcd_compaction_duration_p99` |
+
+`result()` returns `available`, `serverUrls`, `queries` (with `{namespace}` resolved), `metricAvailability` (per-label `bool` recording which queries returned non-empty data at least once during the run — needed to distinguish "metric returned 0" from "metric was never collected"), `timeSeries`, and per-phase `phases` aggregations (sum-across-series → mean/min/max/stdev across samples).
+
+#### utilization.py — Per-pod utilization fractions
+
+`compute_per_pod_utilization(pod_status, prometheus_data)` joins per-pod `cpu_usage` / `memory_usage` from the Prometheus prober's `timeSeries` with `resourceSpecs.requests` parsed by `parse_cpu_quantity` / `parse_memory_quantity`. Emits per-phase `cpuUsageCores`, `cpuFraction`, `memoryUsageBytes`, `memoryFraction` per pod under `metrics.utilization.pods[<pod>]`. A fraction near 1.0 means the pod hit its own request; a low fraction with high node-level CPU throttling points at neighbour contention rather than self-throttle.
 
 ---
 
@@ -548,6 +575,14 @@ All graph commands accept `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`.
 | `chaosprobe visualize --neo4j-uri <uri> [--session <id>] -o <dir>` | Charts from Neo4j |
 | `chaosprobe visualize --summary <file> -o <dir>` | Charts from summary.json |
 
+### Stats
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe stats -s <summary.json> [--confidence 0.95] [--n-resamples 2000] [--seed 42] [--json] [-o <file>]` | Bootstrap CI for per-strategy mean resilienceScore + pairwise Mann-Whitney U with Holm-Bonferroni correction across every strategy pair. |
+
+`--seed -1` for a nondeterministic bootstrap. JSON mode emits `{source, confidence, n_resamples, ci, pairwise}` for downstream tooling.
+
 ### ML Export
 
 | Command | Purpose |
@@ -654,6 +689,23 @@ See **Section 11 → End-to-End Example Flow** for a detailed walkthrough with d
   }
 }
 ```
+
+### Per-iteration fields
+
+Each strategy iteration in `strategies.<name>.iterations[]` additionally carries:
+
+| Field | Source | Purpose |
+|---|---|---|
+| `preIterationSnapshot` / `postIterationSnapshot` | `_snapshot_cluster_state` | Cluster state (per-node CPU/mem capacity, allocatable, pod counts) at the start and end of the iteration. Detects drift between iterations of the same strategy. |
+| `routeView` | `build_route_view` | Per-route join of Locust (outside-cluster) and `LatencyProber` (in-pod) stats — same route, two vantage points; surfaces north-south vs east-west asymmetries. |
+| `metrics.recovery.schedulerEvents` | `RecoveryWatcher` | `Scheduled`, `FailedScheduling`, `BackOff`, `FailedMount`, `Pulling`, `Pulled`, `Killing` events with timestamps. Lets analysis split scheduler stalls from image-pull / mount latency inside `deletionToScheduled_ms`. |
+| `placement.intendedActualDiff` | `placement.mutator.apply_strategy` | `matched` / `mismatched` / `matchRate` between the intended assignment and the realised `pod.spec.nodeName`. Catches scheduler overrides. |
+| `metrics.podStatus.pods[].containers[].oomKillCount` / `metrics.podStatus.totalOOMKills` | `_collect_pod_status` | Per-container and per-iteration OOMKill counts (current state + last-termination). |
+| `metrics.podStatus.pods[].cpuRequestCores` / `memoryRequestBytes` (indirect via `utilization`) | `compute_per_pod_utilization` | Numeric requests parsed from `resourceSpecs.requests`. |
+| `metrics.utilization.pods[<pod>].phases.<phase>.{cpuFraction,memoryFraction}` | `compute_per_pod_utilization` | Mean usage / sum-of-requests per phase per pod. |
+| `metrics.prometheus.metricAvailability` | `ContinuousPrometheusProber.result` | `{label: bool}` map flagging which PromQL queries returned non-empty data at least once — distinguishes "metric returned 0" from "metric was never collected" (PSI / Felix / etcd_debugging_* portability). |
+| `metrics.latency.summary.statusCodeDistribution` | `LatencyProber` | HTTP status-code bucket counts (`2xx`/`3xx`/`4xx`/`5xx`/`timeout`/`error`) so error-rate spikes are attributable to category. |
+| `metrics.latency.summary.meanCrossNodeStddev_ms` | `LatencyProber` | Per-pod cross-node latency stddev — pod-vs-pod variance signal for leakage analysis (H6). |
 
 ---
 
