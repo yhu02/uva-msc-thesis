@@ -535,6 +535,12 @@ CLUSTER_WIDE_QUERIES = {
     "endpointslice_changes_per_sec",
     "kubelet_pleg_relist_duration_p99",
     "kube_proxy_rules_synced_per_sec",
+    "scheduler_attempt_p99",
+    "scheduler_pending_pods",
+    "apiserver_request_p99",
+    "apiserver_inflight",
+    "etcd_wal_fsync_p99",
+    "etcd_backend_commit_p99",
 }
 
 
@@ -549,11 +555,20 @@ class TestDefaultQueries:
 
     def test_cluster_wide_queries_have_no_namespace_placeholder(self):
         """Cluster-wide templates intentionally omit `{namespace}` so they
-        format as no-ops without raising ``KeyError`` in `_build_queries`."""
+        format without raising ``KeyError`` in `_build_queries`.
+
+        The post-format string may legitimately differ from the template
+        when PromQL label selectors are escaped with double-braces
+        (e.g. ``{{verb!="WATCH"}}`` → ``{verb!="WATCH"}``).  What we
+        actually care about is that ``.format(namespace=…)`` (a) does
+        not raise, and (b) does not substitute the namespace anywhere
+        the template did not ask for it — i.e. the namespace string
+        never appears in the output."""
         for label in CLUSTER_WIDE_QUERIES:
             template = DEFAULT_QUERIES[label]
             assert "{namespace}" not in template, f"{label} unexpectedly references {{namespace}}"
-            assert template.format(namespace="test-ns") == template
+            formatted = template.format(namespace="test-ns")
+            assert "test-ns" not in formatted, f"{label} accidentally substitutes namespace"
 
     def test_all_queries_present(self):
         expected = NAMESPACE_SCOPED_QUERIES | CLUSTER_WIDE_QUERIES
@@ -602,3 +617,68 @@ class TestDefaultQueries:
             assert (
                 "rate(" in tpl or "histogram_quantile" in tpl
             ), f"{label} must use rate() or histogram_quantile()"
+
+    def test_control_plane_queries_present(self):
+        """Scheduler + apiserver + etcd control-plane queries are part of
+        the default set so contention-vs-churn analysis can distinguish
+        control-plane latency from kernel/networking latency."""
+        for label in (
+            "scheduler_attempt_p99",
+            "scheduler_pending_pods",
+            "apiserver_request_p99",
+            "apiserver_inflight",
+            "etcd_wal_fsync_p99",
+            "etcd_backend_commit_p99",
+        ):
+            assert label in DEFAULT_QUERIES, f"{label} missing from DEFAULT_QUERIES"
+
+    def test_control_plane_latency_queries_use_histogram_quantile(self):
+        """The four latency-shaped control-plane queries are p99
+        histogram_quantile aggregations.  The two depth/gauge-shaped
+        ones (`scheduler_pending_pods`, `apiserver_inflight`) are
+        intentional bare gauges — they measure queue depth at scrape
+        time, where rate() would be meaningless.  This test pins the
+        latency-vs-depth split so a future edit can't accidentally
+        downgrade a p99 to a gauge."""
+        for label in (
+            "scheduler_attempt_p99",
+            "apiserver_request_p99",
+            "etcd_wal_fsync_p99",
+            "etcd_backend_commit_p99",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert (
+                "histogram_quantile" in tpl
+            ), f"{label} must use histogram_quantile (latency metric)"
+        for label in ("scheduler_pending_pods", "apiserver_inflight"):
+            tpl = DEFAULT_QUERIES[label]
+            assert (
+                "histogram_quantile" not in tpl and "rate(" not in tpl
+            ), f"{label} is a depth gauge; must not wrap in rate() or histogram_quantile"
+
+    def test_apiserver_request_query_excludes_watch_verb(self):
+        """WATCH requests are long-lived (open the entire experiment),
+        so their latency distribution is dominated by the watch lifetime
+        and not the per-call work.  Excluding WATCH keeps the metric
+        meaningful for the H7/H8 attribution claim."""
+        tpl = DEFAULT_QUERIES["apiserver_request_p99"]
+        # `{{verb!="WATCH"}}` escapes to `{verb!="WATCH"}` after .format()
+        assert '{{verb!="WATCH"}}' in tpl or '{verb!="WATCH"}' in tpl
+
+    def test_control_plane_queries_format_to_valid_promql(self):
+        """The apiserver query uses double-braces to escape PromQL's own
+        label selectors so .format(namespace=...) is still a no-op.  This
+        test verifies the formatted output is intended PromQL, not the
+        template-with-double-braces literal."""
+        for label in (
+            "scheduler_attempt_p99",
+            "scheduler_pending_pods",
+            "apiserver_request_p99",
+            "apiserver_inflight",
+            "etcd_wal_fsync_p99",
+            "etcd_backend_commit_p99",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            formatted = tpl.format(namespace="test-ns")
+            assert "{{" not in formatted, f"{label} has unescaped double-braces"
+            assert "}}" not in formatted, f"{label} has unescaped double-braces"
