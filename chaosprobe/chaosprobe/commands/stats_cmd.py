@@ -208,6 +208,35 @@ def _format_csv(analyses: Dict[str, Dict[str, Any]]) -> str:
     return buf.getvalue().rstrip("\n")
 
 
+# Ordered worst-to-best for ">= threshold" filtering.
+_EFFECT_SIZE_ORDER = ("negligible", "small", "medium", "large")
+
+
+def _filter_pairwise_by_effect_size(
+    rows: List[Dict[str, object]],
+    min_magnitude: str,
+) -> List[Dict[str, object]]:
+    """Drop pairwise rows whose Cliff's delta magnitude is below the
+    requested threshold.
+
+    Rows without an ``effect_size_magnitude`` field (older library
+    versions or degenerate samples) are kept — better than silently
+    dropping data the user might still want to see.
+    """
+    if min_magnitude not in _EFFECT_SIZE_ORDER:
+        return rows
+    cutoff = _EFFECT_SIZE_ORDER.index(min_magnitude)
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        mag = row.get("effect_size_magnitude")
+        if not isinstance(mag, str) or mag not in _EFFECT_SIZE_ORDER:
+            out.append(row)
+            continue
+        if _EFFECT_SIZE_ORDER.index(mag) >= cutoff:
+            out.append(row)
+    return out
+
+
 def _analyse_metric(
     raw_summary: Dict[str, Any],
     metric_path: str,
@@ -216,12 +245,14 @@ def _analyse_metric(
     n_resamples: int,
     seed: Optional[int],
     pair: Optional[List[str]] = None,
+    min_effect_size: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Run CI + pairwise for a single metric.  Returns ``None`` when no
     strategies carry the metric — caller decides whether to error or skip.
 
     When ``pair`` is set, only strategies whose name is in the list are
-    included in the analysis.
+    included in the analysis.  When ``min_effect_size`` is set, pairwise
+    rows below that Cliff's delta magnitude are dropped.
     """
     samples = _load_strategies_from_dict(raw_summary, metric_path)
     if pair:
@@ -239,6 +270,8 @@ def _analyse_metric(
         for name, values in samples.items()
     }
     pairwise_rows = pairwise_comparisons(samples, holm_bonferroni=True) if len(samples) >= 2 else []
+    if min_effect_size:
+        pairwise_rows = _filter_pairwise_by_effect_size(pairwise_rows, min_effect_size)
     return {
         "samples": samples,
         "ci": ci_rows,
@@ -314,6 +347,17 @@ def _analyse_metric(
     ),
 )
 @click.option(
+    "--effect-size-min",
+    "min_effect_size",
+    type=click.Choice(["negligible", "small", "medium", "large"]),
+    default=None,
+    help=(
+        "Drop pairwise rows whose Cliff's delta magnitude is below "
+        "this threshold.  Cuts the noise when scanning a large pairwise "
+        "matrix for practically-meaningful differences."
+    ),
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -330,6 +374,7 @@ def stats(
     as_json: bool,
     as_csv: bool,
     pair: Optional[str],
+    min_effect_size: Optional[str],
     output: Optional[Path],
 ):
     """Compute CI and pairwise significance for a per-strategy metric.
@@ -366,6 +411,7 @@ def stats(
             n_resamples,
             actual_seed,
             pair=pair_list,
+            min_effect_size=min_effect_size,
         )
         if analysis is not None:
             analyses[metric_label] = analysis

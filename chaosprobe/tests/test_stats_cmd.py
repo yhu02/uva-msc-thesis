@@ -678,3 +678,89 @@ class TestEffectSizeColumns:
         # No crash; header still present.
         assert "delta" in text
         assert "magnitude" in text
+
+
+class TestEffectSizeMinFilter:
+    """`--effect-size-min` drops pairwise rows below the requested
+    Cliff's delta magnitude.  Lets a defender scan a large pairwise
+    matrix for practically-meaningful differences without sifting noise."""
+
+    def test_large_only_drops_negligible_pairs(self, tmp_path):
+        # Three strategies: a, b mostly equal (negligible delta); c
+        # very different from both (large delta).
+        summary = _make_summary(
+            tmp_path,
+            {
+                "a": [50, 51, 50, 49, 50],
+                "b": [50, 51, 50, 49, 50],
+                "c": [10, 11, 9, 12, 10],
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--effect-size-min", "large", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        # Two surviving pairs: a-c and b-c (both large).  Pair a-b is
+        # negligible → dropped.
+        pairs = {(r["a"], r["b"]) for r in payload["pairwise"]}
+        assert ("a", "b") not in pairs and ("b", "a") not in pairs
+
+    def test_small_threshold_keeps_small_medium_large(self, tmp_path):
+        summary = _make_summary(
+            tmp_path,
+            {
+                "a": [50, 51, 49, 50],
+                "b": [51, 52, 50, 51],  # slight shift — small/negligible
+                "c": [10, 11, 9, 10],  # large diff
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--effect-size-min", "small", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        # Every retained row should be at least small.
+        order = ["negligible", "small", "medium", "large"]
+        cutoff = order.index("small")
+        for row in payload["pairwise"]:
+            mag = row["effect_size_magnitude"]
+            assert order.index(mag) >= cutoff
+
+    def test_no_filter_keeps_all_rows(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [50, 51], "b": [50, 51], "c": [50, 51]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        # 3 strategies → C(3,2) = 3 pairs, all kept.
+        assert len(payload["pairwise"]) == 3
+
+    def test_invalid_choice_rejected(self, tmp_path):
+        summary = _make_summary(tmp_path, {"a": [1, 2], "b": [3, 4]})
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--effect-size-min", "huge"])
+        assert result.exit_code != 0
+        assert "huge" in result.output
+
+    def test_filter_works_with_all_metrics(self, tmp_path):
+        # Construct a summary with split metrics; verify the filter
+        # applies to every block under --all-metrics.
+        summary = _make_summary(
+            tmp_path,
+            {
+                "a": [50, 51, 50, 49],
+                "b": [50, 51, 50, 49],
+                "c": [10, 11, 9, 12],
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            stats,
+            ["-s", str(summary), "--all-metrics", "--effect-size-min", "large", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        # In --all-metrics mode, only resilience block applies (no
+        # recovery data).  Verify filter ran on it.
+        block = next(iter(payload["metrics"].values()))
+        for row in block["pairwise"]:
+            assert row["effect_size_magnitude"] == "large"
