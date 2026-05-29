@@ -5,12 +5,35 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from chaosprobe.commands.doctor_cmd import _check_cross_strategy, _check_strategy, doctor
+from chaosprobe.commands.doctor_cmd import (
+    _check_cross_strategy,
+    _check_run_metadata,
+    _check_strategy,
+    doctor,
+)
 
 
-def _write_summary(tmp_path: Path, strategies: dict) -> Path:
+def _write_summary(
+    tmp_path: Path,
+    strategies: dict,
+    include_run_metadata: bool = True,
+) -> Path:
+    """Helper.  Includes a complete ``runMetadata`` block by default so
+    legacy doctor tests don't trip the new runMetadata checks (#85).
+    Tests that want to exercise the missing-metadata path pass
+    ``include_run_metadata=False``."""
     path = tmp_path / "summary.json"
-    path.write_text(json.dumps({"strategies": strategies}))
+    payload = {"strategies": strategies}
+    if include_run_metadata:
+        payload["runMetadata"] = {
+            "git": {"commit": "abc123", "shortCommit": "abc123", "dirty": False},
+            "kubernetes": {
+                "serverVersion": "v1.28.6",
+                "containerRuntimeOnFirstNode": "containerd",
+            },
+            "cniHint": "calico",
+        }
+    path.write_text(json.dumps(payload))
     return path
 
 
@@ -404,3 +427,112 @@ class TestDoctorCrossStrategyIntegration:
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert "__cross_strategy__" in payload["findings"]
+
+
+class TestCheckRunMetadata:
+    def test_missing_run_metadata_warned(self):
+        issues = _check_run_metadata({"strategies": {}})
+        sevs_msgs = [(s, m) for s, m in issues if "runMetadata absent" in m]
+        assert sevs_msgs
+        assert sevs_msgs[0][0] == "warn"
+
+    def test_complete_metadata_no_issues(self):
+        raw = {
+            "runMetadata": {
+                "git": {"commit": "abc123", "shortCommit": "abc12", "dirty": False},
+                "kubernetes": {
+                    "serverVersion": "v1.28.6",
+                    "containerRuntimeOnFirstNode": "containerd",
+                },
+                "cniHint": "calico",
+            }
+        }
+        assert _check_run_metadata(raw) == []
+
+    def test_dirty_working_tree_warned(self):
+        raw = {
+            "runMetadata": {
+                "git": {"commit": "abc123", "shortCommit": "abc12345", "dirty": True},
+                "kubernetes": {"serverVersion": "v1.28.6"},
+                "cniHint": "calico",
+            }
+        }
+        issues = _check_run_metadata(raw)
+        assert any("dirty working tree" in msg for _, msg in issues)
+        assert any("abc12345" in msg for _, msg in issues)
+
+    def test_missing_git_commit_warned(self):
+        raw = {
+            "runMetadata": {
+                "git": {"commit": None, "dirty": False},
+                "kubernetes": {"serverVersion": "v1.28"},
+                "cniHint": "calico",
+            }
+        }
+        issues = _check_run_metadata(raw)
+        assert any("git commit not recorded" in msg for _, msg in issues)
+
+    def test_missing_k8s_version_warned(self):
+        raw = {
+            "runMetadata": {
+                "git": {"commit": "abc", "dirty": False},
+                "kubernetes": {"serverVersion": None},
+                "cniHint": "calico",
+            }
+        }
+        issues = _check_run_metadata(raw)
+        assert any("Kubernetes server version not recorded" in msg for _, msg in issues)
+
+    def test_missing_cni_hint_warned(self):
+        raw = {
+            "runMetadata": {
+                "git": {"commit": "abc", "dirty": False},
+                "kubernetes": {"serverVersion": "v1.28"},
+                "cniHint": None,
+            }
+        }
+        issues = _check_run_metadata(raw)
+        assert any("CNI hint not recorded" in msg for _, msg in issues)
+
+
+class TestDoctorRunMetadataIntegration:
+    def test_run_metadata_section_in_text_output(self, tmp_path):
+        path = tmp_path / "summary.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "strategies": {
+                        "colocate": {
+                            "iterations": [{}] * 5,
+                            "aggregated": {"meanRecoveryTime_ms": 1000},
+                        }
+                    }
+                    # No runMetadata.
+                }
+            )
+        )
+        runner = CliRunner()
+        result = runner.invoke(doctor, ["-s", str(path)])
+        assert result.exit_code == 0
+        assert "run metadata" in result.output
+        assert "runMetadata absent" in result.output
+
+    def test_run_metadata_section_in_json_output(self, tmp_path):
+        path = tmp_path / "summary.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "strategies": {
+                        "colocate": {
+                            "iterations": [{}] * 5,
+                            "aggregated": {"meanRecoveryTime_ms": 1000},
+                        }
+                    }
+                }
+            )
+        )
+        runner = CliRunner()
+        result = runner.invoke(doctor, ["-s", str(path), "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "__run_metadata__" in payload["findings"]
