@@ -6,8 +6,10 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from chaosprobe.commands.inspect_cmd import (
+    _collect_worst,
     _find_iteration,
     _format_iteration,
+    _format_worst,
     _probe_verdict_summary,
     inspect,
 )
@@ -152,3 +154,141 @@ class TestInspectCommand:
         )
         assert result.exit_code != 0
         assert "not found" in result.output
+
+
+class TestCollectWorst:
+    def test_sorts_ascending_and_caps_at_limit(self):
+        raw = {
+            "strategies": {
+                "spread": {
+                    "iterations": [
+                        _iter_record(1, score=88),
+                        _iter_record(2, score=92),
+                    ]
+                },
+                "colocate": {
+                    "iterations": [
+                        _iter_record(1, score=55),
+                        _iter_record(2, score=42),
+                    ]
+                },
+            }
+        }
+        rows = _collect_worst(raw, limit=3)
+        assert [r["score"] for r in rows] == [42, 55, 88]
+        assert rows[0]["strategy"] == "colocate"
+        assert rows[0]["iteration"] == 2
+
+    def test_skips_iterations_without_numeric_score(self):
+        raw = {
+            "strategies": {
+                "spread": {
+                    "iterations": [
+                        _iter_record(1, score=88),
+                        {"iteration": 2, "resilienceScore": None},
+                        {"iteration": 3},
+                    ]
+                }
+            }
+        }
+        rows = _collect_worst(raw, limit=5)
+        assert len(rows) == 1
+        assert rows[0]["iteration"] == 1
+
+    def test_breaks_ties_by_strategy_then_iteration(self):
+        raw = {
+            "strategies": {
+                "b": {"iterations": [_iter_record(2, score=70)]},
+                "a": {"iterations": [_iter_record(1, score=70)]},
+            }
+        }
+        rows = _collect_worst(raw, limit=2)
+        # Same score, "a" sorts before "b".
+        assert rows[0]["strategy"] == "a"
+        assert rows[1]["strategy"] == "b"
+
+
+class TestFormatWorst:
+    def test_emits_header_and_rows(self):
+        out = _format_worst(
+            [
+                {"strategy": "colocate", "iteration": 3, "score": 42, "verdict": "FAIL"},
+                {"strategy": "spread", "iteration": 1, "score": 88, "verdict": "ALL_PASS"},
+            ]
+        )
+        assert "strategy" in out and "iter" in out and "score" in out
+        assert "colocate" in out and "42" in out and "FAIL" in out
+        assert "spread" in out and "88" in out
+
+    def test_empty_message(self):
+        assert _format_worst([]) == "no iterations with a numeric resilienceScore"
+
+
+class TestInspectWorst:
+    def test_worst_flag_lists_lowest_n(self, tmp_path):
+        summary = _write(
+            tmp_path,
+            _summary(
+                {
+                    "spread": {
+                        "iterations": [
+                            _iter_record(1, score=88),
+                            _iter_record(2, score=92),
+                        ]
+                    },
+                    "colocate": {
+                        "iterations": [
+                            _iter_record(1, score=55),
+                            _iter_record(2, score=42),
+                        ]
+                    },
+                }
+            ),
+        )
+        result = CliRunner().invoke(inspect, ["-s", str(summary), "--worst", "2"])
+        assert result.exit_code == 0, result.output
+        # Worst-2 should include the 42 and the 55, in that order.
+        idx_42 = result.output.find("42")
+        idx_55 = result.output.find("55")
+        assert idx_42 != -1 and idx_55 != -1 and idx_42 < idx_55
+
+    def test_worst_with_json(self, tmp_path):
+        summary = _write(
+            tmp_path,
+            _summary({"spread": {"iterations": [_iter_record(1, score=88)]}}),
+        )
+        result = CliRunner().invoke(inspect, ["-s", str(summary), "--worst", "3", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert isinstance(payload, list) and payload[0]["strategy"] == "spread"
+
+    def test_worst_with_strategy_is_an_error(self, tmp_path):
+        summary = _write(
+            tmp_path,
+            _summary({"spread": {"iterations": [_iter_record(1)]}}),
+        )
+        result = CliRunner().invoke(
+            inspect,
+            ["-s", str(summary), "--worst", "1", "--strategy", "spread"],
+        )
+        assert result.exit_code != 0
+        assert "exclusive" in result.output
+
+    def test_worst_must_be_positive(self, tmp_path):
+        summary = _write(
+            tmp_path,
+            _summary({"spread": {"iterations": [_iter_record(1)]}}),
+        )
+        result = CliRunner().invoke(inspect, ["-s", str(summary), "--worst", "0"])
+        assert result.exit_code != 0
+        assert "positive" in result.output
+
+    def test_missing_required_flags_errors(self, tmp_path):
+        summary = _write(
+            tmp_path,
+            _summary({"spread": {"iterations": [_iter_record(1)]}}),
+        )
+        # No --worst, --strategy, or --iteration → friendly error
+        result = CliRunner().invoke(inspect, ["-s", str(summary)])
+        assert result.exit_code != 0
+        assert "--worst" in result.output or "required" in result.output
