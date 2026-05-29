@@ -165,9 +165,15 @@ class TestQueryPrometheus:
 
 
 class TestFindPrometheusService:
-    @patch("kubernetes.config")
+    # `ensure_k8s_config` is imported at module load by
+    # chaosprobe.metrics.prometheus and re-binds `config` from
+    # chaosprobe.k8s.  Patching kubernetes.config doesn't reach that
+    # binding, so on CI (no kubeconfig) the real load_kube_config raises
+    # and the bare except swallows it -> []. Patch the import site
+    # directly instead.
+    @patch("chaosprobe.metrics.prometheus.ensure_k8s_config")
     @patch("kubernetes.client")
-    def test_returns_empty_when_no_services(self, mock_client, mock_config):
+    def test_returns_empty_when_no_services(self, mock_client, _mock_ensure):
         mock_core = MagicMock()
         mock_client.CoreV1Api.return_value = mock_core
         mock_core.list_namespaced_service.return_value = MagicMock(items=[])
@@ -175,9 +181,9 @@ class TestFindPrometheusService:
         result = _find_prometheus_service()
         assert result == []
 
-    @patch("kubernetes.config")
+    @patch("chaosprobe.metrics.prometheus.ensure_k8s_config")
     @patch("kubernetes.client")
-    def test_finds_single_prometheus_service(self, mock_client, mock_config):
+    def test_finds_single_prometheus_service(self, mock_client, _mock_ensure):
         svc = MagicMock()
         svc.metadata.name = "prometheus-server"
         port = MagicMock()
@@ -186,17 +192,16 @@ class TestFindPrometheusService:
 
         mock_core = MagicMock()
         mock_client.CoreV1Api.return_value = mock_core
-        # Only the "prometheus" namespace has the service
         mock_core.list_namespaced_service.side_effect = [
-            MagicMock(items=[svc]),  # prometheus
+            MagicMock(items=[svc]),
         ]
 
         result = _find_prometheus_service()
         assert result == [("prometheus-server", "prometheus", 9090)]
 
-    @patch("kubernetes.config")
+    @patch("chaosprobe.metrics.prometheus.ensure_k8s_config")
     @patch("kubernetes.client")
-    def test_finds_prometheus_service_in_namespace(self, mock_client, mock_config):
+    def test_finds_prometheus_service_in_namespace(self, mock_client, _mock_ensure):
         svc = MagicMock()
         svc.metadata.name = "prometheus-server"
         p1 = MagicMock()
@@ -206,7 +211,7 @@ class TestFindPrometheusService:
         mock_core = MagicMock()
         mock_client.CoreV1Api.return_value = mock_core
         mock_core.list_namespaced_service.side_effect = [
-            MagicMock(items=[svc]),  # prometheus
+            MagicMock(items=[svc]),
         ]
 
         result = _find_prometheus_service()
