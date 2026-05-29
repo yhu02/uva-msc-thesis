@@ -114,6 +114,21 @@ DEFAULT_QUERIES: Dict[str, str] = {
     "kube_proxy_rules_synced_per_sec": (
         "sum(rate(kubeproxy_sync_proxy_rules_duration_seconds_count[1m]))"
     ),
+    # ── Calico / Felix CNI metrics ─────────────────────────────────────
+    # Proxmox-deployed clusters run Calico per `chaosprobe/proxmox-setup.md`.
+    # Felix is Calico's per-node agent; its dataplane-apply time is the
+    # Calico equivalent of the kube-proxy network-programming SLO and
+    # similarly correlates with leakage if the churn-mechanism story is
+    # right.  Missing on Cilium / Flannel / kindnet clusters; graceful-
+    # missing-metric path in the aggregator covers it.
+    "felix_active_local_endpoints": ("sum(felix_active_local_endpoints) by (instance)"),
+    "felix_int_dataplane_apply_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "felix_int_dataplane_apply_time_seconds_bucket[5m])) by (le))"
+    ),
+    "felix_iptables_save_p99": (
+        "histogram_quantile(0.99, sum(rate(felix_iptables_save_seconds_bucket[5m])) by (le))"
+    ),
 }
 
 # Common service names / namespaces where Prometheus is typically deployed.

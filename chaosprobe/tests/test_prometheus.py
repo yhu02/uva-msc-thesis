@@ -535,6 +535,9 @@ CLUSTER_WIDE_QUERIES = {
     "endpointslice_changes_per_sec",
     "kubelet_pleg_relist_duration_p99",
     "kube_proxy_rules_synced_per_sec",
+    "felix_active_local_endpoints",
+    "felix_int_dataplane_apply_p99",
+    "felix_iptables_save_p99",
 }
 
 
@@ -602,3 +605,27 @@ class TestDefaultQueries:
             assert (
                 "rate(" in tpl or "histogram_quantile" in tpl
             ), f"{label} must use rate() or histogram_quantile()"
+
+    def test_felix_calico_queries_present(self):
+        """Calico Felix queries are part of the default set so the CNI-layer
+        equivalent of the kube-proxy SLO is measured on Calico clusters
+        (Cilium / Flannel / kindnet clusters see empty results via the
+        existing graceful-missing-metric path)."""
+        for label in (
+            "felix_active_local_endpoints",
+            "felix_int_dataplane_apply_p99",
+            "felix_iptables_save_p99",
+        ):
+            assert label in DEFAULT_QUERIES, f"{label} missing from DEFAULT_QUERIES"
+
+    def test_felix_latency_queries_use_histogram_quantile(self):
+        """The two Felix latency queries are p99 histograms; the endpoint
+        count is a bare gauge.  Pin the shape so a future edit can't
+        downgrade a p99 to a gauge by mistake."""
+        for label in ("felix_int_dataplane_apply_p99", "felix_iptables_save_p99"):
+            tpl = DEFAULT_QUERIES[label]
+            assert (
+                "histogram_quantile" in tpl
+            ), f"{label} must use histogram_quantile (latency metric)"
+        tpl = DEFAULT_QUERIES["felix_active_local_endpoints"]
+        assert "histogram_quantile" not in tpl and "rate(" not in tpl
