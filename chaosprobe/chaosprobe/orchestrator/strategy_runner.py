@@ -42,7 +42,7 @@ from chaosprobe.orchestrator.timeout import (
     compute_effective_timeout,
     extract_chaos_duration,
 )
-from chaosprobe.output.generator import OutputGenerator
+from chaosprobe.output.generator import OutputGenerator, build_route_view
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
 
@@ -221,6 +221,30 @@ def _generate_east_west_routes(
 # already filtered) and small enough to keep per-tick latency bounded
 # on a 4-worker VM cluster.
 _PROBE_BUDGET_CAP = 15
+
+
+def _build_route_view_for_iteration(
+    load_gen: Optional[Dict[str, Any]],
+    recovery: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Extract Locust stats + LatencyProber phases from the iteration's data
+    and dispatch to ``build_route_view``.
+
+    Pulled out of ``_run_single_iteration``'s ~300-line body so the
+    extraction-plus-dispatch contract is unit-testable without standing
+    up the whole iteration.  Behaviour:
+
+    * Missing ``load_gen`` → Locust side is ``None``.
+    * Missing or empty ``recovery.latency.phases`` → LatencyProber side
+      is ``None``.
+    * Both missing → ``build_route_view`` returns ``[]``.
+    """
+    locust_stats = load_gen.get("stats") if load_gen else None
+    latency_phases: Optional[Dict[str, Any]] = None
+    if recovery:
+        latency = recovery.get("latency") or {}
+        latency_phases = latency.get("phases") or None
+    return build_route_view(locust_stats, latency_phases)
 
 
 def _build_iteration_routes(
@@ -985,6 +1009,13 @@ def _run_single_iteration(
         recovery_load = dict(load_gen.get("stats", {}))
         recovery_load["profile"] = load_gen.get("profile")
         iter_result["metrics"]["loadGeneration"] = recovery_load
+
+    # Cross-validate the outside-cluster (Locust) and in-pod
+    # (LatencyProber) per-route views.  Disagreement is itself a
+    # thesis-grade methodological finding — the kubectl-exec
+    # measurement has a measurable bias.  Empty list when either
+    # source is missing or contains no per-route data.
+    iter_result["routeView"] = _build_route_view_for_iteration(load_gen, recovery)
 
     if unknown_probe_count > 0:
         iter_result["unknownDiagnostics"] = capture_unknown_diagnostics(
