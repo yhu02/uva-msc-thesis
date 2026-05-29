@@ -103,9 +103,62 @@ files = [
     # neo4j or pyarrow.
     "chaosprobe/graph/__init__.py",
     "chaosprobe/graph/analysis.py",
-    # metrics/ — anomaly + cascade helpers shipped today are pure.
-    # statistics.py / collector.py / prometheus.py etc. still have
-    # active mypy errors and need their own slice.
+    # metrics/ — files that pass cleanly under the kubernetes / matplotlib
+    # ignore_missing_imports override below.  statistics.py / latency.py /
+    # prometheus.py / reproducibility.py / recovery.py / resources.py /
+    # base.py / throughput.py still have real type errors and need their
+    # own slices.
+    "chaosprobe/metrics/__init__.py",
     "chaosprobe/metrics/anomaly_labels.py",
     "chaosprobe/metrics/cascade.py",
+    "chaosprobe/metrics/collector.py",
+    "chaosprobe/metrics/remediation.py",
+    "chaosprobe/metrics/utilization.py",
+    # orchestrator/ — small pure-Python helpers that depend only on
+    # kubernetes (handled by the override).  Larger files
+    # (strategy_runner, run_phases, readiness, preflight) still have
+    # real type errors.
+    "chaosprobe/orchestrator/__init__.py",
+    "chaosprobe/orchestrator/diagnostics.py",
+    "chaosprobe/orchestrator/portforward.py",
+    "chaosprobe/orchestrator/recovery.py",
+    "chaosprobe/orchestrator/timeout.py",
+    # loadgen/ — Locust runner + headless wrapper.
+    "chaosprobe/loadgen/__init__.py",
+    "chaosprobe/loadgen/runner.py",
+    # probes/ — Rust cmdProbe scaffolding + builder.
+    "chaosprobe/probes/__init__.py",
+    "chaosprobe/probes/builder.py",
+    "chaosprobe/probes/templates.py",
+    # provisioner/ — kubernetes manifest application (raw k8s API).
+    "chaosprobe/provisioner/__init__.py",
+    "chaosprobe/provisioner/kubernetes.py",
+    # storage/ — neo4j_reader / neo4j_writer have outstanding mypy
+    # errors (attribute access through a mixin), keep out for now.
+    "chaosprobe/storage/__init__.py",
 ]
+
+# Third-party packages that ship without py.typed markers.  We treat
+# them as opaque rather than letting mypy gate on every call site —
+# adding stubs upstream is out of scope and per-file ignores would
+# scatter the same workaround across dozens of files.
+[[tool.mypy.overrides]]
+module = [
+    "kubernetes",
+    "kubernetes.*",
+    "matplotlib",
+    "matplotlib.*",
+    "pyarrow",
+    "pyarrow.*",
+    "yaml",
+]
+ignore_missing_imports = true
+
+# neo4j ships its own modules (no py.typed marker, and the driver
+# uses Py3.10 ``match`` statements that mypy at python_version=3.9
+# can't parse).  ``follow_imports = "skip"`` skips re-analysing the
+# driver source when our code imports from it.
+[[tool.mypy.overrides]]
+module = ["neo4j", "neo4j.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
