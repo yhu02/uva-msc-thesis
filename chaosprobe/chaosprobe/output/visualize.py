@@ -288,6 +288,21 @@ def generate_from_dict(
     if path:
         generated.append(path)
 
+    # Heterogeneity confound check — score vs host-node RAM
+    from chaosprobe.output.charts import (
+        chart_heterogeneity_scatter,
+        write_pairwise_stats_csv,
+    )
+
+    path = chart_heterogeneity_scatter(raw_strategies, output_path)
+    if path:
+        generated.append(path)
+
+    # Pairwise Mann-Whitney U with Holm-Bonferroni correction
+    path = write_pairwise_stats_csv(raw_strategies, output_path)
+    if path:
+        generated.append(path)
+
     html_path = _generate_html_summary(
         generated,
         strategies,

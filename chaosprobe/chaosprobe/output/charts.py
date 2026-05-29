@@ -1123,3 +1123,165 @@ def chart_strategy_comparison_heatmap(
     fig.savefig(filepath, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return filepath
+
+
+# ---------------------------------------------------------------------------
+# Heterogeneity scatter (Threat-to-Validity #6 addressed)
+# ---------------------------------------------------------------------------
+
+
+def chart_heterogeneity_scatter(
+    raw_strategies: Dict[str, Any],
+    output_path: Path,
+) -> Optional[str]:
+    """Cross-tabulate per-iteration score against host-node RAM.
+
+    The Threats-to-Validity slide notes that the cluster has heterogeneous
+    worker memory (2 GiB w1/w2 and 4 GiB w3/w4).  Without this cross-
+    tabulation, a reviewer can argue that score differences reflect
+    *which nodes* the strategy happened to land on, not the strategy
+    itself.  This chart plots per-iteration score against the *maximum
+    allocatable memory* of any node that hosted an app pod that iteration,
+    one point per iteration, coloured by strategy.
+
+    If points form clear bands by node-size, the heterogeneity is a
+    confound.  If points are mixed across the y-axis at every x value,
+    the strategy effect is independent of node-size and the threat is
+    ruled out.
+    """
+    points: Dict[str, List[Tuple[float, float]]] = {}
+
+    def _bytes_to_gib(b: Any) -> Optional[float]:
+        try:
+            return float(b) / (1024 ** 3)
+        except (TypeError, ValueError):
+            return None
+
+    for strat_name, strat_data in raw_strategies.items():
+        if not isinstance(strat_data, dict):
+            continue
+        # Each iteration result has metrics.nodeInfo with allocatable
+        # per node *for the host* of the target deployment.  For the
+        # max-RAM cross-tabulation we use that allocatable size as a
+        # proxy for "which node tier ran the iteration."  When pods
+        # actually span both tiers (spread), max() picks 4 GiB.
+        for ir in strat_data.get("iterations", []):
+            if ir.get("verdict") == "ERROR":
+                continue
+            score = ir.get("resilienceScore")
+            if score is None:
+                continue
+            metrics = ir.get("metrics") or {}
+            node_info = metrics.get("nodeInfo") or {}
+            allocatable = node_info.get("allocatable") or {}
+            mem = allocatable.get("memory") or allocatable.get("memory_bytes")
+            # Some serialisations use a Kubernetes-style "Mi"/"Gi" suffix.
+            if isinstance(mem, str):
+                if mem.endswith("Ki"):
+                    bytes_ = float(mem[:-2]) * 1024
+                elif mem.endswith("Mi"):
+                    bytes_ = float(mem[:-2]) * 1024 ** 2
+                elif mem.endswith("Gi"):
+                    bytes_ = float(mem[:-2]) * 1024 ** 3
+                else:
+                    try:
+                        bytes_ = float(mem)
+                    except ValueError:
+                        continue
+            else:
+                if mem is None:
+                    continue
+                bytes_ = float(mem)
+            gib = _bytes_to_gib(bytes_)
+            if gib is None:
+                continue
+            points.setdefault(strat_name, []).append((gib, float(score)))
+
+    if not points:
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = strategy_colors(list(points.keys()))
+    for (strat_name, pts), color in zip(points.items(), colors):
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        # Small horizontal jitter so overlapping points (always 2.0 vs
+        # 4.0 GiB) are visually separable.
+        import random as _r
+        _r.seed(hash(strat_name) % (2**32))
+        jit = [x + _r.uniform(-0.08, 0.08) for x in xs]
+        ax.scatter(
+            jit, ys, color=color, s=70, alpha=0.75,
+            edgecolor="black", linewidth=0.4, label=strat_name,
+        )
+
+    ax.set_xlabel("Max allocatable memory (GiB) of any node hosting an app pod")
+    ax.set_ylabel("Per-iteration resilience score (%)")
+    ax.set_title(
+        "Heterogeneity confound check — score vs host-node RAM\n"
+        "(if bands form by GiB, node-size is a confound; if mixed, it is not)"
+    )
+    ax.set_ylim(-2, 105)
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(10))
+    ax.grid(axis="both", alpha=0.3)
+    ax.legend(loc="lower right", fontsize=9, ncol=2)
+
+    plt.tight_layout()
+    filepath = str(output_path / "heterogeneity_score_vs_node_ram.png")
+    fig.savefig(filepath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return filepath
+
+
+# ---------------------------------------------------------------------------
+# Pairwise statistical-significance table (Tier-1 #2 addressed)
+# ---------------------------------------------------------------------------
+
+
+def write_pairwise_stats_csv(
+    raw_strategies: Dict[str, Any],
+    output_path: Path,
+) -> Optional[str]:
+    """Write a CSV of pairwise Mann-Whitney U comparisons across strategies.
+
+    Addresses the Tier-1 critical-review finding that n=3 / stddev~27 leaves
+    most differences inside the noise floor.  Results land at
+    ``output_path / pairwise_stats.csv`` with one row per strategy pair.
+    """
+    from chaosprobe.metrics.statistics import pairwise_comparisons
+
+    samples: Dict[str, List[float]] = {}
+    for strat_name, strat_data in raw_strategies.items():
+        if not isinstance(strat_data, dict):
+            continue
+        scores = []
+        for ir in strat_data.get("iterations", []):
+            if ir.get("verdict") == "ERROR":
+                continue
+            s = ir.get("resilienceScore")
+            if s is not None:
+                scores.append(float(s))
+        if scores:
+            samples[strat_name] = scores
+
+    if len(samples) < 2:
+        return None
+
+    rows = pairwise_comparisons(samples, holm_bonferroni=True)
+
+    import csv
+
+    out = output_path / "pairwise_stats.csv"
+    with out.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "strategy_a", "strategy_b", "mean_a", "mean_b",
+            "u_statistic", "z", "p_raw", "p_holm", "significant_05",
+        ])
+        for r in rows:
+            writer.writerow([
+                r["a"], r["b"], r["mean_a"], r["mean_b"],
+                r["u_statistic"], r["z"], r["p_raw"],
+                r.get("p_holm"), r["significant_05"],
+            ])
+    return str(out)

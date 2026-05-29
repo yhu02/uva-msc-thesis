@@ -685,6 +685,20 @@ def _run_single_iteration(
         "podPlacements": iter_pod_placements,
     }
 
+    # Surface Locust load-generation stats at the iteration level so the
+    # aggregator and the HTML report can correlate offered load with
+    # the resilience score.  Previously this only lived inside output_data
+    # (one level deeper than the iteration_result surface used by the
+    # visualizer), making it invisible to per-iteration analysis.
+    load_gen = output_data.get("loadGeneration")
+    if load_gen:
+        iter_result["loadGeneration"] = load_gen
+        # Also stash a compact view into metrics so downstream filters
+        # that walk `metrics.*` (Neo4j export, ML export) see it.
+        recovery_load = dict(load_gen.get("stats", {}))
+        recovery_load["profile"] = load_gen.get("profile")
+        iter_result["metrics"]["loadGeneration"] = recovery_load
+
     if unknown_probe_count > 0:
         iter_result["unknownDiagnostics"] = capture_unknown_diagnostics(
             namespace=ctx.namespace,
@@ -717,6 +731,55 @@ def _run_iterations(
     """
     results: List[Dict[str, Any]] = []
     for i in range(1, ctx.iterations + 1):
+        # ── Per-iteration reseeding for the random strategy ──────────
+        # The literature (Sparrow, SOSP 2013) argues randomised
+        # scheduling needs many samples to characterise its outcome
+        # distribution.  Running N iterations with the SAME seed is
+        # really one placement sampled N times, which doesn't tell us
+        # anything about seed-variance.  For ``random`` we re-apply the
+        # strategy with seed = base + (i - 1) before each iteration so
+        # each iteration probes a different random placement.
+        if strategy_name == "random" and i > 1:
+            iter_seed = ctx.seed + (i - 1)
+            click.echo(
+                f"    Re-applying random placement with seed={iter_seed} "
+                f"for iteration {i}/{ctx.iterations}"
+            )
+            try:
+                strat = PlacementStrategy.RANDOM
+                all_deps = ctx.mutator.get_deployments()
+                _infra_prefixes = (
+                    "chaos-exporter",
+                    "chaos-operator",
+                    "event-tracker",
+                    "subscriber",
+                    "workflow-controller",
+                )
+                app_deps = [
+                    d.name for d in all_deps
+                    if not d.name.startswith(_infra_prefixes) and d.replicas > 0
+                ]
+                rollout_timeout = max(300, ctx.timeout)
+                assignment = ctx.mutator.apply_strategy(
+                    strategy=strat,
+                    seed=iter_seed,
+                    deployments=app_deps if app_deps else None,
+                    wait=True,
+                    timeout=rollout_timeout,
+                )
+                # Stash so the aggregated result records the seed series.
+                strategy_result.setdefault("perIterationPlacements", []).append({
+                    "iteration": i,
+                    "seed": iter_seed,
+                    "assignments": dict(assignment.assignments),
+                })
+            except Exception as e:
+                click.echo(
+                    f"    WARN: random-reseed failed at iter {i}: {e} "
+                    f"(continuing with previous placement)",
+                    err=True,
+                )
+
         try:
             ir = _run_single_iteration(ctx, strategy_name, strategy_result, i)
         except Exception as e:

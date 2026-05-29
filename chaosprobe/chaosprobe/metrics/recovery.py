@@ -301,7 +301,21 @@ class RecoveryWatcher:
         p95_idx = int(len(sorted_times) * 0.95)
         p95_idx = min(p95_idx, len(sorted_times) - 1)
 
-        return {
+        # Split into the two phases.  Schedules under heavy contention
+        # (colocate / best-fit / random-with-affinity-collision) can stall
+        # in the deletion-to-scheduled phase while the kubelet retries.
+        # Separating the components makes those scheduler-pathological
+        # cases distinguishable from true container start-up latency.
+        d2s = [
+            c["deletionToScheduled_ms"] for c in cycles
+            if c.get("deletionToScheduled_ms") is not None
+        ]
+        s2r = [
+            c["scheduledToReady_ms"] for c in cycles
+            if c.get("scheduledToReady_ms") is not None
+        ]
+
+        summary = {
             "count": len(cycles),
             "completedCycles": len(recovery_times),
             "incompleteCycles": incomplete,
@@ -311,3 +325,12 @@ class RecoveryWatcher:
             "maxRecovery_ms": max(recovery_times),
             "p95Recovery_ms": round(sorted_times[p95_idx], 1),
         }
+
+        if d2s:
+            summary["meanDeletionToScheduled_ms"] = round(statistics.mean(d2s), 1)
+            summary["maxDeletionToScheduled_ms"] = max(d2s)
+        if s2r:
+            summary["meanScheduledToReady_ms"] = round(statistics.mean(s2r), 1)
+            summary["maxScheduledToReady_ms"] = max(s2r)
+
+        return summary

@@ -599,14 +599,14 @@ add_text_box(slide, 7.0, 2.7, 5.4, 0.3,
 # Experiment configurations — bottom
 add_rounded_box(slide, 0.5, 5.2, 6.0, 2.1, VERY_DARK,
                 border_color=CLR_CHAOS, border_width=Pt(2))
-add_text_box(slide, 0.7, 5.2, 5.6, 0.3, "Placement-Matrix Fault Injection",
+add_text_box(slide, 0.7, 5.2, 5.6, 0.3, "Multi-Fault Placement Matrix",
              font_size=14, bold=True, color=CLR_CHAOS)
 exp_data = [
-    ["", "Matrix fault (pod-delete)", "Baseline (trivial pod-cpu-hog)"],
+    ["", "Churn (pod-delete)", "Contention (pod-cpu-hog)"],
     ["Target", "productcatalogservice", "productcatalogservice"],
-    ["Duration", "120s (CHAOS_INTERVAL=15s)", "1s"],
-    ["Parameters", "FORCE=true, 100% pods", "CPU_LOAD=1%, 1 core"],
-    ["Probes", "7 httpProbes + 5 cmdProbes", "Same probe set (control)"],
+    ["Duration", "120s (CHAOS_INTERVAL=15s)", "120s (1 core, 100% load)"],
+    ["Probes", "7 httpProbes + 5 cmdProbes", "Same probe set"],
+    ["Role", "Tests churn-class story", "Tests if literature returns"],
 ]
 add_table(slide, 0.7, 5.55, 5.6, 1.6, 5, 3, exp_data,
           font_size=9, header_color=CLR_CHAOS)
@@ -762,14 +762,15 @@ add_text_box(slide, 0.5, 2.4, 7, 0.3, "6 Continuous Probers (Background Threads)
              font_size=14, bold=True, color=CLR_METRICS)
 prober_data = [
     ["Prober", "What It Measures", "Data Source", "Interval"],
-    ["RecoveryWatcher", "Pod deletion → scheduled → ready (ms)", "K8s Watch API", "Real-time"],
-    ["LatencyProber", "HTTP route latency + error rates", "kubectl exec → python3/wget", "3.5s"],
+    ["RecoveryWatcher", "deletion→scheduled (d2s) + scheduled→ready (s2r) split", "K8s Watch API", "Real-time"],
+    ["LatencyProber", "HTTP route latency + error rates + per-pod stddev", "kubectl exec → python3/wget", "3.5s"],
     ["RedisProber", "Redis ops/s (GET/SET throughput)", "kubectl exec → redis-cli", "10s"],
     ["DiskProber", "Sequential disk R/W bytes/s", "kubectl exec → dd", "10s"],
-    ["ResourceProber", "Node/pod CPU (millicores) + memory", "Metrics API (v1beta1)", "5s"],
-    ["PrometheusProber", "pod_ready, CPU/memory, throttle, net rx", "PromQL queries", "10s"],
+    ["ResourceProber", "Node/pod CPU (millicores) + memory (used-nodes only)", "Metrics API (v1beta1)", "5s"],
+    ["PrometheusProber (app)", "pod_ready, CPU/memory, throttle, net rx", "PromQL queries", "10s"],
+    ["PrometheusProber (churn)", "kube-proxy SLO p99, CoreDNS p99, conntrack, TCP retrans", "PromQL — SIG-Scalability metrics", "10s"],
 ]
-add_table(slide, 0.3, 2.8, 7.5, 2.4, 7, 4, prober_data, font_size=10)
+add_table(slide, 0.3, 2.8, 7.5, 2.4, 8, 4, prober_data, font_size=9)
 
 # Probes + scoring — right
 add_text_box(slide, 8.2, 2.4, 5, 0.3, "Resilience Probes (LitmusChaos)",
@@ -799,8 +800,8 @@ add_text_box(slide, 0.5, 5.5, 12, 0.3, "Resilience Scoring",
 add_rounded_box(slide, 0.5, 5.9, 5.5, 0.5, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(2))
 add_text_box(slide, 0.7, 5.95, 5.1, 0.4,
-    "score = Σ(probeSuccess%) / N    verdict = PASS iff all probes pass",
-    font_size=13, bold=True, color=WHITE)
+    "mean = Σ(probeSuccess%)/N · also report p25, harmonic mean, 95% bootstrap CI",
+    font_size=11, bold=True, color=WHITE)
 
 # Score scale
 scores_compact = [
@@ -817,13 +818,13 @@ add_text_box(slide, 6.5, 6.45, 6.7, 0.3,
 
 # Key design points
 add_bullet_frame(slide, 0.5, 6.6, 6.0, 0.8, [
-    "• 5 probers extend ContinuousProberBase; RecoveryWatcher uses K8s Watch API",
-    "• Phase-aware: measurements tagged PreChaos / DuringChaos / PostChaos",
-], font_size=11, color=LIGHT_GRAY)
+    "• Bootstrap 95% CI on the mean + Holm-Bonferroni-adjusted pairwise Mann-Whitney U",
+    "• Recovery time split: scheduler-stall (d2s) vs container start-up (s2r)",
+], font_size=10, color=LIGHT_GRAY)
 add_bullet_frame(slide, 6.8, 6.6, 6.0, 0.8, [
-    "• 4 sensitivity tiers (strict → moderate-tight → moderate-loose → control)",
-    "• Healthz control probe detects node-level contention even when chaos is local",
-], font_size=11, color=LIGHT_GRAY)
+    "• kube-proxy SLO + CoreDNS p99 + conntrack measured directly (SIG-Scalability)",
+    "• Heterogeneity confound: score vs host-node RAM scatter (Threats-to-Validity)",
+], font_size=10, color=LIGHT_GRAY)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -850,12 +851,11 @@ add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Key Observations",
              font_size=16, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
     "• Baseline: 100.0% (stddev 0) —\n  methodology control holds",
-    "• Colocate: 83.0% (stddev 0) — BEST\n  non-baseline; stable across iterations",
-    "• best-fit / adversarial / dep-aware:\n  ~69% (stddev 24–31)",
-    "• Spread: 52.3% — among the WORST\n  non-baseline strategies",
-    "• Default / random: ~50% — broadest\n  probe-failure footprint",
-    "• Ordering inverts the literature\n  intuition encoded in H1 + H2",
-], font_size=11, color=LIGHT_GRAY)
+    "• CONTAINMENT cluster (83.0, stddev 0):\n  colocate, random, dep-aware, adversarial.\n  Only the 2 strict probes (directly\n  targeted) fail; everything else passes",
+    "• PARTIAL LEAKAGE (66.3, stddev 29):\n  spread, best-fit — moderate/loose/cmd\n  probes fail in ~1/3 of iterations",
+    "• FULL LEAKAGE (49.7, stddev 29):\n  default — collateral damage routine",
+    "• Bifurcation, not monotonic density;\n  contradicts both H1 and H2",
+], font_size=10, color=LIGHT_GRAY)
 
 # Hypothesis check
 add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
@@ -871,6 +871,10 @@ add_text_box(slide, 4.8, 6.55, 4.0, 0.6,
 add_text_box(slide, 8.9, 6.55, 4.0, 0.6,
     "H3 (recovery → score): REFUTED",
     font_size=12, bold=True, color=ACCENT_RED)
+add_text_box(slide, 0.7, 6.95, 11.9, 0.3,
+    "Random has the fastest recovery (1120ms) and is tied for the best score; "
+    "spread has the slowest recovery (1617ms) and sits in the leakage cluster.",
+    font_size=10, color=LIGHT_GRAY)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -992,16 +996,19 @@ add_text_box(slide, 7.2, 1.4, 5.5, 0.3, "Hypothesis Evaluation",
 
 hyp_results = [
     ("H1", "Colocate = worst resilience",
-     "Inverted: colocate scored 83.0 (best non-baseline,\n"
-     "stddev 0); spread scored 52.3 (among the worst).",
+     "Refuted: colocate tied for top non-baseline\n"
+     "score (83.0, stddev 0) with random, adversarial,\n"
+     "dep-aware — the containment cluster.",
      ACCENT_RED, "Refuted"),
     ("H2", "Spread = best fault isolation",
-     "Inverted: spread had highest during-chaos latency\n"
-     "(229ms vs colocate 99ms) and widest probe failure set.",
+     "Refuted: spread sits in the leakage cluster\n"
+     "(66.3, stddev 29), not the containment cluster.\n"
+     "Default (49.7) is worst, not colocate.",
      ACCENT_RED, "Refuted"),
     ("H3", "Recovery time predicts score",
-     "Refuted: dep-aware fastest (1229ms) but score 69;\n"
-     "colocate slower (1333ms) but score 83. No correlation.",
+     "Refuted: random has fastest recovery (1120ms)\n"
+     "+ top score; spread slowest (1617ms) + leakage.\n"
+     "Recovery and score uncorrelated.",
      ACCENT_RED, "Refuted"),
 ]
 
@@ -1023,36 +1030,38 @@ add_text_box(slide, 0.5, 5.6, 12, 0.3, "Key Insights",
 
 add_rounded_box(slide, 0.5, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_RED)
-add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Churn ≠ Contention",
+add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Bimodal, not monotonic",
              font_size=13, bold=True, color=ACCENT_RED)
 add_text_box(slide, 0.7, 6.3, 3.5, 0.8,
-    "Literature assumes faults create resource "
-    "contention. Pod-delete creates rescheduling "
-    "churn — a different mechanism with opposite "
-    "placement implications.",
+    "Strategies cluster into containment (83) "
+    "and leakage (50–66) — not a density "
+    "gradient. The literature's monotonic "
+    "spread-better/colocate-worse model does "
+    "not fit the data.",
     font_size=10, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 4.7, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_BLUE)
-add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Locality > Recovery Speed",
+add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Containment is the predictor",
              font_size=13, bold=True, color=ACCENT_BLUE)
 add_text_box(slide, 4.9, 6.3, 3.5, 0.8,
-    "Recovery times cluster in 1.2–1.6s for all "
-    "strategies, yet scores span 52–83. What "
-    "matters is whether probe paths stay node-"
-    "local during the kill cycle — not how fast "
-    "the replacement pod becomes ready.",
+    "What separates the two clusters is whether "
+    "the chaos target's network path stays "
+    "inside the placement domain. When it does, "
+    "only the directly-targeted probes fail. "
+    "When it doesn't, collateral damage leaks.",
     font_size=10, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 8.9, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_GREEN)
-add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "Cross-Node = Failure Surface",
+add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "Churn-driven, not contention",
              font_size=13, bold=True, color=ACCENT_GREEN)
 add_text_box(slide, 9.1, 6.3, 3.5, 0.8,
-    "Spread maximises cross-node traffic, "
-    "which is exactly what pod-delete churn "
-    "disrupts — every cross-node hop becomes "
-    "a failure surface during the kill cycle.",
+    "Pod-delete creates kube-proxy / conntrack "
+    "/ CoreDNS reconvergence — the K8s SLO "
+    "directly tracks this. Cross-node hops "
+    "exposed to the kill cycle become failure "
+    "surfaces; same-domain paths do not.",
     font_size=10, color=LIGHT_GRAY)
 
 
@@ -1148,13 +1157,13 @@ add_rounded_box(slide, 0.5, 4.9, 12.1, 1.6, VERY_DARK,
 add_text_box(slide, 0.7, 4.9, 11.7, 0.35, "Future Work",
              font_size=16, bold=True, color=ACCENT_ORANGE)
 add_bullet_frame(slide, 0.7, 5.3, 5.6, 1.15, [
-    "• Test contention-based faults (pod-cpu-hog,\n  memory-hog) — predict ordering flips back",
     "• Multi-replica services — does locality still win\n  when restart can happen on a peer pod?",
-    "• Larger cluster + production-like traffic patterns",
+    "• Larger cluster (20+ nodes), production-like traffic\n  & service-mesh instrumentation (Istio/Linkerd)",
+    "• Memory- and network-fault classes beyond CPU",
 ], font_size=11, color=LIGHT_GRAY)
 add_bullet_frame(slide, 6.7, 5.3, 5.7, 1.15, [
     "• Per-fault-class placement guidance — choose strategy\n  by expected fault type, not by general 'best practice'",
-    "• ML-based anomaly detection on collected dataset",
+    "• ML-based anomaly detection on collected dataset\n  (the Neo4j store is already structured for it)",
     "• Per-fault-class extensions to Borg / Medea schedulers",
 ], font_size=11, color=LIGHT_GRAY)
 

@@ -264,8 +264,16 @@ def _assert_no_unbuilt_cmdprobes(experiments: List[Dict[str, Any]]) -> None:
 def _load_and_prepare_scenario(
     experiment: str,
     namespace: Optional[str],
+    deploy: bool = True,
 ) -> Tuple[dict, str, Path, Optional[List[dict]]]:
     """Load, validate, deploy manifests, and discover topology.
+
+    Args:
+        experiment: Path to the experiment YAML file.
+        namespace: Override namespace (None = use scenario's own).
+        deploy: If False, skip kubectl apply and Rust-probe build.  Used
+            for secondary experiments in a multi-fault matrix where
+            manifests have already been applied by the primary one.
 
     Returns ``(shared_scenario, namespace, experiment_file, service_routes)``.
     """
@@ -283,6 +291,14 @@ def _load_and_prepare_scenario(
     except Exception as e:
         click.echo(f"Error loading experiment: {e}", err=True)
         sys.exit(1)
+
+    if not deploy:
+        # Secondary scenario in a multi-fault matrix.  Manifests and
+        # probe images were already taken care of by the primary
+        # scenario; we just need the parsed scenario dict so the runner
+        # can swap engine specs.
+        service_routes = parse_topology_from_scenario(shared_scenario) or None
+        return shared_scenario, namespace, experiment_file, service_routes
 
     # Auto-deploy application manifests from scenario's deploy/ directory.
     # Shells out to kubectl rather than using the python client because
@@ -587,8 +603,15 @@ def _print_run_banner(
 @click.option(
     "--experiment",
     "-e",
-    default="scenarios/online-boutique/placement-experiment.yaml",
-    help="Path to the placement experiment YAML file",
+    multiple=True,
+    default=("scenarios/online-boutique/placement-experiment.yaml",),
+    help=(
+        "Path to a placement-experiment YAML file. Pass -e multiple times "
+        "to run a multi-fault matrix: every placement strategy is executed "
+        "once per experiment file. Results are keyed as "
+        "'<fault-label>__<strategy>' so the two faults can be compared "
+        "side-by-side."
+    ),
 )
 @click.option(
     "--iterations",
@@ -687,7 +710,7 @@ def run(
     timeout: int,
     seed: int,
     settle_time: int,
-    experiment: str,
+    experiment: Tuple[str, ...],
     iterations: int,
     load_profile: Optional[str],
     locustfile: Optional[str],
@@ -771,13 +794,44 @@ def run(
         )
         sys.exit(1)
 
-    # Load scenario, deploy manifests, discover topology, build probes
+    # ── Multi-fault matrix support ──────────────────────────────────────
+    # ``experiment`` is a tuple of YAML paths (Click multi-option).  The
+    # first one is loaded as the "primary" scenario used for namespace
+    # detection, image pre-pull, and probe-image extraction.  All others
+    # are loaded separately and iterated as a second outer loop wrapped
+    # around the strategy loop further down.
+    if not experiment:
+        click.echo("Error: at least one --experiment / -e must be provided", err=True)
+        sys.exit(1)
+
+    primary_experiment = experiment[0]
+    # Load scenario, deploy manifests, discover topology, build probes.
+    # All fault experiments must target the same namespace.
     shared_scenario, namespace, experiment_file, service_routes = _load_and_prepare_scenario(
-        experiment, namespace
+        primary_experiment, namespace
     )
 
-    # Ensure LitmusChaos is ready once
-    experiment_types = extract_experiment_types(shared_scenario)
+    # Pre-load every additional scenario so any parse errors fail fast
+    # before we spin up the cluster setup.  Each entry is a (label,
+    # scenario_dict, fault_types) triple keyed for downstream loops.
+    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]] = []
+    for exp_path in experiment:
+        label = Path(exp_path).stem  # e.g. "placement-experiment" / "placement-cpu-hog"
+        if exp_path == primary_experiment:
+            scenario_dict = shared_scenario
+        else:
+            scenario_dict, _ns_unused, _file_unused, _routes_unused = (
+                _load_and_prepare_scenario(exp_path, namespace, deploy=False)
+            )
+        fault_scenarios.append((label, scenario_dict, extract_experiment_types(scenario_dict)))
+
+    # Ensure LitmusChaos is ready once with all required experiment types
+    # across the whole fault matrix.
+    experiment_types: List[str] = []
+    for _label, _scn, types in fault_scenarios:
+        for t in types:
+            if t not in experiment_types:
+                experiment_types.append(t)
     # Baseline uses pod-cpu-hog (trivial fault) instead of pod-delete
     if "baseline" in strategy_list and "pod-cpu-hog" not in experiment_types:
         experiment_types.append("pod-cpu-hog")
@@ -838,10 +892,22 @@ def run(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "namespace": namespace,
         "iterations": iterations,
+        # Multi-fault matrix: keyed as ``faults[label][strategy]``.  When
+        # only one fault is supplied (the historical default), the
+        # outer key is the scenario filename stem so downstream consumers
+        # can still find a stable label.
+        "faults": {label: {"strategies": {}} for label, _, _ in fault_scenarios},
+        "faultExperiments": [label for label, _, _ in fault_scenarios],
+        # Flat view, kept for backwards compatibility with the existing
+        # visualizer / HTML report / per-strategy file writer.  Keys are
+        # bare strategy names when there is one fault, ``f"{fault}__{strategy}"``
+        # otherwise.  Both views point at the same per-strategy dict, so
+        # writes through either are observed by both.
         "strategies": {},
     }
+    _multi_fault = len(fault_scenarios) > 1
 
-    total = len(strategy_list)
+    total = len(strategy_list) * len(fault_scenarios)
     passed = 0
     failed = 0
 
@@ -913,85 +979,111 @@ def run(
     # pods couldn't pull in time when the chaos pod was bursting CPU/network
     # on the same node, dragging the score down by ~8 points per missed
     # probe even though the SUT was healthy).
-    probe_images = extract_cmdprobe_images(shared_scenario.get("experiments", []))
+    # Pre-pull probe images across the UNION of all fault scenarios so a
+    # later fault doesn't trigger a fresh image pull mid-run.
+    all_probe_images: List[str] = []
+    seen_images: set = set()
+    for _label, scn, _types in fault_scenarios:
+        for img in extract_cmdprobe_images(scn.get("experiments", [])):
+            if img not in seen_images:
+                seen_images.add(img)
+                all_probe_images.append(img)
     worker_node_names = [
         n.name for n in mutator.get_nodes() if n.is_schedulable and not n.is_control_plane
     ]
-    if probe_images and worker_node_names:
+    if all_probe_images and worker_node_names:
         click.echo(
-            f"Pre-pulling {len(probe_images)} probe image(s) onto "
+            f"Pre-pulling {len(all_probe_images)} probe image(s) onto "
             f"{len(worker_node_names)} worker node(s)..."
         )
-        pulled = prepull_probe_images(namespace, probe_images, worker_node_names)
+        pulled = prepull_probe_images(namespace, all_probe_images, worker_node_names)
         click.echo(f"  Pre-pulled {pulled} (node x image) combinations")
 
-    # Build shared context for strategy execution
-    run_ctx = RunContext(
-        namespace=namespace,
-        timeout=timeout,
-        seed=seed,
-        settle_time=settle_time,
-        iterations=iterations,
-        baseline_duration=baseline_duration,
-        measure_latency=measure_latency,
-        measure_redis=measure_redis,
-        measure_disk=measure_disk,
-        measure_resources=measure_resources,
-        measure_prometheus=measure_prometheus,
-        prometheus_url=prometheus_url,
-        collect_logs=collect_logs,
-        load_profile=load_profile,
-        locustfile=locustfile,
-        target_url=target_url,
-        neo4j_uri=neo4j_uri,
-        neo4j_user=neo4j_user,
-        neo4j_password=neo4j_password,
-        shared_scenario=shared_scenario,
-        service_routes=service_routes,
-        target_deployment=target_deployment,
-        core_api=core_api,
-        chaoscenter_config=chaoscenter_config,
-        frontend_pf_port=frontend_pf_port,
-        load_service=load_service,
-        metrics_collector=metrics_collector,
-        mutator=mutator,
-        graph_store=graph_store,
-        ts=ts,
-    )
+    # ── Outer loop: per-fault scenario ─────────────────────────────────
+    # When multiple --experiment / -e flags were passed, run the full
+    # placement matrix once per fault.  This realises the "test fault
+    # class to refute or confirm the churn-vs-contention story"
+    # recommendation from the critical review.
+    for fault_label, fault_scenario, _fault_types in fault_scenarios:
+        click.echo(f"\n{'═' * 60}")
+        click.echo(f"  FAULT: {fault_label}")
+        click.echo(f"{'═' * 60}")
+        fault_target = extract_target_deployment(fault_scenario)
+        # Build per-fault context so each fault's scenario / target is
+        # swapped in fresh for execute_strategy.
+        run_ctx = RunContext(
+            namespace=namespace,
+            timeout=timeout,
+            seed=seed,
+            settle_time=settle_time,
+            iterations=iterations,
+            baseline_duration=baseline_duration,
+            measure_latency=measure_latency,
+            measure_redis=measure_redis,
+            measure_disk=measure_disk,
+            measure_resources=measure_resources,
+            measure_prometheus=measure_prometheus,
+            prometheus_url=prometheus_url,
+            collect_logs=collect_logs,
+            load_profile=load_profile,
+            locustfile=locustfile,
+            target_url=target_url,
+            neo4j_uri=neo4j_uri,
+            neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password,
+            shared_scenario=fault_scenario,
+            service_routes=service_routes,
+            target_deployment=fault_target,
+            core_api=core_api,
+            chaoscenter_config=chaoscenter_config,
+            frontend_pf_port=frontend_pf_port,
+            load_service=load_service,
+            metrics_collector=metrics_collector,
+            mutator=mutator,
+            graph_store=graph_store,
+            ts=ts,
+        )
 
-    for idx, strategy_name in enumerate(strategy_list, 1):
-        try:
-            strategy_result, strategy_passed = execute_strategy(
-                run_ctx,
-                strategy_name,
-                idx,
-                total,
+        for idx, strategy_name in enumerate(strategy_list, 1):
+            try:
+                strategy_result, strategy_passed = execute_strategy(
+                    run_ctx,
+                    strategy_name,
+                    idx,
+                    total,
+                )
+            except Exception as e:
+                click.echo(
+                    f"\n  FATAL ERROR in strategy '{strategy_name}' "
+                    f"under fault '{fault_label}': {e}",
+                    err=True,
+                )
+                strategy_result = {
+                    "strategy": strategy_name,
+                    "fault": fault_label,
+                    "status": "error",
+                    "placement": None,
+                    "experiment": None,
+                    "metrics": None,
+                    "error": str(e),
+                }
+                strategy_passed = False
+            strategy_result["fault"] = fault_label
+            overall_results["faults"][fault_label]["strategies"][strategy_name] = strategy_result
+            flat_key = (
+                f"{fault_label}__{strategy_name}" if _multi_fault else strategy_name
             )
-        except Exception as e:
-            click.echo(
-                f"\n  FATAL ERROR in strategy '{strategy_name}': {e}",
-                err=True,
-            )
-            strategy_result = {
-                "strategy": strategy_name,
-                "status": "error",
-                "placement": None,
-                "experiment": None,
-                "metrics": None,
-                "error": str(e),
-            }
-            strategy_passed = False
-        overall_results["strategies"][strategy_name] = strategy_result
-        if strategy_result["status"] == "error":
-            failed += 1
-        elif strategy_passed:
-            passed += 1
-        else:
-            failed += 1
+            overall_results["strategies"][flat_key] = strategy_result
+            if strategy_result["status"] == "error":
+                failed += 1
+            elif strategy_passed:
+                passed += 1
+            else:
+                failed += 1
 
-        # Persist partial results after each strategy so that a crash
-        # in a later strategy doesn't lose everything collected so far.
-        _save_partial_results(overall_results, results_dir)
+            # Persist partial results after each strategy so that a crash
+            # in a later strategy doesn't lose everything collected so far.
+            _save_partial_results(overall_results, results_dir)
 
     # ── Final cleanup: clear placement ──
     click.echo(f"\n{'─' * 60}")

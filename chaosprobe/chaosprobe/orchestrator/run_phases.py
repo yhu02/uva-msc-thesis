@@ -23,6 +23,22 @@ from chaosprobe.provisioner.setup import LitmusSetup
 
 LOAD_TARGET_LOCAL_PORT = 8089
 
+
+def _percentile(sorted_values: List[float], p: float) -> float:
+    """Linear-interpolated percentile from an already-sorted sequence."""
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    import math as _m
+
+    k = (len(sorted_values) - 1) * p
+    f = _m.floor(k)
+    c = _m.ceil(k)
+    if f == c:
+        return float(sorted_values[int(k)])
+    return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
+
 # ---------------------------------------------------------------------------
 # 1.  Pre-flight sub-steps
 # ---------------------------------------------------------------------------
@@ -836,6 +852,30 @@ def aggregate_iterations(
 
     healthy_stddev = round(statistics.stdev(healthy_scores), 1) if len(healthy_scores) > 1 else 0.0
     valid_stddev = round(statistics.stdev(valid_scores), 1) if len(valid_scores) > 1 else 0.0
+
+    # ── Tail-aware score variants ──────────────────────────────────────
+    # The arithmetic mean hides exactly the tail failures Dean & Barroso
+    # ("The Tail at Scale", CACM 2013) argue dominate user-perceived
+    # quality.  Surface them so the user can pick the right point estimate
+    # for their argument and so the discussion can refer to actual tail
+    # percentiles rather than just the mean.
+    sorted_valid = sorted(valid_scores)
+    p25_score = _percentile(sorted_valid, 0.25)
+    # Harmonic mean penalises low values disproportionately.  Compute on
+    # (score + 1) to avoid divide-by-zero when a probe was fully wiped
+    # out (score=0); subtract 1 after.  Bounded to [0, 100] for sanity.
+    harm_mean = statistics.harmonic_mean([s + 1.0 for s in valid_scores]) - 1.0
+    harm_mean = max(0.0, min(100.0, harm_mean))
+
+    # ── Bootstrap CI for the mean ──────────────────────────────────────
+    # With n=3 and stddev~25-30, the point-estimate gap between many
+    # strategies is well inside the noise floor.  Reporting a bootstrap
+    # 95% CI makes the uncertainty visible up-front rather than burying
+    # it.
+    from chaosprobe.metrics.statistics import bootstrap_ci
+
+    mean_ci = bootstrap_ci(valid_scores, statistic="mean")
+
     agg: Dict[str, Any] = {
         "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
         "passRate": round(pass_count / len(verdicts), 2),
@@ -845,6 +885,14 @@ def aggregate_iterations(
         "stddevResilienceScore_healthyOnly": healthy_stddev,
         "minResilienceScore": min(valid_scores),
         "maxResilienceScore": max(valid_scores),
+        "p25ResilienceScore": round(p25_score, 1),
+        "harmonicMeanResilienceScore": round(harm_mean, 1),
+        "meanResilienceScore_ci95": {
+            "low": mean_ci["ci_low"],
+            "high": mean_ci["ci_high"],
+            "n": mean_ci["n"],
+            "n_resamples": mean_ci["n_resamples"],
+        },
         "totalExperiments": len(iteration_results),
         "passed": pass_count,
         "failed": len(verdicts) - pass_count - error_count,
@@ -902,6 +950,66 @@ def aggregate_iterations(
         # (Taking max() would report the worst-case outlier, not a
         # proper aggregate percentile.)
         agg["p95RecoveryTime_ms"] = round(statistics.mean(all_p95), 1) if all_p95 else None
+
+        # Surface the deletion->scheduled vs scheduled->ready split.  Lets
+        # downstream analysis distinguish scheduler stalls (large d2s, e.g.
+        # affinity collision) from genuine container-start latency (large s2r).
+        all_d2s: List[float] = []
+        all_s2r: List[float] = []
+        for ir in iteration_results:
+            rm = ir.get("metrics", {})
+            if not rm:
+                continue
+            summary = rm.get("recovery", {}).get("summary", {})
+            v = summary.get("meanDeletionToScheduled_ms")
+            if v is not None:
+                all_d2s.append(v)
+            v = summary.get("meanScheduledToReady_ms")
+            if v is not None:
+                all_s2r.append(v)
+
+        if all_d2s:
+            agg["meanDeletionToScheduled_ms"] = round(statistics.mean(all_d2s), 1)
+            agg["stddevDeletionToScheduled_ms"] = (
+                round(statistics.stdev(all_d2s), 1) if len(all_d2s) > 1 else 0.0
+            )
+        if all_s2r:
+            agg["meanScheduledToReady_ms"] = round(statistics.mean(all_s2r), 1)
+            agg["stddevScheduledToReady_ms"] = (
+                round(statistics.stdev(all_s2r), 1) if len(all_s2r) > 1 else 0.0
+            )
+
+        # Aggregate Locust load-generation stats across iterations so each
+        # strategy reports the actual offered RPS / error rate that drove
+        # its score.  Without this, a reviewer cannot rule out load drift
+        # as the cause of inter-strategy score differences.
+        rps_vals: List[float] = []
+        err_vals: List[float] = []
+        resp_vals: List[float] = []
+        for ir in iteration_results:
+            lg = ir.get("loadGeneration") or {}
+            stats = lg.get("stats") or {}
+            v = stats.get("requestsPerSecond")
+            if v is not None:
+                rps_vals.append(float(v))
+            v = stats.get("errorRate")
+            if v is not None:
+                err_vals.append(float(v))
+            v = stats.get("p95ResponseTime_ms") or stats.get("avgResponseTime_ms")
+            if v is not None:
+                resp_vals.append(float(v))
+        if rps_vals or err_vals or resp_vals:
+            load_agg: Dict[str, Any] = {}
+            if rps_vals:
+                load_agg["meanRequestsPerSecond"] = round(statistics.mean(rps_vals), 2)
+                load_agg["stddevRequestsPerSecond"] = (
+                    round(statistics.stdev(rps_vals), 2) if len(rps_vals) > 1 else 0.0
+                )
+            if err_vals:
+                load_agg["meanErrorRate"] = round(statistics.mean(err_vals), 4)
+            if resp_vals:
+                load_agg["meanResponseTime_ms"] = round(statistics.mean(resp_vals), 1)
+            agg["loadGenerationAggregate"] = load_agg
     else:
         agg["meanRecoveryTime_ms"] = None
         agg["stddevRecoveryTime_ms"] = None
