@@ -154,6 +154,7 @@ class MetricsCollector:
 
         pod_list = []
         total_restarts = 0
+        total_oom_kills = 0
 
         for pod in pods.items:
             restarts = 0
@@ -163,6 +164,7 @@ class MetricsCollector:
             containers = []
             for cs in container_statuses:
                 restarts += cs.restart_count
+                oom_kill_count = 0
 
                 container_info: Dict[str, Any] = {
                     "name": cs.name,
@@ -188,6 +190,8 @@ class MetricsCollector:
                         container_info["state"] = "terminated"
                         container_info["terminatedReason"] = cs.state.terminated.reason
                         container_info["exitCode"] = cs.state.terminated.exit_code
+                        if cs.state.terminated.reason == "OOMKilled":
+                            oom_kill_count += 1
 
                 # Last termination state (critical for OOMKills, CrashLoopBackOff)
                 if cs.last_state and cs.last_state.terminated:
@@ -199,6 +203,11 @@ class MetricsCollector:
                         "finishedAt": term.finished_at.isoformat() if term.finished_at else None,
                         "message": term.message,
                     }
+                    if term.reason == "OOMKilled":
+                        oom_kill_count += 1
+
+                container_info["oomKillCount"] = oom_kill_count
+                total_oom_kills += oom_kill_count
 
                 containers.append(container_info)
 
@@ -240,6 +249,7 @@ class MetricsCollector:
         return {
             "pods": pod_list,
             "totalRestarts": total_restarts,
+            "totalOOMKills": total_oom_kills,
         }
 
     def _collect_node_info(self, node_name: Optional[str]) -> Optional[Dict[str, Any]]:
