@@ -14,7 +14,7 @@ uncertainty explicit instead of hiding it behind point estimates.
 import math
 import random
 import statistics
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence
 
 
 def _percentile(sorted_values: Sequence[float], p: float) -> float:
@@ -308,7 +308,7 @@ def cliffs_delta(
 
 
 def pairwise_comparisons(
-    samples_by_label: Dict[str, Sequence[float]],
+    samples_by_label: Mapping[str, Sequence[float]],
     holm_bonferroni: bool = True,
 ) -> List[Dict[str, object]]:
     """Run pairwise Mann-Whitney U across every label pair.

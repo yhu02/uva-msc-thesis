@@ -16,7 +16,7 @@ don't get silently dropped from the comparison.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import click
 
@@ -27,7 +27,9 @@ _METRICS: List[Tuple[str, str, str]] = [
 
 
 def _load(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text())
+    # Trusted boundary: summary.json is produced by chaosprobe run and
+    # always a JSON object at the top level.
+    return cast(Dict[str, Any], json.loads(path.read_text()))
 
 
 def _strategies(raw: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:

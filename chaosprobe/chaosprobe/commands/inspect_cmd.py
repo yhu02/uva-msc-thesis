@@ -28,7 +28,7 @@ def _find_iteration(raw: Dict[str, Any], strategy: str, iteration: int) -> Optio
     if sdata is None:
         return None
     for ir in sdata.get("iterations") or []:
-        if ir.get("iteration") == iteration:
+        if isinstance(ir, dict) and ir.get("iteration") == iteration:
             return ir
     return None
 
