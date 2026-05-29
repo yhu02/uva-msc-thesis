@@ -1030,9 +1030,7 @@ def aggregate_iterations(
             stddev_d2s = round(statistics.stdev(all_d2s), 1) if len(all_d2s) > 1 else 0.0
             agg["meanDeletionToScheduled_ms"] = mean_d2s
             agg["stddevDeletionToScheduled_ms"] = stddev_d2s
-            agg["deletionToScheduledCV"] = (
-                round(stddev_d2s / mean_d2s, 3) if mean_d2s > 0 else None
-            )
+            agg["deletionToScheduledCV"] = round(stddev_d2s / mean_d2s, 3) if mean_d2s > 0 else None
             d2s_ci = bootstrap_ci(all_d2s, statistic="mean")
             agg["meanDeletionToScheduled_ms_ci95"] = {
                 "low": d2s_ci["ci_low"],
@@ -1045,9 +1043,7 @@ def aggregate_iterations(
             stddev_s2r = round(statistics.stdev(all_s2r), 1) if len(all_s2r) > 1 else 0.0
             agg["meanScheduledToReady_ms"] = mean_s2r
             agg["stddevScheduledToReady_ms"] = stddev_s2r
-            agg["scheduledToReadyCV"] = (
-                round(stddev_s2r / mean_s2r, 3) if mean_s2r > 0 else None
-            )
+            agg["scheduledToReadyCV"] = round(stddev_s2r / mean_s2r, 3) if mean_s2r > 0 else None
             s2r_ci = bootstrap_ci(all_s2r, statistic="mean")
             agg["meanScheduledToReady_ms_ci95"] = {
                 "low": s2r_ci["ci_low"],
