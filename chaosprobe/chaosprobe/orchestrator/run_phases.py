@@ -1190,6 +1190,22 @@ def aggregate_iterations(
     if node_pressure:
         agg["nodePressureEvents"] = node_pressure
 
+    # Per-iteration experimentDuration_s — the end-to-end wall-clock of
+    # the chaos window.  Aggregating across iterations lets a defender
+    # ask "did this strategy's runs take noticeably longer than that
+    # one's" and surfaces between-iteration cluster slow-down.
+    durations: List[float] = []
+    for ir in iteration_results:
+        d = ir.get("experimentDuration_s")
+        if isinstance(d, (int, float)):
+            durations.append(float(d))
+    if durations:
+        agg["meanExperimentDuration_s"] = round(statistics.mean(durations), 1)
+        agg["maxExperimentDuration_s"] = round(max(durations), 1)
+        agg["minExperimentDuration_s"] = round(min(durations), 1)
+        if len(durations) > 1:
+            agg["stddevExperimentDuration_s"] = round(statistics.stdev(durations), 1)
+
     return agg
 
 
