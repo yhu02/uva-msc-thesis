@@ -204,6 +204,9 @@ def wait_for_app_ready(
                 f"wget -q -O /dev/null --timeout={budget_s} '{shell_escape(url)}' "
                 f"&& echo OK || echo FAIL"
             )
+            # pod is guarded non-None above and only ever reassigned to a
+            # non-None replacement; assert so the closure type-checks.
+            assert pod is not None
             out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
             if "OK" not in out:
                 # Pod may have been evicted — try to re-discover

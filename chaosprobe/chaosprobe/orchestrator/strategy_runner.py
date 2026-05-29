@@ -348,7 +348,7 @@ def _snapshot_node_entry(node: Any) -> Dict[str, Any]:
     for cond in raw_conditions:
         cond_type = getattr(cond, "type", None)
         if cond_type in _SNAPSHOT_CONDITION_TYPES:
-            conditions[cond_type] = getattr(cond, "status", None)
+            conditions[cond_type] = getattr(cond, "status", "")
     return {
         "name": name,
         "conditions": conditions,
@@ -779,6 +779,8 @@ def _run_single_iteration(
             duration_seconds=locust_duration,
         )
         click.echo(f"    Starting Locust ({ctx.load_profile}: {base_profile.users} users)")
+        # load_profile is only set together with a target_url
+        assert ctx.target_url is not None
         iter_locust_runner = LocustRunner(target_url=ctx.target_url, locustfile=ctx.locustfile)
         iter_locust_runner.start(profile)
 
@@ -1215,6 +1217,7 @@ def _run_iterations(
                     try:
                         from chaosprobe.storage.neo4j_store import Neo4jStore
 
+                        assert ctx.neo4j_uri is not None
                         ctx.graph_store = Neo4jStore(
                             ctx.neo4j_uri,
                             ctx.neo4j_user,
@@ -1340,7 +1343,7 @@ def _aggregate_strategy(
                 f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
                 f"Max: {agg['maxRecoveryTime_ms']:.0f}ms"
             )
-        return agg["passRate"] == 1.0
+        return bool(agg["passRate"] == 1.0)
     else:
         ir = iteration_results[0]
         strategy_result["experiment"] = {
@@ -1356,7 +1359,7 @@ def _aggregate_strategy(
         strategy_result["cascadeTimeline"] = ir.get("cascadeTimeline")
         strategy_result["status"] = "completed"
         strategy_result["runId"] = ir["runId"]
-        return ir["verdict"] == "PASS"
+        return bool(ir["verdict"] == "PASS")
 
 
 def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
@@ -1400,8 +1403,8 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
             try:
                 parsed = (ctx.neo4j_uri or "").replace("bolt://", "").replace("neo4j://", "")
                 if ":" in parsed:
-                    neo4j_host, neo4j_port = parsed.split(":", 1)
-                    neo4j_port = int(neo4j_port)
+                    neo4j_host, port_str = parsed.split(":", 1)
+                    neo4j_port = int(port_str)
             except (ValueError, AttributeError):
                 pass
             if not pf.check_port(neo4j_host, neo4j_port):
@@ -1412,6 +1415,7 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
             try:
                 from chaosprobe.storage.neo4j_store import Neo4jStore
 
+                assert ctx.neo4j_uri is not None
                 ctx.graph_store = Neo4jStore(
                     ctx.neo4j_uri,
                     ctx.neo4j_user,
@@ -1434,3 +1438,7 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
                 )
                 ctx.graph_store = None
                 return False
+
+    # All three attempts return within the loop (attempt 2 always hits the
+    # ``attempt >= 2`` branch above); defensive fallback for the type checker.
+    return False  # pragma: no cover

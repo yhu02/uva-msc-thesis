@@ -1,16 +1,19 @@
 """Unit tests for orchestrator timeout and readiness helpers."""
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from chaosprobe.orchestrator.readiness import shell_escape
 from chaosprobe.orchestrator.strategy_runner import (
     _PROBE_BUDGET_CAP,
+    _aggregate_strategy,
     _build_iteration_routes,
     _build_route_view_for_iteration,
     _generate_east_west_routes,
     _is_non_http_target,
     _snapshot_cluster_state,
+    _sync_neo4j,
 )
 from chaosprobe.orchestrator.timeout import (
     compute_effective_timeout,
@@ -804,3 +807,92 @@ class TestBuildRouteViewForIteration:
         assert _build_route_view_for_iteration(None, None) == []
         assert _build_route_view_for_iteration(None, {}) == []
         assert _build_route_view_for_iteration({}, None) == []
+
+
+def _iteration(verdict, score):
+    return {
+        "verdict": verdict,
+        "resilienceScore": score,
+        "metrics": {
+            "recovery": {
+                "summary": {
+                    "meanRecovery_ms": 1000.0,
+                    "maxRecovery_ms": 2000.0,
+                    "p95Recovery_ms": 1800.0,
+                }
+            }
+        },
+        "runId": "run-1",
+        "probeVerdicts": {},
+    }
+
+
+class TestAggregateStrategy:
+    def test_single_iteration_pass(self):
+        sr = {}
+        result = _aggregate_strategy(
+            SimpleNamespace(iterations=1), "spread", sr, [_iteration("PASS", 90)]
+        )
+        assert result is True
+        assert sr["status"] == "completed"
+        assert sr["experiment"]["resilienceScore"] == 90
+
+    def test_single_iteration_fail(self):
+        sr = {}
+        result = _aggregate_strategy(
+            SimpleNamespace(iterations=1), "spread", sr, [_iteration("FAIL", 30)]
+        )
+        assert result is False
+
+    def test_multi_iteration_all_pass(self):
+        sr = {}
+        result = _aggregate_strategy(
+            SimpleNamespace(iterations=2),
+            "colocate",
+            sr,
+            [_iteration("PASS", 80), _iteration("PASS", 90)],
+        )
+        assert result is True
+        assert sr["status"] == "completed"
+        assert "aggregated" in sr
+
+    def test_multi_iteration_mixed_is_not_full_pass(self):
+        sr = {}
+        result = _aggregate_strategy(
+            SimpleNamespace(iterations=3),
+            "colocate",
+            sr,
+            [_iteration("PASS", 80), _iteration("FAIL", 40), _iteration("PASS", 90)],
+        )
+        assert result is False
+
+
+def _neo4j_ctx(store):
+    return SimpleNamespace(
+        graph_store=store,
+        neo4j_uri="bolt://host:7687",
+        neo4j_user="neo4j",
+        neo4j_password="pw",
+    )
+
+
+class TestSyncNeo4j:
+    def test_success_first_attempt(self):
+        store = MagicMock()
+        ctx = _neo4j_ctx(store)
+        assert _sync_neo4j(ctx, {"run": 1}) is True
+        store.sync_run.assert_called_once_with({"run": 1})
+
+    def test_reconnects_then_succeeds(self):
+        failing = MagicMock()
+        failing.sync_run.side_effect = Exception("driver closed")
+        ctx = _neo4j_ctx(failing)
+        with (
+            patch("chaosprobe.orchestrator.strategy_runner.pf") as mock_pf,
+            patch("chaosprobe.storage.neo4j_store.Neo4jStore") as MockStore,
+        ):
+            mock_pf.check_port.return_value = True
+            MockStore.return_value = MagicMock()  # reconnected store syncs cleanly
+            result = _sync_neo4j(ctx, {"run": 1})
+        assert result is True
+        assert ctx.graph_store is MockStore.return_value
