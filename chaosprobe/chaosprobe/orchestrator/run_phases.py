@@ -952,6 +952,19 @@ def aggregate_iterations(
         # proper aggregate percentile.)
         agg["p95RecoveryTime_ms"] = round(statistics.mean(all_p95), 1) if all_p95 else None
 
+        # The thesis's H9 attribution is "scheduling latency dominates
+        # recovery" — it lives or dies on the mean of meanRecovery_ms and
+        # its split. A point estimate without a CI is not defensible at n=5
+        # iterations × ~25-30 stddev, so surface the bootstrap interval
+        # alongside the point estimate (matches meanResilienceScore_ci95).
+        recovery_ci = bootstrap_ci(all_recovery_times, statistic="mean")
+        agg["meanRecoveryTime_ms_ci95"] = {
+            "low": recovery_ci["ci_low"],
+            "high": recovery_ci["ci_high"],
+            "n": recovery_ci["n"],
+            "n_resamples": recovery_ci["n_resamples"],
+        }
+
         # Surface the deletion->scheduled vs scheduled->ready split.  Lets
         # downstream analysis distinguish scheduler stalls (large d2s, e.g.
         # affinity collision) from genuine container-start latency (large s2r).
@@ -974,11 +987,25 @@ def aggregate_iterations(
             agg["stddevDeletionToScheduled_ms"] = (
                 round(statistics.stdev(all_d2s), 1) if len(all_d2s) > 1 else 0.0
             )
+            d2s_ci = bootstrap_ci(all_d2s, statistic="mean")
+            agg["meanDeletionToScheduled_ms_ci95"] = {
+                "low": d2s_ci["ci_low"],
+                "high": d2s_ci["ci_high"],
+                "n": d2s_ci["n"],
+                "n_resamples": d2s_ci["n_resamples"],
+            }
         if all_s2r:
             agg["meanScheduledToReady_ms"] = round(statistics.mean(all_s2r), 1)
             agg["stddevScheduledToReady_ms"] = (
                 round(statistics.stdev(all_s2r), 1) if len(all_s2r) > 1 else 0.0
             )
+            s2r_ci = bootstrap_ci(all_s2r, statistic="mean")
+            agg["meanScheduledToReady_ms_ci95"] = {
+                "low": s2r_ci["ci_low"],
+                "high": s2r_ci["ci_high"],
+                "n": s2r_ci["n"],
+                "n_resamples": s2r_ci["n_resamples"],
+            }
 
         # Aggregate Locust load-generation stats across iterations so each
         # strategy reports the actual offered RPS / error rate that drove
