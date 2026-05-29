@@ -1,0 +1,303 @@
+{
+  "schemaVersion": "2.0.0",
+  "runMetadata": {
+    "chaosprobeVersion": "0.1.0",
+    "git": {
+      "commit": "a9f718311c7e0d8e9c4dba8b7e2c9f0a4ffe1234",
+      "shortCommit": "a9f7183",
+      "dirty": false
+    },
+    "kubernetes": {
+      "serverVersion": "v1.28.6",
+      "containerRuntimeOnFirstNode": "containerd://1.7.13"
+    },
+    "cniHint": "calico"
+  },
+  "scenarioName": "online-boutique-pod-delete-example",
+  "strategies": {
+    "spread": {
+      "iterations": [
+        {
+          "iteration": 1,
+          "verdict": "ALL_PASS",
+          "resilienceScore": 90,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Pass", "cartservice-rps": "Pass"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 78.2,
+          "runId": "spread-1",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 4200,
+              "deletionToScheduled_ms": 900,
+              "scheduledToReady_ms": 3300,
+              "summary": {
+                "meanRecovery_ms": 4200,
+                "meanDeletionToScheduled_ms": 900,
+                "meanScheduledToReady_ms": 3300
+              }
+            }
+          }
+        },
+        {
+          "iteration": 2,
+          "verdict": "ALL_PASS",
+          "resilienceScore": 88,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Pass", "cartservice-rps": "Pass"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 80.1,
+          "runId": "spread-2",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 4500,
+              "deletionToScheduled_ms": 1100,
+              "scheduledToReady_ms": 3400,
+              "summary": {
+                "meanRecovery_ms": 4500,
+                "meanDeletionToScheduled_ms": 1100,
+                "meanScheduledToReady_ms": 3400
+              }
+            }
+          }
+        },
+        {
+          "iteration": 3,
+          "verdict": "ALL_PASS",
+          "resilienceScore": 91,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Pass", "cartservice-rps": "Pass"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 77.8,
+          "runId": "spread-3",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 4100,
+              "deletionToScheduled_ms": 850,
+              "scheduledToReady_ms": 3250,
+              "summary": {
+                "meanRecovery_ms": 4100,
+                "meanDeletionToScheduled_ms": 850,
+                "meanScheduledToReady_ms": 3250
+              }
+            }
+          }
+        },
+        {
+          "iteration": 4,
+          "verdict": "DEGRADED",
+          "resilienceScore": 82,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Pass", "cartservice-rps": "Fail"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 82.4,
+          "runId": "spread-4",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 4800,
+              "deletionToScheduled_ms": 1300,
+              "scheduledToReady_ms": 3500,
+              "summary": {
+                "meanRecovery_ms": 4800,
+                "meanDeletionToScheduled_ms": 1300,
+                "meanScheduledToReady_ms": 3500
+              }
+            }
+          }
+        },
+        {
+          "iteration": 5,
+          "verdict": "ALL_PASS",
+          "resilienceScore": 89,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Pass", "cartservice-rps": "Pass"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 79.6,
+          "runId": "spread-5",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 4300,
+              "deletionToScheduled_ms": 950,
+              "scheduledToReady_ms": 3350,
+              "summary": {
+                "meanRecovery_ms": 4300,
+                "meanDeletionToScheduled_ms": 950,
+                "meanScheduledToReady_ms": 3350
+              }
+            }
+          }
+        }
+      ],
+      "aggregated": {
+        "meanResilienceScore": 88.0,
+        "stddevResilienceScore": 3.39,
+        "p25ResilienceScore": 87.0,
+        "harmonicMeanResilienceScore": 87.92,
+        "meanResilienceScore_ci95": {"low": 84.6, "high": 91.0},
+        "meanRecoveryTime_ms": 4380.0,
+        "stddevRecoveryTime_ms": 267.4,
+        "medianRecoveryTime_ms": 4300.0,
+        "maxRecoveryTime_ms": 4800.0,
+        "p95RecoveryTime_ms": 4740.0,
+        "recoveryTimeCV": 0.061,
+        "meanRecoveryTime_ms_ci95": {"low": 4140.0, "high": 4620.0},
+        "meanDeletionToScheduled_ms": 1020.0,
+        "deletionToScheduledCV": 0.176,
+        "meanDeletionToScheduled_ms_ci95": {"low": 880.0, "high": 1180.0},
+        "meanScheduledToReady_ms": 3360.0,
+        "scheduledToReadyCV": 0.029,
+        "meanScheduledToReady_ms_ci95": {"low": 3280.0, "high": 3440.0},
+        "errors": 0,
+        "taintedIterations": 0,
+        "totalOOMKills": 0
+      }
+    },
+    "colocate": {
+      "iterations": [
+        {
+          "iteration": 1,
+          "verdict": "DEGRADED",
+          "resilienceScore": 62,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Fail", "cartservice-rps": "Fail"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 95.8,
+          "runId": "colocate-1",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 11200,
+              "deletionToScheduled_ms": 4100,
+              "scheduledToReady_ms": 7100,
+              "summary": {
+                "meanRecovery_ms": 11200,
+                "meanDeletionToScheduled_ms": 4100,
+                "meanScheduledToReady_ms": 7100
+              }
+            }
+          }
+        },
+        {
+          "iteration": 2,
+          "verdict": "DEGRADED",
+          "resilienceScore": 58,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Fail", "cartservice-rps": "Fail"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 98.2,
+          "runId": "colocate-2",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 12500,
+              "deletionToScheduled_ms": 4600,
+              "scheduledToReady_ms": 7900,
+              "summary": {
+                "meanRecovery_ms": 12500,
+                "meanDeletionToScheduled_ms": 4600,
+                "meanScheduledToReady_ms": 7900
+              }
+            }
+          }
+        },
+        {
+          "iteration": 3,
+          "verdict": "FAIL",
+          "resilienceScore": 48,
+          "probeVerdicts": {"frontend-liveness": "Fail", "frontend-readiness": "Fail", "cartservice-rps": "Fail"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 105.6,
+          "runId": "colocate-3",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 14800,
+              "deletionToScheduled_ms": 5200,
+              "scheduledToReady_ms": 9600,
+              "summary": {
+                "meanRecovery_ms": 14800,
+                "meanDeletionToScheduled_ms": 5200,
+                "meanScheduledToReady_ms": 9600
+              }
+            }
+          }
+        },
+        {
+          "iteration": 4,
+          "verdict": "DEGRADED",
+          "resilienceScore": 60,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Fail", "cartservice-rps": "Fail"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 97.4,
+          "runId": "colocate-4",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 11800,
+              "deletionToScheduled_ms": 4300,
+              "scheduledToReady_ms": 7500,
+              "summary": {
+                "meanRecovery_ms": 11800,
+                "meanDeletionToScheduled_ms": 4300,
+                "meanScheduledToReady_ms": 7500
+              }
+            }
+          }
+        },
+        {
+          "iteration": 5,
+          "verdict": "DEGRADED",
+          "resilienceScore": 56,
+          "probeVerdicts": {"frontend-liveness": "Pass", "frontend-readiness": "Fail", "cartservice-rps": "Fail"},
+          "unknownProbeCount": 0,
+          "preChaosHealthy": true,
+          "preChaosTaintReasons": [],
+          "experimentDuration_s": 100.1,
+          "runId": "colocate-5",
+          "metrics": {
+            "recovery": {
+              "recoveryTime_ms": 13100,
+              "deletionToScheduled_ms": 4800,
+              "scheduledToReady_ms": 8300,
+              "summary": {
+                "meanRecovery_ms": 13100,
+                "meanDeletionToScheduled_ms": 4800,
+                "meanScheduledToReady_ms": 8300
+              }
+            }
+          }
+        }
+      ],
+      "aggregated": {
+        "meanResilienceScore": 56.8,
+        "stddevResilienceScore": 5.4,
+        "p25ResilienceScore": 56.0,
+        "harmonicMeanResilienceScore": 56.49,
+        "meanResilienceScore_ci95": {"low": 51.0, "high": 62.5},
+        "meanRecoveryTime_ms": 12680.0,
+        "stddevRecoveryTime_ms": 1370.4,
+        "medianRecoveryTime_ms": 12500.0,
+        "maxRecoveryTime_ms": 14800.0,
+        "p95RecoveryTime_ms": 14460.0,
+        "recoveryTimeCV": 0.108,
+        "meanRecoveryTime_ms_ci95": {"low": 11420.0, "high": 13940.0},
+        "meanDeletionToScheduled_ms": 4600.0,
+        "deletionToScheduledCV": 0.094,
+        "meanDeletionToScheduled_ms_ci95": {"low": 4180.0, "high": 5020.0},
+        "meanScheduledToReady_ms": 8080.0,
+        "scheduledToReadyCV": 0.121,
+        "meanScheduledToReady_ms_ci95": {"low": 7220.0, "high": 8940.0},
+        "errors": 0,
+        "taintedIterations": 0,
+        "totalOOMKills": 0
+      }
+    }
+  }
+}
