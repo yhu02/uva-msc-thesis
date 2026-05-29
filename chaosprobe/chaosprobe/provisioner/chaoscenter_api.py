@@ -57,7 +57,8 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                result = _json.loads(resp.read().decode())
+                # result is decoded JSON (Any); coerce at this boundary
+                result: dict = _json.loads(resp.read().decode())
             # Surface GraphQL-level errors that arrive with HTTP 200
             if isinstance(result, dict) and result.get("errors") and result.get("data") is None:
                 errors = result["errors"]
@@ -149,7 +150,12 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         for pwd in candidates:
             try:
                 resp = self._chaoscenter_authenticate(auth_url, username, pwd)
-                token = resp.get("accessToken") or resp.get("access_token") or resp.get("token")
+                # token is read from the JSON login response (Any | None);
+                # _chaoscenter_authenticate already raised if it was absent,
+                # so coerce to a concrete str at this boundary.
+                token: str = (
+                    resp.get("accessToken") or resp.get("access_token") or resp.get("token") or ""
+                )
                 project_id = resp.get("projectID", "")
 
                 # Auto-rotate factory default → managed password
@@ -172,6 +178,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                             resp2.get("accessToken")
                             or resp2.get("access_token")
                             or resp2.get("token")
+                            or ""
                         )
                         project_id = resp2.get("projectID", project_id)
                         print("  ChaosCenter: default password rotated to managed password")
@@ -259,7 +266,11 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             },
             token=token,
         )
-        return resp.get("data", {}).get("createEnvironment", {}).get("environmentID", env_name)
+        # environment_id is read from the JSON GraphQL response (Any); coerce here
+        environment_id: str = (
+            resp.get("data", {}).get("createEnvironment", {}).get("environmentID", env_name)
+        )
+        return environment_id
 
     def _chaoscenter_server_internal_url(self) -> str:
         """Return the cluster-internal URL of the ChaosCenter frontend.
@@ -316,7 +327,8 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             token=token,
             headers={"Referer": referer},
         )
-        result = resp.get("data", {}).get("registerInfra", {})
+        # result is read from the JSON GraphQL response (Any); coerce here
+        result: dict = resp.get("data", {}).get("registerInfra", {})
         if not result.get("infraID"):
             raise RuntimeError("Failed to register infrastructure in ChaosCenter")
         return result
@@ -445,7 +457,9 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             experiments = (resp.get("data") or {}).get("listExperiment", {}).get("experiments", [])
             for exp in experiments:
                 if exp.get("name") == experiment_name:
-                    return exp.get("experimentID")
+                    # experiment_id is read from the JSON response (Any); coerce here
+                    experiment_id: Optional[str] = exp.get("experimentID")
+                    return experiment_id
         except Exception as exc:
             print(f"    ChaosCenter: could not look up experiment '{experiment_name}': {exc}")
         return None
@@ -555,7 +569,9 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         if existing_id:
             experiment_id = existing_id
 
-        save_data = {
+        # Mixed-value mapping (str query + nested dicts); annotate so the
+        # nested ["variables"]["req"]["id"] reassignment below is indexable.
+        save_data: dict[str, Any] = {
             "query": (
                 "mutation($pid: ID!, $req: SaveChaosExperimentRequest!) "
                 "{ saveChaosExperiment(projectID: $pid, request: $req) }"
@@ -651,7 +667,9 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             },
             token=token,
         )
-        return (resp.get("data") or {}).get("runChaosExperiment", {}).get("notifyID", "")
+        # notify_id is read from the JSON GraphQL response (Any); coerce here
+        notify_id: str = (resp.get("data") or {}).get("runChaosExperiment", {}).get("notifyID", "")
+        return notify_id
 
     def chaoscenter_get_experiment_run(
         self,
@@ -695,7 +713,9 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             token=token,
             timeout=timeout,
         )
-        return (resp.get("data") or {}).get("getExperimentRun", {})
+        # run is read from the JSON GraphQL response (Any); coerce here
+        run: dict[str, Any] = (resp.get("data") or {}).get("getExperimentRun", {})
+        return run
 
     # ------------------------------------------------------------------
     # Resilience Probes — register / query via ChaosCenter API
@@ -736,7 +756,9 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             },
             token=token,
         )
-        return (resp.get("data") or {}).get("addProbe", {})
+        # probe is read from the JSON GraphQL response (Any); coerce here
+        probe: dict[str, Any] = (resp.get("data") or {}).get("addProbe", {})
+        return probe
 
     def chaoscenter_update_probe(
         self,
@@ -770,7 +792,9 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             },
             token=token,
         )
-        return (resp.get("data") or {}).get("updateProbe", "")
+        # confirmation is read from the JSON GraphQL response (Any); coerce here
+        confirmation: str = (resp.get("data") or {}).get("updateProbe", "")
+        return confirmation
 
     def chaoscenter_list_probes(
         self,
@@ -791,4 +815,6 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             },
             token=token,
         )
-        return (resp.get("data") or {}).get("listProbes", [])
+        # probes is read from the JSON GraphQL response (Any); coerce here
+        probes: list[dict[str, Any]] = (resp.get("data") or {}).get("listProbes", [])
+        return probes
