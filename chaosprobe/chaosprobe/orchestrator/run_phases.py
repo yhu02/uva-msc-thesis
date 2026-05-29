@@ -1044,4 +1044,47 @@ def aggregate_iterations(
         agg["medianRecoveryTime_ms"] = None
         agg["maxRecoveryTime_ms"] = None
 
+    # ── Per-strategy scheduler-event roll-up ──────────────────────────
+    # Each iteration carries a metrics.recovery.schedulerEvents list of
+    # {reason, ...} dicts.  Aggregating reason counts across iterations
+    # makes "FailedScheduling fires 4x more often on adversarial than on
+    # spread" — and the same for image-pull / BackOff / Killing — a
+    # directly readable per-strategy number rather than something a
+    # reader has to compute by hand from the iteration list.
+    scheduler_event_totals: Dict[str, int] = {}
+    scheduler_event_per_iter: Dict[str, List[int]] = {}
+    iterations_with_events = 0
+    for ir in iteration_results:
+        events = (ir.get("metrics", {}).get("recovery", {}) or {}).get("schedulerEvents")
+        if not events:
+            continue
+        iterations_with_events += 1
+        per_iter_counts: Dict[str, int] = {}
+        for e in events:
+            reason = e.get("reason") if isinstance(e, dict) else None
+            if not reason:
+                continue
+            scheduler_event_totals[reason] = scheduler_event_totals.get(reason, 0) + 1
+            per_iter_counts[reason] = per_iter_counts.get(reason, 0) + 1
+        for reason, count in per_iter_counts.items():
+            scheduler_event_per_iter.setdefault(reason, []).append(count)
+
+    if scheduler_event_totals:
+        # `meanPerIteration` denominates by the number of iterations that
+        # carried any events, not by total iterations — this prevents a
+        # silent zero from non-recording iterations (e.g. probe-only runs)
+        # from biasing the per-strategy attribution downward.
+        agg["schedulerEventCounts"] = {
+            reason: {
+                "total": total,
+                "meanPerIteration": round(
+                    statistics.mean(scheduler_event_per_iter.get(reason, [0])), 2
+                ),
+                "maxPerIteration": max(scheduler_event_per_iter.get(reason, [0])),
+                "iterationsObserved": len(scheduler_event_per_iter.get(reason, [])),
+            }
+            for reason, total in scheduler_event_totals.items()
+        }
+        agg["schedulerEventIterationsCovered"] = iterations_with_events
+
     return agg
