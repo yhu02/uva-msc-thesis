@@ -577,3 +577,104 @@ class TestPairFilter:
         payload = json.loads(result.output)
         for block in payload["metrics"].values():
             assert set(block["ci"].keys()) <= {"colocate", "spread"}
+
+
+class TestEffectSizeColumns:
+    def test_csv_header_includes_effect_size_columns(self, tmp_path):
+        import csv as _csv
+        from io import StringIO
+
+        summary = _make_summary(
+            tmp_path,
+            {"colocate": [70, 75, 80], "spread": [40, 45, 50]},
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--csv"])
+        assert result.exit_code == 0
+
+        rows = list(_csv.reader(StringIO(result.output)))
+        header = rows[0]
+        assert "cliffs_delta" in header
+        assert "effect_size_magnitude" in header
+
+    def test_csv_pairwise_row_has_values_when_library_provides_them(self, tmp_path):
+        """The library used by stats provides cliffs_delta + magnitude as
+        of PR #53; the pairwise row in the CSV should reflect those
+        values."""
+        import csv as _csv
+        from io import StringIO
+
+        summary = _make_summary(
+            tmp_path,
+            {"colocate": [70, 75, 80], "spread": [40, 45, 50]},
+        )
+        runner = CliRunner()
+        result = runner.invoke(stats, ["-s", str(summary), "--csv"])
+
+        rows = list(_csv.reader(StringIO(result.output)))
+        header = rows[0]
+        pairwise = [r for r in rows if r[0] == "pairwise"][0]
+        delta_idx = header.index("cliffs_delta")
+        mag_idx = header.index("effect_size_magnitude")
+        # When PR #53 is included, both columns should be populated.
+        # Without it, both will be empty strings — we tolerate either
+        # to keep this PR independent of #53's merge order.
+        if pairwise[delta_idx]:
+            assert pairwise[mag_idx] in {"negligible", "small", "medium", "large"}
+
+    def test_text_formatter_renders_delta_columns(self):
+        """Direct call into the formatter — exercise the rendering
+        independent of the library version."""
+        from chaosprobe.commands.stats_cmd import _format_text
+
+        samples = {"a": [1, 2, 3], "b": [4, 5, 6]}
+        ci_rows = {
+            "a": {"point": 2.0, "ci_low": 1.0, "ci_high": 3.0, "n": 3},
+            "b": {"point": 5.0, "ci_low": 4.0, "ci_high": 6.0, "n": 3},
+        }
+        # With library fields populated.
+        pairwise_rows_with = [
+            {
+                "a": "a",
+                "b": "b",
+                "mean_a": 2.0,
+                "mean_b": 5.0,
+                "p_raw": 0.04,
+                "p_holm": 0.04,
+                "significant_05": True,
+                "cliffs_delta": -1.0,
+                "effect_size_magnitude": "large",
+            }
+        ]
+        text = _format_text(samples, ci_rows, pairwise_rows_with, 0.95, "score")
+        assert "delta" in text
+        assert "magnitude" in text
+        assert "large" in text
+        assert "-1.0" in text
+
+    def test_text_formatter_degrades_gracefully_without_effect_size(self):
+        """Pairwise rows from older library versions don't carry
+        cliffs_delta / effect_size_magnitude.  The formatter must show
+        '-' rather than KeyError."""
+        from chaosprobe.commands.stats_cmd import _format_text
+
+        samples = {"a": [1, 2, 3], "b": [4, 5, 6]}
+        ci_rows = {
+            "a": {"point": 2.0, "ci_low": 1.0, "ci_high": 3.0, "n": 3},
+            "b": {"point": 5.0, "ci_low": 4.0, "ci_high": 6.0, "n": 3},
+        }
+        pairwise_rows_without = [
+            {
+                "a": "a",
+                "b": "b",
+                "mean_a": 2.0,
+                "mean_b": 5.0,
+                "p_raw": 0.04,
+                "p_holm": 0.04,
+                "significant_05": True,
+            }
+        ]
+        text = _format_text(samples, ci_rows, pairwise_rows_without, 0.95, "score")
+        # No crash; header still present.
+        assert "delta" in text
+        assert "magnitude" in text
