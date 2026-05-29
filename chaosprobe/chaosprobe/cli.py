@@ -259,6 +259,7 @@ def cleanup(namespace: str, cleanup_all: bool):
 from chaosprobe.commands.cluster_cmd import cluster  # noqa: E402
 from chaosprobe.commands.dashboard_cmd import dashboard  # noqa: E402
 from chaosprobe.commands.delete_cmd import delete  # noqa: E402
+from chaosprobe.commands.doctor_cmd import doctor  # noqa: E402
 from chaosprobe.commands.graph_cmd import graph  # noqa: E402
 from chaosprobe.commands.init_cmd import init  # noqa: E402
 from chaosprobe.commands.placement_cmd import placement  # noqa: E402
@@ -270,6 +271,7 @@ from chaosprobe.commands.visualize_cmd import ml_export, visualize  # noqa: E402
 main.add_command(cluster)
 main.add_command(dashboard)
 main.add_command(delete)
+main.add_command(doctor)
 main.add_command(graph)
 main.add_command(init)
 main.add_command(placement)
