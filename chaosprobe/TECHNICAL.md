@@ -637,6 +637,7 @@ Flags:
 | `--pair colocate,spread` | — | Restrict CI + pairwise output to a specific strategy pair (≥2 comma-separated names). |
 | `--effect-size-min {negligible,small,medium,large}` | — | Drop pairwise rows whose Cliff's delta magnitude is below this threshold. |
 | `--sort {p_holm,p_raw,delta}` | `p_holm` | Pairwise sort key. `delta` sorts by absolute Cliff's delta descending. |
+| `--baseline <name>` | — | Strategy name to use as the anchor for relative-to-baseline comparisons. Output includes `baselineRelative: {strategy: {delta, percent}}`. |
 | `--confidence` | `0.95` | Bootstrap confidence level. |
 | `--n-resamples` | `2000` | Bootstrap resample count. |
 | `--seed` | `42` | Bootstrap RNG seed. Use `-1` for nondeterministic. |
@@ -647,7 +648,7 @@ Flags:
 
 `--json`, `--csv`, and `--markdown` are mutually exclusive.
 
-JSON shape: `{source, metric (single mode) or metrics (--all-metrics), confidence, n_resamples, ci, pairwise}`. Each pairwise row carries `p_raw`, `p_holm`, `cliffs_delta`, `effect_size_magnitude`, `significant_05`.
+JSON shape: `{source, metric (single mode) or metrics (--all-metrics), confidence, n_resamples, ci, pairwise, baselineRelative?, baselineName?}`. Each pairwise row carries `p_raw`, `p_holm`, `cliffs_delta`, `effect_size_magnitude`, `significant_05`.
 
 CSV columns: `section,metric,strategy,a,b,n,mean,mean_a,mean_b,ci_low,ci_high,p_raw,p_holm,cliffs_delta,effect_size_magnitude,significant_05`. `section=ci` rows leave the pairwise fields blank; `section=pairwise` rows leave the CI fields blank.
 
@@ -688,6 +689,22 @@ Per-strategy checks: tainted iterations (with reason breakdown), all-iterations-
 Cross-strategy checks: every pair of CIs overlaps (analysis inconclusive), every strategy hit OOMKills (cluster undersized), every strategy tainted (cluster unstable), Locust offered RPS varies > 20% (load drift).
 
 `--strict` makes warn-level findings exit non-zero. Without `--strict`, only error-level findings exit non-zero. `--json` emits structured findings under `{strategiesChecked, errorCount, warnCount, findings}`; cross-strategy findings appear under `__cross_strategy__`.
+
+### Export
+
+| Command | Purpose |
+|---|---|
+| `chaosprobe export -s <summary.json> [--strategy <name>] [--format {csv,jsonl}] [-o <file>]` | Per-iteration flat export for external analysis. |
+
+One row per `(strategy, iteration)` with the headline iteration fields: resilience score, verdict, pre-chaos health, experiment duration, mean / median / max / p95 recovery time, recovery split (d2s + s2r), OOMKills, restarts, Locust RPS / error rate / p95 response time.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--strategy <name>` | all | Restrict export to one strategy. |
+| `--format {csv,jsonl}` | `csv` | CSV (R / SPSS / Excel) or JSONL (one JSON object per line — preserves numeric types; what pandas / jq / streaming pipelines actually consume). |
+| `-o, --output <file>` | stdout | Write to file. |
+
+Missing fields render as empty strings in both formats so consumers can distinguish "no data" from zero.
 
 ### ML Export
 
