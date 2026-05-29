@@ -6,6 +6,52 @@ ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-
 
 **Core loop**: deploy manifests → run chaos experiments → collect metrics → store in Neo4j → AI reads data, edits manifests, re-runs, compares.
 
+### Data flow during a run
+
+```mermaid
+flowchart TD
+    CLI["chaosprobe run<br/>(commands/run_cmd.py)"]
+    PF["Pre-flight checks<br/>(orchestrator/preflight.py)"]
+    PM["PlacementMutator<br/>(placement/mutator.py)"]
+    LR["LocustRunner<br/>(loadgen/runner.py)"]
+    PRB["Continuous probers<br/>(metrics/{latency,prometheus,recovery,resource,redis,disk})"]
+    CR["ChaosRunner<br/>(chaos/runner.py)"]
+    K8s[("Kubernetes cluster")]
+    Litmus[("LitmusChaos<br/>+ ChaosCenter")]
+    Prom[("Prometheus")]
+    RC["ResultCollector<br/>(collector/)"]
+    MC["MetricsCollector<br/>(metrics/collector.py)"]
+    AGG["aggregate_iterations<br/>(orchestrator/run_phases.py)"]
+    OUT["OutputGenerator<br/>summary.json"]
+    NEO[("Neo4j")]
+    STATS["chaosprobe stats / doctor / compare"]
+
+    CLI --> PF
+    PF -->|per strategy| PM
+    PM --> K8s
+    CLI -->|per iteration| LR
+    CLI -->|per iteration| PRB
+    PRB -->|kubectl exec / HTTP| K8s
+    PRB -->|PromQL| Prom
+    Prom -->|scrapes| K8s
+    CLI --> CR
+    CR -->|GraphQL| Litmus
+    Litmus --> K8s
+    LR -.->|cleanup| RC
+    PRB -.->|results| MC
+    CR -.->|results| RC
+    RC --> AGG
+    MC --> AGG
+    AGG --> OUT
+    OUT --> NEO
+    OUT -.->|file| STATS
+    NEO -.->|via --neo4j-uri| STATS
+```
+
+The chaos runner, the load generator, and every continuous prober run **in parallel** during each iteration's chaos window. `MetricsCollector` joins their outputs after the chaos ends; `aggregate_iterations` rolls per-iteration data into the per-strategy summary that downstream tools consume.
+
+### Layout (legacy)
+
 ```
 ChaosProbe CLI
       │
