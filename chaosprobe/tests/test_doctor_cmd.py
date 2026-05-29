@@ -5,7 +5,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from chaosprobe.commands.doctor_cmd import _check_strategy, doctor
+from chaosprobe.commands.doctor_cmd import _check_cross_strategy, _check_strategy, doctor
 
 
 def _write_summary(tmp_path: Path, strategies: dict) -> Path:
@@ -259,3 +259,148 @@ class TestDoctorCommand:
         # Only colocate has issues; spread should not have a header.
         assert "colocate" in result.output
         assert "spread" not in result.output
+
+
+def _strategy_with_ci(low, high):
+    return {
+        "iterations": [{}] * 5,
+        "aggregated": {
+            "meanRecoveryTime_ms": 1000,
+            "meanResilienceScore_ci95": {"low": low, "high": high, "n": 5},
+        },
+    }
+
+
+class TestCrossStrategyChecks:
+    def test_all_overlapping_cis_warned(self):
+        strategies = {
+            "a": _strategy_with_ci(40, 60),
+            "b": _strategy_with_ci(45, 65),
+            "c": _strategy_with_ci(50, 70),
+        }
+        issues = _check_cross_strategy(strategies)
+        assert any("statistically inconclusive" in msg for _, msg in issues)
+
+    def test_disjoint_cis_no_warning(self):
+        strategies = {
+            "a": _strategy_with_ci(10, 20),
+            "b": _strategy_with_ci(50, 60),
+        }
+        issues = _check_cross_strategy(strategies)
+        assert not any("statistically inconclusive" in msg for _, msg in issues)
+
+    def test_single_strategy_no_cross_checks(self):
+        strategies = {"a": _strategy_with_ci(40, 60)}
+        assert _check_cross_strategy(strategies) == []
+
+    def test_all_strategies_oom_warned(self):
+        strategies = {
+            name: {
+                "iterations": [{}] * 5,
+                "aggregated": {
+                    "meanRecoveryTime_ms": 1000,
+                    "totalOOMKills": 1,
+                },
+            }
+            for name in ("a", "b", "c")
+        }
+        issues = _check_cross_strategy(strategies)
+        assert any("every strategy hit OOMKills" in msg for _, msg in issues)
+
+    def test_one_strategy_oom_not_warned(self):
+        strategies = {
+            "a": {
+                "iterations": [{}] * 5,
+                "aggregated": {"meanRecoveryTime_ms": 1000, "totalOOMKills": 5},
+            },
+            "b": {
+                "iterations": [{}] * 5,
+                "aggregated": {"meanRecoveryTime_ms": 1000, "totalOOMKills": 0},
+            },
+            "c": {
+                "iterations": [{}] * 5,
+                "aggregated": {"meanRecoveryTime_ms": 1000, "totalOOMKills": 0},
+            },
+        }
+        issues = _check_cross_strategy(strategies)
+        assert not any("every strategy hit OOMKills" in msg for _, msg in issues)
+
+    def test_all_tainted_warned(self):
+        strategies = {
+            name: {
+                "iterations": [{}] * 5,
+                "aggregated": {"meanRecoveryTime_ms": 1000, "taintedIterations": 1},
+            }
+            for name in ("a", "b", "c")
+        }
+        issues = _check_cross_strategy(strategies)
+        assert any("cluster is unstable" in msg for _, msg in issues)
+
+    def test_rps_skew_warned(self):
+        strategies = {
+            "a": {
+                "iterations": [{}] * 5,
+                "aggregated": {
+                    "meanRecoveryTime_ms": 1000,
+                    "loadGenerationAggregate": {"meanRequestsPerSecond": 10.0},
+                },
+            },
+            "b": {
+                "iterations": [{}] * 5,
+                "aggregated": {
+                    "meanRecoveryTime_ms": 1000,
+                    "loadGenerationAggregate": {"meanRequestsPerSecond": 20.0},
+                },
+            },
+        }
+        issues = _check_cross_strategy(strategies)
+        assert any("Locust offered RPS varies" in msg for _, msg in issues)
+
+    def test_small_rps_skew_not_warned(self):
+        strategies = {
+            "a": {
+                "iterations": [{}] * 5,
+                "aggregated": {
+                    "meanRecoveryTime_ms": 1000,
+                    "loadGenerationAggregate": {"meanRequestsPerSecond": 10.0},
+                },
+            },
+            "b": {
+                "iterations": [{}] * 5,
+                "aggregated": {
+                    "meanRecoveryTime_ms": 1000,
+                    "loadGenerationAggregate": {"meanRequestsPerSecond": 10.5},
+                },
+            },
+        }
+        issues = _check_cross_strategy(strategies)
+        assert not any("Locust offered RPS varies" in msg for _, msg in issues)
+
+
+class TestDoctorCrossStrategyIntegration:
+    def test_cross_strategy_section_in_text_output(self, tmp_path):
+        path = _write_summary(
+            tmp_path,
+            {
+                "a": _strategy_with_ci(40, 60),
+                "b": _strategy_with_ci(45, 65),
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(doctor, ["-s", str(path)])
+        assert result.exit_code == 0
+        assert "cross-strategy" in result.output
+
+    def test_cross_strategy_section_in_json_output(self, tmp_path):
+        path = _write_summary(
+            tmp_path,
+            {
+                "a": _strategy_with_ci(40, 60),
+                "b": _strategy_with_ci(45, 65),
+            },
+        )
+        runner = CliRunner()
+        result = runner.invoke(doctor, ["-s", str(path), "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "__cross_strategy__" in payload["findings"]
