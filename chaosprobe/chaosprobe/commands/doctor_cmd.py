@@ -205,6 +205,57 @@ def _check_cross_strategy(strategies: Dict[str, Any]) -> List[Tuple[str, str]]:
     return issues
 
 
+def _check_run_metadata(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Check run-level reproducibility metadata.
+
+    A summary without ``runMetadata`` was either produced by an older
+    chaosprobe version (before PR #44) or by a manually-assembled file.
+    Either way, the reproducibility claim is weakened.  Specific gaps
+    inside the block are surfaced too: dirty git, missing K8s server
+    version, missing CNI hint.
+    """
+    issues: List[Tuple[str, str]] = []
+    md = raw.get("runMetadata")
+    if not isinstance(md, dict):
+        issues.append(
+            (
+                "warn",
+                "runMetadata absent — summary was produced by an older "
+                "chaosprobe version; reproducibility provenance is incomplete",
+            )
+        )
+        return issues
+
+    git = md.get("git") or {}
+    if git.get("commit") is None:
+        issues.append(
+            (
+                "warn",
+                "git commit not recorded — runMetadata.git.commit is missing",
+            )
+        )
+    if git.get("dirty") is True:
+        issues.append(
+            (
+                "warn",
+                f"data collected from a dirty working tree "
+                f"(commit {git.get('shortCommit') or 'unknown'}) — "
+                f"the recorded commit doesn't fully represent the running code",
+            )
+        )
+
+    k8s = md.get("kubernetes") or {}
+    if k8s.get("serverVersion") is None:
+        issues.append(
+            ("warn", "Kubernetes server version not recorded — portability claim unverifiable")
+        )
+    if md.get("cniHint") is None:
+        issues.append(
+            ("warn", "CNI hint not recorded — Felix / Calico-specific metrics unverifiable")
+        )
+    return issues
+
+
 @click.command("doctor")
 @click.option(
     "--summary",
@@ -258,6 +309,10 @@ def doctor(summary: Path, strict: bool, as_json: bool):
     if cross:
         report["__cross_strategy__"] = _tally(cross)
 
+    metadata = _check_run_metadata(raw)
+    if metadata:
+        report["__run_metadata__"] = _tally(metadata)
+
     if as_json:
         click.echo(
             json.dumps(
@@ -275,8 +330,12 @@ def doctor(summary: Path, strict: bool, as_json: bool):
         if not report:
             click.echo(f"  ✓ no issues across {len(strategies)} strategies")
         else:
+            _heading_map = {
+                "__cross_strategy__": "cross-strategy",
+                "__run_metadata__": "run metadata",
+            }
             for name, findings in report.items():
-                heading = "cross-strategy" if name == "__cross_strategy__" else name
+                heading = _heading_map.get(name, name)
                 click.echo(f"\n  {heading}")
                 for finding in findings:
                     marker = "✗" if finding["severity"] == "error" else "!"
