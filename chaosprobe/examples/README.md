@@ -20,7 +20,7 @@ chaosprobe stats     -s examples/example-summary.json --all-metrics --markdown
 chaosprobe inspect   -s examples/example-summary.json --strategy colocate -i 3
 chaosprobe power     -s examples/example-summary.json --metric resilience
 chaosprobe report    -s examples/example-summary.json -o /tmp/report.md
-chaosprobe export    -s examples/example-summary.json --jsonl -o /tmp/runs.jsonl
+chaosprobe export    -s examples/example-summary.json --format jsonl -o /tmp/runs.jsonl
 chaosprobe diff      --a examples/example-summary.json --b examples/example-summary.json
 ```
 
