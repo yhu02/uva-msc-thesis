@@ -77,3 +77,18 @@ select = ["E", "F", "I", "W"]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
+# Scoped gate: type-check the defender's analysis-CLI surface, the
+# part that's been growing the most over the last 70+ PRs.  Cluster /
+# run / visualize use untyped kubernetes / matplotlib APIs and need
+# stub work before they can be added.  Run via `uv run mypy --strict-equality`
+# against the files in this list (kept in sync with chaosprobe analysis CLI).
+files = [
+    "chaosprobe/commands/diff_cmd.py",
+    "chaosprobe/commands/doctor_cmd.py",
+    "chaosprobe/commands/export_cmd.py",
+    "chaosprobe/commands/inspect_cmd.py",
+    "chaosprobe/commands/power_cmd.py",
+    "chaosprobe/commands/report_cmd.py",
+    "chaosprobe/commands/stats_cmd.py",
+    "chaosprobe/commands/summarize_cmd.py",
+]

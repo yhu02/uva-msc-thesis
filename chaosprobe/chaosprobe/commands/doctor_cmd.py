@@ -191,8 +191,8 @@ def _check_cross_strategy(strategies: Dict[str, Any]) -> List[Tuple[str, str]]:
         vals = list(rps_means.values())
         spread = (max(vals) - min(vals)) / max(max(vals), 0.1)
         if spread > 0.20:
-            mn = min(rps_means, key=rps_means.get)
-            mx = max(rps_means, key=rps_means.get)
+            mn = min(rps_means, key=lambda k: rps_means[k])
+            mx = max(rps_means, key=lambda k: rps_means[k])
             issues.append(
                 (
                     "warn",
