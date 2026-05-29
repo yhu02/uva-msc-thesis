@@ -250,6 +250,63 @@ def wilson_ci(
     }
 
 
+def cliffs_delta(
+    a: Sequence[float],
+    b: Sequence[float],
+) -> Dict[str, object]:
+    """Cliff's delta — non-parametric effect size for two independent samples.
+
+    delta = (#pairs where a_i > b_j  -  #pairs where a_i < b_j)  /  (n_a * n_b)
+
+    The Mann-Whitney p-value says *whether* the two distributions differ;
+    Cliff's delta says *how much*.  Both are needed for the defence —
+    "statistically significant but practically negligible" is a common
+    reviewer objection.
+
+    Returns ``{delta, magnitude, n_a, n_b}``.  ``magnitude`` uses
+    Romano et al. (2006) thresholds on ``|delta|``:
+
+    * < 0.147   → "negligible"
+    * < 0.33    → "small"
+    * < 0.474   → "medium"
+    * otherwise → "large"
+
+    Boundary case ``n_a == 0`` or ``n_b == 0`` returns
+    ``{delta: None, magnitude: None}``.
+    """
+    n_a = len(a)
+    n_b = len(b)
+    if n_a == 0 or n_b == 0:
+        return {"delta": None, "magnitude": None, "n_a": n_a, "n_b": n_b}
+
+    greater = 0
+    less = 0
+    for ai in a:
+        for bj in b:
+            if ai > bj:
+                greater += 1
+            elif ai < bj:
+                less += 1
+    delta = (greater - less) / (n_a * n_b)
+
+    abs_delta = abs(delta)
+    if abs_delta < 0.147:
+        magnitude = "negligible"
+    elif abs_delta < 0.33:
+        magnitude = "small"
+    elif abs_delta < 0.474:
+        magnitude = "medium"
+    else:
+        magnitude = "large"
+
+    return {
+        "delta": round(delta, 4),
+        "magnitude": magnitude,
+        "n_a": n_a,
+        "n_b": n_b,
+    }
+
+
 def pairwise_comparisons(
     samples_by_label: Dict[str, Sequence[float]],
     holm_bonferroni: bool = True,
@@ -267,6 +324,7 @@ def pairwise_comparisons(
         List of dicts, one per (label_a, label_b) pair, sorted by raw p.
         Each dict has keys: ``a``, ``b``, ``mean_a``, ``mean_b``,
         ``u_statistic``, ``z``, ``p_raw``, ``p_holm`` (if requested),
+        ``cliffs_delta``, ``effect_size_magnitude``,
         ``significant_05`` (bool, against the adjusted p when available).
     """
     labels = list(samples_by_label.keys())
@@ -276,6 +334,7 @@ def pairwise_comparisons(
             sa = list(samples_by_label[la])
             sb = list(samples_by_label[lb])
             t = mann_whitney_u(sa, sb)
+            d = cliffs_delta(sa, sb)
             row: Dict[str, object] = {
                 "a": la,
                 "b": lb,
@@ -284,6 +343,8 @@ def pairwise_comparisons(
                 "u_statistic": t["u_statistic"],
                 "z": t["z"],
                 "p_raw": t["p_two_sided"],
+                "cliffs_delta": d["delta"],
+                "effect_size_magnitude": d["magnitude"],
             }
             out.append(row)
 
