@@ -576,6 +576,7 @@ NAMESPACE_SCOPED_QUERIES = {
     "tcp_sockets_per_pod",
     "network_transmit_bytes",
     "network_packets",
+    "container_oom_events_per_pod",
 }
 CLUSTER_WIDE_QUERIES = {
     "kubeproxy_network_programming_p99",
@@ -601,6 +602,11 @@ CLUSTER_WIDE_QUERIES = {
     "coredns_cache_hit_rate_per_sec",
     "coredns_cache_miss_rate_per_sec",
     "etcd_compaction_duration_p99",
+    "node_cpu_pressure_some_per_node",
+    "node_memory_pressure_some_per_node",
+    "node_io_pressure_some_per_node",
+    "kubelet_pod_start_p99",
+    "kubelet_runtime_ops_p99",
 }
 
 
@@ -785,3 +791,52 @@ class TestDefaultQueries:
         tpl = DEFAULT_QUERIES["tcp_sockets_per_pod"]
         assert "rate(" not in tpl
         assert "histogram_quantile" not in tpl
+
+    def test_node_level_psi_queries_present(self):
+        """Node-level PSI complements container-level PSI: it surfaces
+        cases where one pod's contention pushes the whole node into stall
+        even when the *neighbour's* per-container PSI looks fine."""
+        for label in (
+            "node_cpu_pressure_some_per_node",
+            "node_memory_pressure_some_per_node",
+            "node_io_pressure_some_per_node",
+        ):
+            assert label in DEFAULT_QUERIES, f"{label} missing"
+
+    def test_node_level_psi_uses_rate_per_instance(self):
+        """Node-level PSI counters must use `rate(...)` and `by (instance)`
+        — same shape invariant as the kernel TCP-drop counters."""
+        for label in (
+            "node_cpu_pressure_some_per_node",
+            "node_memory_pressure_some_per_node",
+            "node_io_pressure_some_per_node",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert "rate(" in tpl, f"{label} must use rate()"
+            assert "by (instance)" in tpl, f"{label} must aggregate by (instance)"
+
+    def test_container_oom_events_is_namespace_scoped_rate_per_pod(self):
+        """`container_oom_events_total` time-series locates an OOM event in
+        a phase — the snapshot-only count from `_collect_pod_status` can't.
+        It must be namespace-scoped (exclude Litmus pods), use rate(), and
+        aggregate by (pod)."""
+        tpl = DEFAULT_QUERIES["container_oom_events_per_pod"]
+        assert "{namespace}" in tpl
+        assert 'pod!~"' in tpl
+        assert "rate(" in tpl
+        assert "by (pod)" in tpl
+
+    def test_kubelet_pod_start_p99_is_histogram_quantile(self):
+        """`kubelet_pod_start_p99` further decomposes scheduledToReady_ms
+        into the kubelet+CRI start phase.  Must be p99 histogram."""
+        tpl = DEFAULT_QUERIES["kubelet_pod_start_p99"]
+        assert "histogram_quantile(0.99" in tpl
+        assert "kubelet_pod_start_duration_seconds_bucket" in tpl
+
+    def test_kubelet_runtime_ops_p99_keeps_operation_type_dimension(self):
+        """Different runtime operations (pull/create/start) have very
+        different latency distributions; collapsing them would hide the
+        bottleneck.  Pin the `operation_type` dimension."""
+        tpl = DEFAULT_QUERIES["kubelet_runtime_ops_p99"]
+        assert "histogram_quantile(0.99" in tpl
+        assert "operation_type" in tpl

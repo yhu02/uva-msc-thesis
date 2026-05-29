@@ -224,6 +224,48 @@ DEFAULT_QUERIES: Dict[str, str] = {
         "histogram_quantile(0.99, sum(rate("
         "etcd_debugging_mvcc_db_compaction_total_duration_seconds_bucket[5m])) by (le))"
     ),
+    # ── Node-level PSI (cgroup-v2 only) ────────────────────────────────
+    # Container-level PSI tells us a pod stalled; node-level PSI tells us
+    # the *whole node* stalled.  Under a colocate adversarial placement,
+    # one pod's contention can push every neighbour into stall — the
+    # per-pod PSI of an unrelated pod looks "fine" while the node is on
+    # fire.  Pairs with the per-container `cpu_pressure_some` /
+    # `memory_pressure_some` / `io_pressure_some` for both viewpoints.
+    "node_cpu_pressure_some_per_node": (
+        "sum(rate(node_pressure_cpu_waiting_seconds_total[5m])) by (instance)"
+    ),
+    "node_memory_pressure_some_per_node": (
+        "sum(rate(node_pressure_memory_waiting_seconds_total[5m])) by (instance)"
+    ),
+    "node_io_pressure_some_per_node": (
+        "sum(rate(node_pressure_io_waiting_seconds_total[5m])) by (instance)"
+    ),
+    # ── OOM events (time-series, not snapshot) ─────────────────────────
+    # _collect_pod_status captures the pod's *current* OOM count — which
+    # is stale by the time the chaos window ended.  cAdvisor exposes
+    # OOMKills as a time-series so the event can be located in a phase.
+    "container_oom_events_per_pod": (
+        "sum(rate(container_oom_events_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[1m])) by (pod)"
+    ),
+    # ── Kubelet pod-start + runtime operation latency ──────────────────
+    # Decomposes the scheduledToReady_ms phase further:
+    #   * `kubelet_pod_start_duration_seconds_bucket` covers from
+    #     PodSandboxReady → pod-running — i.e. how long the kubelet+CRI
+    #     took to bring the container up after the scheduler decided.
+    #   * `kubelet_runtime_operations_duration_seconds_bucket` covers
+    #     individual containerd ops (image pull, container create,
+    #     container start).  A spike here under churn says the runtime
+    #     itself is the bottleneck, not the kube-proxy reconvergence.
+    "kubelet_pod_start_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubelet_pod_start_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "kubelet_runtime_ops_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubelet_runtime_operations_duration_seconds_bucket[5m])) by (le, operation_type))"
+    ),
 }
 
 # Common service names / namespaces where Prometheus is typically deployed.
