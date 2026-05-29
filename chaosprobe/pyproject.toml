@@ -97,4 +97,15 @@ files = [
     "chaosprobe/output/__init__.py",
     "chaosprobe/output/comparison.py",
     "chaosprobe/output/generator.py",
+    # graph/ — pure-Python Neo4j-read helpers consumed by stats /
+    # report / blast-radius commands.  Driver imports are isolated to
+    # the storage/ layer, so this directory itself doesn't pull in
+    # neo4j or pyarrow.
+    "chaosprobe/graph/__init__.py",
+    "chaosprobe/graph/analysis.py",
+    # metrics/ — anomaly + cascade helpers shipped today are pure.
+    # statistics.py / collector.py / prometheus.py etc. still have
+    # active mypy errors and need their own slice.
+    "chaosprobe/metrics/anomaly_labels.py",
+    "chaosprobe/metrics/cascade.py",
 ]
