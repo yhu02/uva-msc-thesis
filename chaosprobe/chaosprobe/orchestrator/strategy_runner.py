@@ -214,6 +214,133 @@ def _generate_east_west_routes(
 
 
 # ---------------------------------------------------------------------------
+# Cluster-state snapshot
+# ---------------------------------------------------------------------------
+
+
+# Node-condition types we surface in cluster snapshots.  These are the
+# kubelet-set pressure flags that distinguish placement-driven resource
+# contention (`MemoryPressure=True`, `DiskPressure=True`, etc.) from
+# churn-mechanism reconvergence pressure (see Slice 1's PromQL additions).
+_SNAPSHOT_CONDITION_TYPES = (
+    "Ready",
+    "MemoryPressure",
+    "DiskPressure",
+    "PIDPressure",
+    "NetworkUnavailable",
+)
+
+
+def _snapshot_pod_entry(pod: Any) -> Optional[Dict[str, Any]]:
+    """Project a V1Pod into the snapshot's per-pod shape.
+
+    Returns None if the pod object is malformed (missing metadata.name),
+    which can happen in mocks but never with real K8s API responses.
+    """
+    metadata = getattr(pod, "metadata", None)
+    if metadata is None or not getattr(metadata, "name", None):
+        return None
+    status = getattr(pod, "status", None)
+    spec = getattr(pod, "spec", None)
+
+    ready = False
+    restart_count = 0
+    container_statuses = getattr(status, "container_statuses", None) or []
+    for cs in container_statuses:
+        restart_count += getattr(cs, "restart_count", 0) or 0
+    conditions = getattr(status, "conditions", None) or []
+    for cond in conditions:
+        if getattr(cond, "type", None) == "Ready":
+            ready = getattr(cond, "status", None) == "True"
+            break
+
+    return {
+        "name": metadata.name,
+        "node": getattr(spec, "node_name", None) if spec is not None else None,
+        "phase": getattr(status, "phase", None) if status is not None else None,
+        "ready": ready,
+        "restartCount": restart_count,
+    }
+
+
+def _snapshot_node_entry(node: Any) -> Dict[str, Any]:
+    """Project a V1Node into the snapshot's per-node shape."""
+    name = getattr(getattr(node, "metadata", None), "name", None)
+    status = getattr(node, "status", None)
+    raw_conditions = getattr(status, "conditions", None) or [] if status is not None else []
+    conditions: Dict[str, str] = {}
+    for cond in raw_conditions:
+        cond_type = getattr(cond, "type", None)
+        if cond_type in _SNAPSHOT_CONDITION_TYPES:
+            conditions[cond_type] = getattr(cond, "status", None)
+    return {
+        "name": name,
+        "conditions": conditions,
+    }
+
+
+def _snapshot_cluster_state(
+    namespace: str,
+    core_api: Any,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Capture a lightweight cluster snapshot for between-iteration drift detection.
+
+    Returned shape::
+
+        {
+            "timestamp": "2026-05-28T22:00:00+00:00",
+            "namespace": "online-boutique",
+            "pods": [
+                {"name": ..., "node": ..., "phase": ..., "ready": bool, "restartCount": int},
+                ...
+            ],
+            "nodes": [
+                {"name": ..., "conditions": {"Ready": "True", ...}},
+                ...
+            ],
+            "errors": [...],  # populated only when one of the API calls failed
+        }
+
+    The snapshot is intentionally minimal — it's intended to be called
+    twice per iteration (pre/post) and compared post-hoc, so it has to
+    be cheap.  Full pod-status / node-info collection still happens in
+    `MetricsCollector` at experiment-window boundaries.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    errors: List[str] = []
+    pods: List[Dict[str, Any]] = []
+    try:
+        pod_list = core_api.list_namespaced_pod(namespace)
+        for pod in getattr(pod_list, "items", []) or []:
+            entry = _snapshot_pod_entry(pod)
+            if entry is not None:
+                pods.append(entry)
+    except Exception as exc:  # noqa: BLE001 - K8s client raises a broad set
+        errors.append(f"list_namespaced_pod({namespace}) failed: {exc}")
+
+    nodes: List[Dict[str, Any]] = []
+    try:
+        node_list = core_api.list_node()
+        for node in getattr(node_list, "items", []) or []:
+            nodes.append(_snapshot_node_entry(node))
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"list_node() failed: {exc}")
+
+    snapshot: Dict[str, Any] = {
+        "timestamp": now.isoformat(),
+        "namespace": namespace,
+        "pods": pods,
+        "nodes": nodes,
+    }
+    if errors:
+        snapshot["errors"] = errors
+    return snapshot
+
+
+# ---------------------------------------------------------------------------
 
 
 @dataclass
