@@ -242,6 +242,48 @@ For `random`, each iteration uses a different seed (`base_seed + iter - 1`)
 so the N iterations actually sample the seed-variance distribution, not
 the same placement N times. Override the base with `--seed`.
 
+### Analysis
+
+All analysis commands consume the `summary.json` written by `chaosprobe run`.
+You can try them against the worked-example fixture in `examples/` — no
+cluster required.
+
+```bash
+# Data-quality gate: tainted iterations, low placement match, OOM, missing
+# recovery, inconclusive CIs, schema drift, missing runMetadata.
+uv run chaosprobe doctor -s examples/example-summary.json
+uv run chaosprobe doctor -s examples/example-summary.json --strict   # exit 1 on warn
+
+# Per-strategy aggregate roll-up (resilience, recovery split, CV, histogram).
+uv run chaosprobe summarize -s examples/example-summary.json
+uv run chaosprobe summarize -s examples/example-summary.json --strategy spread
+
+# Bootstrap CIs + Mann-Whitney U (Holm-Bonferroni) + Cliff's delta.
+uv run chaosprobe stats -s examples/example-summary.json --metric resilience
+uv run chaosprobe stats -s examples/example-summary.json --all-metrics --markdown
+uv run chaosprobe stats -s examples/example-summary.json --baseline spread
+uv run chaosprobe stats -s examples/example-summary.json --effect-size-min medium
+
+# Sample-size / power analysis for a target effect.
+uv run chaosprobe power -s examples/example-summary.json --metric resilience
+
+# Per-iteration record drill-down (verdict, probes, recovery split, snapshots).
+uv run chaosprobe inspect -s examples/example-summary.json --strategy colocate -i 3
+uv run chaosprobe inspect -s examples/example-summary.json --strategy spread -i 1 --json
+
+# Two-summary stability comparison ("did re-running give consistent results?").
+uv run chaosprobe diff --a baseline.json --b rerun.json
+uv run chaosprobe diff --a baseline.json --b rerun.json --strict      # exit 1 on disjoint CI
+
+# Flatten iterations into CSV / JSONL for downstream ML.
+uv run chaosprobe export -s examples/example-summary.json -o iters.csv
+uv run chaosprobe export -s examples/example-summary.json --format jsonl -o iters.jsonl
+
+# One-shot thesis-appendix markdown: doctor + summarize + stats (+ optional diff).
+uv run chaosprobe report -s examples/example-summary.json -o report.md
+uv run chaosprobe report -s rerun.json --diff baseline.json -o report.md
+```
+
 ### Placement
 
 ```bash
