@@ -453,7 +453,7 @@ Applies standard K8s manifests. Supports: Deployment, Service, ConfigMap, Networ
 - `provisioner/chaoscenter.py` — `_ChaosCenterMixin` (~678 lines)
 - `provisioner/chaoscenter_api.py` — `_ChaosCenterAPIMixin` (~792 lines)
 
-**Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, 4096MB RAM, Kubespray v2.24.0.
+**Defaults**: Vagrant box `generic/ubuntu2204`, 2 CPUs, control-plane 16384MB / worker 6144MB RAM, Kubespray v2.24.0.
 
 ---
 

@@ -56,3 +56,27 @@ class TestLibvirtOnly:
         with patch.object(setup, "_recover_shutoff_libvirt_vms"):
             with pytest.raises(RuntimeError, match="Failed to start"):
                 setup.vagrant_up(tmp_path)
+
+
+class TestVagrantfileMemoryDefaults:
+    def _render(self, tmp_path, **kwargs):
+        setup = _setup()
+        setup.create_vagrantfile(output_dir=tmp_path, **kwargs)
+        return (tmp_path / "Vagrantfile").read_text()
+
+    def test_defaults_render_cp_16g_worker_6g(self, tmp_path):
+        # Locks the per-role memory defaults: control planes 16 GB, workers 6 GB.
+        content = self._render(tmp_path)
+        assert "CP_MEMORY = 16384" in content
+        assert "WORKER_MEMORY = 6144" in content
+
+    def test_explicit_per_role_memory_overrides_defaults(self, tmp_path):
+        content = self._render(tmp_path, cp_memory=8192, worker_memory=2048)
+        assert "CP_MEMORY = 8192" in content
+        assert "WORKER_MEMORY = 2048" in content
+
+    def test_vm_memory_overrides_both_roles(self, tmp_path):
+        # The legacy single --memory flag still wins over the per-role defaults.
+        content = self._render(tmp_path, vm_memory=3072)
+        assert "CP_MEMORY = 3072" in content
+        assert "WORKER_MEMORY = 3072" in content
