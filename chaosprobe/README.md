@@ -1,461 +1,58 @@
 # ChaosProbe
 
-A framework for running LitmusChaos experiments against Kubernetes deployments, collecting structured experiment data into Neo4j for AI-driven anomaly classification and remediation.
+A framework for running LitmusChaos experiments against Kubernetes deployments,
+collecting structured experiment data into Neo4j, and turning it into
+statistically-grounded comparisons of pod **placement strategies** under chaos —
+with an AI feedback loop for anomaly classification and remediation.
 
-## Overview
-
-ChaosProbe enables automated chaos testing with an AI feedback loop:
-
-1. **Cluster Deployment**: Deploy Kubernetes clusters via Vagrant (local) or Kubespray (production)
-2. **Auto-Setup**: Installs Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, Neo4j, and an in-cluster image registry for probe images
-3. **Deploy Manifests**: Applies standard K8s manifests to the cluster
-4. **Run Experiments**: Executes ChaosEngine experiments via the ChaosCenter GraphQL API across placement strategies
-5. **Collect to Neo4j**: Stores results, metrics, anomaly labels, and time-series in a Neo4j graph database
-6. **ML Export**: Exports aligned, labeled datasets for anomaly classification and remediation models
-7. **Compare Runs**: Diffs before/after results to evaluate fix effectiveness
-
-### AI Feedback Loop
-
-```
-AI reads output → edits K8s manifests → re-runs ChaosProbe → compares results → repeats
-```
-
-## Installation
+## Install
 
 ```bash
 cd chaosprobe
 uv sync          # creates .venv, installs all dependencies
 ```
 
-Optionally create a `.env` file to override Neo4j, registry, and other settings (see **Environment Variables** below). Shell-exported variables take precedence.
+Optionally add a `.env` to override Neo4j / registry settings — see
+[Configuration](docs/reference/configuration.md).
 
-## Environment Variables
+## 30-second taste (no cluster)
 
-ChaosProbe loads a `.env` file automatically (via python-dotenv). Create a `.env` in the project root and adjust as needed. Shell-exported variables take precedence.
-
-| Variable | Default | Description |
-|---|---|---|
-| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI |
-| `NEO4J_USER` | `neo4j` | Neo4j username |
-| `NEO4J_PASSWORD` | `chaosprobe` | Neo4j password |
-| `KUBECONFIG` | `~/.kube/config` | Path to kubeconfig |
-| `CHAOSPROBE_REGISTRY` | *(in-cluster registry, else `ghcr.io`)* | Override the registry host for Rust probe images. Unset, ChaosProbe uses the in-cluster registry from `chaosprobe init` if present, otherwise `ghcr.io` |
-| `CHAOSPROBE_REGISTRY_USER` | *(empty)* | Registry namespace / login user (e.g. `yhu02`) |
-
-### Rust Probe Runtime Variables
-
-These are set inside probe containers at runtime (via ChaosEngine env or Kubernetes pod env):
-
-| Variable | Default | Probe |
-|---|---|---|
-| `PROBE_REDIS_ADDR` | `redis-cart.online-boutique.svc.cluster.local:6379` | check-redis |
-| `PROBE_URL` | `http://frontend.online-boutique.svc.cluster.local/` | check-http-latency |
-| `PROBE_LATENCY_MS_MAX` | `4000` | check-http-latency |
-| `PROBE_HOST` | `frontend.online-boutique.svc.cluster.local:80` | check-dns-latency, check-cart-flow |
-| `PROBE_DNS_MS_MAX` | `250` | check-dns-latency |
-| `PROBE_TARGET` | `frontend.online-boutique.svc.cluster.local:80` | check-tcp-connect |
-| `PROBE_CONNECT_MS_MAX` | `500` | check-tcp-connect |
-| `PROBE_ROUTE_MS_MAX` | `1500` | check-cart-flow |
-| `PROBE_TIMEOUT_MS` | `5000` (check-http-latency); `2000` (check-redis, check-tcp-connect, check-cart-flow) | per-probe |
-
-## Prerequisites
-
-- `kubectl`
-- Python 3.9+
-- [uv](https://docs.astral.sh/uv/) package manager
-
-> Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, and Neo4j are automatically installed by `chaosprobe init`.
-
-### For Local Development (Vagrant)
-
-- [Vagrant](https://www.vagrantup.com/downloads)
-- libvirt/KVM provider
-- `git`, Python 3 with `venv` module
-
-### For Production Deployment (Kubespray)
-
-- `git`, `ssh`, Python 3 with `venv` module (`apt install python3-venv`)
-
-## Scenario Format
-
-Scenarios are **directories** containing standard Kubernetes manifests and ChaosEngine YAML files. ChaosProbe auto-classifies files by their `kind` field.
-
-```
-scenarios/nginx-pod-delete/
-  deployment.yaml     # Standard K8s Deployment
-  service.yaml        # Standard K8s Service
-  experiment.yaml     # ChaosEngine experiment
-```
-
-### Example: experiment.yaml (ChaosEngine)
-
-```yaml
-apiVersion: litmuschaos.io/v1alpha1
-kind: ChaosEngine
-metadata:
-  name: nginx-pod-delete
-spec:
-  engineState: active
-  appinfo:
-    appns: chaosprobe-test
-    applabel: app=nginx
-    appkind: deployment
-  chaosServiceAccount: litmus-admin
-  experiments:
-    - name: pod-delete
-      spec:
-        components:
-          env:
-            - name: TOTAL_CHAOS_DURATION
-              value: "30"
-            - name: CHAOS_INTERVAL
-              value: "10"
-        probe:
-          - name: http-probe
-            type: httpProbe
-            mode: Continuous
-            httpProbe/inputs:
-              url: http://nginx-service.chaosprobe-test.svc.cluster.local
-              method:
-                get:
-                  criteria: "=="
-                  responseCode: "200"
-            runProperties:
-              probeTimeout: 5s
-              interval: 2s
-              retry: 3
-```
-
-## Quick Start
-
-### With Existing Cluster
+Every analysis command ships with a worked-example fixture, so you can see what
+ChaosProbe produces without a cluster:
 
 ```bash
-# Initialize (installs LitmusChaos, ChaosCenter, Prometheus, Neo4j, metrics-server)
-uv run chaosprobe init
-
-# Run the full placement experiment matrix
-uv run chaosprobe run -n online-boutique
-
-# Compare before and after (using Neo4j run IDs)
-uv run chaosprobe compare run-baseline-001 run-afterfix-001 --neo4j-uri bolt://localhost:7687
-```
-
-### Local Development with Vagrant
-
-```bash
-# 1. Initialize Vagrantfile (1 control plane + 4 workers)
-uv run chaosprobe cluster vagrant init --control-planes 1 --workers 4
-
-# 2. (WSL2/Linux) Setup libvirt provider — run once
-uv run chaosprobe cluster vagrant setup
-
-# 3. Start the VMs
-uv run chaosprobe cluster vagrant up
-
-# 4. Deploy Kubernetes (takes 15-30 minutes)
-uv run chaosprobe cluster vagrant deploy
-
-# 5. Fetch kubeconfig
-uv run chaosprobe cluster vagrant kubeconfig
-export KUBECONFIG=~/.kube/config-chaosprobe
-
-# 6. Initialize ChaosProbe and run
-uv run chaosprobe init
-uv run chaosprobe run -n online-boutique
-
-# Stop VMs (preserves state, can restart with 'vagrant up')
-uv run chaosprobe cluster vagrant halt
-
-# Destroy VMs permanently when done
-uv run chaosprobe cluster vagrant destroy
-```
-
-### Deploy on Bare Metal / Cloud VMs (Kubespray)
-
-```bash
-# 1. Create a hosts file
-cat > hosts.yaml << EOF
-hosts:
-  - name: master1
-    ip: 192.168.1.10
-    ansible_user: ubuntu
-    roles: [control_plane, worker]
-  - name: worker1
-    ip: 192.168.1.11
-    ansible_user: ubuntu
-    roles: [worker]
-  - name: worker2
-    ip: 192.168.1.12
-    ansible_user: ubuntu
-    roles: [worker]
-EOF
-
-# 2. Deploy cluster (15-30 minutes)
-uv run chaosprobe cluster create --hosts-file hosts.yaml
-
-# 3. Fetch kubeconfig
-uv run chaosprobe cluster kubeconfig --host 192.168.1.10 --user ubuntu
-export KUBECONFIG=~/.kube/config-chaosprobe
-
-# 4. Run scenarios
-uv run chaosprobe init
-uv run chaosprobe run -n online-boutique
-```
-
-## Commands
-
-### Core
-
-```bash
-uv run chaosprobe status                    # Check prerequisites and cluster connectivity
-uv run chaosprobe init                      # Install all infrastructure
-uv run chaosprobe run -n online-boutique    # Run placement experiment matrix
-uv run chaosprobe provision <scenario-dir>  # Deploy manifests only (no experiments)
-uv run chaosprobe compare <base> <fix> --neo4j-uri bolt://localhost:7687  # Compare runs
-uv run chaosprobe cleanup <namespace> --all # Cleanup provisioned resources
-uv run chaosprobe delete -n <namespace>     # Delete ALL ChaosProbe infrastructure
-```
-
-### Run
-
-The `run` command runs the full placement experiment matrix. Default strategies: `baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware`.
-
-```bash
-uv run chaosprobe run -n online-boutique                          # All defaults
-uv run chaosprobe run -n online-boutique -s colocate,spread       # Specific strategies
-uv run chaosprobe run -n online-boutique -i 3                     # Multiple iterations
-uv run chaosprobe run -n online-boutique --load-profile ramp      # Ramp load profile
-uv run chaosprobe run -n online-boutique --no-visualize           # Skip chart generation
-
-# Multi-fault matrix — every strategy runs once per fault class.
-# This is the recommended invocation for the thesis defense, since
-# it directly tests the churn-vs-contention claim by varying the
-# fault class while holding placement, target, and probes constant.
-uv run chaosprobe run -n online-boutique \
-    -e scenarios/online-boutique/placement-experiment.yaml \
-    -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
-    -i 5
-```
-
-For `random`, each iteration uses a different seed (`base_seed + iter - 1`)
-so the N iterations actually sample the seed-variance distribution, not
-the same placement N times. Override the base with `--seed`.
-
-### Analysis
-
-All analysis commands consume the `summary.json` written by `chaosprobe run`.
-You can try them against the worked-example fixture in `examples/` — no
-cluster required.
-
-```bash
-# Data-quality gate: tainted iterations, low placement match, OOM, missing
-# recovery, inconclusive CIs, schema drift, missing runMetadata.
-uv run chaosprobe doctor -s examples/example-summary.json
-uv run chaosprobe doctor -s examples/example-summary.json --strict   # exit 1 on warn
-
-# Per-strategy aggregate roll-up (resilience, recovery split, CV, histogram).
-uv run chaosprobe summarize -s examples/example-summary.json
-uv run chaosprobe summarize -s examples/example-summary.json --strategy spread
-
-# Bootstrap CIs + Mann-Whitney U (Holm-Bonferroni) + Cliff's delta.
-uv run chaosprobe stats -s examples/example-summary.json --metric resilience
-uv run chaosprobe stats -s examples/example-summary.json --all-metrics --markdown
-uv run chaosprobe stats -s examples/example-summary.json --baseline spread
-uv run chaosprobe stats -s examples/example-summary.json --effect-size-min medium
-uv run chaosprobe stats -s run1.json --merge run2.json --merge run3.json    # pool samples
-
-# Sample-size / power analysis for a target effect.
-uv run chaosprobe power -s examples/example-summary.json --metric resilience
-
-# Statistically-justified placement recommendation (closes the feedback loop).
 uv run chaosprobe recommend -s examples/example-summary.json
-uv run chaosprobe recommend -s examples/example-summary.json --metric recovery
-uv run chaosprobe recommend -s examples/example-summary.json --alpha 0.01 --json
-
-# Per-iteration record drill-down (verdict, probes, recovery split, snapshots).
-uv run chaosprobe inspect -s examples/example-summary.json --strategy colocate -i 3
-uv run chaosprobe inspect -s examples/example-summary.json --strategy spread -i 1 --json
-
-# Two-summary stability comparison ("did re-running give consistent results?").
-uv run chaosprobe diff --a baseline.json --b rerun.json
-uv run chaosprobe diff --a baseline.json --b rerun.json --strict      # exit 1 on disjoint CI
-
-# Flatten iterations into CSV / JSONL for downstream ML.
-uv run chaosprobe export -s examples/example-summary.json -o iters.csv
-uv run chaosprobe export -s examples/example-summary.json --format jsonl -o iters.jsonl
-
-# One-shot thesis-appendix markdown: doctor + summarize + stats (+ optional diff).
-uv run chaosprobe report -s examples/example-summary.json -o report.md
-uv run chaosprobe report -s rerun.json --diff baseline.json -o report.md
+uv run chaosprobe report    -s examples/example-summary.json -o /tmp/report.md
 ```
 
-### Placement
+Then follow the [Getting started tutorial](docs/tutorials/getting-started.md).
 
-```bash
-uv run chaosprobe placement apply colocate -n online-boutique
-uv run chaosprobe placement apply spread -n online-boutique
-uv run chaosprobe placement apply random -n online-boutique --seed 42
-uv run chaosprobe placement apply adversarial -n online-boutique
-uv run chaosprobe placement apply best-fit -n online-boutique
-uv run chaosprobe placement apply dependency-aware -n online-boutique
-uv run chaosprobe placement show -n online-boutique
-uv run chaosprobe placement nodes
-uv run chaosprobe placement clear -n online-boutique
-```
+## Documentation
 
-### Graph (Neo4j)
+The docs follow the [Diátaxis](https://diataxis.fr/) framework — pick by what
+you need. Full map: **[docs/index.md](docs/index.md)**.
 
-```bash
-uv run chaosprobe graph status --neo4j-uri bolt://localhost:7687
-uv run chaosprobe graph sessions --neo4j-uri bolt://localhost:7687
-uv run chaosprobe graph blast-radius frontend --neo4j-uri bolt://localhost:7687
-uv run chaosprobe graph topology --run-id <run-id> --neo4j-uri bolt://localhost:7687
-uv run chaosprobe graph details <run-id> --neo4j-uri bolt://localhost:7687
-uv run chaosprobe graph compare --run-ids <id1,id2,...> --neo4j-uri bolt://localhost:7687
-```
+| | |
+|---|---|
+| 🎓 **[Tutorial](docs/tutorials/getting-started.md)** | Learn by doing — your first analysis and first experiment. |
+| 🔧 **[How-to guides](docs/index.md)** | [Set up a cluster](docs/how-to/set-up-a-cluster.md) · [Run experiments](docs/how-to/run-experiments.md) · [Analyze results](docs/how-to/analyze-results.md) · [Write a scenario](docs/how-to/write-a-scenario.md) · [Add a Rust probe](docs/how-to/add-a-rust-probe.md) · [Reproduce thesis results](docs/how-to/reproducing-thesis-results.md) |
+| 📖 **[Reference](docs/reference/cli.md)** | [CLI](docs/reference/cli.md) · [Configuration](docs/reference/configuration.md) · [TECHNICAL.md](TECHNICAL.md) (modules, schemas) |
+| 💡 **[Explanation](docs/explanation/concepts.md)** | [Concepts](docs/explanation/concepts.md) · [TECHNICAL.md](TECHNICAL.md) (methodology) |
 
-### Dashboard (ChaosCenter)
-
-```bash
-uv run chaosprobe dashboard install
-uv run chaosprobe dashboard status
-uv run chaosprobe dashboard open
-uv run chaosprobe dashboard connect -n <namespace>
-uv run chaosprobe dashboard credentials
-```
-
-### Visualization
-
-```bash
-uv run chaosprobe visualize --neo4j-uri bolt://localhost:7687 -o charts/
-uv run chaosprobe visualize --neo4j-uri bolt://localhost:7687 --session <id> -o charts/
-uv run chaosprobe visualize --summary summary.json -o charts/    # Legacy
-```
-
-### ML Export
-
-```bash
-uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.csv
-uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 -o dataset.parquet --format parquet
-uv run chaosprobe ml-export --neo4j-uri bolt://localhost:7687 --strategy colocate -o dataset.csv
-```
-
-### Probe (Rust cmdProbes)
-
-Custom Rust probes are compiled to static Linux binaries, packaged into minimal (`scratch`) container images, and automatically injected into ChaosEngine `cmdProbe` specs at run time.
-
-`chaosprobe init` installs a private in-cluster registry on the control-plane node, and `chaosprobe run` builds + pushes probe images there automatically — no external registry (GHCR) login required. `run` resolves the push/pull registry as `CHAOSPROBE_REGISTRY` (env override) → the in-cluster registry → the `ghcr.io` default. The in-cluster registry serves plain HTTP, so a one-time per-node containerd / build-host docker "insecure registry" trust step is required — see [manifests/README.md](manifests/README.md). Use `chaosprobe init --skip-registry` to opt out (e.g. when using GHCR or an external registry via `CHAOSPROBE_REGISTRY`).
-
-```bash
-# Scaffold a new probe (full Cargo project)
-uv run chaosprobe probe init <name> --scenario <path>
-
-# Scaffold a single-file probe (no Cargo.toml)
-uv run chaosprobe probe init <name> --single-file --scenario <path>
-
-# Build all probes in a scenario (local Docker only)
-uv run chaosprobe probe build <scenario>
-
-# Build and push to GHCR (or any OCI registry)
-uv run chaosprobe probe build <scenario> -r ghcr.io/<user> --push
-
-# List discovered probes without building
-uv run chaosprobe probe list <scenario>
-```
-
-**Workflow:**
-
-1. `chaosprobe probe init check-redis -s scenarios/online-boutique` — scaffolds `probes/check-redis/`
-2. Edit `probes/check-redis/src/main.rs` — implement the check logic
-3. Add a `cmdProbe` entry to the experiment YAML with `source.image: auto`
-4. `chaosprobe probe build scenarios/online-boutique` — compiles and builds images
-5. `chaosprobe run -n online-boutique` — auto-builds probes, patches `source.image`, runs experiment
-
-Probes print a result string to stdout. The ChaosEngine comparator matches against this output. Exit 0 means the check ran (verdict comes from the comparator); exit non-zero means the probe itself failed.
-
-### Cluster
-
-```bash
-# Vagrant
-uv run chaosprobe cluster vagrant init
-uv run chaosprobe cluster vagrant setup          # libvirt for WSL2/Linux
-uv run chaosprobe cluster vagrant up
-uv run chaosprobe cluster vagrant deploy
-uv run chaosprobe cluster vagrant kubeconfig
-uv run chaosprobe cluster vagrant status
-uv run chaosprobe cluster vagrant ssh <vm-name>
-uv run chaosprobe cluster vagrant halt             # stop VMs (preserves disk)
-uv run chaosprobe cluster vagrant destroy
-
-# Kubespray
-uv run chaosprobe cluster create --hosts-file hosts.yaml
-uv run chaosprobe cluster kubeconfig --host <ip> --user <user>
-uv run chaosprobe cluster destroy --inventory <path>
-```
-
-## Supported Chaos Experiments
-
-Any LitmusChaos experiment can be used via ChaosEngine YAML. Common ones:
-
-- **Pod**: `pod-delete`, `container-kill`, `pod-cpu-hog`, `pod-memory-hog`, `pod-io-stress`
-- **Network**: `pod-network-loss`, `pod-network-latency`, `pod-network-corruption`
-- **Node**: `node-cpu-hog`, `node-memory-hog`, `node-drain`
-
-## Architecture
-
-```
-ChaosProbe CLI (cli.py + commands/)
-      │
-      ├── Cluster Manager
-      │   ├── Vagrant (local development)
-      │   └── Kubespray (production)
-      │
-      ├── Setup Manager (Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, Neo4j)
-      │
-      ├── Config Loader (directory-based, auto-classifies by kind)
-      │   └── Validator (ChaosEngine + K8s manifest validation)
-      │
-      ├── Infrastructure Provisioner (applies raw K8s manifests)
-      │
-      ├── Placement Engine
-      │   ├── Strategy (colocate, spread, random, adversarial, best-fit, dependency-aware)
-      │   └── Mutator (nodeSelector injection, rollout management)
-      │
-      ├── Chaos Runner (ChaosCenter GraphQL API — save, trigger, poll experiments)
-      │
-      ├── Result Collector (ChaosResult CRDs)
-      │
-      ├── Metrics Collection
-      │   ├── RecoveryWatcher (real-time pod watch during chaos)
-      │   ├── Continuous Probers (latency, throughput, resources, Prometheus)
-      │   ├── Anomaly Labels (ground-truth ML labels)
-      │   ├── Cascade Timeline (fault propagation tracking)
-      │   └── MetricsCollector (pod status, node info, unified output)
-      │
-      ├── Storage — Neo4j Graph Store (topology, runs, metrics, time-series)
-      │
-      ├── Graph Analysis (blast radius, topology comparison, colocation impact)
-      │
-      └── Output
-          ├── Visualization (charts, HTML reports)
-          ├── ML Export (aligned CSV/Parquet datasets)
-          └── Comparison Engine (diffs before/after runs)
-```
+[`TECHNICAL.md`](TECHNICAL.md) is the deep, citable technical write-up — the
+consolidated reference + explanation appendix the Diátaxis tree links into.
 
 ## Development
 
 ```bash
-uv sync                     # Sync all dependencies (including dev)
-uv run pytest               # Run tests
-uv run ruff check .         # Lint
-uv run black --check .      # Check formatting
-uv run black .              # Format code
+uv sync                     # sync all dependencies (including dev)
+uv run pytest               # run tests
+uv run ruff check .         # lint
+uv run black --check .      # check formatting
+uv run mypy                 # type-check
 ```
 
-## Reproducing the thesis results
-
-Exact cluster spec, workload, fault matrix, and CLI invocations are in [docs/reproducing-thesis-results.md](docs/reproducing-thesis-results.md). For the underlying mechanism docs see [TECHNICAL.md](TECHNICAL.md); for cluster provisioning see [proxmox-setup.md](proxmox-setup.md).
+See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for contribution guidelines.
 
 ## License
 

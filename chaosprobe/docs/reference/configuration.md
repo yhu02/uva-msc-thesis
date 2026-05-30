@@ -1,0 +1,48 @@
+# Configuration reference
+
+## Environment variables
+
+ChaosProbe loads a `.env` file automatically (via python-dotenv); create one in
+the project root. **Shell-exported variables take precedence** over `.env`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI. |
+| `NEO4J_USER` | `neo4j` | Neo4j username. |
+| `NEO4J_PASSWORD` | `chaosprobe` | Neo4j password. |
+| `KUBECONFIG` | `~/.kube/config` | Path to the kubeconfig ChaosProbe acts against. |
+| `CHAOSPROBE_REGISTRY` | in-cluster registry, else `ghcr.io` | Registry host for Rust probe images. Unset, `run` uses the in-cluster registry from `chaosprobe init` if present, otherwise `ghcr.io`. |
+| `CHAOSPROBE_REGISTRY_USER` | *(empty)* | Registry namespace / login user (e.g. `yhu02`). |
+| `CHAOSPROBE_REGISTRY_PASSWORD` | *(empty)* | Registry login token/password. Set together with `CHAOSPROBE_REGISTRY_USER` to `docker login` an authenticated registry (e.g. GHCR) before pushing probe images. The default in-cluster registry needs neither. |
+
+## Rust probe runtime variables
+
+These are read **inside probe containers at runtime** (set via ChaosEngine env
+or pod env), not by the CLI. See [Add a Rust probe](../how-to/add-a-rust-probe.md).
+
+| Variable | Default | Probe |
+|---|---|---|
+| `PROBE_REDIS_ADDR` | `redis-cart.online-boutique.svc.cluster.local:6379` | check-redis |
+| `PROBE_URL` | `http://frontend.online-boutique.svc.cluster.local/` | check-http-latency |
+| `PROBE_LATENCY_MS_MAX` | `4000` | check-http-latency |
+| `PROBE_HOST` | `frontend.online-boutique.svc.cluster.local:80` | check-dns-latency, check-cart-flow |
+| `PROBE_DNS_MS_MAX` | `250` | check-dns-latency |
+| `PROBE_TARGET` | `frontend.online-boutique.svc.cluster.local:80` | check-tcp-connect |
+| `PROBE_CONNECT_MS_MAX` | `500` | check-tcp-connect |
+| `PROBE_ROUTE_MS_MAX` | `1500` | check-cart-flow |
+| `PROBE_TIMEOUT_MS` | `5000` (check-http-latency); `2000` (check-redis, check-tcp-connect, check-cart-flow) | per-probe |
+
+## Prerequisites
+
+- `kubectl`
+- Python 3.9+
+- [uv](https://docs.astral.sh/uv/)
+
+Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, Neo4j, and the
+in-cluster registry are installed automatically by `chaosprobe init`.
+
+**Cluster provisioning** additionally needs:
+- *Vagrant (local):* [Vagrant](https://www.vagrantup.com/downloads), a
+  libvirt/KVM provider, `git`, Python 3 with `venv`.
+- *Kubespray (production):* `git`, `ssh`, Python 3 with `venv`
+  (`apt install python3-venv`).
