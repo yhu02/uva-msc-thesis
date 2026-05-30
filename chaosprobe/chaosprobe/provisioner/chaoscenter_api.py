@@ -5,6 +5,7 @@ environments, infrastructures, experiments, and resilience probes.
 """
 
 import json as _json
+import logging
 import os
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ import urllib.request
 from typing import Any, Optional
 
 from chaosprobe.provisioner._setup_base import _LitmusSetupBase
+
+logger = logging.getLogger(__name__)
 
 
 class _ChaosCenterAPIMixin(_LitmusSetupBase):
@@ -192,7 +195,8 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                         project_id = resp2.get("projectID", project_id)
                         print("  ChaosCenter: default password rotated to managed password")
                     except Exception:
-                        pass  # keep using the default-password token
+                        # keep using the default-password token
+                        logger.debug("re-login after password rotation failed", exc_info=True)
 
                 return token, project_id
             except Exception as exc:
@@ -382,7 +386,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                     if i.get("infraID") == infra_id and i.get("isActive"):
                         return True
             except Exception:
-                pass
+                logger.debug("failed to list infras while polling", exc_info=True)
             time.sleep(5)
         return False
 
@@ -632,7 +636,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                 self._chaoscenter_api_request(gql_url, data=save_data, token=token)
                 return fresh_id
             except Exception:
-                pass
+                logger.debug("retry save with fresh experiment id failed", exc_info=True)
 
             # Last resort: the name itself is blocked by a soft-deleted
             # ghost.  Nothing in the API can fix this — raise clearly.

@@ -3,6 +3,7 @@
 Covers metrics-server, Prometheus, Neo4j, and local-path-provisioner.
 """
 
+import logging
 import os
 import subprocess
 import tempfile
@@ -13,6 +14,8 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.provisioner._setup_base import _LitmusSetupBase
+
+logger = logging.getLogger(__name__)
 
 # In-cluster container registry for ChaosProbe probe images. Runs registry:2 on
 # the control plane and is reachable at <control-plane-node-ip>:REGISTRY_NODEPORT
@@ -381,7 +384,7 @@ class _ComponentsMixin(_LitmusSetupBase):
             if sc_list.items:
                 return
         except Exception:
-            pass
+            logger.debug("failed to list storage classes", exc_info=True)
 
         self._install_local_path_provisioner()
 
@@ -396,7 +399,7 @@ class _ComponentsMixin(_LitmusSetupBase):
                 if pod.status.phase == "Running":
                     return True
         except Exception:
-            pass
+            logger.debug("failed to list local-path-provisioner pods", exc_info=True)
         return False
 
     def ensure_local_path_provisioner(self) -> bool:

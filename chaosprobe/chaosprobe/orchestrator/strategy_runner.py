@@ -1213,7 +1213,7 @@ def _run_iterations(
                     try:
                         ctx.graph_store.close()
                     except Exception:
-                        pass
+                        logger.debug("failed to close stale Neo4j driver", exc_info=True)
                     try:
                         from chaosprobe.storage.neo4j_store import Neo4jStore
 
@@ -1398,7 +1398,7 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
             try:
                 ctx.graph_store.close()
             except Exception:
-                pass
+                logger.debug("failed to close Neo4j driver before reconnect", exc_info=True)
 
             # Ensure Neo4j port-forward is alive before reconnecting.
             # Heavy strategies (colocate/best-fit) can starve nodes and

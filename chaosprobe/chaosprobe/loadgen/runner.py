@@ -4,6 +4,7 @@ Provides controllable load patterns and live metric collection
 to replace the passive Google loadgenerator.
 """
 
+import logging
 import os
 import subprocess
 import sys
@@ -11,6 +12,8 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_int(value: Any) -> int:
@@ -291,7 +294,7 @@ class LocustRunner:
                 self._process.stderr.read()
                 self._process.stderr.close()
             except Exception:
-                pass
+                logger.debug("failed to drain Locust stderr on stop", exc_info=True)
         self._end_time = time.time()
 
     def wait(self) -> None:

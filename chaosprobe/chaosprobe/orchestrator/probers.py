@@ -5,9 +5,12 @@ measurement probers (latency, throughput, resources, Prometheus,
 recovery watcher) and the optional Locust load generator.
 """
 
+import logging
 from typing import Any, Dict, Tuple
 
 import click
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Create & start
@@ -143,7 +146,7 @@ def stop_and_collect_probers(
                 try:
                     f.result()
                 except Exception:
-                    pass
+                    logger.debug("prober stop() raised during shutdown", exc_info=True)
 
     results: Dict[str, Any] = {}
     error_breakdown: Dict[str, int] = {}

@@ -6,6 +6,7 @@ and polls for completion via the ``getExperimentRun`` query.
 """
 
 import json as _json
+import logging
 import time
 import uuid
 from copy import deepcopy
@@ -13,6 +14,8 @@ from typing import Any, Dict, List
 
 from chaosprobe.chaos.manifest import build_workflow_manifest
 from chaosprobe.provisioner.setup import LitmusSetup
+
+logger = logging.getLogger(__name__)
 
 # Phase values returned by ChaosCenter ``getExperimentRun.phase``
 _TERMINAL_PHASES = frozenset(
@@ -414,7 +417,7 @@ class ChaosRunner:
                 if running:
                     return True
             except Exception:
-                pass
+                logger.debug("failed to poll pods during readiness wait", exc_info=True)
             time.sleep(5)
         return False
 

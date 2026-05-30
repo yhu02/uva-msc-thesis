@@ -1,6 +1,7 @@
 """CLI command: chaosprobe run — automated full experiment matrix."""
 
 import json
+import logging
 import subprocess
 import sys
 import time
@@ -49,6 +50,8 @@ from chaosprobe.probes.builder import (
 )
 from chaosprobe.provisioner.components import resolve_probe_registry
 from chaosprobe.provisioner.setup import LitmusSetup, UnknownExperimentType
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_litmus_setup(
@@ -163,7 +166,7 @@ def _ensure_metrics_server(setup: LitmusSetup) -> Tuple[str, str]:
                 setup.install_metrics_server(wait=True)
                 return "metrics-server", "repaired (added --kubelet-insecure-tls)"
         except Exception:
-            pass
+            logger.debug("failed to inspect metrics-server args", exc_info=True)
         return "metrics-server", "available"
     if setup.install_metrics_server(wait=True):
         return "metrics-server", "installed"
