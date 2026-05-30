@@ -261,6 +261,58 @@ class TestComputePerPodUtilization:
         pod = out["pods"]["frontend-abc"]
         assert pod["phases"] == {}
 
+    def test_non_finite_sample_values_skipped(self):
+        # Prometheus emits "NaN"/"+Inf"/"-Inf" for no-data; float() parses
+        # them without raising.  They must be dropped — otherwise the
+        # non-finite mean reaches int(mean_mem) and raises ValueError.
+        pod_status = _make_pod_status(cpu="100m", memory="100Mi")
+        prometheus_data = {
+            "available": True,
+            "timeSeries": [
+                _make_prom_entry(
+                    "pre-chaos",
+                    {
+                        "cpu_usage": [
+                            {"metric": {"pod": "frontend-abc"}, "value": [1, "NaN"]},
+                            {"metric": {"pod": "frontend-abc"}, "value": [2, "+Inf"]},
+                            {"metric": {"pod": "frontend-abc"}, "value": [3, "0.1"]},
+                        ],
+                        "memory_usage": [
+                            {"metric": {"pod": "frontend-abc"}, "value": [1, "-Inf"]},
+                            {"metric": {"pod": "frontend-abc"}, "value": [2, str(64 * 1024**2)]},
+                        ],
+                    },
+                ),
+            ],
+        }
+        out = compute_per_pod_utilization(pod_status, prometheus_data)
+        pod = out["pods"]["frontend-abc"]
+        # Only the finite samples contribute; no crash on int(mean_mem).
+        assert pod["phases"]["pre-chaos"]["cpuUsageCores"] == 0.1
+        assert pod["phases"]["pre-chaos"]["memoryUsageBytes"] == 64 * 1024**2
+
+    def test_all_non_finite_samples_omit_phase_keys(self):
+        # Every sample non-finite → the label has no usable values, so the
+        # phase entry omits the key entirely rather than emitting NaN.
+        pod_status = _make_pod_status(cpu="100m", memory="100Mi")
+        prometheus_data = {
+            "available": True,
+            "timeSeries": [
+                _make_prom_entry(
+                    "pre-chaos",
+                    {
+                        "memory_usage": [
+                            {"metric": {"pod": "frontend-abc"}, "value": [1, "NaN"]},
+                            {"metric": {"pod": "frontend-abc"}, "value": [2, "+Inf"]},
+                        ],
+                    },
+                ),
+            ],
+        }
+        out = compute_per_pod_utilization(pod_status, prometheus_data)
+        pod = out["pods"]["frontend-abc"]
+        assert pod["phases"] == {}
+
     def test_malformed_value_field_skipped(self):
         pod_status = _make_pod_status()
         prometheus_data = {

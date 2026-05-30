@@ -2,8 +2,29 @@
 
 import csv
 import io
+import math
 
 from chaosprobe.metrics.timeseries import align_time_series, export_aligned_csv
+
+
+def _make_prometheus_metrics(items):
+    """Build a metrics dict carrying a single Prometheus timeSeries entry."""
+    return {
+        "timeWindow": {
+            "start": "2026-04-02T01:35:00+00:00",
+            "end": "2026-04-02T01:35:30+00:00",
+            "duration_s": 30,
+        },
+        "prometheus": {
+            "available": True,
+            "timeSeries": [
+                {
+                    "timestamp": "2026-04-02T01:35:10+00:00",
+                    "metrics": {"node_cpu": items},
+                }
+            ],
+        },
+    }
 
 
 def _make_metrics(
@@ -218,6 +239,59 @@ class TestAlignTimeSeries:
         filled = [r for r in rows if r.get("node_cpu_percent") == 25.0]
         # Should be present in multiple buckets (forward filled)
         assert len(filled) > 1
+
+    def test_prometheus_non_finite_values_skipped(self):
+        # Prometheus emits "NaN"/"+Inf"/"-Inf" for no-data; float() parses
+        # them without raising.  They must be dropped so they don't poison
+        # the sum/avg or serialise as invalid JSON (NaN/Infinity).
+        metrics = _make_prometheus_metrics(
+            [
+                {"value": [1, "1.5"]},
+                {"value": [2, "NaN"]},
+                {"value": [3, "+Inf"]},
+                {"value": [4, "2.5"]},
+            ]
+        )
+        rows = align_time_series(metrics, resolution_s=5.0)
+
+        prom_rows = [r for r in rows if "prom:node_cpu:sum" in r]
+        assert len(prom_rows) >= 1
+        # Only the two finite samples (1.5 + 2.5) contribute.
+        assert prom_rows[0]["prom:node_cpu:sum"] == 4.0
+        assert prom_rows[0]["prom:node_cpu:avg"] == 2.0
+        # No aligned cell anywhere carries a non-finite float.
+        for row in rows:
+            for cell in row.values():
+                if isinstance(cell, float):
+                    assert math.isfinite(cell)
+
+    def test_prometheus_all_non_finite_omits_metric(self):
+        # Every sample non-finite → count stays 0 → no prom key is written.
+        metrics = _make_prometheus_metrics(
+            [
+                {"value": [1, "NaN"]},
+                {"value": [2, "-Inf"]},
+            ]
+        )
+        rows = align_time_series(metrics, resolution_s=5.0)
+        assert all("prom:node_cpu:sum" not in r for r in rows)
+        assert all("prom:node_cpu:avg" not in r for r in rows)
+
+    def test_prometheus_unparseable_value_skipped(self):
+        # Malformed samples raise in float() (ValueError / IndexError) and
+        # are skipped via the except branch; only the finite one survives.
+        metrics = _make_prometheus_metrics(
+            [
+                {"value": [1, "abc"]},  # ValueError
+                {"value": []},  # IndexError
+                {"value": [2, "3.0"]},  # finite
+            ]
+        )
+        rows = align_time_series(metrics, resolution_s=5.0)
+        prom_rows = [r for r in rows if "prom:node_cpu:sum" in r]
+        assert len(prom_rows) >= 1
+        assert prom_rows[0]["prom:node_cpu:sum"] == 3.0
+        assert prom_rows[0]["prom:node_cpu:avg"] == 3.0
 
 
 class TestExportAlignedCsv:

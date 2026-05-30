@@ -142,10 +142,19 @@ def _merge_prometheus(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _Ne
             count = 0
             for v in values:
                 try:
-                    total += float(v.get("value", [0, "0"])[1])
-                    count += 1
+                    value = float(v.get("value", [0, "0"])[1])
                 except (ValueError, IndexError, TypeError):
-                    pass
+                    continue
+                # Prometheus emits "NaN"/"+Inf"/"-Inf" for no-data (e.g.
+                # histogram_quantile over an empty window).  float() parses
+                # those without raising, so guard explicitly — letting a
+                # non-finite value into the sum poisons the bucket and
+                # serialises as invalid JSON (NaN/Infinity).  Mirrors the
+                # summary-path guard in prometheus.py.
+                if not math.isfinite(value):
+                    continue
+                total += value
+                count += 1
             if count > 0:
                 buckets[bk][f"prom:{metric_name}:sum"] = round(total, 4)
                 buckets[bk][f"prom:{metric_name}:avg"] = round(total / count, 4)

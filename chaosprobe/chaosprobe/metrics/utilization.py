@@ -7,6 +7,7 @@ it hit its own limit" from "pod was throttled because the node was hot"
 (H7 attribution).
 """
 
+import math
 from typing import Any, Dict, List, Optional
 
 
@@ -104,6 +105,13 @@ def _walk_time_series(
                 try:
                     val = float(value[1])
                 except (TypeError, ValueError):
+                    continue
+                # Prometheus emits "NaN"/"+Inf"/"-Inf" for no-data; float()
+                # parses those without raising.  Drop them — a non-finite
+                # mean later reaches int(mean_mem), which raises ValueError,
+                # and round(nan) would emit invalid JSON.  Mirrors the
+                # summary-path guard in prometheus.py.
+                if not math.isfinite(val):
                     continue
                 by_phase.setdefault(phase, {}).setdefault(pod_name, {}).setdefault(
                     label, []
