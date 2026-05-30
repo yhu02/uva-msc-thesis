@@ -66,12 +66,19 @@ kubectl --kubeconfig ~/.kube/config-chaosprobe get nodes
   by its own check.
 
 ### 2–5. Provision with Vagrant (only if step 1 found no cluster)
+
+`uv run chaosprobe cluster vagrant status` is the authoritative probe here: it
+resolves the cluster dir itself (`~/.chaosprobe/vagrant/chaosprobe/` — **not** the
+current directory, so don't `test -f Vagrantfile` from `chaosprobe/`) and reports
+both whether the Vagrantfile exists and whether the VMs are running. Run it once,
+then act on what it says.
+
 | Step | Check (skip the command if true) | Command |
 |---|---|---|
-| 2. Vagrantfile | `test -f Vagrantfile` | `uv run chaosprobe cluster vagrant init --control-planes 1 --workers 4` |
-| 3. ⚠️ libvirt | `uv run chaosprobe cluster vagrant setup` reports all `OK` (it's a checker) | run it; if anything is `MISSING`/`NOT RUNNING` or sudo is needed → hand to user |
-| 4. VMs up | `uv run chaosprobe cluster vagrant status` shows the VMs `running` | `uv run chaosprobe cluster vagrant up` |
-| 5. ⚠️ k8s installed | `kubectl ... get nodes` works (step 1) — **this is the expensive 15–30 min step; never re-run if nodes already exist** | `uv run chaosprobe cluster vagrant deploy` (background + poll; may need sudo → user) |
+| 2. Vagrantfile | `cluster vagrant status` shows the cluster exists (Vagrantfile present) | `uv run chaosprobe cluster vagrant init --control-planes 1 --workers 4` |
+| 3. ⚠️ libvirt | libvirt already set up | `uv run chaosprobe cluster vagrant setup` — diagnostic-first, but it also *installs* the provider and may need **sudo**, so treat it as the user-owned gate: run it, and if it reports `MISSING`/`NOT RUNNING` or asks for sudo → hand to user |
+| 4. VMs up | `cluster vagrant status` shows the VMs `running` | `uv run chaosprobe cluster vagrant up` |
+| 5. ⚠️ k8s installed | — | `uv run chaosprobe cluster vagrant deploy` — installs Kubernetes; this is what makes step 1's `kubectl get nodes` succeed. **Run it once during fresh provisioning. You only reach this step because step 1 found no cluster, and that master gate is what stops it ever re-running.** 15–30 min, background + poll; may need sudo → user |
 
 Then fetch the kubeconfig **only if missing**:
 - **Check:** `test -f ~/.kube/config-chaosprobe` and `kubectl --kubeconfig ~/.kube/config-chaosprobe get nodes` works.
