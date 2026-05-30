@@ -64,11 +64,11 @@ class TestVagrantfileMemoryDefaults:
         setup.create_vagrantfile(output_dir=tmp_path, **kwargs)
         return (tmp_path / "Vagrantfile").read_text()
 
-    def test_defaults_render_cp_16g_worker_6g(self, tmp_path):
-        # Locks the per-role memory defaults: control planes 16 GB, workers 6 GB.
+    def test_defaults_render_cp_12g_worker_4g(self, tmp_path):
+        # Locks the per-role memory defaults: control planes 12 GB, workers 4 GB.
         content = self._render(tmp_path)
-        assert "CP_MEMORY = 16384" in content
-        assert "WORKER_MEMORY = 6144" in content
+        assert "CP_MEMORY = 12288" in content
+        assert "WORKER_MEMORY = 4096" in content
 
     def test_explicit_per_role_memory_overrides_defaults(self, tmp_path):
         content = self._render(tmp_path, cp_memory=8192, worker_memory=2048)

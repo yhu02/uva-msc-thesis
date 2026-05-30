@@ -194,9 +194,9 @@ def cluster_vagrant():
     type=int,
     help="CPUs for ALL VMs (overrides --cp-cpus/--worker-cpus)",
 )
-@click.option("--cp-memory", default=16384, type=int, help="Memory for control plane VMs in MB")
+@click.option("--cp-memory", default=12288, type=int, help="Memory for control plane VMs in MB")
 @click.option("--cp-cpus", default=2, type=int, help="CPUs for control plane VMs")
-@click.option("--worker-memory", default=6144, type=int, help="Memory for worker VMs in MB")
+@click.option("--worker-memory", default=4096, type=int, help="Memory for worker VMs in MB")
 @click.option("--worker-cpus", default=2, type=int, help="CPUs for worker VMs")
 @click.option("--box", default="generic/ubuntu2204", help="Vagrant box image")
 @click.option("--network-prefix", default="192.168.56", help="Network prefix for private IPs")
