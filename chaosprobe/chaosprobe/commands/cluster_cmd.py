@@ -335,7 +335,7 @@ def vagrant_up(name: str, vagrant_dir: Optional[str]):
     click.echo(f"\nStarting Vagrant VMs from {vdir}...")
 
     try:
-        setup.vagrant_up(vdir, provider="libvirt")
+        setup.vagrant_up(vdir)
         click.echo("\nVMs are running. Next steps:")
         click.echo(f"  Deploy K8s: chaosprobe cluster vagrant deploy --name {name}")
     except Exception as e:
