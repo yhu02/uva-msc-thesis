@@ -3,8 +3,11 @@
 Guidance for Claude Code to provision the thesis cluster with Vagrant and run
 ChaosProbe experiments end to end. Full docs: [`chaosprobe/docs/index.md`](chaosprobe/docs/index.md).
 
-This flow is **mostly** autonomous, but a few steps require the user — they are
-flagged ⚠️ below. Honor those gates; do not try to work around them.
+This flow is **idempotent and re-entrant**: every step is gated by a pre-check,
+so on a second invocation (cluster already up, infra already installed) it skips
+straight to running. **Run the pre-check before each command and skip the
+command when its check already passes** — never re-provision or re-install
+blindly. A few steps require the user; they are flagged ⚠️.
 
 ---
 
@@ -38,90 +41,107 @@ operations — do not attempt them; stop and hand over (suggest they run it via
 - ⚠️ `cluster vagrant setup` / `deploy` when they need **sudo or libvirt** (VM
   provider setup, ansible "become" password).
 - ⚠️ The one-time **in-cluster registry trust** step on each node's containerd
-  and the build host — node-level config outside the K8s API. See
-  [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md).
+  and the build host (see [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md)).
 - ⚠️ Any node restart or containerd reload.
 
 ---
 
-## Setup (Vagrant) — run from `chaosprobe/`
+## Decide what's actually needed (pre-checks)
 
+Work top-down. Each row's **check** tells you whether to run the command or skip
+it. `cd chaosprobe` first; all checks assume `KUBECONFIG=~/.kube/config-chaosprobe`.
+
+### 0. Toolchain
+- **Check:** `uv run chaosprobe --version` succeeds.
+- **If it fails:** `uv sync` (from `chaosprobe/`). Otherwise skip.
+
+### 1. Is there already a working cluster? (the master gate)
 ```bash
-cd chaosprobe && uv sync
+kubectl --kubeconfig ~/.kube/config-chaosprobe get nodes
 ```
+- **Nodes listed and `Ready`** → a cluster already exists. **Skip the entire
+  Vagrant section (steps 2–5)**, `export KUBECONFIG=~/.kube/config-chaosprobe`,
+  and jump to the safety gate → step 6.
+- **Command fails / no nodes** → you need to provision: do steps 2–5, each gated
+  by its own check.
 
-Then, pausing at every ⚠️ gate:
+### 2–5. Provision with Vagrant (only if step 1 found no cluster)
+| Step | Check (skip the command if true) | Command |
+|---|---|---|
+| 2. Vagrantfile | `test -f Vagrantfile` | `uv run chaosprobe cluster vagrant init --control-planes 1 --workers 4` |
+| 3. ⚠️ libvirt | `uv run chaosprobe cluster vagrant setup` reports all `OK` (it's a checker) | run it; if anything is `MISSING`/`NOT RUNNING` or sudo is needed → hand to user |
+| 4. VMs up | `uv run chaosprobe cluster vagrant status` shows the VMs `running` | `uv run chaosprobe cluster vagrant up` |
+| 5. ⚠️ k8s installed | `kubectl ... get nodes` works (step 1) — **this is the expensive 15–30 min step; never re-run if nodes already exist** | `uv run chaosprobe cluster vagrant deploy` (background + poll; may need sudo → user) |
 
-1. `uv run chaosprobe cluster vagrant init --control-planes 1 --workers 4`
-2. ⚠️ `uv run chaosprobe cluster vagrant setup` — checks libvirt/KVM. If it
-   reports anything `MISSING` / `NOT RUNNING`, or a sudo password is required,
-   hand this to the user.
-3. `uv run chaosprobe cluster vagrant up`
-4. ⚠️ `uv run chaosprobe cluster vagrant deploy` — installs Kubernetes; **15–30
-   min and may need sudo**. Long-running: run it in the background and poll;
-   don't block the turn. If it prompts for sudo, hand to the user.
-5. `uv run chaosprobe cluster vagrant kubeconfig` then
-   `export KUBECONFIG=~/.kube/config-chaosprobe`
-6. **Run the safety gate above**, then `uv run chaosprobe status` to confirm
-   prerequisites + cluster connectivity before going further.
+Then fetch the kubeconfig **only if missing**:
+- **Check:** `test -f ~/.kube/config-chaosprobe` and `kubectl --kubeconfig ~/.kube/config-chaosprobe get nodes` works.
+- **Else:** `uv run chaosprobe cluster vagrant kubeconfig`, then `export KUBECONFIG=~/.kube/config-chaosprobe`.
 
-(Already have a cluster? Skip 1–4, just export the thesis kubeconfig and run the
-safety gate. Other cluster paths — Kubespray, Proxmox — are in
-[`chaosprobe/docs/how-to/set-up-a-cluster.md`](chaosprobe/docs/how-to/set-up-a-cluster.md).)
+### 6. Safety gate
+Run the ⛔ safety gate above. Then optionally `uv run chaosprobe status`
+(prerequisites + connectivity).
 
----
+### 7. In-cluster registry — the ONLY thing `init` adds that `run` won't
+`run` self-heals Helm, local-path-provisioner, LitmusChaos, RBAC, experiment
+CRDs, metrics-server, Prometheus, Neo4j, and ChaosCenter on its own — so **you do
+not need `init` for those.** The single exception is the in-cluster image
+registry (for the 5 Rust `cmdProbes`), which only `init` installs.
+- **Check:** `kubectl get ns registry` (and `kubectl get pods -n registry -l app=registry`).
+- **Registry present** → skip `init` entirely; go to step 8.
+- **Registry absent AND you want the Rust cmdProbes** → `uv run chaosprobe init`
+  (⚠️ first run also needs the one-time node registry-trust step — user-owned).
+- **Registry absent AND you don't need Rust probes** → skip `init`; either set
+  `CHAOSPROBE_REGISTRY` to an external registry or accept that the 5 cmdProbes
+  won't run. `run` still installs everything else.
 
-## Initialize + run experiments
+> Tip: you can skip `init` and let `run` bootstrap the rest — the trade-off is
+> the *first* `run` takes longer (it installs the infra inline) and has no
+> in-cluster registry. Use `init` when you want that install done upfront and/or
+> need the registry.
 
-7. `uv run chaosprobe init` — installs LitmusChaos, ChaosCenter, Prometheus,
-   Neo4j, metrics-server, and the in-cluster registry.
-   - ⚠️ If probe-image **pulls fail**, the registry node-trust step (user-owned,
-     above) hasn't been done — hand it to the user, or re-init with
-     `--skip-registry` and point `CHAOSPROBE_REGISTRY` at an external registry.
-8. Run the experiment matrix. **This is long** (per iteration ≈ 60 s settle +
-   120 s chaos + 60 s post, × each strategy × iterations — hours for the full
-   matrix). Run in the background and poll.
-
-   ```bash
-   # Full multi-fault matrix (recommended for results — varies fault class
-   # while holding placement/target/probes constant):
-   uv run chaosprobe run -n online-boutique \
-       -e scenarios/online-boutique/placement-experiment.yaml \
-       -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
-       -i 5
-
-   # Fast smoke check first (one strategy pass, one iteration):
-   uv run chaosprobe run -n online-boutique -i 1
-   ```
+### 8. Run experiments (always — this is the goal)
+Long (per iteration ≈ 60 s settle + 120 s chaos + 60 s post, × strategy ×
+iterations — hours for the full matrix). Background + poll; don't block.
+```bash
+# Full multi-fault matrix (recommended for results):
+uv run chaosprobe run -n online-boutique \
+    -e scenarios/online-boutique/placement-experiment.yaml \
+    -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
+    -i 5
+# Fast smoke check first:
+uv run chaosprobe run -n online-boutique -i 1
+```
 
 ---
 
 ## Analyze + report
 
-9. `uv run chaosprobe doctor -s <run-output>/summary.json --strict` — gate data
-   quality before trusting numbers.
-10. `uv run chaosprobe recommend -s <run-output>/summary.json` and
-    `uv run chaosprobe report -s <run-output>/summary.json -o report.md`.
-    Surface the recommendation and the report path to the user.
+- `uv run chaosprobe doctor -s <run-output>/summary.json --strict` (gate data quality).
+- `uv run chaosprobe recommend -s <run-output>/summary.json` and
+  `uv run chaosprobe report -s <run-output>/summary.json -o report.md` — surface
+  the recommendation and report path to the user.
 
-Full analysis command set:
-[`chaosprobe/docs/how-to/analyze-results.md`](chaosprobe/docs/how-to/analyze-results.md).
+Full analysis set: [`chaosprobe/docs/how-to/analyze-results.md`](chaosprobe/docs/how-to/analyze-results.md).
 
 ---
 
 ## Teardown
 
 - `uv run chaosprobe cluster vagrant halt` — stops the VMs, **preserves** state
-  (restart later with `up`). This is the default when done.
-- ⚠️ `uv run chaosprobe cluster vagrant destroy` — **destructive** (deletes the
-  VMs). Only on explicit user request.
+  (restart with `up`; no re-`deploy` needed). Default when done.
+- ⚠️ `uv run chaosprobe cluster vagrant destroy` — **destructive**. Only on
+  explicit user request. (After a destroy, step 1's check fails and the full
+  provision path runs again.)
 
 ---
 
 ## Conventions
 
+- **Pre-check, then act** — skip any command whose check already passes; never
+  re-provision/re-install blindly. The expensive ones to guard are `vagrant
+  deploy` (gate on `kubectl get nodes`) and `init` (gate on `kubectl get ns registry`).
 - Long ops (`deploy`, `run`): launch in the background and poll; don't block.
-- Do **not** commit run outputs, `summary.json`, charts, or reports unless asked.
 - Stop at the ⚠️ gates rather than guessing sudo passwords or node config.
+- Do **not** commit run outputs, `summary.json`, charts, or reports unless asked.
 - Reference: [`chaosprobe/docs/index.md`](chaosprobe/docs/index.md) (Diátaxis map),
   [`chaosprobe/TECHNICAL.md`](chaosprobe/TECHNICAL.md) (deep reference).
