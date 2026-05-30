@@ -130,6 +130,47 @@ class TestAlignTimeSeries:
         rec_rows = [r for r in rows if r.get("recovery_in_progress") == 1]
         assert len(rec_rows) >= 1
         assert rec_rows[0]["recovery_total_ms"] == 2000
+        # A completed recovery is not a failure: recovery_failed stays 0 everywhere.
+        assert all(r["recovery_failed"] == 0 for r in rows)
+
+    def test_never_recovered_marks_failed(self):
+        # Pod deleted mid-experiment, never became ready before the window ended.
+        recovery = [
+            {
+                "deletionTime": "2026-04-02T01:35:10+00:00",
+                "readyTime": None,
+                "failure_reason": "experiment_ended_before_recovery",
+            }
+        ]
+        metrics = _make_metrics(recovery_events=recovery)
+        rows = align_time_series(metrics, resolution_s=5.0)
+
+        del_epoch = 10.0  # 10s into the window
+        for row in rows:
+            offset = row["epoch_s"] - rows[0]["epoch_s"]
+            if offset >= del_epoch:
+                assert row["recovery_failed"] == 1
+                assert row["recovery_in_progress"] == 0
+                # A failed window has no recovery duration.
+                assert row.get("recovery_total_ms") is None
+            else:
+                assert row["recovery_failed"] == 0
+
+    def test_recovery_failed_defaults_zero(self):
+        # No recovery events at all → recovery_failed defaults to 0 on every row.
+        rows = align_time_series(_make_metrics(), resolution_s=5.0)
+        assert rows
+        assert all(r["recovery_failed"] == 0 for r in rows)
+        assert all(r["recovery_in_progress"] == 0 for r in rows)
+
+    def test_recovery_cycle_without_deletion_time_skipped(self):
+        # A cycle with no deletionTime can't be placed on the grid — skip it,
+        # don't crash, and don't flag any bucket.
+        recovery = [{"deletionTime": None, "readyTime": "2026-04-02T01:35:12+00:00"}]
+        rows = align_time_series(_make_metrics(recovery_events=recovery), resolution_s=5.0)
+        assert rows
+        assert all(r["recovery_failed"] == 0 for r in rows)
+        assert all(r["recovery_in_progress"] == 0 for r in rows)
 
     def test_event_timeline_counted(self):
         events = [

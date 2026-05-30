@@ -154,14 +154,28 @@ def _merge_prometheus(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _Ne
 def _merge_recovery(metrics: Dict[str, Any], buckets: _BucketMap, bucket_keys: List[float]) -> None:
     for cycle in metrics.get("recovery", {}).get("recoveryEvents", []):
         del_time = cycle.get("deletionTime")
+        if not del_time:
+            # No deletion timestamp — the cycle can't be placed on the grid.
+            continue
+        del_epoch = _parse_iso(del_time)
         ready_time = cycle.get("readyTime")
-        if del_time and ready_time:
-            del_epoch = _parse_iso(del_time)
+        if ready_time:
+            # Bounded, completed recovery interval.
             ready_epoch = _parse_iso(ready_time)
             for bk in bucket_keys:
                 if del_epoch <= bk <= ready_epoch:
                     buckets[bk]["recovery_in_progress"] = 1
                     buckets[bk]["recovery_total_ms"] = cycle.get("totalRecovery_ms")
+        else:
+            # Pod was deleted and never recovered before the experiment ended
+            # (RecoveryWatcher.stop finalizes such cycles with readyTime=None).
+            # Flag the whole [deletionTime, end] window as a failed recovery so
+            # this worst-case outcome is visible in the feature set instead of
+            # being indistinguishable from healthy idle time.  recovery_total_ms
+            # is deliberately left unset: there is no recovery duration to report.
+            for bk in bucket_keys:
+                if bk >= del_epoch:
+                    buckets[bk]["recovery_failed"] = 1
 
 
 def _merge_events(metrics: Dict[str, Any], buckets: _BucketMap, nearest: _NearestFn) -> None:
@@ -206,6 +220,21 @@ def align_time_series(
     -------
     List of dicts, each representing one time bucket.  Suitable for direct
     conversion to a pandas DataFrame or CSV.
+
+    Recovery features (two 0/1 flags, defaulting to 0) encode three states:
+
+    ============================  ================  =============================
+    ``recovery_in_progress``      ``recovery_failed``  meaning
+    ============================  ================  =============================
+    0                             0                 not in a recovery window
+    1                             0                 bounded recovery in progress
+    0                             1                 pod deleted, never recovered
+                                                    before the experiment ended
+    ============================  ================  =============================
+
+    ``recovery_total_ms`` is set only for completed (``recovery_in_progress``)
+    windows; it is left unset for failed windows, which have no recovery
+    duration.
     """
     time_window = metrics.get("timeWindow", {})
     if not time_window.get("start") or not time_window.get("end"):
@@ -270,9 +299,10 @@ def align_time_series(
                 elif col in last_values:
                     row[col] = last_values[col]
 
-    # Set recovery_in_progress default and event counts default
+    # Set recovery flag defaults (absent buckets are neither recovering nor failed)
     for row in rows:
         row.setdefault("recovery_in_progress", 0)
+        row.setdefault("recovery_failed", 0)
 
     return rows
 

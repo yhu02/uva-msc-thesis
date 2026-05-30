@@ -790,6 +790,7 @@ class Neo4jWriterMixin:
         if not windows:
             for s in samples.values():
                 s.setdefault("recovery_in_progress", False)
+                s.setdefault("recovery_failed", False)
                 s.setdefault("recovery_cycle_id", None)
             return
 
@@ -802,10 +803,12 @@ class Neo4jWriterMixin:
                 ts_epoch = ts_dt.timestamp()
             except (ValueError, TypeError):
                 s["recovery_in_progress"] = False
+                s["recovery_failed"] = False
                 s["recovery_cycle_id"] = None
                 continue
 
             in_recovery = False
+            failed = False
             cycle_id = None
             for idx, t_del, t_rdy in windows:
                 if t_rdy is not None:
@@ -814,13 +817,17 @@ class Neo4jWriterMixin:
                         cycle_id = idx
                         break
                 else:
-                    # Incomplete cycle — mark everything after deletion
+                    # Incomplete cycle — the pod was deleted and never recovered
+                    # before the experiment ended.  Flag everything after the
+                    # deletion as a failed recovery (distinct from in-progress),
+                    # mirroring the CSV path's recovery_failed feature.
                     if ts_epoch >= t_del:
-                        in_recovery = True
+                        failed = True
                         cycle_id = idx
                         break
 
             s["recovery_in_progress"] = in_recovery
+            s["recovery_failed"] = failed
             s["recovery_cycle_id"] = cycle_id
 
     def _sync_anomaly_labels(
