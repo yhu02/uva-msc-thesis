@@ -11,10 +11,27 @@ import subprocess
 import tempfile
 import time
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.provisioner._setup_base import _LitmusSetupBase
+
+
+def _scheme_and_host(url: str) -> str:
+    """Return ``scheme://host`` from a URL, dropping any port and path.
+
+    Used to turn a dashboard URL (e.g. ``http://node:9091/path``) back into
+    the bare ``scheme://host`` that the ChaosCenter endpoints are rebuilt
+    from.  Unlike a naive ``rsplit(":", 1)``, this is correct for a URL with
+    no port (which rsplit would truncate to just the scheme) and re-brackets
+    IPv6 literals.  If the URL carries no scheme the bare host is returned.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if ":" in host:  # IPv6 literal — urlparse strips the brackets
+        host = f"[{host}]"
+    return f"{parsed.scheme}://{host}" if parsed.scheme else host
 
 
 class _ChaosCenterMixin(_LitmusSetupBase):
@@ -677,8 +694,8 @@ spec:
         if not base_url:
             raise RuntimeError("Cannot detect ChaosCenter URL. Is it installed and ready?")
 
-        # Derive scheme + host (strip port)
-        base_host = base_url.rsplit(":", 1)[0]
+        # Derive scheme + host (strip port/path)
+        base_host = _scheme_and_host(base_url)
 
         result = self.ensure_chaoscenter_configured(
             namespace=namespace,

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from chaosprobe.provisioner.chaoscenter import _scheme_and_host
 from chaosprobe.provisioner.setup import LitmusSetup
 
 # ---------------------------------------------------------------------------
@@ -1516,3 +1517,24 @@ class TestExtractProbeVerdictsFromExecutionData:
 
         data = {"nodes": {"n1": {"name": "steps", "type": "Steps"}}}
         assert _extract_probe_verdicts_from_execution_data(data) == {}
+
+
+class TestSchemeAndHost:
+    def test_strips_port(self):
+        assert _scheme_and_host("http://localhost:9091") == "http://localhost"
+
+    def test_no_port_kept_intact(self):
+        # rsplit(":", 1) used to truncate this to just "http".
+        assert _scheme_and_host("http://localhost") == "http://localhost"
+
+    def test_strips_path_and_port(self):
+        assert _scheme_and_host("http://node:9091/path") == "http://node"
+
+    def test_https_with_ip(self):
+        assert _scheme_and_host("https://10.0.0.5:9091") == "https://10.0.0.5"
+
+    def test_ipv6_literal_rebracketed(self):
+        assert _scheme_and_host("http://[::1]:9091") == "http://[::1]"
+
+    def test_no_scheme_returns_bare_host(self):
+        assert _scheme_and_host("") == ""
