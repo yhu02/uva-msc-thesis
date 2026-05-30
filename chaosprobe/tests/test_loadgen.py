@@ -132,3 +132,38 @@ class TestLocustRunner:
     def test_default_locustfile_content(self):
         """Test that DEFAULT_LOCUSTFILE is valid Python syntax."""
         compile(DEFAULT_LOCUSTFILE, "<string>", "exec")
+
+
+class TestParseStatsCsv:
+    """Locust writes 'N/A' for percentiles on zero-request rows; parsing must
+    tolerate non-numeric / missing cells instead of raising ValueError."""
+
+    @staticmethod
+    def _runner():
+        return LocustRunner.__new__(LocustRunner)
+
+    def test_na_percentiles_in_aggregated_row_default_to_zero(self, tmp_path):
+        csv_path = tmp_path / "stats.csv"
+        csv_path.write_text(
+            "Type,Name,Request Count,Failure Count,Average Response Time,"
+            "Min Response Time,Max Response Time,Requests/s,Failures/s,50%,95%,99%\n"
+            # N/A in the count columns too, exercising the int fallback
+            ",Aggregated,N/A,N/A,0,0,0,0,0,N/A,N/A,N/A\n"
+        )
+        stats = self._runner()._parse_stats_csv(str(csv_path), LoadStats())
+        assert stats.total_requests == 0
+        assert stats.total_failures == 0
+        assert stats.p50_response_time_ms == 0.0
+        assert stats.p95_response_time_ms == 0.0
+        assert stats.p99_response_time_ms == 0.0
+
+    def test_endpoint_row_with_na_does_not_crash(self, tmp_path):
+        csv_path = tmp_path / "stats.csv"
+        csv_path.write_text(
+            "Type,Name,Request Count,Failure Count,Average Response Time,95%\n"
+            "GET,/cart,5,0,12.3,N/A\n"
+        )
+        stats = self._runner()._parse_stats_csv(str(csv_path), LoadStats())
+        assert len(stats.endpoints) == 1
+        assert stats.endpoints[0]["requests"] == 5
+        assert stats.endpoints[0]["p95ResponseTime_ms"] == 0.0
