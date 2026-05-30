@@ -1,9 +1,11 @@
 """Tests for the inter-service latency measurement module."""
 
 import threading
+from unittest.mock import MagicMock, patch
 
 from chaosprobe.metrics.latency import (
     ContinuousLatencyProber,
+    LatencyProber,
     LatencyResult,
     LatencySample,
     _aggregate_latency_samples,
@@ -713,3 +715,47 @@ class TestStatusCodeDistribution:
         summary = result.summary()
         assert summary["mean_ms"] is None  # no OK samples
         assert summary["statusCodeDistribution"]["5xx"] == 1
+
+
+class TestMeasureTcpFromPod:
+    @staticmethod
+    def _prober():
+        p = LatencyProber.__new__(LatencyProber)
+        p.namespace = "online-boutique"
+        p.timeout_seconds = 5
+        p.core_api = MagicMock()
+        return p
+
+    def test_host_passed_as_argv_not_interpolated_into_script(self):
+        captured = {}
+
+        def fake_stream(*_args, **kwargs):
+            captured["cmd"] = kwargs["command"]
+            return "1000000 3000000"
+
+        with patch("chaosprobe.metrics.latency.stream", side_effect=fake_stream):
+            sample = self._prober()._measure_tcp_from_pod(
+                "pod-1", "weird'host:9999", "frontend", "cart"
+            )
+
+        cmd = captured["cmd"]
+        # host/port are standalone argv elements, never baked into the script
+        assert cmd[3] == "weird'host"
+        assert cmd[5] == "9999"
+        assert "weird'host" not in cmd[2]
+        assert "sys.argv" in cmd[2]
+        # output still parses correctly
+        assert sample.status == "ok"
+        assert sample.latency_ms == 2.0
+
+    def test_default_port_80_when_host_has_no_port(self):
+        captured = {}
+
+        def fake_stream(*_args, **kwargs):
+            captured["cmd"] = kwargs["command"]
+            return "1000000 2000000"
+
+        with patch("chaosprobe.metrics.latency.stream", side_effect=fake_stream):
+            self._prober()._measure_tcp_from_pod("pod-1", "frontend.ns.svc", "a", "b")
+
+        assert captured["cmd"][5] == "80"

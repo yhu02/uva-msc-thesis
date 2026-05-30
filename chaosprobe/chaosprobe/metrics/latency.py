@@ -679,17 +679,20 @@ class LatencyProber:
         else:
             hostname, port = host, "80"
 
+        # Pass host/port as argv rather than interpolating into the script —
+        # matches the HTTP probe path and keeps an unexpected hostname out of
+        # executable code (also avoids an uncaught int(port) ValueError here).
         py_script = (
-            "import socket,time;"
+            "import socket,sys,time;"
             "s=socket.socket();"
-            f"s.settimeout({int(self.timeout_seconds)});"
+            "s.settimeout(int(sys.argv[2]));"
             "t0=int(time.time()*1e9);"
-            f"s.connect(('{hostname}',{int(port)}));"
+            "s.connect((sys.argv[1], int(sys.argv[3])));"
             "t1=int(time.time()*1e9);"
             "s.close();"
             "print(t0,t1)"
         )
-        cmd = ["python3", "-c", py_script]
+        cmd = ["python3", "-c", py_script, hostname, str(int(self.timeout_seconds)), str(port)]
 
         try:
             resp = stream(
