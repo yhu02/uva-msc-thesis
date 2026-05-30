@@ -180,6 +180,37 @@ class TestGetDashboardUrl:
         url = setup.get_dashboard_url()
         assert url == "http://203.0.113.1:9091"
 
+    def test_loadbalancer_address_pending_returns_none(self):
+        # An ingress entry can exist before the LB address is assigned;
+        # both ip and hostname are None during that transient window.
+        setup = _make_setup()
+        svc = _mock_service(
+            LitmusSetup.CHAOSCENTER_FRONTEND_SVC,
+            svc_type="LoadBalancer",
+            port=9091,
+        )
+        ingress_entry = MagicMock()
+        ingress_entry.ip = None
+        ingress_entry.hostname = None
+        svc.status.load_balancer = MagicMock()
+        svc.status.load_balancer.ingress = [ingress_entry]
+        setup.core_api.read_namespaced_service.return_value = svc
+
+        assert setup.get_dashboard_url() is None
+
+    def test_loadbalancer_no_ingress_returns_none(self):
+        setup = _make_setup()
+        svc = _mock_service(
+            LitmusSetup.CHAOSCENTER_FRONTEND_SVC,
+            svc_type="LoadBalancer",
+            port=9091,
+        )
+        svc.status.load_balancer = MagicMock()
+        svc.status.load_balancer.ingress = []
+        setup.core_api.read_namespaced_service.return_value = svc
+
+        assert setup.get_dashboard_url() is None
+
     def test_returns_none_when_not_initialized(self):
         setup = _make_setup(_k8s_initialized=False)
         assert setup.get_dashboard_url() is None
