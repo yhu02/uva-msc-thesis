@@ -87,6 +87,7 @@ files = [
     "chaosprobe/commands/export_cmd.py",
     "chaosprobe/commands/inspect_cmd.py",
     "chaosprobe/commands/power_cmd.py",
+    "chaosprobe/commands/recommend_cmd.py",
     "chaosprobe/commands/report_cmd.py",
     "chaosprobe/commands/stats_cmd.py",
     "chaosprobe/commands/summarize_cmd.py",

@@ -24,7 +24,7 @@ flowchart TD
     AGG["aggregate_iterations<br/>(orchestrator/run_phases.py)"]
     OUT["OutputGenerator<br/>summary.json"]
     NEO[("Neo4j")]
-    STATS["chaosprobe stats / doctor / summarize / power / inspect / diff / report / export"]
+    STATS["chaosprobe stats / recommend / doctor / summarize / power / inspect / diff / report / export"]
 
     CLI --> PF
     PF -->|per strategy| PM
@@ -627,6 +627,7 @@ All graph commands accept `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`.
 | Command | Purpose |
 |---|---|
 | `chaosprobe stats -s <summary.json>` | Bootstrap CI for per-strategy means + pairwise Mann-Whitney U with Holm-Bonferroni correction + Cliff's delta effect size. |
+| `chaosprobe recommend -s <summary.json> [--metric {resilience,recovery}] [--alpha {0.01,0.05,0.10}]` | Rank strategies by the metric and emit a placement recommendation: `significant` when the leader beats the runner-up at the chosen α (Holm-adjusted p + Cliff's delta), else `tentative` (points at `power` for the iteration count needed). Closes the run→compare→decide loop. |
 
 Flags:
 

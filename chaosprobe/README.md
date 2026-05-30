@@ -268,6 +268,11 @@ uv run chaosprobe stats -s run1.json --merge run2.json --merge run3.json    # po
 # Sample-size / power analysis for a target effect.
 uv run chaosprobe power -s examples/example-summary.json --metric resilience
 
+# Statistically-justified placement recommendation (closes the feedback loop).
+uv run chaosprobe recommend -s examples/example-summary.json
+uv run chaosprobe recommend -s examples/example-summary.json --metric recovery
+uv run chaosprobe recommend -s examples/example-summary.json --alpha 0.01 --json
+
 # Per-iteration record drill-down (verdict, probes, recovery split, snapshots).
 uv run chaosprobe inspect -s examples/example-summary.json --strategy colocate -i 3
 uv run chaosprobe inspect -s examples/example-summary.json --strategy spread -i 1 --json
