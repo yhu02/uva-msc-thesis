@@ -1,5 +1,12 @@
 # ChaosProbe Technical Reference
 
+> **Where this fits.** In the [Diátaxis](https://diataxis.fr/) terms used by the
+> [documentation map](docs/index.md), this document is the consolidated
+> **reference + explanation** appendix: a single, citable, deep technical
+> write-up. For learning-oriented and task-oriented docs (tutorial, how-to
+> guides) start at [docs/index.md](docs/index.md). The quick CLI lookup lives in
+> [docs/reference/cli.md](docs/reference/cli.md).
+
 ## 1. System Overview
 
 ChaosProbe is a Python framework for automated Kubernetes chaos testing with AI-consumable output. It wraps LitmusChaos to run ChaosEngine experiments via the ChaosCenter GraphQL API, collects real-time pod recovery metrics, and stores all data in a Neo4j graph database for machine-learning feedback loops.
