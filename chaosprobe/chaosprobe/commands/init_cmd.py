@@ -6,12 +6,49 @@ import click
 
 from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.preflight import check_pods_ready
+from chaosprobe.probes.builder import ensure_crane
 from chaosprobe.provisioner.components import get_registry_address
 from chaosprobe.provisioner.setup import LitmusSetup
 
 
 def _pf_ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
     return pf.ensure(svc, ns, ports, host, port)
+
+
+def _install_probe_registry(setup: LitmusSetup) -> None:
+    """Install the in-cluster probe-image registry and the crane pusher.
+
+    Both are prerequisites for building/pushing Rust probe images: the registry
+    holds them, and crane (auto-installed like helm) does the daemon-less push.
+    """
+    click.echo("\nInstalling in-cluster registry for probe images...")
+    try:
+        if setup.is_registry_installed():
+            click.echo("  registry: already installed")
+        elif setup.install_registry(wait=True):
+            click.echo("  registry: installed")
+        else:
+            click.echo("  registry: installed but not yet ready", err=True)
+        registry_addr = get_registry_address(setup.core_api)
+        if registry_addr:
+            click.echo(f"  registry address: {registry_addr}")
+            click.echo(
+                "  One-time per-node setup (init can't do this — it's node-level):\n"
+                "  trust this insecure registry in each node's containerd so the\n"
+                "  kubelet can pull probe images. The build host needs no trust —\n"
+                "  crane pushes daemon-lessly via a port-forward. See\n"
+                "  chaosprobe/manifests/README.md."
+            )
+    except Exception as e:
+        click.echo(f"  WARNING: registry install failed: {e}", err=True)
+
+    # crane (the daemon-less pusher) is a build-host tool; install it now like
+    # helm, so `run` doesn't have to fetch it mid-experiment.
+    try:
+        ensure_crane()
+        click.echo("  crane: available")
+    except Exception as e:
+        click.echo(f"  WARNING: crane install failed: {e} — install before `run`", err=True)
 
 
 @click.command()
@@ -204,25 +241,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool, skip_registry:
                 click.echo(f"  WARNING: Failed to install {label}: {e}", err=True)
 
     if not skip_registry:
-        click.echo("\nInstalling in-cluster registry for probe images...")
-        try:
-            if setup.is_registry_installed():
-                click.echo("  registry: already installed")
-            elif setup.install_registry(wait=True):
-                click.echo("  registry: installed")
-            else:
-                click.echo("  registry: installed but not yet ready", err=True)
-            registry_addr = get_registry_address(setup.core_api)
-            if registry_addr:
-                click.echo(f"  registry address: {registry_addr}")
-                click.echo(
-                    "  One-time node setup required (init can't do this — it's node-level):\n"
-                    "  trust this insecure registry on the build host (docker) and every node\n"
-                    "  (containerd). ChaosProbe then pushes/pulls probe images here\n"
-                    "  automatically — see chaosprobe/manifests/README.md."
-                )
-        except Exception as e:
-            click.echo(f"  WARNING: registry install failed: {e}", err=True)
+        _install_probe_registry(setup)
 
     click.echo("\nChaosProbe initialized successfully!")
 
