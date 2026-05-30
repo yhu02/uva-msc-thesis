@@ -26,7 +26,7 @@ Speaker notes for the thesis defense presentation.
 
 > Our research question is: *How do multi-dimensional metrics decompose chaos response across pod-placement strategies in Kubernetes?*
 >
-> The framing is deliberate. Earlier work asks which placement strategy is most resilient and collapses the answer into a single aggregate score. We instead ask what each metric dimension uniquely reveals -- and what we can claim with confidence at this scale. We test ten hypotheses, grouped into four themes. I will walk each theme at a high level; the results slides take them one at a time.
+> The framing is deliberate. Earlier work asks which placement strategy is most resilient and collapses the answer into a single aggregate score. We instead ask what each metric dimension uniquely reveals -- and what we can claim with confidence at this scale. We test ten hypotheses (H1–H10), grouped into four themes; I will walk each theme at a high level. Separately, three *legacy literature predictions* -- **L1** (colocate is the worst), **L2** (spread gives the best fault isolation), and **L3** (recovery time predicts resilience) -- are the contention-model expectations the results slides put to the test. I label these L-, distinct from the ten H-hypotheses, to keep the two families clear.
 >
 > **Theme 1 -- Instrument design (H1 through H3).** These hypotheses justify ChaosProbe's measurement architecture from first principles.
 >
@@ -80,9 +80,9 @@ Speaker notes for the thesis defense presentation.
 >
 > **Default** uses the standard Kubernetes scheduler with full chaos injection. This is the placement null hypothesis -- what happens when we let the scheduler decide.
 >
-> **Colocate** pins all pods to a single node using pod affinity. This is maximum contention and we expect the worst resilience.
+> **Colocate** pins all pods to a single node via `nodeSelector` (every deployment gets the same `kubernetes.io/hostname`). This is maximum contention and we expect the worst resilience.
 >
-> **Spread** distributes pods evenly across workers using topology spread constraints. This is minimum contention and we expect the best fault isolation.
+> **Spread** distributes pods evenly across workers via per-node `nodeSelector` assignment. This is minimum contention and we expect the best fault isolation.
 >
 > **Random** uses a seeded random assignment per deployment. It is reproducible and serves as a null baseline for topology effects.
 >
@@ -170,17 +170,17 @@ Speaker notes for the thesis defense presentation.
 >
 > The **leakage cluster** sits at 49.7% to 66.3% with standard deviation around 29. Spread and best-fit average 66.3%, with collateral damage to non-target probes in about one iteration in three. Default averages 49.7%, with collateral damage in two iterations out of three.
 >
-> H1 predicted colocate would be the worst. Colocate ties for the top non-baseline score. H2 predicted spread would be the best. Spread sits in the leakage cluster. Both hypotheses are refuted -- but the more interesting observation is that the distinction between "containment" and "leakage" is not about density. Colocate and adversarial are dense; random and dependency-aware are not, yet all four are in the containment cluster. The dividing line is something else, which the discussion slide takes up.
+> L1 predicted colocate would be the worst. Colocate ties for the top non-baseline score. L2 predicted spread would be the best. Spread sits in the leakage cluster. Both predictions are refuted -- but the more interesting observation is that the distinction between "containment" and "leakage" is not about density. Colocate and adversarial are dense; random and dependency-aware are not, yet all four are in the containment cluster. The dividing line is something else, which the discussion slide takes up.
 
 ---
 
 ## Slide 10 -- Results: Recovery Time & Latency
 
-> Recovery time -- measured as the interval from pod deletion to pod ready -- is where H3 gets tested directly.
+> Recovery time -- measured as the interval from pod deletion to pod ready -- is where L3 gets tested directly.
 >
 > The fastest recovery was **random at 1120 milliseconds**, followed by dependency-aware (1258), colocate (1336), adversarial (1362), default (1387), best-fit (1452), and spread (1617). The full spread is just 500 milliseconds end-to-end -- a tight band of 1.1 to 1.6 seconds across all six placement strategies.
 >
-> H3 predicted that faster recovery should yield higher resilience scores. The data does not support this. Random had the *fastest* recovery (1120ms) and tied for the *best* score (83.0). Spread had the *slowest* recovery (1617ms) and sat in the leakage cluster (66.3). But dependency-aware (1258ms, score 83) and default (1387ms, score 50) are within 130 milliseconds of each other on recovery yet 33 points apart on score. Across the six main strategies, recovery time and resilience score are essentially uncorrelated -- H3 is refuted.
+> L3 predicted that faster recovery should yield higher resilience scores. The data does not support this. Random had the *fastest* recovery (1120ms) and tied for the *best* score (83.0). Spread had the *slowest* recovery (1617ms) and sat in the leakage cluster (66.3). But dependency-aware (1258ms, score 83) and default (1387ms, score 50) are within 130 milliseconds of each other on recovery yet 33 points apart on score. Across the six main strategies, recovery time and resilience score are essentially uncorrelated -- L3 is refuted.
 >
 > The lesson is that recovery speed is not the bottleneck under pod-delete. What matters is whether the chaos target's *in-flight network traffic* during the kill cycle has to cross node boundaries that are reconverging.
 >
@@ -210,19 +210,19 @@ Speaker notes for the thesis defense presentation.
 
 ## Slide 12 -- Discussion
 
-> All three literature-derived hypotheses are refuted, but the more interesting observation is *how* the refutations group themselves.
+> All three literature-derived predictions (L1–L3) are refuted, but the more interesting observation is *how* the refutations group themselves.
 >
-> **H1 -- Colocate is the worst: refuted.** Colocate tied for the top non-baseline score at 83.0 with standard deviation zero -- the same score as random, dependency-aware, and adversarial. It is in the containment cluster, not at the bottom.
+> **L1 -- Colocate is the worst: refuted.** Colocate tied for the top non-baseline score at 83.0 with standard deviation zero -- the same score as random, dependency-aware, and adversarial. It is in the containment cluster, not at the bottom.
 >
-> **H2 -- Spread provides the best fault isolation: refuted.** Spread scored 66.3 with standard deviation 29, sitting in the leakage cluster. Default scored worse, at 49.7. Spread is neither best nor uniquely worst -- it just leaks more often than the containment cluster does.
+> **L2 -- Spread provides the best fault isolation: refuted.** Spread scored 66.3 with standard deviation 29, sitting in the leakage cluster. Default scored worse, at 49.7. Spread is neither best nor uniquely worst -- it just leaks more often than the containment cluster does.
 >
-> **H3 -- Recovery time predicts resilience: refuted.** Mean recovery time across the six main strategies clusters tightly between 1.1 and 1.6 seconds, yet resilience scores split into a bimodal distribution. Random has the fastest recovery and the top score, but the relationship breaks down across the rest of the strategies. Recovery speed and resilience are essentially uncorrelated.
+> **L3 -- Recovery time predicts resilience: refuted.** Mean recovery time across the six main strategies clusters tightly between 1.1 and 1.6 seconds, yet resilience scores split into a bimodal distribution. Random has the fastest recovery and the top score, but the relationship breaks down across the rest of the strategies. Recovery speed and resilience are essentially uncorrelated.
 >
 > The methodology control held -- baseline scored 100 with zero variance -- so these refutations are signal, not noise.
 >
 > The real story the data tells is **not a monotonic placement-vs-resilience curve**. It is a **bifurcation**. Strategies fall into two clusters with a clear gap. The containment cluster -- colocate, random, dependency-aware, adversarial -- has only the directly-targeted probes failing. The leakage cluster -- spread, best-fit, default -- has collateral damage to non-target probes. The question is what separates them.
 >
-> The explanation comes from what pod-delete actually does. The placement literature builds its predictions on **contention-based faults**: CPU hogs, memory hogs, disk I/O stress. Under those faults, co-locating services causes shared resources to compete and degrade, and spreading services across nodes genuinely helps. The intuition behind H1, H2, and H3 all comes from this contention model.
+> The explanation comes from what pod-delete actually does. The placement literature builds its predictions on **contention-based faults**: CPU hogs, memory hogs, disk I/O stress. Under those faults, co-locating services causes shared resources to compete and degrade, and spreading services across nodes genuinely helps. The intuition behind L1, L2, and L3 all comes from this contention model.
 >
 > **Pod-delete is not a contention-based fault. It is a churn-based fault.** Every 15 seconds, the productcatalogservice pod is killed and a new one is scheduled. The kernel's TCP stack, conntrack table, kube-proxy iptables rules, and CoreDNS cache all have to reconverge to the new pod IP. The Kubernetes project tracks this directly -- it is the `network_programming_duration_seconds` SLO -- and while it is reconverging, every cross-node hop *to or through* the affected node is briefly disrupted.
 >
@@ -274,7 +274,7 @@ Speaker notes for the thesis defense presentation.
 >
 > Fourth, a **reproducible methodology** with seeded randomness, exact configurations, and an automated comparison pipeline.
 >
-> Key findings: all three literature-derived hypotheses are refuted, and the three refutations point at the same mechanism. Under pod-delete on a single-replica critical service, colocate scored 83.0 with zero variance, while spread scored 52.3 with high variance. Recovery time does not predict score -- the strategies all recover in roughly the same 1.2 to 1.6 second band, yet scores span 52 to 83. The mechanism is that pod-delete is a churn-based fault, not a contention-based one, so co-located services keep their probe paths kernel-local during the kill cycle and avoid cross-node TCP and conntrack disruption. Spread amplifies exactly the cross-node traffic that pod churn disrupts. The methodology control held -- baseline scored 100% with zero variance -- so the refutations are real, not noise.
+> Key findings: all three literature-derived predictions (L1–L3) are refuted, and the three refutations point at the same mechanism. Under pod-delete on a single-replica critical service, colocate scored 83.0 with zero variance, while spread scored 66.3 with high variance. Recovery time does not predict score -- the strategies all recover in roughly the same 1.1 to 1.6 second band, yet scores span roughly 50 to 83. The mechanism is that pod-delete is a churn-based fault, not a contention-based one, so co-located services keep their probe paths kernel-local during the kill cycle and avoid cross-node TCP and conntrack disruption. Spread amplifies exactly the cross-node traffic that pod churn disrupts. The methodology control held -- baseline scored 100% with zero variance -- so the refutations are real, not noise.
 >
 > The framework now supports a multi-fault matrix out of the box: pass `-e placement-experiment.yaml -e placement-experiment-cpuhog.yaml` and every placement strategy runs once under each fault class. The contention-fault scenario (pod-cpu-hog on the same target) is the most informative single experiment to add, because it directly tests whether the ordering flips back to the literature direction under contention. If it does, the fault-class-specific story is confirmed and turns into a concrete operator recommendation: pick the placement strategy by the dominant fault class for the workload. Other directions still ahead include multi-replica services where restart can happen on a peer pod, larger clusters with production-like traffic, memory- and network-fault classes, and integrating per-fault-class placement guidance into existing schedulers like Borg or Medea.
 >
@@ -286,4 +286,4 @@ Speaker notes for the thesis defense presentation.
 
 > Thank you. I am happy to take any questions.
 >
-> To recap: 6 placement strategies plus baseline and default-scheduler controls, 4 metric dimensions, 7 httpProbes across 4 tiers plus 5 Rust cmdProbes, and three literature-derived hypotheses -- all three refuted, pointing at one shared mechanism. The placement-vs-resilience intuition in the literature implicitly assumes faults are contention-based. Pod-delete is churn-based, and under churn the prescription inverts: co-location wins, spread loses, and recovery speed is not the bottleneck. ChaosProbe gives operators a framework to make this distinction empirically rather than by default.
+> To recap: 6 placement strategies plus baseline and default-scheduler controls, 4 metric dimensions, 7 httpProbes across 4 tiers plus 5 Rust cmdProbes, and three literature-derived predictions (L1–L3) -- all three refuted, pointing at one shared mechanism. The placement-vs-resilience intuition in the literature implicitly assumes faults are contention-based. Pod-delete is churn-based, and under churn the prescription inverts: co-location wins, spread loses, and recovery speed is not the bottleneck. ChaosProbe gives operators a framework to make this distinction empirically rather than by default.
