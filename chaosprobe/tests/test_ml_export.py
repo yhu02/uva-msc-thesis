@@ -150,6 +150,23 @@ class TestExportRunToRows:
         rec_rows = [r for r in rows if r.get("recovery_in_progress") == 1]
         assert len(rec_rows) >= 1
 
+    def test_never_recovered_surfaces_recovery_failed(self):
+        # A run whose pod was deleted and never recovered must surface
+        # recovery_failed in the exported feature rows.
+        data = _make_run_data()
+        data["metrics"]["recovery"]["recoveryEvents"] = [
+            {
+                "deletionTime": "2026-04-02T01:35:10+00:00",
+                "readyTime": None,
+                "failure_reason": "experiment_ended_before_recovery",
+            }
+        ]
+        rows = export_run_to_rows(data, resolution_s=5.0)
+        failed_rows = [r for r in rows if r.get("recovery_failed") == 1]
+        assert len(failed_rows) >= 1
+        # Never-recovered windows are not also flagged as in-progress.
+        assert all(r["recovery_in_progress"] == 0 for r in failed_rows)
+
 
 class TestWriteDataset:
     def test_csv_output(self, tmp_path):

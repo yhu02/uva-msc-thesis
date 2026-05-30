@@ -14,6 +14,7 @@ from chaosprobe.graph.analysis import (
     strategy_summary,
     topology_comparison,
 )
+from chaosprobe.storage.neo4j_writer import Neo4jWriterMixin
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -883,3 +884,95 @@ class TestSessionVisualizationData:
         store.get_run_output = MagicMock(return_value=None)
         data = store.get_session_visualization_data("sess")
         assert data["strategies"] == {}
+
+
+class TestAnnotateRecoveryWindows:
+    """_annotate_recovery_windows marks MetricsSamples with recovery state."""
+
+    DEL = "2026-04-02T01:35:10+00:00"
+    BEFORE = "2026-04-02T01:35:05+00:00"
+    DURING = "2026-04-02T01:35:15+00:00"
+    AFTER = "2026-04-02T01:35:28+00:00"
+
+    def test_completed_cycle_marks_in_progress(self):
+        samples = {
+            "before": {"timestamp": self.BEFORE},
+            "during": {"timestamp": self.DURING},
+            "after": {"timestamp": self.AFTER},
+        }
+        cycles = [{"deletionTime": self.DEL, "readyTime": "2026-04-02T01:35:20+00:00"}]
+        Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
+
+        assert samples["during"]["recovery_in_progress"] is True
+        assert samples["during"]["recovery_failed"] is False
+        assert samples["during"]["recovery_cycle_id"] == 0
+        for key in ("before", "after"):
+            assert samples[key]["recovery_in_progress"] is False
+            assert samples[key]["recovery_failed"] is False
+
+    def test_never_recovered_marks_failed(self):
+        samples = {
+            "before": {"timestamp": self.BEFORE},
+            "after": {"timestamp": self.AFTER},
+        }
+        cycles = [{"deletionTime": self.DEL, "readyTime": None}]
+        Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
+
+        assert samples["after"]["recovery_failed"] is True
+        assert samples["after"]["recovery_in_progress"] is False
+        assert samples["after"]["recovery_cycle_id"] == 0
+        assert samples["before"]["recovery_failed"] is False
+        assert samples["before"]["recovery_in_progress"] is False
+
+    def test_no_valid_windows_defaults_both_flags(self):
+        # A cycle without deletionTime yields no placeable windows.
+        samples = {"s": {"timestamp": self.DURING}}
+        Neo4jWriterMixin._annotate_recovery_windows(samples, [{"readyTime": self.DEL}])
+
+        assert samples["s"]["recovery_in_progress"] is False
+        assert samples["s"]["recovery_failed"] is False
+        assert samples["s"]["recovery_cycle_id"] is None
+
+    def test_unparseable_timestamp_defaults_both_flags(self):
+        samples = {"bad": {"timestamp": "not-a-timestamp"}}
+        cycles = [{"deletionTime": self.DEL, "readyTime": None}]
+        Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
+
+        assert samples["bad"]["recovery_in_progress"] is False
+        assert samples["bad"]["recovery_failed"] is False
+        assert samples["bad"]["recovery_cycle_id"] is None
+
+    def test_timezone_naive_timestamps_classified(self):
+        # deletionTime / readyTime / sample timestamps may arrive without a
+        # timezone; they are assumed UTC.
+        samples = {
+            "before": {"timestamp": "2026-04-02T01:35:05"},
+            "during": {"timestamp": "2026-04-02T01:35:15"},
+        }
+        cycles = [{"deletionTime": "2026-04-02T01:35:10", "readyTime": "2026-04-02T01:35:20"}]
+        Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
+
+        assert samples["during"]["recovery_in_progress"] is True
+        assert samples["before"]["recovery_in_progress"] is False
+
+    def test_malformed_deletion_time_skips_that_cycle(self):
+        # A cycle with an unparseable deletionTime is dropped, but other valid
+        # cycles still apply (note the surviving cycle keeps its original index).
+        samples = {"after": {"timestamp": self.AFTER}}
+        cycles = [
+            {"deletionTime": "garbage"},
+            {"deletionTime": self.DEL, "readyTime": None},
+        ]
+        Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
+
+        assert samples["after"]["recovery_failed"] is True
+        assert samples["after"]["recovery_cycle_id"] == 1
+
+    def test_malformed_ready_time_treated_as_incomplete(self):
+        # An unparseable readyTime falls back to an open-ended (failed) window.
+        samples = {"after": {"timestamp": self.AFTER}}
+        cycles = [{"deletionTime": self.DEL, "readyTime": "garbage"}]
+        Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
+
+        assert samples["after"]["recovery_failed"] is True
+        assert samples["after"]["recovery_in_progress"] is False
