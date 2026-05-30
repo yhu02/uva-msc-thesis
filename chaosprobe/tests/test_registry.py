@@ -2,10 +2,10 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.provisioner.components import (
-    DEFAULT_REGISTRY,
     _ComponentsMixin,
     get_registry_address,
     resolve_probe_registry,
@@ -86,7 +86,7 @@ class TestResolveProbeRegistry:
         monkeypatch.setenv("CHAOSPROBE_REGISTRY", "myreg:5000")
         assert resolve_probe_registry(MagicMock()) == "myreg:5000"
 
-    def test_falls_back_to_incluster(self, monkeypatch):
+    def test_uses_incluster_when_no_override(self, monkeypatch):
         monkeypatch.delenv("CHAOSPROBE_REGISTRY", raising=False)
         with patch(
             "chaosprobe.provisioner.components.get_registry_address",
@@ -94,13 +94,16 @@ class TestResolveProbeRegistry:
         ):
             assert resolve_probe_registry(MagicMock()) == "192.168.56.11:30500"
 
-    def test_falls_back_to_default(self, monkeypatch):
+    def test_raises_when_no_registry_and_no_override(self, monkeypatch):
+        # No env override and no in-cluster registry: must raise, never fall
+        # back to GHCR. The error points the operator at `chaosprobe init`.
         monkeypatch.delenv("CHAOSPROBE_REGISTRY", raising=False)
         with patch(
             "chaosprobe.provisioner.components.get_registry_address",
             return_value=None,
         ):
-            assert resolve_probe_registry(MagicMock()) == DEFAULT_REGISTRY
+            with pytest.raises(RuntimeError, match="chaosprobe init"):
+                resolve_probe_registry(MagicMock())
 
 
 class TestIsRegistryInstalled:

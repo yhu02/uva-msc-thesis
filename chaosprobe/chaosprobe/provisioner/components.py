@@ -12,7 +12,6 @@ from typing import Any, Optional
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
-from chaosprobe.probes.builder import DEFAULT_REGISTRY
 from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 
 # In-cluster container registry for ChaosProbe probe images. Runs registry:2 on
@@ -162,10 +161,23 @@ def get_registry_address(core_api: Any) -> Optional[str]:
 
 
 def resolve_probe_registry(core_api: Any) -> str:
-    """Pick the registry for probe images: explicit ``CHAOSPROBE_REGISTRY`` env
-    override, else the in-cluster registry if installed, else the GHCR default."""
-    return (
-        os.environ.get("CHAOSPROBE_REGISTRY") or get_registry_address(core_api) or DEFAULT_REGISTRY
+    """Pick the registry for probe images.
+
+    Prefers the in-cluster registry. An explicit ``CHAOSPROBE_REGISTRY`` env var
+    overrides it (for a deliberate external registry). There is **no silent GHCR
+    fallback**: if neither is available, raise so the operator installs the
+    in-cluster registry rather than unexpectedly pushing images off-cluster.
+    """
+    override = os.environ.get("CHAOSPROBE_REGISTRY")
+    if override:
+        return override
+    in_cluster = get_registry_address(core_api)
+    if in_cluster:
+        return in_cluster
+    raise RuntimeError(
+        "No probe-image registry available. Run `chaosprobe init` to install the "
+        "in-cluster registry (without --skip-registry), or set CHAOSPROBE_REGISTRY "
+        "to an external registry."
     )
 
 
