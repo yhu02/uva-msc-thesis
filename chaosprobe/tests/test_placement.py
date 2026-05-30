@@ -426,6 +426,27 @@ class TestAdversarialStrategy:
         for dep_name in heavy_deps:
             assert assignment.assignments[dep_name] == heavy_node
 
+    def test_equal_weight_split_is_input_order_independent(self, two_nodes):
+        # Deployments with identical resource weight must split into the
+        # heavy/light halves deterministically (name-ordered), regardless of
+        # the order they're passed in — otherwise the run isn't reproducible.
+        def _mk(name):
+            return DeploymentInfo(
+                name=name,
+                cpu_request_millicores=100,
+                memory_request_bytes=100 * 1024 * 1024,
+            )
+
+        deps = [_mk("alpha"), _mk("bravo"), _mk("charlie"), _mk("delta")]
+        asg_forward = compute_assignments(PlacementStrategy.ADVERSARIAL, deps, two_nodes)
+        asg_reversed = compute_assignments(
+            PlacementStrategy.ADVERSARIAL, list(reversed(deps)), two_nodes
+        )
+        assert asg_forward.assignments == asg_reversed.assignments
+        assert (
+            asg_forward.metadata["heavy_deployments"] == asg_reversed.metadata["heavy_deployments"]
+        )
+
     def test_heaviest_services_identified(self, two_nodes, sample_deployments):
         assignment = compute_assignments(
             PlacementStrategy.ADVERSARIAL, sample_deployments, two_nodes
