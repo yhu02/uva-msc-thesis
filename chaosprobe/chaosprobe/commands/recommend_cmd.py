@@ -57,15 +57,17 @@ def _resolve_path(d: Dict[str, Any], path: str) -> Any:
     return cur
 
 
-def _samples_by_strategy(raw: Dict[str, Any], metric: str) -> Dict[str, List[float]]:
-    """Extract ``{strategy: [sample, ...]}`` for *metric* from a summary dict.
+def _samples_from_strategies(strategies: Dict[str, Any], metric: str) -> Dict[str, List[float]]:
+    """Extract ``{strategy: [sample, ...]}`` for *metric* from a strategies map.
 
-    Strategies with no usable samples for the metric are omitted.
+    Strategies with no usable samples for the metric are omitted.  The map
+    is keyed by bare strategy name (the per-fault ``faults[label].strategies``
+    view) or by ``{fault}__{strategy}`` (the flat single-fault view) — this
+    helper is agnostic to which.
     """
     metric_path = _METRIC_SPECS[metric][0]
-    strategies = raw.get("strategies") or {}
     out: Dict[str, List[float]] = {}
-    for name, sdata in strategies.items():
+    for name, sdata in (strategies or {}).items():
         if not isinstance(sdata, dict):
             continue
         samples: List[float] = []
@@ -82,6 +84,12 @@ def _samples_by_strategy(raw: Dict[str, Any], metric: str) -> Dict[str, List[flo
         if samples:
             out[name] = samples
     return out
+
+
+def _samples_by_strategy(raw: Dict[str, Any], metric: str) -> Dict[str, List[float]]:
+    """Extract ``{strategy: [sample, ...]}`` for *metric* from the flat
+    ``strategies`` view of a summary dict."""
+    return _samples_from_strategies(raw.get("strategies") or {}, metric)
 
 
 def _find_comparison(
@@ -196,6 +204,58 @@ def _fmt(value: object) -> str:
     return "—"
 
 
+def _recommend_one(
+    samples: Dict[str, List[float]],
+    higher_is_better: bool,
+    alpha: float,
+    include_control: bool,
+    metric_label: str,
+) -> Dict[str, Any]:
+    """Drop control strategies (unless asked), rank, and return the
+    recommendation dict with ``metric`` and ``excludedControls`` attached.
+
+    This is the unit of work for both the single-fault path and each fault
+    of a multi-fault summary, so the baseline-control exclusion happens on a
+    map keyed by bare strategy names regardless of which view it came from.
+    """
+    # Drop methodology controls (e.g. 'baseline') unless explicitly asked for —
+    # they inject no real fault, so recommending them as a placement is wrong.
+    excluded_controls: List[str] = []
+    if not include_control:
+        excluded_controls = sorted(n for n in samples if n in _CONTROL_STRATEGIES)
+        samples = {n: s for n, s in samples.items() if n not in _CONTROL_STRATEGIES}
+
+    result = _recommend(samples, higher_is_better, alpha)
+    result["metric"] = metric_label
+    result["excludedControls"] = excluded_controls
+    return result
+
+
+def _render_block(result: Dict[str, Any], metric_label: str, higher_is_better: bool) -> List[str]:
+    """Render one recommendation result as a list of text lines."""
+    direction = "higher is better" if higher_is_better else "lower is better"
+    lines = [f"Placement recommendation by {metric_label} ({direction}):", ""]
+    excluded_controls = result.get("excludedControls") or []
+    if excluded_controls:
+        lines.append(
+            f"  (excluded control strategy: {', '.join(excluded_controls)} — "
+            "injects no real fault; pass --include-control to include)"
+        )
+        lines.append("")
+    if not result["ranking"]:
+        lines.append("  No placement strategy has data for this metric.")
+        return lines
+
+    lines.append(f"  {'rank':>4}  {'strategy':<20} {'n':>3} {'mean':>10}  {'95% CI':>20}")
+    for i, r in enumerate(result["ranking"], 1):
+        ci = f"[{_fmt(r['ciLow'])}, {_fmt(r['ciHigh'])}]"
+        lines.append(f"  {i:>4}  {r['name']:<20} {r['n']:>3} {r['mean']:>10.2f}  {ci:>20}")
+    lines.append("")
+    lines.append(f"  -> Recommended: {result['recommended']}  [{result['status']}]")
+    lines.append(f"     {result['rationale']}")
+    return lines
+
+
 @click.command("recommend")
 @click.option(
     "--summary",
@@ -246,40 +306,38 @@ def recommend(summary: Path, metric: str, alpha: str, as_json: bool, include_con
     alpha_f = float(alpha)
     _path, metric_label, higher_is_better = _METRIC_SPECS[metric]
     raw = json.loads(summary.read_text())
+
+    # Multi-fault summaries key the flat `strategies` map as
+    # `{fault}__{strategy}`, which would pool different fault classes into one
+    # ranking and defeat the control-name exclusion.  When the run tested more
+    # than one fault, recommend per fault instead, reading the clean per-fault
+    # view (`faults[label].strategies`, keyed by bare strategy names).
+    faults = raw.get("faults") or {}
+    if len(faults) > 1:
+        by_fault: Dict[str, Any] = {}
+        for label in sorted(faults):
+            fault_strategies = (faults[label] or {}).get("strategies") or {}
+            fault_samples = _samples_from_strategies(fault_strategies, metric)
+            by_fault[label] = _recommend_one(
+                fault_samples, higher_is_better, alpha_f, include_control, metric_label
+            )
+        if as_json:
+            click.echo(json.dumps({"source": str(summary), "byFault": by_fault}, indent=2))
+            return
+        sections = []
+        for label in sorted(by_fault):
+            block = ["=" * 60, f"Fault: {label}", "=" * 60]
+            block.extend(_render_block(by_fault[label], metric_label, higher_is_better))
+            sections.append("\n".join(block))
+        click.echo("\n\n".join(sections))
+        return
+
+    # Single-fault / legacy summary: one ranking over the flat strategies view.
     samples = _samples_by_strategy(raw, metric)
-
-    # Drop methodology controls (e.g. 'baseline') unless explicitly asked for —
-    # they inject no real fault, so recommending them as a placement is wrong.
-    excluded_controls: List[str] = []
-    if not include_control:
-        excluded_controls = sorted(n for n in samples if n in _CONTROL_STRATEGIES)
-        samples = {n: s for n, s in samples.items() if n not in _CONTROL_STRATEGIES}
-
-    result = _recommend(samples, higher_is_better, alpha_f)
-    result["metric"] = metric_label
-    result["excludedControls"] = excluded_controls
+    result = _recommend_one(samples, higher_is_better, alpha_f, include_control, metric_label)
 
     if as_json:
         click.echo(json.dumps({"source": str(summary), **result}, indent=2))
         return
 
-    direction = "higher is better" if higher_is_better else "lower is better"
-    click.echo(f"Placement recommendation by {metric_label} ({direction}):")
-    click.echo("")
-    if excluded_controls:
-        click.echo(
-            f"  (excluded control strategy: {', '.join(excluded_controls)} — "
-            "injects no real fault; pass --include-control to include)"
-        )
-        click.echo("")
-    if not result["ranking"]:
-        click.echo("  No placement strategy has data for this metric.")
-        return
-
-    click.echo(f"  {'rank':>4}  {'strategy':<20} {'n':>3} {'mean':>10}  {'95% CI':>20}")
-    for i, r in enumerate(result["ranking"], 1):
-        ci = f"[{_fmt(r['ciLow'])}, {_fmt(r['ciHigh'])}]"
-        click.echo(f"  {i:>4}  {r['name']:<20} {r['n']:>3} {r['mean']:>10.2f}  {ci:>20}")
-    click.echo("")
-    click.echo(f"  -> Recommended: {result['recommended']}  [{result['status']}]")
-    click.echo(f"     {result['rationale']}")
+    click.echo("\n".join(_render_block(result, metric_label, higher_is_better)))
