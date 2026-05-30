@@ -51,8 +51,8 @@ No `# type: ignore` and no `Any` returned from public APIs unless paired with a 
 - `chaosprobe/chaosprobe/placement/` — placement strategy enum + mutator.
 - `chaosprobe/scenarios/` — experiment YAMLs + scenario assets.
 - `chaosprobe/tests/` — unit tests.
-- `chaosprobe/docs/reproducing-thesis-results.md` — exact cluster / workload / fault matrix used in the thesis.
-- `TECHNICAL.md` — module reference + output schema.
+- `chaosprobe/docs/how-to/reproducing-thesis-results.md` — exact cluster / workload / fault matrix used in the thesis.
+- `chaosprobe/TECHNICAL.md` — module reference + output schema.
 
 ## Adding a new per-strategy aggregate
 
@@ -76,7 +76,7 @@ Each per-strategy aggregate roll-up (e.g. `schedulerEventCounts`, `nodePressureE
 
 ## Reproducing the thesis numbers
 
-See [`chaosprobe/docs/reproducing-thesis-results.md`](chaosprobe/docs/reproducing-thesis-results.md) — exact cluster spec, fault matrix, invocations, and the two falsifiable bars a reproducing run must clear.
+See [`chaosprobe/docs/how-to/reproducing-thesis-results.md`](chaosprobe/docs/how-to/reproducing-thesis-results.md) — exact cluster spec, fault matrix, invocations, and the two falsifiable bars a reproducing run must clear.
 
 ## License
 
