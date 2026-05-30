@@ -246,7 +246,11 @@ class _ChaosCenterMixin(_LitmusSetupBase):
             ingress = load_balancer.ingress
             if ingress:
                 host = ingress[0].ip or ingress[0].hostname
-                return f"http://{host}:{port_obj.port}"
+                # ingress entry can exist before an address is assigned;
+                # treat that as "not ready yet" rather than emitting a URL
+                # with a literal "None" host.
+                if host:
+                    return f"http://{host}:{port_obj.port}"
             return None
 
         if svc_type == "NodePort" and port_obj.node_port:
