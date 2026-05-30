@@ -750,12 +750,14 @@ class Neo4jWriterMixin:
         samples: Dict[str, Dict[str, Any]],
         recovery_cycles: List[Dict[str, Any]],
     ) -> None:
-        """Mark each sample with recovery_in_progress and cycle index.
+        """Mark each sample with the recovery flags and cycle index.
 
         Compares each sample timestamp against recovery cycle windows
-        (deletionTime → readyTime).  Sets ``recovery_in_progress`` to
-        True and ``recovery_cycle_id`` to the cycle index for samples
-        that fall within an active recovery window.
+        (deletionTime → readyTime).  Sets ``recovery_in_progress`` (within a
+        completed window) or ``recovery_failed`` (after the deletion of a
+        never-recovered cycle) to ``1`` — matching the 0/1 flags emitted by
+        the CSV ``align_time_series`` path — and ``recovery_cycle_id`` to the
+        cycle index.
         """
         from datetime import datetime, timezone
 
@@ -789,8 +791,9 @@ class Neo4jWriterMixin:
 
         if not windows:
             for s in samples.values():
-                s.setdefault("recovery_in_progress", False)
-                s.setdefault("recovery_failed", False)
+                # 0/1 flags (not bool) to match the CSV align_time_series path.
+                s.setdefault("recovery_in_progress", 0)
+                s.setdefault("recovery_failed", 0)
                 s.setdefault("recovery_cycle_id", None)
             return
 
@@ -802,8 +805,8 @@ class Neo4jWriterMixin:
                     ts_dt = ts_dt.replace(tzinfo=timezone.utc)
                 ts_epoch = ts_dt.timestamp()
             except (ValueError, TypeError):
-                s["recovery_in_progress"] = False
-                s["recovery_failed"] = False
+                s["recovery_in_progress"] = 0
+                s["recovery_failed"] = 0
                 s["recovery_cycle_id"] = None
                 continue
 
@@ -826,8 +829,8 @@ class Neo4jWriterMixin:
                         cycle_id = idx
                         break
 
-            s["recovery_in_progress"] = in_recovery
-            s["recovery_failed"] = failed
+            s["recovery_in_progress"] = int(in_recovery)
+            s["recovery_failed"] = int(failed)
             s["recovery_cycle_id"] = cycle_id
 
     def _sync_anomaly_labels(
