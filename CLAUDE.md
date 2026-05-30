@@ -155,17 +155,21 @@ between iterations; surface results and keep going.
 
 1. **Launch** a run in the background (step 8) on the current `main`. Re-run the
    ⛔ safety gate **every** time, not just the first.
-2. **Watch + finish.** Tail the run log for errors/anomalies; let it complete —
-   don't block.
-3. **Gate + analyze** the fresh `summary.json`: `doctor -s … --strict`, then
-   `recommend` / `report`. Surface the verdict and report path.
-4. **Mine** the run's logs *and* output for genuine bugs — crashes, swallowed
-   exceptions, wrong/misleading output. Fix each clear one via the `pr-workflow`
-   skill: one PR per bug, auto-merge when CI is green.
-5. **Relaunch — but only on the fixed code.** After merging a fix that changes
-   runtime behaviour, `git pull` + `uv sync` *before* relaunching: a running
-   process keeps the code it launched with, so a run started before the merge
-   does **not** validate the fix. Stop the stale run and start a fresh one.
+2. **Watch.** Tail the run log for errors/anomalies *while it runs* — bugs often
+   surface mid-run (a swallowed-exception warning, a crash), not only at the end.
+3. **Gate + analyze** each completed run's `summary.json`: `doctor -s …
+   --strict`, then `recommend` / `report`. Surface the verdict and report path.
+4. **Mine** the run's logs *and* output for genuine bugs and optimisations —
+   crashes, swallowed exceptions, wrong/misleading output, clear improvements.
+   Fix each clear one via the `pr-workflow` skill: one PR per finding, auto-merge
+   when CI is green.
+5. **Cancel the in-flight run, then relaunch on the improved code.** The moment
+   you merge a fix or optimisation that changes runtime behaviour, **cancel any
+   experiment still running** — it is now on superseded code — then `git pull` +
+   `uv sync` and start a fresh run. Do **not** wait for a stale run to finish,
+   and never relaunch without re-syncing: a running process keeps the code it
+   started with, so only a run launched *after* the merge reflects (and
+   validates) the change. New runs must always be on the latest `main`.
 6. Go to 1.
 
 **Fix autonomously vs. surface (don't auto-ship):**
