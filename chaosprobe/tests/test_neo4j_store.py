@@ -903,12 +903,12 @@ class TestAnnotateRecoveryWindows:
         cycles = [{"deletionTime": self.DEL, "readyTime": "2026-04-02T01:35:20+00:00"}]
         Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
 
-        assert samples["during"]["recovery_in_progress"] is True
-        assert samples["during"]["recovery_failed"] is False
+        assert samples["during"]["recovery_in_progress"] == 1
+        assert samples["during"]["recovery_failed"] == 0
         assert samples["during"]["recovery_cycle_id"] == 0
         for key in ("before", "after"):
-            assert samples[key]["recovery_in_progress"] is False
-            assert samples[key]["recovery_failed"] is False
+            assert samples[key]["recovery_in_progress"] == 0
+            assert samples[key]["recovery_failed"] == 0
 
     def test_never_recovered_marks_failed(self):
         samples = {
@@ -918,19 +918,19 @@ class TestAnnotateRecoveryWindows:
         cycles = [{"deletionTime": self.DEL, "readyTime": None}]
         Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
 
-        assert samples["after"]["recovery_failed"] is True
-        assert samples["after"]["recovery_in_progress"] is False
+        assert samples["after"]["recovery_failed"] == 1
+        assert samples["after"]["recovery_in_progress"] == 0
         assert samples["after"]["recovery_cycle_id"] == 0
-        assert samples["before"]["recovery_failed"] is False
-        assert samples["before"]["recovery_in_progress"] is False
+        assert samples["before"]["recovery_failed"] == 0
+        assert samples["before"]["recovery_in_progress"] == 0
 
     def test_no_valid_windows_defaults_both_flags(self):
         # A cycle without deletionTime yields no placeable windows.
         samples = {"s": {"timestamp": self.DURING}}
         Neo4jWriterMixin._annotate_recovery_windows(samples, [{"readyTime": self.DEL}])
 
-        assert samples["s"]["recovery_in_progress"] is False
-        assert samples["s"]["recovery_failed"] is False
+        assert samples["s"]["recovery_in_progress"] == 0
+        assert samples["s"]["recovery_failed"] == 0
         assert samples["s"]["recovery_cycle_id"] is None
 
     def test_unparseable_timestamp_defaults_both_flags(self):
@@ -938,8 +938,8 @@ class TestAnnotateRecoveryWindows:
         cycles = [{"deletionTime": self.DEL, "readyTime": None}]
         Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
 
-        assert samples["bad"]["recovery_in_progress"] is False
-        assert samples["bad"]["recovery_failed"] is False
+        assert samples["bad"]["recovery_in_progress"] == 0
+        assert samples["bad"]["recovery_failed"] == 0
         assert samples["bad"]["recovery_cycle_id"] is None
 
     def test_timezone_naive_timestamps_classified(self):
@@ -952,8 +952,8 @@ class TestAnnotateRecoveryWindows:
         cycles = [{"deletionTime": "2026-04-02T01:35:10", "readyTime": "2026-04-02T01:35:20"}]
         Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
 
-        assert samples["during"]["recovery_in_progress"] is True
-        assert samples["before"]["recovery_in_progress"] is False
+        assert samples["during"]["recovery_in_progress"] == 1
+        assert samples["before"]["recovery_in_progress"] == 0
 
     def test_malformed_deletion_time_skips_that_cycle(self):
         # A cycle with an unparseable deletionTime is dropped, but other valid
@@ -965,7 +965,7 @@ class TestAnnotateRecoveryWindows:
         ]
         Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
 
-        assert samples["after"]["recovery_failed"] is True
+        assert samples["after"]["recovery_failed"] == 1
         assert samples["after"]["recovery_cycle_id"] == 1
 
     def test_malformed_ready_time_treated_as_incomplete(self):
@@ -974,5 +974,5 @@ class TestAnnotateRecoveryWindows:
         cycles = [{"deletionTime": self.DEL, "readyTime": "garbage"}]
         Neo4jWriterMixin._annotate_recovery_windows(samples, cycles)
 
-        assert samples["after"]["recovery_failed"] is True
-        assert samples["after"]["recovery_in_progress"] is False
+        assert samples["after"]["recovery_failed"] == 1
+        assert samples["after"]["recovery_in_progress"] == 0
