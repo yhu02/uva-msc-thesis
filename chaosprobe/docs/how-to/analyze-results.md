@@ -66,6 +66,12 @@ Ranks the strategies and renders a verdict — `significant` (the leader provabl
 beats the runner-up), `tentative` (leads but not significantly — collect more
 iterations), `single-strategy`, or `no-data`.
 
+When the summary covers **more than one fault** (a multi-fault matrix run with
+several `-e` experiments), `recommend` ranks each fault class **separately** —
+comparing placements only against others tested under the *same* fault — and
+emits one recommendation per fault (a `byFault` map under `--json`, one
+`Fault: <name>` section in text). Single-fault summaries keep the flat output.
+
 ## Drill into a single iteration
 
 ```bash
