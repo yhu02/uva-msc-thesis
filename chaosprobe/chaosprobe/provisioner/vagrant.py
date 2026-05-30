@@ -346,12 +346,8 @@ class _VagrantMixin(_LitmusSetupBase):
 
         return recovered
 
-    def vagrant_up(
-        self,
-        vagrant_dir: Path,
-        provider: str = "libvirt",
-    ) -> bool:
-        """Start Vagrant VMs."""
+    def vagrant_up(self, vagrant_dir: Path) -> bool:
+        """Start Vagrant VMs (libvirt is the only supported provider)."""
         vagrant_dir = Path(vagrant_dir)
 
         if not (vagrant_dir / "Vagrantfile").exists():
@@ -361,13 +357,14 @@ class _VagrantMixin(_LitmusSetupBase):
         # the virDomainSetMemory bug in vagrant-libvirt
         self._recover_shutoff_libvirt_vms(vagrant_dir)
 
-        print(f"Starting Vagrant VMs with provider: {provider}...")
+        print("Starting Vagrant VMs with provider: libvirt...")
 
         try:
             subprocess.run(
-                ["vagrant", "up", f"--provider={provider}"],
+                ["vagrant", "up", "--provider=libvirt"],
                 check=True,
                 cwd=str(vagrant_dir),
+                env=self._get_vagrant_env(),
             )
             print("Vagrant VMs started successfully!")
             return True
@@ -425,11 +422,16 @@ class _VagrantMixin(_LitmusSetupBase):
             raise RuntimeError(f"Failed to destroy Vagrant VMs: {e}") from e
 
     def _get_vagrant_env(self) -> dict:
-        """Get environment variables for vagrant commands with libvirt support."""
+        """Vagrant subprocess environment.
+
+        libvirt is the only supported provider, so force it unconditionally.
+        If it isn't set, vagrant falls back to its built-in default provider,
+        which ChaosProbe does not support and which fails under WSL2. Forcing
+        libvirt makes vagrant surface a clear libvirt error when libvirt is
+        missing, instead of silently switching to an unsupported provider.
+        """
         env = os.environ.copy()
-        # Check if libvirt is available and set as default provider
-        if self._check_libvirt().get("all_ready"):
-            env["VAGRANT_DEFAULT_PROVIDER"] = "libvirt"
+        env["VAGRANT_DEFAULT_PROVIDER"] = "libvirt"
         return env
 
     def vagrant_status(self, vagrant_dir: Path) -> dict:
