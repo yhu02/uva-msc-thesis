@@ -3,6 +3,7 @@
 All tests use mocked Neo4j sessions so no running database is needed.
 """
 
+import math
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -976,3 +977,87 @@ class TestAnnotateRecoveryWindows:
 
         assert samples["after"]["recovery_failed"] == 1
         assert samples["after"]["recovery_in_progress"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Neo4jStore._sync_time_series — Prometheus non-finite guard
+# ---------------------------------------------------------------------------
+
+
+def _prom_metrics(values):
+    """Wrap raw Prometheus value entries in a single-timestamp metrics dict
+    shaped like the input to ``_sync_time_series``."""
+    return {
+        "prometheus": {
+            "available": True,
+            "timeSeries": [
+                {
+                    "timestamp": "2026-01-01T00:00:00",
+                    "phase": "during",
+                    "metrics": {"node_cpu": values},
+                }
+            ],
+        }
+    }
+
+
+def _written_samples(tx):
+    """Pull the sample list passed to the MetricsSample UNWIND-create call."""
+    calls = _get_tx_calls(tx, "UNWIND $samples")
+    assert len(calls) == 1
+    return calls[0].kwargs["samples"]
+
+
+class TestSyncTimeSeriesPrometheusNonFinite:
+    def test_non_finite_prometheus_values_skipped(self):
+        # Prometheus emits "NaN"/"+Inf"/"-Inf" for no-data; float() parses them
+        # without raising. They must be dropped so they never reach Neo4j (which
+        # rejects non-finite float properties), skew the average, or serialise
+        # into data_json as invalid JSON.
+        store, tx = _make_store_with_tx()
+        metrics = _prom_metrics(
+            [
+                {"value": [1, "1.5"]},
+                {"value": [2, "NaN"]},
+                {"value": [3, "+Inf"]},
+                {"value": [4, "2.5"]},
+            ]
+        )
+        store._sync_time_series(tx, "run1", metrics, "colocate")
+
+        samples = _written_samples(tx)
+        assert len(samples) == 1
+        s = samples[0]
+        # Only the two finite samples (1.5 + 2.5) contribute.
+        assert s["prom:node_cpu:sum"] == 4.0
+        assert s["prom:node_cpu:avg"] == 2.0
+        # No written float is non-finite.
+        for cell in s.values():
+            if isinstance(cell, float):
+                assert math.isfinite(cell)
+
+    def test_all_non_finite_omits_prometheus_metric(self):
+        # Every sample non-finite -> count stays 0 -> no prom key is written,
+        # but the timestamp bucket itself is still created.
+        store, tx = _make_store_with_tx()
+        metrics = _prom_metrics([{"value": [1, "NaN"]}, {"value": [2, "-Inf"]}])
+        store._sync_time_series(tx, "run1", metrics, "colocate")
+
+        samples = _written_samples(tx)
+        assert len(samples) == 1
+        s = samples[0]
+        assert "prom:node_cpu:sum" not in s
+        assert "prom:node_cpu:avg" not in s
+
+    def test_unparseable_or_non_dict_prometheus_value_skipped(self):
+        # Non-dict entries and malformed samples (ValueError/IndexError in
+        # float()) are skipped; only the finite one survives.
+        store, tx = _make_store_with_tx()
+        metrics = _prom_metrics(
+            ["not-a-dict", {"value": [1, "oops"]}, {"value": [2, "3.0"]}, {"value": []}]
+        )
+        store._sync_time_series(tx, "run1", metrics, "colocate")
+
+        s = _written_samples(tx)[0]
+        assert s["prom:node_cpu:sum"] == 3.0
+        assert s["prom:node_cpu:avg"] == 3.0
