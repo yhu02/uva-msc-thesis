@@ -49,10 +49,12 @@ you to run `chaosprobe init`.
 
 `run` builds with docker, then pushes with [`crane`](https://github.com/google/go-containerregistry)
 (daemon-less) through a `kubectl port-forward` tunnel — so **the build host needs
-no docker registry config**, just `docker`, `kubectl`, and `crane` (the daemon,
-which can be network-isolated on Docker Desktop, never touches the registry; no
-`docker login`). The one manual step is a one-time "insecure registry" trust on
-**each node's containerd**, so the kubelet can *pull* the images over plain HTTP.
+no docker registry config**, just `docker` and `kubectl` (the daemon, which can
+be network-isolated on Docker Desktop, never touches the registry; no `docker
+login`). crane itself is auto-installed (like Helm) by `init`/`run`, so it isn't
+a manual prerequisite. The one manual step is a one-time "insecure registry"
+trust on **each node's containerd**, so the kubelet can *pull* the images over
+plain HTTP.
 The full runbook is in [`../../manifests/README.md`](../../manifests/README.md).
 
 The standalone `probe build` command builds local images by default; to push to

@@ -11,10 +11,11 @@ automatically.
 through a `kubectl port-forward` tunnel to the registry Service. crane runs in
 the `chaosprobe` process — not the docker daemon, whose network can be isolated
 from the cluster (e.g. Docker Desktop) — so the build host needs only docker (to
-build), `kubectl`, and `crane`. No route to the registry's NodePort, no docker
-`insecure-registries` config, no `docker login` (crane pushes over plain HTTP
-with `--insecure`). This works the same on Docker Desktop, native Linux, or a
-remote build host.
+build) and `kubectl`. crane itself is **auto-installed** (like Helm) by `init`
+and `run` if missing, so it isn't a manual prerequisite. No route to the
+registry's NodePort, no docker `insecure-registries` config, no `docker login`
+(crane pushes over plain HTTP with `--insecure`). This works the same on Docker
+Desktop, native Linux, or a remote build host.
 
 The **one manual step** is trusting the registry on each node's containerd, so
 the kubelet can *pull* the images over plain HTTP (step 2) — that's node-level
@@ -80,7 +81,7 @@ curl http://<registry-address>/v2/_catalog
 
 ## Troubleshooting
 
-- **`run` fails with "crane not found"** → install crane: `go install github.com/google/go-containerregistry/cmd/crane@latest` (or download a release binary) and ensure it's on `PATH`.
+- **`run`/`init` fails with "Failed to install crane" or "no prebuilt binary"** → the auto-install couldn't fetch the release binary (offline, or an unsupported OS/arch). Install crane manually onto `PATH`: download a release binary from [go-containerregistry](https://github.com/google/go-containerregistry/releases) or `go install github.com/google/go-containerregistry/cmd/crane@latest`.
 - **`run` fails with "In-cluster registry not found"** → the registry isn't installed/ready; run `chaosprobe init` and check `kubectl -n registry get pods`.
 - **`run` fails with "registry port-forward did not become ready / failed"** → kubectl can't reach the cluster or the registry Service is missing. Check `kubectl config current-context` (thesis cluster) and `kubectl -n registry get svc registry`.
 - **Pods `ImagePullBackOff` with an HTTP/HTTPS error** → step 2 not done on the node that scheduled the probe pod (or its containerd wasn't restarted).

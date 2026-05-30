@@ -91,8 +91,9 @@ Run the ⛔ safety gate above. Then optionally `uv run chaosprobe status`
 
 ### 7. In-cluster registry — the ONLY thing `init` adds that `run` won't
 `run` self-heals Helm, local-path-provisioner, LitmusChaos, RBAC, experiment
-CRDs, metrics-server, Prometheus, Neo4j, and ChaosCenter on its own — so **you do
-not need `init` for those.** The single exception is the in-cluster image
+CRDs, metrics-server, Prometheus, Neo4j, ChaosCenter, and `crane` (the
+daemon-less probe-image pusher, auto-installed like Helm) on its own — so **you
+do not need `init` for those.** The single exception is the in-cluster image
 registry (for the 5 Rust `cmdProbes`), which only `init` installs.
 Probe images use the in-cluster registry **exclusively** — there is no external
 / GHCR option. `run` resolves its address and pushes there, and **fails** if it
