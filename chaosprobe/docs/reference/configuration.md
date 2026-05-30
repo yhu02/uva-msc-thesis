@@ -47,7 +47,10 @@ init` — and `run` self-installs them too, so a fresh checkout needs only the
 tools listed above.
 
 **Cluster provisioning** additionally needs:
-- *Vagrant (local):* [Vagrant](https://www.vagrantup.com/downloads), a
-  libvirt/KVM provider, `git`, Python 3 with `venv`.
+- *Vagrant (local):* [Vagrant](https://www.vagrantup.com/downloads) with the
+  **libvirt/KVM** provider — the only supported provider (ChaosProbe forces it
+  via `VAGRANT_DEFAULT_PROVIDER=libvirt`), `git`, Python 3 with `venv`.
 - *Kubespray (production):* `git`, `ssh`, Python 3 with `venv`
   (`apt install python3-venv`).
+
+Kubespray is the only supported Kubernetes installer for both paths.

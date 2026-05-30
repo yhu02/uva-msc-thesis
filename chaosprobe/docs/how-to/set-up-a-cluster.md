@@ -18,8 +18,10 @@ continue with `chaosprobe init` (see [Run experiments](run-experiments.md)).
 
 ## Local development (Vagrant)
 
-Requires [Vagrant](https://www.vagrantup.com/downloads), a libvirt/KVM provider,
-`git`, and Python 3 with the `venv` module.
+Requires [Vagrant](https://www.vagrantup.com/downloads) with the **libvirt/KVM**
+provider — the only supported provider. ChaosProbe forces
+`VAGRANT_DEFAULT_PROVIDER=libvirt`, so vagrant always uses libvirt and never
+another provider. Also needs `git` and Python 3 with the `venv` module.
 
 ```bash
 # 1. Generate a Vagrantfile (1 control plane + 4 workers)
