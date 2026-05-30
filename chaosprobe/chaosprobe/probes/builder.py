@@ -281,26 +281,34 @@ class RustProbeBuilder:
         return image_tag
 
     def _push_image(self, image_tag: str, retries: int = 3) -> None:
-        """Push an image to the in-cluster registry with retries.
+        """Push an image to the in-cluster registry with ``crane`` (daemon-less).
 
-        Pushes through the localhost port-forward tunnel opened by
-        :meth:`build_all`: the image is re-tagged to ``127.0.0.1:<port>/<repo>``
-        and that tag is pushed (then removed). The original *image_tag* keeps the
-        node-reachable address that cmdProbe pods pull from. With no tunnel open
-        (e.g. a direct ``probe build --push -r``), pushes *image_tag* as-is.
+        ``docker push`` runs inside the docker daemon, whose network may be
+        isolated from the registry (e.g. Docker Desktop, where the daemon's VM
+        can't reach the port-forward tunnel). ``crane`` runs in *this* process —
+        which can — so we ``docker save`` the built image and ``crane push`` the
+        tarball over plain HTTP (the registry is insecure).
+
+        The destination is the localhost tunnel opened by :meth:`build_all` when
+        present; the repository path is preserved so cmdProbe pods still pull the
+        image from the node-reachable address in *image_tag*. With no tunnel
+        (e.g. a direct ``probe build --push -r``), pushes to *image_tag*.
         """
         if self._push_host:
-            # Strip the registry host, keep "<repo>:<tag>", re-address to localhost.
-            repo_tag = image_tag.split("/", 1)[1]
-            push_ref = f"{self._push_host}/{repo_tag}"
-            _run_cmd(["docker", "tag", image_tag, push_ref], f"Failed to tag {push_ref}")
+            # Same registry, re-addressed to the localhost tunnel; repo path kept.
+            dest = f"{self._push_host}/{image_tag.split('/', 1)[1]}"
         else:
-            push_ref = image_tag
+            dest = image_tag
 
-        try:
+        with tempfile.TemporaryDirectory(prefix="chaosprobe-push-") as td:
+            tarball = str(Path(td) / "image.tar")
+            _run_cmd(["docker", "save", image_tag, "-o", tarball], f"Failed to save {image_tag}")
             for attempt in range(retries):
                 try:
-                    _run_cmd(["docker", "push", push_ref], f"Failed to push image {push_ref}")
+                    _run_cmd(
+                        ["crane", "push", "--insecure", tarball, dest],
+                        f"Failed to push image {dest}",
+                    )
                     return
                 except ProbeBuilderError:
                     if attempt < retries - 1:
@@ -312,10 +320,6 @@ class RustProbeBuilder:
                         time.sleep(wait)
                     else:
                         raise
-        finally:
-            if self._push_host:
-                # Best-effort cleanup of the temporary localhost tag.
-                subprocess.run(["docker", "rmi", push_ref], capture_output=True)
 
     def _open_push_tunnel(self) -> None:
         """Open a `kubectl port-forward` to the in-cluster registry Service.
@@ -407,6 +411,12 @@ class RustProbeBuilder:
         with tempfile.TemporaryDirectory(prefix="chaosprobe-build-") as tmp:
             # One push tunnel for the whole batch (only needed when pushing).
             if self.push:
+                _require_tool(
+                    "crane",
+                    "crane not found — needed to push probe images to the in-cluster "
+                    "registry (daemon-less). Install: "
+                    "go install github.com/google/go-containerregistry/cmd/crane@latest",
+                )
                 self._open_push_tunnel()
             try:
                 for probe in probes:

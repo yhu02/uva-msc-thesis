@@ -6,12 +6,15 @@ package visibility), `chaosprobe init` installs a small private `registry:2` on
 the control-plane node and `chaosprobe run` pushes/pulls probe images there
 automatically.
 
-`run` **pushes through a `kubectl port-forward` tunnel** to the registry
-Service, so the build host needs only kubectl access — no route to the
-registry's NodePort and no docker `insecure-registries` config (the push goes
-to `127.0.0.1`, which docker trusts as insecure by default; no `docker login`
-either). This works the same on Docker Desktop, native Linux, or a remote build
-host.
+`run` builds images with docker, then **pushes them with
+[`crane`](https://github.com/google/go-containerregistry) (daemon-less)**
+through a `kubectl port-forward` tunnel to the registry Service. crane runs in
+the `chaosprobe` process — not the docker daemon, whose network can be isolated
+from the cluster (e.g. Docker Desktop) — so the build host needs only docker (to
+build), `kubectl`, and `crane`. No route to the registry's NodePort, no docker
+`insecure-registries` config, no `docker login` (crane pushes over plain HTTP
+with `--insecure`). This works the same on Docker Desktop, native Linux, or a
+remote build host.
 
 The **one manual step** is trusting the registry on each node's containerd, so
 the kubelet can *pull* the images over plain HTTP (step 2) — that's node-level
@@ -66,16 +69,18 @@ export KUBECONFIG=~/.kube/config-chaosprobe
 uv run chaosprobe run -i 1 --strategies baseline,default,colocate,spread
 ```
 `run` resolves the registry's address automatically, opens a `kubectl
-port-forward` to the registry Service, and pushes the probe images through it
-(tagging them with the node-reachable `<registry-address>` that cmdProbe pods
-pull from). If the registry isn't installed, `run` fails with a message telling
-you to run `chaosprobe init`. Verify the push landed:
+port-forward` to the registry Service, and `crane push`es the probe images
+through it (the image repository is preserved, so cmdProbe pods still pull from
+the node-reachable `<registry-address>`). If the registry isn't installed, `run`
+fails with a message telling you to run `chaosprobe init`. Verify the push
+landed:
 ```bash
 curl http://<registry-address>/v2/_catalog
 ```
 
 ## Troubleshooting
 
+- **`run` fails with "crane not found"** → install crane: `go install github.com/google/go-containerregistry/cmd/crane@latest` (or download a release binary) and ensure it's on `PATH`.
 - **`run` fails with "In-cluster registry not found"** → the registry isn't installed/ready; run `chaosprobe init` and check `kubectl -n registry get pods`.
 - **`run` fails with "registry port-forward did not become ready / failed"** → kubectl can't reach the cluster or the registry Service is missing. Check `kubectl config current-context` (thesis cluster) and `kubectl -n registry get svc registry`.
 - **Pods `ImagePullBackOff` with an HTTP/HTTPS error** → step 2 not done on the node that scheduled the probe pod (or its containerd wasn't restarted).

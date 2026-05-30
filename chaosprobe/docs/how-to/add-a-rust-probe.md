@@ -47,12 +47,13 @@ external registry). `chaosprobe run` resolves its address automatically and
 pushes there; if it isn't installed, `run` fails with a clear message telling
 you to run `chaosprobe init`.
 
-`run` pushes through a `kubectl port-forward` tunnel to the registry, so **the
-build host needs no docker config** — just kubectl access (the push goes to
-`127.0.0.1`, insecure-by-default, no `docker login`). The one manual step is a
-one-time "insecure registry" trust on **each node's containerd**, so the kubelet
-can *pull* the images over plain HTTP. The full runbook is in
-[`../../manifests/README.md`](../../manifests/README.md).
+`run` builds with docker, then pushes with [`crane`](https://github.com/google/go-containerregistry)
+(daemon-less) through a `kubectl port-forward` tunnel — so **the build host needs
+no docker registry config**, just `docker`, `kubectl`, and `crane` (the daemon,
+which can be network-isolated on Docker Desktop, never touches the registry; no
+`docker login`). The one manual step is a one-time "insecure registry" trust on
+**each node's containerd**, so the kubelet can *pull* the images over plain HTTP.
+The full runbook is in [`../../manifests/README.md`](../../manifests/README.md).
 
 The standalone `probe build` command builds local images by default; to push to
 the cluster manually, pass the in-cluster registry address:
