@@ -7,6 +7,7 @@ that complement ChaosProbe's active probing data.
 
 import json
 import logging
+import math
 import socket
 import statistics
 import subprocess
@@ -623,9 +624,16 @@ class ContinuousPrometheusProber(ContinuousProberBase):
                     for item in metric_items:
                         raw = item.get("value", [None, None])
                         try:
-                            total += float(raw[1])
+                            value = float(raw[1])
                         except (TypeError, IndexError, ValueError):
-                            pass
+                            continue
+                        # Prometheus returns NaN / +Inf / -Inf for no-data
+                        # (e.g. histogram_quantile over an empty window). Letting
+                        # them into the sums makes statistics.stdev raise
+                        # "'float' object has no attribute 'numerator'", which
+                        # fails the *entire* Prometheus collection — so skip them.
+                        if math.isfinite(value):
+                            total += value
                     sample_sums.append(total)
 
                 if sample_sums:
