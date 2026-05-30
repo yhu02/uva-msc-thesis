@@ -10,8 +10,9 @@ uv run chaosprobe init
 ```
 
 Installs Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, Neo4j, and
-an in-cluster image registry for probe images. Use `--skip-registry` if you
-push probe images to an external registry instead (see
+the in-cluster image registry that Rust `cmdProbe` images are pushed to. There
+is no external-registry option — `--skip-registry` only makes sense if your
+scenario has no Rust probes, since they require the in-cluster registry (see
 [Add a Rust probe](add-a-rust-probe.md)).
 
 ## Run the placement-strategy matrix
