@@ -237,3 +237,26 @@ class TestSummarizeCommand:
         assert result.exit_code == 0
         assert f"Wrote {out_path}" in result.output
         assert "## colocate" in out_path.read_text()
+
+
+class TestRenderStrategyPartialEventDicts:
+    """Older / partially-written summary.json may carry event dicts missing
+    some keys; rendering must degrade gracefully, not KeyError."""
+
+    def test_partial_scheduler_and_node_pressure_dicts_dont_crash(self):
+        sdata = {
+            "iterations": [{}] * 3,
+            "aggregated": {
+                # scheduler dict missing mean/max/iterationsObserved
+                "schedulerEventCounts": {"FailedScheduling": {"total": 4}},
+                # node-pressure dict passes the iterationsWithEvent>0 filter but
+                # has no totalNodeEvents
+                "nodePressureEvents": {"MemoryPressure": {"iterationsWithEvent": 2}},
+            },
+        }
+        lines = _render_strategy("spread", sdata)
+        text = "\n".join(lines)
+        assert "scheduler events:" in text
+        assert "FailedScheduling" in text and "total=4" in text
+        assert "node pressure:" in text
+        assert "MemoryPressure" in text and "total_events=0" in text
