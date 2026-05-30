@@ -114,12 +114,22 @@ isn't installed (no off-cluster fallback).
 ### 8. Run experiments (always — this is the goal)
 Long (per iteration ≈ 60 s settle + 120 s chaos + 60 s post, × strategy ×
 iterations — hours for the full matrix). Background + poll; don't block.
+
+`run` defaults to all 8 strategies
+(`baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware`);
+`-s` selects a subset, `-i` sets the iteration count, and `-e` (repeatable)
+selects the fault experiment file(s). The output dir (`results/<timestamp>/`,
+holding `summary.json`) is printed at startup; override with `-o`. Full flag
+list: [`chaosprobe/docs/reference/cli.md`](chaosprobe/docs/reference/cli.md#run).
 ```bash
 # Full multi-fault matrix (recommended for results):
 uv run chaosprobe run -n online-boutique \
     -e scenarios/online-boutique/placement-experiment.yaml \
     -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
     -i 5
+# A subset of strategies (e.g. 4 strategies × 2 iterations):
+uv run chaosprobe run -n online-boutique \
+    -s default,colocate,spread,dependency-aware -i 2
 # Fast smoke check first:
 uv run chaosprobe run -n online-boutique -i 1
 ```
