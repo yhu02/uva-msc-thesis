@@ -213,10 +213,10 @@ module = [
 ]
 ignore_missing_imports = true
 
-# neo4j ships its own modules (no py.typed marker, and the driver
-# uses Py3.10 ``match`` statements that mypy at python_version=3.9
-# can't parse).  ``follow_imports = "skip"`` skips re-analysing the
-# driver source when our code imports from it.
+# neo4j ships its own modules without a py.typed marker, so mypy would
+# otherwise try to type-check the untyped driver source itself.
+# ``follow_imports = "skip"`` skips re-analysing that source when our
+# code imports from it.
 [[tool.mypy.overrides]]
 module = ["neo4j", "neo4j.*"]
 ignore_missing_imports = true
