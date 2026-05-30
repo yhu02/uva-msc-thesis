@@ -13,6 +13,22 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
+def _safe_int(value: Any) -> int:
+    """int() a Locust CSV cell, tolerating missing/non-numeric values (e.g. "N/A")."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    """float() a Locust CSV cell, tolerating missing/non-numeric values (e.g. "N/A")."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @dataclass
 class LoadProfile:
     """Configuration for a load generation profile."""
@@ -323,16 +339,16 @@ class LocustRunner:
                 name = row.get("Name", "")
                 req_type = row.get("Type", "")
                 if name == "Aggregated" or req_type == "Aggregated":
-                    stats.total_requests = int(row.get("Request Count", 0))
-                    stats.total_failures = int(row.get("Failure Count", 0))
-                    stats.avg_response_time_ms = float(row.get("Average Response Time", 0))
-                    stats.min_response_time_ms = float(row.get("Min Response Time", 0))
-                    stats.max_response_time_ms = float(row.get("Max Response Time", 0))
-                    stats.p50_response_time_ms = float(row.get("50%", 0))
-                    stats.p95_response_time_ms = float(row.get("95%", 0))
-                    stats.p99_response_time_ms = float(row.get("99%", 0))
-                    stats.requests_per_second = float(row.get("Requests/s", 0))
-                    stats.failures_per_second = float(row.get("Failures/s", 0))
+                    stats.total_requests = _safe_int(row.get("Request Count"))
+                    stats.total_failures = _safe_int(row.get("Failure Count"))
+                    stats.avg_response_time_ms = _safe_float(row.get("Average Response Time"))
+                    stats.min_response_time_ms = _safe_float(row.get("Min Response Time"))
+                    stats.max_response_time_ms = _safe_float(row.get("Max Response Time"))
+                    stats.p50_response_time_ms = _safe_float(row.get("50%"))
+                    stats.p95_response_time_ms = _safe_float(row.get("95%"))
+                    stats.p99_response_time_ms = _safe_float(row.get("99%"))
+                    stats.requests_per_second = _safe_float(row.get("Requests/s"))
+                    stats.failures_per_second = _safe_float(row.get("Failures/s"))
                     if stats.total_requests > 0:
                         stats.error_rate = round(stats.total_failures / stats.total_requests, 4)
                 else:
@@ -340,10 +356,10 @@ class LocustRunner:
                         {
                             "method": row.get("Type", ""),
                             "name": name,
-                            "requests": int(row.get("Request Count", 0)),
-                            "failures": int(row.get("Failure Count", 0)),
-                            "avgResponseTime_ms": float(row.get("Average Response Time", 0)),
-                            "p95ResponseTime_ms": float(row.get("95%", 0)),
+                            "requests": _safe_int(row.get("Request Count")),
+                            "failures": _safe_int(row.get("Failure Count")),
+                            "avgResponseTime_ms": _safe_float(row.get("Average Response Time")),
+                            "p95ResponseTime_ms": _safe_float(row.get("95%")),
                         }
                     )
 
