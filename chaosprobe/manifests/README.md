@@ -81,5 +81,6 @@ curl http://<registry-address>/v2/_catalog
 ## Troubleshooting
 
 - **`docker push` → "HTTP response to HTTPS client"** → step 2 not done (or daemon not restarted).
-- **Pods `ImagePullBackOff` with the same HTTP/HTTPS error** → step 3 not done on the node that scheduled the probe pod.
+- **`docker push` → `dial tcp <registry-address>: ... connection attempt failed` / "Docker Desktop has no HTTPS proxy"** → the docker *daemon* can't route to the registry's node IP, even when `curl http://<registry-address>/v2/` works from your shell. Common on **Docker Desktop + WSL2**: the daemon runs in a separate VM that has no route to the cluster's host-only network (e.g. `192.168.56.0/24`). Fix: give the Docker Desktop VM a route to that network, or build/push the probe images from a host that is on it (a WSL distro running a native `dockerd`, or a cluster node).
+- **Pods `ImagePullBackOff` with the HTTP/HTTPS error** → step 3 not done on the node that scheduled the probe pod.
 - **`run` fails with "In-cluster registry not found"** → the registry isn't installed/ready; run `chaosprobe init` and check `kubectl -n registry get pods`.
