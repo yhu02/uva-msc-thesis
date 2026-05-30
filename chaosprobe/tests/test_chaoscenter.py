@@ -379,6 +379,20 @@ class TestChaoscenterApiRequest:
                 data={"query": "mutation { fail }"},
             )
 
+    @patch("urllib.request.urlopen")
+    def test_non_json_response_raises_clear_error(self, mock_urlopen):
+        # A 200 with a non-JSON body (e.g. a proxy/gateway HTML error page)
+        # must surface as a clear RuntimeError, not a bare JSONDecodeError.
+        setup = _make_setup()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<html><body>502 Bad Gateway</body></html>"
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        with pytest.raises(RuntimeError, match="non-JSON response.*502 Bad Gateway"):
+            setup._chaoscenter_api_request("http://localhost:9002/api/query")
+
 
 # ---------------------------------------------------------------------------
 # _chaoscenter_authenticate

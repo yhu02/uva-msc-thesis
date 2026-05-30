@@ -57,17 +57,26 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                # result is decoded JSON (Any); coerce at this boundary
-                result: dict = _json.loads(resp.read().decode())
-            # Surface GraphQL-level errors that arrive with HTTP 200
-            if isinstance(result, dict) and result.get("errors") and result.get("data") is None:
-                errors = result["errors"]
-                msg = errors[0].get("message", str(errors)) if errors else str(result)
-                raise RuntimeError(f"ChaosCenter GraphQL error: {msg}")
-            return result
+                raw = resp.read().decode()
         except urllib.error.HTTPError as e:
             body_text = e.read().decode() if e.fp else ""
             raise RuntimeError(f"ChaosCenter API error {e.code}: {body_text}") from e
+
+        # A 200 response is not guaranteed to be JSON: a proxy/gateway error
+        # page or an empty body would otherwise raise a bare JSONDecodeError.
+        try:
+            # result is decoded JSON (Any); coerce at this boundary
+            result: dict = _json.loads(raw)
+        except _json.JSONDecodeError as e:
+            snippet = raw[:200]
+            raise RuntimeError(f"ChaosCenter returned a non-JSON response: {snippet!r}") from e
+
+        # Surface GraphQL-level errors that arrive with HTTP 200
+        if isinstance(result, dict) and result.get("errors") and result.get("data") is None:
+            errors = result["errors"]
+            msg = errors[0].get("message", str(errors)) if errors else str(result)
+            raise RuntimeError(f"ChaosCenter GraphQL error: {msg}")
+        return result
 
     # ------------------------------------------------------------------
     # Authentication
