@@ -147,6 +147,45 @@ Full analysis set: [`chaosprobe/docs/how-to/analyze-results.md`](chaosprobe/docs
 
 ---
 
+## Continuous experiment + bug-fix loop
+
+When the user asks to run experiments continuously (and fix bugs as they
+surface), repeat this cycle until they say stop. Don't pause for permission
+between iterations; surface results and keep going.
+
+1. **Launch** a run in the background (step 8) on the current `main`. Re-run the
+   ⛔ safety gate **every** time, not just the first.
+2. **Watch + finish.** Tail the run log for errors/anomalies; let it complete —
+   don't block.
+3. **Gate + analyze** the fresh `summary.json`: `doctor -s … --strict`, then
+   `recommend` / `report`. Surface the verdict and report path.
+4. **Mine** the run's logs *and* output for genuine bugs — crashes, swallowed
+   exceptions, wrong/misleading output. Fix each clear one via the `pr-workflow`
+   skill: one PR per bug, auto-merge when CI is green.
+5. **Relaunch — but only on the fixed code.** After merging a fix that changes
+   runtime behaviour, `git pull` + `uv sync` *before* relaunching: a running
+   process keeps the code it launched with, so a run started before the merge
+   does **not** validate the fix. Stop the stale run and start a fresh one.
+6. Go to 1.
+
+**Fix autonomously vs. surface (don't auto-ship):**
+- *Fix:* unambiguous defects — crashes, swallowed errors, wrong/misleading
+  output (e.g. the Prometheus NaN/Inf collection crash; `recommend` ranking the
+  `baseline` no-fault control as a deployable placement).
+- *Surface only:* anything that changes the thesis's **statistical methodology**
+  or the **system-under-test** — relaxing the app's gRPC readiness-probe
+  timeouts, cluster-capacity changes, excluding tainted iterations from `stats`.
+  These are the user's research-validity calls; diagnose and recommend, don't
+  silently ship.
+
+**Known non-code issues** (diagnose, don't "fix" in code): the recurring
+`app-ready check timed out` / tainted-iteration warnings are a cluster-capacity +
+1 s gRPC-probe-timeout effect on this libvirt cluster, not a code bug. Likewise
+verify the per-node registry trust before a run (probe-image pull) — see
+[`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md).
+
+---
+
 ## Teardown
 
 - `uv run chaosprobe cluster vagrant halt` — stops the VMs, **preserves** state
