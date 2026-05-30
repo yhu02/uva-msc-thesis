@@ -58,6 +58,10 @@ uv run chaosprobe recommend -s examples/example-summary.json --metric recovery
 uv run chaosprobe recommend -s examples/example-summary.json --alpha 0.01 --json
 ```
 
+The `baseline` control (which injects no real fault) is **excluded by default** —
+it isn't a deployable placement and its score is a no-chaos artifact. Pass
+`--include-control` to keep it in the ranking as a reference.
+
 Ranks the strategies and renders a verdict — `significant` (the leader provably
 beats the runner-up), `tentative` (leads but not significantly — collect more
 iterations), `single-strategy`, or `no-data`.
