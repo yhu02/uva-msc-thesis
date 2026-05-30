@@ -1157,7 +1157,7 @@ chaosprobe/
 | `ProbeResult` | `run_id`, `name` (display: `probe (verdict)`), `probe_name`, `type`, `mode`, `verdict`, `description` | Individual probe pass/fail |
 | `MetricsPhase` | `run_id`, `name` (display: `type: phase`), `metric_type`, `phase`, `sample_count`, `mean_cpu_millicores`, `max_cpu_millicores`, `mean_memory_bytes`, `max_memory_bytes`, `routes` (JSON), `metrics_json` | Aggregated metrics per phase (baseline/during/after) |
 | `PodSnapshot` | `run_id`, `name`, `phase`, `node`, `restart_count`, `conditions` (JSON) | Pod state at collection time |
-| `MetricsSample` | `run_id`, `name` (display: `#seq phase`), `timestamp`, `phase`, `strategy`, `seq`, `recovery_in_progress`, `recovery_cycle_id`, `data` (JSON) | Individual time-series data point |
+| `MetricsSample` | `run_id`, `name` (display: `#seq phase`), `timestamp`, `phase`, `strategy`, `seq`, `recovery_in_progress`, `recovery_failed`, `recovery_cycle_id`, `data` (JSON) | Individual time-series data point |
 | `AnomalyLabel` | `run_id`, `name` (display: `fault (severity)`), `fault_type`, `category`, `resource`, `severity`, `target_service`, `target_node`, `target_namespace`, `start_time`, `end_time`, `duration_s`, `parameters` (JSON), `observed_cycle_count`, `observed_completed_cycles`, `observed_incomplete_cycles` | Ground-truth fault label for ML |
 | `CascadeEvent` | `run_id`, `name` (display: `cascade #N → service`), `seq`, `data_json` | Failure propagation event |
 | `ContainerLog` | `run_id`, `name` (display: `pod/container`), `pod_name`, `container_name`, `restart_count`, `current_log`, `previous_log` | Container log snapshot |
@@ -1227,8 +1227,14 @@ Each `MetricsSample.data` JSON blob can contain:
 | `timestamp` | `2026-04-17T08:06:42Z` | All probers |
 | `phase` | `PreChaos` / `DuringChaos` / `PostChaos` | All probers |
 | `strategy` | `colocate` | Run context |
-| `recovery_in_progress` | `true` / `false` | Recovery watcher |
+| `recovery_in_progress` | `0` / `1` | Recovery watcher |
+| `recovery_failed` | `0` / `1` | Recovery watcher |
 | `recovery_cycle_id` | `3` | Recovery watcher |
+
+The two recovery flags are 0/1 and together encode three states: `0,0` = not in
+a recovery window; `1,0` = bounded recovery in progress; `0,1` = pod deleted and
+never recovered before the experiment ended. `recovery_total_ms` is set only for
+completed windows (left unset for failed ones).
 
 ### AnomalyLabel Fields
 
