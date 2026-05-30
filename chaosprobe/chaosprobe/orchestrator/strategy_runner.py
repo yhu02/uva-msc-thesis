@@ -17,6 +17,7 @@ from kubernetes import client as k8s_client
 
 from chaosprobe.chaos.runner import ChaosRunner
 from chaosprobe.collector.result_collector import ResultCollector
+from chaosprobe.config.topology import ServiceRoute
 from chaosprobe.loadgen.runner import LoadProfile, LocustRunner
 from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.orchestrator import portforward as pf
@@ -132,85 +133,33 @@ def _extract_http_routes(
     return routes
 
 
-# Service-name fragments that indicate a non-HTTP target.  These services
-# expose only TCP / database protocols (Redis, Postgres, etc.) so a
-# `/healthz`-style HTTP probe would always fail.  Skip them when generating
-# east-west routes from dependency edges.
-_NON_HTTP_SERVICE_FRAGMENTS = ("redis", "memcached", "postgres", "mysql", "mongo", "kafka")
+def _consolidate_service_routes(routes: List[ServiceRoute]) -> List[ServiceRoute]:
+    """Collapse east-west dependency routes to one probe per target host.
 
-
-def _is_non_http_target(service: str) -> bool:
-    """Return True for services that don't speak HTTP."""
-    name = service.lower()
-    return any(fragment in name for fragment in _NON_HTTP_SERVICE_FRAGMENTS)
-
-
-def _generate_east_west_routes(
-    dependencies: List[tuple],
-    healthz_path: str = "/healthz",
-) -> List[tuple]:
-    """Generate east-west latency routes from a service-dependency edge list.
-
-    Each ``(source, target)`` edge becomes a route tuple
-    ``(target, healthz_path, f"{source}->{target}", "GET")`` so the
-    ContinuousLatencyProber can sample target-side health from every probe
-    pod.  Non-HTTP targets (Redis, etc.) are skipped with a logged reason;
-    duplicate targets are emitted only once but the description records
-    every edge that contributed.
-
-    Args:
-        dependencies: List of (source, target) tuples from the placement
-            dependency edge list.  Typically produced by
-            ``PlacementMutator.get_service_dependencies``.
-        healthz_path: Path to probe on each target service.  Defaults to
-            ``/healthz`` which Online Boutique's frontend exposes and most
-            backend services implement as well.
-
-    Returns:
-        List of ``(service, path, description, method)`` tuples in the
-        same shape as ``_extract_http_routes``.  Empty list if
-        ``dependencies`` is empty.
+    Multiple services often depend on the same backend (e.g. both
+    ``frontend`` and ``recommendationservice`` call
+    ``productcatalogservice``).  Probing the same ``host:port`` once per
+    edge wastes the per-tick probe budget and measures the same target
+    repeatedly, so routes are deduplicated by target ``host``; the
+    description accumulates every ``source->target`` edge that
+    contributed, keeping the attribution visible.  Protocol and host are
+    a property of the target, so they are taken from the first edge seen
+    for each host.  Edges missing a source, target, or host are dropped.
     """
-    if not dependencies:
-        return []
-
-    routes: List[tuple] = []
-    targets_seen: Dict[str, str] = {}
-    skipped: Dict[str, str] = {}
-
-    for edge in dependencies:
-        if not edge or len(edge) < 2:
+    by_host: Dict[str, List[Any]] = {}
+    for source, target, host, protocol, _desc in routes:
+        if not source or not target or not host:
             continue
-        source, target = edge[0], edge[1]
-        if not source or not target:
-            continue
-        if _is_non_http_target(target):
-            skipped.setdefault(target, source)
-            continue
-
-        edge_label = f"{source}->{target}"
-        existing = targets_seen.get(target)
-        if existing is not None:
-            # Already emitted a route for this target; extend the description
-            # so the edge attribution stays visible.
-            targets_seen[target] = f"{existing},{edge_label}"
-            continue
-        targets_seen[target] = edge_label
-        routes.append((target, healthz_path, edge_label, "GET"))
-
-    # Rewrite descriptions for any targets that accumulated multiple edges.
-    routes = [
-        (target, path, targets_seen[target], method) for target, path, _desc, method in routes
+        label = f"{source}->{target}"
+        entry = by_host.get(host)
+        if entry is None:
+            by_host[host] = [source, target, host, protocol, [label]]
+        elif label not in entry[4]:
+            entry[4].append(label)
+    return [
+        (src, tgt, host, proto, ",".join(labels))
+        for src, tgt, host, proto, labels in by_host.values()
     ]
-
-    if skipped:
-        logger.info(
-            "Skipped %d non-HTTP east-west target(s) when generating routes: %s",
-            len(skipped),
-            sorted(skipped.keys()),
-        )
-
-    return routes
 
 
 # Maximum number of routes the LatencyProber probes per sampling round.
@@ -250,43 +199,45 @@ def _build_route_view_for_iteration(
 def _build_iteration_routes(
     scenario: Dict[str, Any],
     ctx: "RunContext",
-) -> List[tuple]:
-    """Combine scenario httpProbe routes with dependency-graph east-west
-    routes, trimming to the probe budget if necessary.
+) -> Tuple[List[tuple], List[ServiceRoute]]:
+    """Build north-south HTTP routes and east-west service routes for one
+    iteration's probers.
 
-    North-south routes (from the scenario YAML) are always preserved;
-    when the combined list exceeds ``_PROBE_BUDGET_CAP`` only the
-    east-west routes are trimmed, with a WARN log so the trimming is
-    visible.  This keeps the user-defined probes intact while still
-    bounding the per-tick cost.
+    North-south routes come from the scenario httpProbes (frontend HTTP,
+    ``(service, path, desc, method)``) and are always preserved.
+    East-west routes are the service-dependency graph as protocol-aware
+    ``ServiceRoute`` tuples (``grpc``/``tcp`` with the real ``host:port``),
+    so gRPC backends are probed over their actual port instead of a
+    non-existent HTTP ``/healthz``.  When the combined count exceeds
+    ``_PROBE_BUDGET_CAP`` only east-west routes are trimmed, with a WARN
+    log, keeping every user-defined scenario probe intact while bounding
+    the per-tick ``kubectl exec`` cost.
     """
     north_south = _extract_http_routes(scenario, ctx.namespace)
 
     try:
-        dependencies = ctx.mutator.get_service_dependencies()
+        dependency_routes = ctx.mutator.get_service_dependency_routes()
     except Exception as exc:  # noqa: BLE001 — K8s client raises broad set
         logger.warning("Failed to fetch service dependencies for east-west routes: %s", exc)
-        dependencies = []
+        dependency_routes = []
 
-    east_west = _generate_east_west_routes(dependencies)
-    combined = list(north_south) + list(east_west)
-
-    if len(combined) <= _PROBE_BUDGET_CAP:
-        return combined
+    east_west = _consolidate_service_routes(dependency_routes)
 
     # Preserve every scenario probe; trim east-west routes from the end.
     headroom = max(0, _PROBE_BUDGET_CAP - len(north_south))
-    trimmed_east_west = east_west[:headroom]
-    dropped = len(east_west) - len(trimmed_east_west)
-    logger.warning(
-        "Probe-budget cap (%d) reached: keeping %d scenario routes + %d east-west routes; "
-        "dropping %d east-west route(s)",
-        _PROBE_BUDGET_CAP,
-        len(north_south),
-        len(trimmed_east_west),
-        dropped,
-    )
-    return list(north_south) + trimmed_east_west
+    if len(east_west) > headroom:
+        dropped = len(east_west) - headroom
+        logger.warning(
+            "Probe-budget cap (%d) reached: keeping %d scenario routes + %d east-west routes; "
+            "dropping %d east-west route(s)",
+            _PROBE_BUDGET_CAP,
+            len(north_south),
+            headroom,
+            dropped,
+        )
+        east_west = east_west[:headroom]
+
+    return north_south, east_west
 
 
 # ---------------------------------------------------------------------------
@@ -673,14 +624,14 @@ def _run_single_iteration(
         exp["spec"]["metadata"]["name"] = f"{orig_name}-{strategy_name}"
 
     # Extract HTTP routes from scenario probes for latency measurement,
-    # then extend with east-west routes generated from the service-dependency
-    # graph (slice 5 of the coverage work).  Each backend → backend edge
-    # becomes a `<source>-><target>` route the LatencyProber samples in
-    # parallel with the existing north-south frontend routes — turning
-    # the "interactions" axis of the thesis from a hand-wave into a
-    # measured surface.  The combined list is trimmed to a probe budget
-    # so the per-tick `kubectl exec` cost stays bounded.
-    http_routes = _build_iteration_routes(scenario, ctx)
+    # then extend with east-west routes from the service-dependency graph
+    # (slice 5 of the coverage work).  North-south frontend routes are
+    # probed over HTTP; east-west backend edges are probed over their real
+    # protocol (gRPC/TCP on the actual service port) — turning the
+    # "interactions" axis of the thesis from a hand-wave into a measured
+    # surface.  Both lists are trimmed to a shared probe budget so the
+    # per-tick `kubectl exec` cost stays bounded.
+    http_routes, service_routes = _build_iteration_routes(scenario, ctx)
 
     # Extract chaos duration for prober phase labeling
     chaos_duration = extract_chaos_duration(scenario)
@@ -693,10 +644,12 @@ def _run_single_iteration(
     # variance in the n=3 result analysis.
     pre_iteration_snapshot = _snapshot_cluster_state(ctx.namespace, ctx.core_api)
 
-    # Verify app-level HTTP readiness across ALL probed routes before
-    # starting probers.  This prevents cascading poisoning where a
-    # previous iteration's post-chaos damage leaks into the next
-    # iteration's pre-chaos baseline.
+    # Verify app-level readiness across the probed routes before starting
+    # probers.  This prevents cascading poisoning where a previous
+    # iteration's post-chaos damage leaks into the next iteration's
+    # pre-chaos baseline.  North-south HTTP routes always gate; east-west
+    # gRPC/TCP service routes additionally gate when the probe pod has
+    # python3 (else K8s-native gRPC readiness already covers them).
     # 240s upper bound: consecutive-OK (≥15s) + sustained period (15s) +
     # generous slack for slow JVM warm-up between iterations.  The function
     # returns early as soon as the gate passes.
@@ -705,6 +658,7 @@ def _run_single_iteration(
         ctx.target_deployment,
         timeout=240,
         http_routes=http_routes or None,
+        service_routes=service_routes or None,
     )
 
     # Per-iteration pod -> node ground truth.  Captured here (after the
@@ -731,6 +685,7 @@ def _run_single_iteration(
         measure_prometheus=ctx.measure_prometheus,
         prometheus_url=ctx.prometheus_url,
         http_routes=http_routes or None,
+        service_routes=service_routes or None,
         expected_chaos_duration=float(chaos_duration),
     )
 

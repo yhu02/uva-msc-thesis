@@ -14,7 +14,7 @@ import click
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
-from chaosprobe.config.topology import _extract_dependencies_from_deployment
+from chaosprobe.config.topology import ServiceRoute, _extract_dependencies_from_deployment
 from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
 from chaosprobe.orchestrator.preflight import LITMUS_INFRA_DEPLOYMENTS
@@ -212,17 +212,21 @@ class PlacementMutator:
             usage[node] = (prev_cpu + cpu_m, prev_mem + mem_b)
         return usage
 
-    def get_service_dependencies(self) -> List[Tuple[str, str]]:
-        """Discover ``(source, target)`` service dependency edges for the namespace.
+    def get_service_dependency_routes(self) -> List[ServiceRoute]:
+        """Discover full ``(source, target, host:port, protocol, desc)`` routes.
 
         Reads every Deployment spec in the namespace and extracts
         ``*_SERVICE_ADDR`` / ``*_ADDR`` environment variables using the
-        same parser as :mod:`chaosprobe.config.topology`.  Used by the
-        dependency-aware placement strategy.
+        same parser as :mod:`chaosprobe.config.topology`, preserving the
+        target host:port and inferred protocol (``grpc`` / ``tcp``) that
+        :meth:`get_service_dependencies` discards.  Used to build
+        protocol-aware east-west latency routes so gRPC backends are
+        probed over their real port instead of a non-existent HTTP one.
+        Deduplicated on the ``(source, target)`` pair.
         """
         deps = self.apps_api.list_namespaced_deployment(self.namespace)
         serializer = self.apps_api.api_client.sanitize_for_serialization
-        edges: List[Tuple[str, str]] = []
+        routes: List[ServiceRoute] = []
         seen: set = set()
         for dep in deps.items:
             if dep.metadata.name in LITMUS_INFRA_DEPLOYMENTS:
@@ -230,13 +234,24 @@ class PlacementMutator:
             try:
                 dep_dict = serializer(dep)
             except Exception:
+                # A deployment that won't serialize simply contributes no
+                # dependency edges; skipping it is safe (others still parse).
                 continue
             for route in _extract_dependencies_from_deployment(dep_dict):
                 key = (route[0], route[1])
                 if key not in seen:
                     seen.add(key)
-                    edges.append(key)
-        return edges
+                    routes.append(route)
+        return routes
+
+    def get_service_dependencies(self) -> List[Tuple[str, str]]:
+        """Discover ``(source, target)`` service dependency edges for the namespace.
+
+        Thin ``(source, target)`` projection of
+        :meth:`get_service_dependency_routes` for the dependency-aware
+        placement strategy, which only needs the edge pairs.
+        """
+        return [(route[0], route[1]) for route in self.get_service_dependency_routes()]
 
     def apply_strategy(
         self,

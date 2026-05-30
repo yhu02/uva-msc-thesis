@@ -956,7 +956,7 @@ confidence = 0.50 (base)
 Microservice resilience under chaos varies with pod placement strategy due to differences in resource contention on co-located nodes. Specifically, placement affects:
 
 1. **Pod recovery time** — deletion-to-ready latency under scheduling pressure
-2. **Inter-service latency** — HTTP response times across dependent services during and after faults
+2. **Inter-service latency** — north-south HTTP response times plus east-west TCP-connect latency to gRPC/TCP dependency backends, during and after faults
 3. **I/O throughput** — Redis read/write operations and disk throughput on contended nodes
 4. **Resource utilisation** — CPU and memory pressure on nodes hosting co-located workloads
 5. **Cascade propagation** — how faults in one service degrade upstream consumers

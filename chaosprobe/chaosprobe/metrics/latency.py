@@ -823,7 +823,13 @@ def _aggregate_latency_samples(
 
 
 class ContinuousLatencyProber(ContinuousProberBase):
-    """Runs HTTP latency probing from every eligible pod during chaos.
+    """Runs inter-service latency probing from every eligible pod during chaos.
+
+    Probes two complementary route sets each tick: north-south HTTP routes
+    (frontend request paths, measured with an HTTP probe) and east-west
+    service routes (service-dependency edges, measured with a TCP connect
+    to the target's real ``host:port`` — the correct probe for gRPC/TCP
+    backends that expose no HTTP endpoint).
 
     Each pod is an independent vantage point even when co-located on the
     same node: service load-balancing (kube-proxy/IPVS conntrack hash)
@@ -862,11 +868,16 @@ class ContinuousLatencyProber(ContinuousProberBase):
         interval: float = 3.5,
         timeout_seconds: int = 5,
         http_routes: Optional[List[Tuple[str, str, str, str]]] = None,
+        service_routes: Optional[List[Tuple[str, str, str, str, str]]] = None,
         exclude_prefixes: Optional[List[str]] = None,
         expected_chaos_duration: Optional[float] = None,
     ):
         super().__init__(namespace, interval, name="latency-prober")
         self._http_routes = http_routes
+        # East-west service-dependency routes (source, target, host:port,
+        # protocol, description).  gRPC/TCP backends are probed over their
+        # real port via TCP connect rather than a non-existent HTTP path.
+        self._service_routes = service_routes
         self._prober = LatencyProber(
             namespace,
             timeout_seconds,
@@ -968,31 +979,40 @@ class ContinuousLatencyProber(ContinuousProberBase):
     def _run_all_probes(self) -> Dict[str, Any]:
         """Probe each route from every probe pod in parallel.
 
+        North-south HTTP routes are probed over HTTP; east-west service
+        routes are probed over TCP to their real ``host:port`` (a real L4
+        probe of the gRPC/TCP listener, since those backends expose no
+        HTTP).  Both kinds are keyed into the same per-route record so the
+        phase aggregation and downstream taint detection see one unified
+        route set.
+
         Evicts pods whose kubectl exec fails consecutively (pod truly
         dead/evicted from K8s).  Does NOT evict pods that successfully
-        exec but whose HTTP probes return errors — that indicates the
-        probe TARGET is temporarily down (e.g. gRPC cascade), not that
-        the probe pod is gone.  Previous behavior evicted on any error,
-        which blinded the prober for 50%+ of the chaos phase whenever
-        the target experienced extended degradation.
+        exec but whose probes return errors — that indicates the probe
+        TARGET is temporarily down (e.g. gRPC cascade), not that the probe
+        pod is gone.  Previous behavior evicted on any error, which
+        blinded the prober for 50%+ of the chaos phase whenever the target
+        experienced extended degradation.
         """
-        if not self._probe_points or not self._http_routes:
+        http_routes = self._http_routes or []
+        service_routes = self._service_routes or []
+        if not self._probe_points or (not http_routes and not service_routes):
             return {}
 
-        # Bind to a local so the narrowed (non-None) type is visible inside
-        # the _probe_one closure below, where the attribute narrowing wouldn't.
-        http_routes = self._http_routes
-
-        # per_route_samples[route] = [(pod, node, LatencySample), ...]
-        per_route_samples: Dict[str, List[Tuple[str, str, LatencySample]]] = {
-            route: [] for _svc, route, _d, _m in http_routes
-        }
+        # per_route_samples[route_key] = [(pod, node, LatencySample), ...].
+        # HTTP routes key on the request path; east-west service routes key
+        # on their "source->target" description so the two never collide.
+        per_route_samples: Dict[str, List[Tuple[str, str, LatencySample]]] = {}
+        for _svc, route, _d, _m in http_routes:
+            per_route_samples.setdefault(route, [])
+        for _src, _tgt, _host, _proto, label in service_routes:
+            per_route_samples.setdefault(label, [])
 
         def _probe_one(
             pod: str,
             node: str,
-        ) -> List[Tuple[str, str, LatencySample]]:
-            results: List[Tuple[str, str, LatencySample]] = []
+        ) -> List[Tuple[str, str, str, LatencySample]]:
+            results: List[Tuple[str, str, str, LatencySample]] = []
             for service, route, _desc, method in http_routes:
                 url = f"http://{service}.{self.namespace}.svc.cluster.local{route}"
                 sample = self._prober._measure_http_from_pod(
@@ -1001,7 +1021,10 @@ class ContinuousLatencyProber(ContinuousProberBase):
                     method,
                     route,
                 )
-                results.append((pod, node, sample))
+                results.append((pod, node, route, sample))
+            for source, target, host, _proto, label in service_routes:
+                sample = self._prober._measure_tcp_from_pod(pod, host, source, target)
+                results.append((pod, node, label, sample))
             return results
 
         with ThreadPoolExecutor(max_workers=min(len(self._probe_points), 8)) as pool:
@@ -1015,10 +1038,10 @@ class ContinuousLatencyProber(ContinuousProberBase):
                     results = f.result()
                     # A pod's exec failed if ANY sample has exec_failed=True
                     # (indicates kubectl exec to the pod itself failed, not
-                    # just the HTTP target being unreachable).
-                    pod_exec_failed[pod] = any(s.exec_failed for _, _, s in results)
-                    for _p, _n, sample in results:
-                        per_route_samples.setdefault(sample.route, []).append(
+                    # just the probe target being unreachable).
+                    pod_exec_failed[pod] = any(s.exec_failed for _, _, _, s in results)
+                    for _p, _n, route_key, sample in results:
+                        per_route_samples.setdefault(route_key, []).append(
                             (pod, node, sample),
                         )
                 except Exception as exc:

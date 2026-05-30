@@ -432,6 +432,7 @@ class TestEvictionLogic:
         prober._pod_consecutive_errors = {}
         prober._max_consecutive_errors = 3
         prober._http_routes = [("frontend", "/", "homepage", "GET")]
+        prober._service_routes = None
         prober.namespace = "test"
         prober._prober = MagicMock()
         return prober
@@ -536,6 +537,154 @@ class TestEvictionLogic:
             prober._run_all_probes()
 
         assert len(prober._probe_points) == 2  # not evicted
+
+
+class TestServiceRouteProbing:
+    """`_run_all_probes` probes east-west service routes via TCP (the
+    correct probe for gRPC/TCP backends), keyed by the source->target
+    label and merged alongside the HTTP routes."""
+
+    def _make_prober(self, http_routes, service_routes):
+        from unittest.mock import MagicMock
+
+        prober = ContinuousLatencyProber.__new__(ContinuousLatencyProber)
+        prober._lock = threading.Lock()
+        prober._probe_points = [("pod-a", "node1")]
+        prober._pod_consecutive_errors = {}
+        prober._max_consecutive_errors = 3
+        prober._http_routes = http_routes
+        prober._service_routes = service_routes
+        prober.namespace = "test"
+        prober._prober = MagicMock()
+        return prober
+
+    @staticmethod
+    def _tcp_ok(source, target, host):
+        return LatencySample(
+            source=source,
+            target=target,
+            route=host,
+            protocol="tcp",
+            latency_ms=2.5,
+            status="ok",
+            timestamp="now",
+        )
+
+    def test_service_route_probed_via_tcp_and_keyed_by_label(self):
+        prober = self._make_prober(
+            http_routes=None,
+            service_routes=[
+                ("checkout", "currency", "currency:7000", "grpc", "checkout->currency")
+            ],
+        )
+        prober._prober._measure_tcp_from_pod = lambda pod, host, source, target: self._tcp_ok(
+            source, target, host
+        )
+
+        result = prober._run_all_probes()
+
+        assert "checkout->currency" in result
+        assert result["checkout->currency"]["status"] == "ok"
+
+    def test_tcp_called_with_host_source_and_target(self):
+        prober = self._make_prober(
+            http_routes=None,
+            service_routes=[
+                ("checkout", "currency", "currency:7000", "grpc", "checkout->currency")
+            ],
+        )
+        calls = []
+
+        def fake_tcp(pod, host, source, target):
+            calls.append((pod, host, source, target))
+            return self._tcp_ok(source, target, host)
+
+        prober._prober._measure_tcp_from_pod = fake_tcp
+
+        prober._run_all_probes()
+
+        assert calls == [("pod-a", "currency:7000", "checkout", "currency")]
+
+    def test_http_and_service_routes_both_probed(self):
+        prober = self._make_prober(
+            http_routes=[("frontend", "/", "homepage", "GET")],
+            service_routes=[
+                ("checkout", "currency", "currency:7000", "grpc", "checkout->currency")
+            ],
+        )
+        prober._prober._measure_http_from_pod = lambda *a, **kw: LatencySample(
+            source="probe-pod",
+            target="frontend",
+            route="/",
+            protocol="http",
+            latency_ms=5.0,
+            status="ok",
+            timestamp="now",
+            status_code=200,
+        )
+        prober._prober._measure_tcp_from_pod = lambda pod, host, source, target: self._tcp_ok(
+            source, target, host
+        )
+
+        result = prober._run_all_probes()
+
+        assert "/" in result  # north-south HTTP route
+        assert "checkout->currency" in result  # east-west service route
+
+    def test_no_routes_at_all_returns_empty(self):
+        prober = self._make_prober(http_routes=None, service_routes=None)
+        assert prober._run_all_probes() == {}
+
+    def test_probe_future_exception_marks_pod_failed(self):
+        """If a per-pod probe future raises, the pod is recorded as failed
+        (so it can be evicted) rather than crashing the tick."""
+        prober = self._make_prober(
+            http_routes=[("frontend", "/", "homepage", "GET")],
+            service_routes=None,
+        )
+
+        def boom(*_a, **_k):
+            raise RuntimeError("exec blew up")
+
+        prober._prober._measure_http_from_pod = boom
+
+        prober._run_all_probes()
+
+        assert prober._pod_consecutive_errors["pod-a"] == 1
+
+    def test_init_stores_service_routes(self):
+        """The constructor records both route sets so the probe loop can
+        reach the east-west service routes."""
+        with patch("chaosprobe.metrics.latency.LatencyProber"):
+            prober = ContinuousLatencyProber(
+                "ns",
+                http_routes=[("frontend", "/", "homepage", "GET")],
+                service_routes=[("a", "b", "b:1", "grpc", "a->b")],
+            )
+        assert prober._service_routes == [("a", "b", "b:1", "grpc", "a->b")]
+        assert prober._http_routes == [("frontend", "/", "homepage", "GET")]
+
+    def test_refused_service_route_records_error(self):
+        """A refused gRPC port yields an error sample (a genuine signal),
+        not a silent pass — this is what unblocks the taint detector."""
+        prober = self._make_prober(
+            http_routes=None,
+            service_routes=[("a", "b", "b:1", "grpc", "a->b")],
+        )
+        prober._prober._measure_tcp_from_pod = lambda *a, **kw: LatencySample(
+            source="a",
+            target="b",
+            route="b:1",
+            protocol="tcp",
+            latency_ms=0,
+            status="error",
+            timestamp="now",
+            error="connection refused",
+        )
+
+        result = prober._run_all_probes()
+
+        assert result["a->b"]["status"] == "error"
 
 
 def _mk_sample_with_code(status_code, status="ok"):
