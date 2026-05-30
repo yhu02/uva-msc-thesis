@@ -1338,11 +1338,16 @@ def _aggregate_strategy(
         )
         if tainted > 0:
             click.echo(f"    Healthy-only Mean Score: {agg['meanResilienceScore_healthyOnly']:.1f}")
-        if agg.get("meanRecoveryTime_ms") is not None:
-            click.echo(
-                f"    Mean Recovery: {agg['meanRecoveryTime_ms']:.0f}ms | "
-                f"Max: {agg['maxRecoveryTime_ms']:.0f}ms"
-            )
+        mean_recovery = agg.get("meanRecoveryTime_ms")
+        if mean_recovery is not None:
+            line = f"    Mean Recovery: {mean_recovery:.0f}ms"
+            # maxRecoveryTime_ms is set independently of the mean (only when
+            # per-iteration maxRecovery_ms is reported), so it can be None even
+            # when the mean is present — append it only when available.
+            max_recovery = agg.get("maxRecoveryTime_ms")
+            if max_recovery is not None:
+                line += f" | Max: {max_recovery:.0f}ms"
+            click.echo(line)
         return bool(agg["passRate"] == 1.0)
     else:
         ir = iteration_results[0]
