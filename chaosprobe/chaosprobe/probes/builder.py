@@ -10,6 +10,8 @@ Supported layouts:
 """
 
 import hashlib
+import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -21,6 +23,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from chaosprobe.probes.templates import (
     generate_dockerfile,
 )
+
+# crane (go-containerregistry) does the daemon-less push to the in-cluster
+# registry. Auto-installed (like helm) if missing — see ensure_crane.
+CRANE_VERSION = "v0.20.2"
 
 # Default image prefix for local (build-only) images. Probe images destined
 # for the cluster are pushed to the in-cluster registry, whose address the
@@ -60,6 +66,71 @@ def _port_accepts(port: int) -> bool:
 
 class ProbeBuilderError(Exception):
     """Raised when probe compilation or image build fails."""
+
+
+def _check_crane() -> bool:
+    """True if the `crane` CLI is available."""
+    try:
+        subprocess.run(["crane", "version"], check=True, capture_output=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def ensure_crane() -> None:
+    """Ensure `crane` is installed, downloading the release binary if missing.
+
+    crane (go-containerregistry) performs the daemon-less push to the in-cluster
+    registry. Mirrors how helm is auto-installed: fetch the pinned release
+    tarball into ``~/.local/bin``. Raises if it can't be made available.
+    """
+    if _check_crane():
+        return
+
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    os_name = {"linux": "Linux", "darwin": "Darwin"}.get(system)
+    arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64", "arm64": "arm64"}.get(
+        machine
+    )
+    if not os_name or not arch:
+        raise ProbeBuilderError(
+            f"crane not found and no prebuilt binary for {system}/{machine}. "
+            "Install crane manually: https://github.com/google/go-containerregistry"
+        )
+
+    filename = f"go-containerregistry_{os_name}_{arch}.tar.gz"
+    url = (
+        "https://github.com/google/go-containerregistry/releases/download/"
+        f"{CRANE_VERSION}/{filename}"
+    )
+    print(f"  crane not found, installing {CRANE_VERSION} to ~/.local/bin ...")
+    install_dir = Path.home() / ".local" / "bin"
+    install_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        tarball = Path(tmp) / filename
+        try:
+            subprocess.run(
+                ["curl", "-fsSL", "-o", str(tarball), url], check=True, capture_output=True
+            )
+            subprocess.run(
+                ["tar", "-xzf", str(tarball), "-C", str(install_dir), "crane"],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or b"").decode().strip()
+            raise ProbeBuilderError(f"Failed to install crane: {stderr or e}") from e
+    (install_dir / "crane").chmod(0o755)
+    # Make it visible to this process (mirrors install_helm).
+    if str(install_dir) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{install_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    if not _check_crane():
+        raise ProbeBuilderError(
+            f"crane installed to {install_dir} but `crane version` still fails; "
+            f"ensure {install_dir} is on PATH."
+        )
 
 
 class RustProbeBuilder:
@@ -411,12 +482,7 @@ class RustProbeBuilder:
         with tempfile.TemporaryDirectory(prefix="chaosprobe-build-") as tmp:
             # One push tunnel for the whole batch (only needed when pushing).
             if self.push:
-                _require_tool(
-                    "crane",
-                    "crane not found — needed to push probe images to the in-cluster "
-                    "registry (daemon-less). Install: "
-                    "go install github.com/google/go-containerregistry/cmd/crane@latest",
-                )
+                ensure_crane()  # daemon-less pusher; auto-installs if missing
                 self._open_push_tunnel()
             try:
                 for probe in probes:

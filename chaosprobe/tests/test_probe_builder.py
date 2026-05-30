@@ -8,12 +8,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chaosprobe.probes.builder import (
+    CRANE_VERSION,
     MUSL_TARGET,
     ProbeBuilderError,
     RustProbeBuilder,
+    _check_crane,
     _port_accepts,
     _require_tool,
     _run_cmd,
+    ensure_crane,
     patch_probe_images,
 )
 from chaosprobe.probes.templates import (
@@ -395,30 +398,31 @@ class TestPushTunnel:
             b.build_image("p", str(binary), "sc")
         assert mock_push.call_count == 2  # the hash tag + :latest
 
-    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/crane")
+    @patch("chaosprobe.probes.builder.ensure_crane")
     @patch.object(RustProbeBuilder, "_close_push_tunnel")
     @patch.object(RustProbeBuilder, "_open_push_tunnel")
     @patch.object(RustProbeBuilder, "build_image", return_value="192.168.56.11:30500/sc-p:abc")
     @patch.object(RustProbeBuilder, "compile_probe")
     @patch.object(RustProbeBuilder, "discover_probes")
     def test_build_all_opens_and_closes_tunnel_when_pushing(
-        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, mock_which, tmp_path
+        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, mock_crane, tmp_path
     ):
         mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
         mock_comp.return_value = str(tmp_path / "p")
         b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
         b.build_all(str(tmp_path))
+        mock_crane.assert_called_once()  # crane is ensured before pushing
         mock_open.assert_called_once()
         mock_close.assert_called_once()
 
-    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/crane")
+    @patch("chaosprobe.probes.builder.ensure_crane")
     @patch.object(RustProbeBuilder, "_close_push_tunnel")
     @patch.object(RustProbeBuilder, "_open_push_tunnel")
     @patch.object(RustProbeBuilder, "build_image", side_effect=ProbeBuilderError("push failed"))
     @patch.object(RustProbeBuilder, "compile_probe")
     @patch.object(RustProbeBuilder, "discover_probes")
     def test_build_all_closes_tunnel_even_on_failure(
-        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, mock_which, tmp_path
+        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, mock_crane, tmp_path
     ):
         mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
         mock_comp.return_value = str(tmp_path / "p")
@@ -427,13 +431,18 @@ class TestPushTunnel:
             b.build_all(str(tmp_path))
         mock_close.assert_called_once()  # tunnel torn down via finally despite the failure
 
-    @patch("chaosprobe.probes.builder.shutil.which", return_value=None)
+    @patch("chaosprobe.probes.builder.ensure_crane")
+    @patch.object(RustProbeBuilder, "build_image", return_value="chaosprobe/sc-p:abc")
+    @patch.object(RustProbeBuilder, "compile_probe")
     @patch.object(RustProbeBuilder, "discover_probes")
-    def test_build_all_requires_crane_when_pushing(self, mock_disc, mock_which, tmp_path):
+    def test_build_all_skips_crane_when_not_pushing(
+        self, mock_disc, mock_comp, mock_img, mock_crane, tmp_path
+    ):
         mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
-        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
-        with pytest.raises(ProbeBuilderError, match="crane not found"):
-            b.build_all(str(tmp_path))
+        mock_comp.return_value = str(tmp_path / "p")
+        b = RustProbeBuilder(push=False)
+        b.build_all(str(tmp_path))
+        mock_crane.assert_not_called()  # build-only never needs the pusher
 
     def test_port_accepts_open_and_closed(self):
         # An open listening socket is accepted; a closed port is not.
@@ -446,6 +455,74 @@ class TestPushTunnel:
         finally:
             srv.close()
         assert _port_accepts(open_port) is False  # now closed
+
+
+class TestEnsureCrane:
+    """Auto-install of the daemon-less `crane` pusher (mirrors helm)."""
+
+    @patch("chaosprobe.probes.builder.subprocess.run")
+    def test_check_crane_true_when_runnable(self, mock_run):
+        assert _check_crane() is True
+
+    @patch("chaosprobe.probes.builder.subprocess.run", side_effect=FileNotFoundError())
+    def test_check_crane_false_when_absent(self, mock_run):
+        assert _check_crane() is False
+
+    @patch("chaosprobe.probes.builder.subprocess.run")
+    @patch("chaosprobe.probes.builder._check_crane", return_value=True)
+    def test_noop_when_present(self, mock_check, mock_run):
+        ensure_crane()
+        mock_run.assert_not_called()  # already present → no download
+
+    @patch("chaosprobe.probes.builder.platform.machine", return_value="riscv64")
+    @patch("chaosprobe.probes.builder.platform.system", return_value="Linux")
+    @patch("chaosprobe.probes.builder._check_crane", return_value=False)
+    def test_unsupported_arch_raises(self, mock_check, mock_sys, mock_mach):
+        with pytest.raises(ProbeBuilderError, match="no prebuilt binary"):
+            ensure_crane()
+
+    @patch.dict("chaosprobe.probes.builder.os.environ", {"PATH": "/usr/bin"}, clear=True)
+    @patch("chaosprobe.probes.builder.Path.chmod")
+    @patch("chaosprobe.probes.builder.Path.mkdir")
+    @patch("chaosprobe.probes.builder.subprocess.run")
+    @patch("chaosprobe.probes.builder.platform.machine", return_value="x86_64")
+    @patch("chaosprobe.probes.builder.platform.system", return_value="Linux")
+    @patch("chaosprobe.probes.builder._check_crane", side_effect=[False, True])
+    def test_installs_when_missing(
+        self, mock_check, mock_sys, mock_mach, mock_run, mock_mkdir, mock_chmod
+    ):
+        ensure_crane()
+        cmds = [c.args[0] for c in mock_run.call_args_list]
+        assert cmds[0][0] == "curl" and any(CRANE_VERSION in a for a in cmds[0])
+        assert cmds[1][0] == "tar" and "crane" in cmds[1]
+        assert mock_check.call_count == 2  # checked before and after install
+
+    @patch("chaosprobe.probes.builder.Path.mkdir")
+    @patch(
+        "chaosprobe.probes.builder.subprocess.run",
+        side_effect=subprocess.CalledProcessError(1, ["curl"], stderr=b"404 not found"),
+    )
+    @patch("chaosprobe.probes.builder.platform.machine", return_value="x86_64")
+    @patch("chaosprobe.probes.builder.platform.system", return_value="Linux")
+    @patch("chaosprobe.probes.builder._check_crane", return_value=False)
+    def test_raises_on_download_failure(
+        self, mock_check, mock_sys, mock_mach, mock_run, mock_mkdir
+    ):
+        with pytest.raises(ProbeBuilderError, match="Failed to install crane"):
+            ensure_crane()
+
+    @patch.dict("chaosprobe.probes.builder.os.environ", {"PATH": "/usr/bin"}, clear=True)
+    @patch("chaosprobe.probes.builder.Path.chmod")
+    @patch("chaosprobe.probes.builder.Path.mkdir")
+    @patch("chaosprobe.probes.builder.subprocess.run")
+    @patch("chaosprobe.probes.builder.platform.machine", return_value="arm64")
+    @patch("chaosprobe.probes.builder.platform.system", return_value="Darwin")
+    @patch("chaosprobe.probes.builder._check_crane", side_effect=[False, False])
+    def test_raises_if_absent_after_install(
+        self, mock_check, mock_sys, mock_mach, mock_run, mock_mkdir, mock_chmod
+    ):
+        with pytest.raises(ProbeBuilderError, match="still fails"):
+            ensure_crane()
 
 
 # ── Patching tests ────────────────────────────────────────────

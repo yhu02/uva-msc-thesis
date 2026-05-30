@@ -38,13 +38,13 @@ or pod env), not by the CLI. See [Add a Rust probe](../how-to/add-a-rust-probe.m
 - `kubectl`
 - Python 3.9+
 - [uv](https://docs.astral.sh/uv/)
-- For building/running Rust `cmdProbe`s: `docker` (build), `rustc`/`cargo`
-  (compile), and [`crane`](https://github.com/google/go-containerregistry)
-  (daemon-less push to the in-cluster registry —
-  `go install github.com/google/go-containerregistry/cmd/crane@latest`).
+- For building Rust `cmdProbe`s: `docker` (build) and `rustc`/`cargo` (compile).
 
-Helm, LitmusChaos, ChaosCenter, metrics-server, Prometheus, Neo4j, and the
-in-cluster registry are installed automatically by `chaosprobe init`.
+Helm, [`crane`](https://github.com/google/go-containerregistry) (the daemon-less
+pusher for probe images), LitmusChaos, ChaosCenter, metrics-server, Prometheus,
+Neo4j, and the in-cluster registry are installed automatically by `chaosprobe
+init` — and `run` self-installs them too, so a fresh checkout needs only the
+tools listed above.
 
 **Cluster provisioning** additionally needs:
 - *Vagrant (local):* [Vagrant](https://www.vagrantup.com/downloads), a
