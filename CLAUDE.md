@@ -93,13 +93,15 @@ Run the ⛔ safety gate above. Then optionally `uv run chaosprobe status`
 CRDs, metrics-server, Prometheus, Neo4j, and ChaosCenter on its own — so **you do
 not need `init` for those.** The single exception is the in-cluster image
 registry (for the 5 Rust `cmdProbes`), which only `init` installs.
+Probe images use the in-cluster registry **exclusively** — there is no external
+/ GHCR option. `run` resolves its address and pushes there, and **fails** if it
+isn't installed (no off-cluster fallback).
 - **Check:** `kubectl get ns registry` (and `kubectl get pods -n registry -l app=registry`).
 - **Registry present** → skip `init` entirely; go to step 8.
-- **Registry absent AND you want the Rust cmdProbes** → `uv run chaosprobe init`
-  (⚠️ first run also needs the one-time node registry-trust step — user-owned).
-- **Registry absent AND you don't need Rust probes** → skip `init`; either set
-  `CHAOSPROBE_REGISTRY` to an external registry or accept that the 5 cmdProbes
-  won't run. `run` still installs everything else.
+- **Registry absent** → `uv run chaosprobe init` to install it (⚠️ the one-time
+  insecure-registry trust on the build host + each node's containerd is
+  user-owned — see [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md)).
+  `run` self-heals all other infra but never the registry.
 
 > Tip: you can skip `init` and let `run` bootstrap the rest — the trade-off is
 > the *first* `run` takes longer (it installs the infra inline) and has no

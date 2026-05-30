@@ -121,7 +121,7 @@ fn run_check() -> Result<String, String> {{
 """
 
 
-def generate_dockerfile(binary_name: str, source_repo: str = "") -> str:
+def generate_dockerfile(binary_name: str) -> str:
     """Generate a minimal Dockerfile for a compiled probe binary.
 
     Uses ``busybox:stable-musl`` as the base image so that
@@ -132,14 +132,9 @@ def generate_dockerfile(binary_name: str, source_repo: str = "") -> str:
 
     Args:
         binary_name: Name of the binary file (must be in the build context).
-        source_repo: If non-empty, written as the
-            ``org.opencontainers.image.source`` label so GHCR auto-links
-            the resulting package to that repository (used for
-            inherit-from-source-repo visibility).
     """
-    label_line = f'LABEL org.opencontainers.image.source="{source_repo}"\n' if source_repo else ""
     return f"""\
 FROM busybox:stable-musl
-{label_line}COPY {binary_name} /probe/{binary_name}
+COPY {binary_name} /probe/{binary_name}
 ENTRYPOINT ["/probe/{binary_name}"]
 """

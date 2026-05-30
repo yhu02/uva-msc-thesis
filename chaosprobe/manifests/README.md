@@ -70,10 +70,10 @@ containerd_insecure_registries:
 export KUBECONFIG=~/.kube/config-chaosprobe
 uv run chaosprobe run -i 1 --strategies baseline,default,colocate,spread
 ```
-`run` resolves the registry as: `CHAOSPROBE_REGISTRY` env override → the
-in-cluster registry → the GHCR default. With the in-cluster registry installed
-and no `CHAOSPROBE_REGISTRY_USER`/`PASSWORD` set, it pushes locally and skips
-`docker login`. Verify the push landed:
+`run` resolves the in-cluster registry's address automatically and pushes there
+(it's an unauthenticated insecure HTTP registry, so no `docker login`). If the
+registry isn't installed, `run` fails with a message telling you to run
+`chaosprobe init`. Verify the push landed:
 ```bash
 curl http://<registry-address>/v2/_catalog
 ```
@@ -82,5 +82,4 @@ curl http://<registry-address>/v2/_catalog
 
 - **`docker push` → "HTTP response to HTTPS client"** → step 2 not done (or daemon not restarted).
 - **Pods `ImagePullBackOff` with the same HTTP/HTTPS error** → step 3 not done on the node that scheduled the probe pod.
-- **`docker login ... denied`** → leftover `CHAOSPROBE_REGISTRY_USER`+`PASSWORD` in `.env`; unset them so the in-cluster registry path is used.
-- **`run` still pushes to ghcr.io** → registry not installed/ready (`kubectl -n registry get pods`) or `CHAOSPROBE_REGISTRY` is set to something else.
+- **`run` fails with "In-cluster registry not found"** → the registry isn't installed/ready; run `chaosprobe init` and check `kubectl -n registry get pods`.
