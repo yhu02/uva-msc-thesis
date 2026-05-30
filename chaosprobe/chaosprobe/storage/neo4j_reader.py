@@ -7,6 +7,7 @@ reconstruction, and ML export.
 
 import json
 import logging
+import statistics
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -784,7 +785,7 @@ class Neo4jReaderMixin:
                 if rec_times:
                     agg["meanRecoveryTime_ms"] = sum(rec_times) / len(rec_times)
                     agg["maxRecoveryTime_ms"] = max(rec_times)
-                    agg["medianRecoveryTime_ms"] = sorted(rec_times)[len(rec_times) // 2]
+                    agg["medianRecoveryTime_ms"] = statistics.median(rec_times)
                 strategies[strat] = {
                     "strategy": strat,
                     "status": "completed",
