@@ -1,6 +1,7 @@
 """Tests for the Prometheus metrics collection module."""
 
 import json
+import math
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -293,6 +294,35 @@ class TestPrometheusProberResult:
         assert "phases" in result
         assert "queries" in result
         assert "probeErrors" not in result
+
+    def test_aggregate_phases_ignores_nan_and_inf(self):
+        # Prometheus returns NaN / +Inf for no-data (e.g. histogram_quantile
+        # over an empty window). These must not crash statistics.stdev
+        # ("'float' object has no attribute 'numerator'") nor poison the stats —
+        # they should be skipped, with the metric computed from finite values.
+        prober = _make_prober()
+        series = [
+            {"phase": "during-chaos", "metrics": {"p99": [{"value": [1, "2.0"]}]}},
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "p99": [
+                        {"value": [2, "NaN"]},  # skipped (non-finite)
+                        {"value": [3, "not-a-number"]},  # skipped (unparseable)
+                        {"value": [3, "4.0"]},
+                    ]
+                },
+            },
+            {"phase": "during-chaos", "metrics": {"p99": [{"value": [4, "+Inf"]}]}},
+        ]
+
+        agg = prober._aggregate_phases(series)
+
+        # sample sums: [2.0, 4.0 (NaN + bad skipped), 0.0 (Inf skipped)]
+        p99 = agg["during-chaos"]["metrics"]["p99"]
+        assert p99["mean"] == pytest.approx(2.0)
+        assert p99["max"] == pytest.approx(4.0)
+        assert math.isfinite(p99["stdev"])  # computed without crashing
 
     def test_result_includes_probe_errors(self):
         prober = _make_prober()
