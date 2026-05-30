@@ -5,6 +5,9 @@ Complete list of `chaosprobe` commands. All commands are invoked as
 [`../../TECHNICAL.md`](../../TECHNICAL.md); for task-oriented walkthroughs see
 the [how-to guides](../index.md).
 
+> This page documents the commonly-used flags. `uv run chaosprobe <command>
+> --help` is always the authoritative, complete list for any command.
+
 ## Core
 
 | Command | Purpose |
@@ -25,10 +28,13 @@ dependency-aware`.
 | Flag | Default | Purpose |
 |---|---|---|
 | `-n, --namespace <ns>` | scenario's own | Target namespace / scenario name. |
+| `-o, --output-dir <dir>` | auto | Where the run writes its output, including `summary.json`. |
 | `-s, --strategies <list>` | all 8 | Comma-separated strategies to run. |
 | `-i, --iterations <n>` | 1 | Iterations per strategy. |
 | `-e, --experiment <file>` | scenario default | Experiment YAML; repeat for a multi-fault matrix. |
-| `--load-profile <name>` | — | Load profile during chaos (e.g. `ramp`). |
+| `--settle-time <s>` | 60 | Pre- and post-chaos steady-state sample window (seconds). |
+| `--baseline-duration <s>` | 0 | Pre-chaos baseline window override; `0` falls back to `--settle-time`. |
+| `--load-profile <steady\|ramp\|spike>` | steady | Locust load profile during chaos. |
 | `--seed <n>` | 42 | Base seed for the `random` strategy (iteration *k* uses `seed + k − 1`). |
 | `-t, --timeout <s>` | 300 | Timeout per experiment, seconds. |
 | `--no-visualize` | off | Skip chart generation. |
@@ -44,7 +50,7 @@ All consume a `summary.json`; all are demoable against `examples/`. See
 |---|---|
 | `doctor -s <summary> [--strict]` | Data-quality gate (tainted iterations, OOM, missing recovery, inconclusive CIs, schema drift). `--strict` exits 1 on warnings. |
 | `summarize -s <summary> [--strategy <name>]` | Per-strategy aggregate roll-up (resilience, recovery split, CV, histogram). |
-| `stats -s <summary> [--metric m] [--all-metrics] [--baseline <name>] [--effect-size-min lvl] [--merge <file>] [--markdown]` | Bootstrap CIs + pairwise Mann-Whitney U (Holm-Bonferroni) + Cliff's delta. `--metric` ∈ `resilience, recovery, d2s, s2r`. |
+| `stats -s <summary> [--metric m] [--all-metrics] [--baseline <name>] [--effect-size-min lvl] [--sort p_holm\|p_raw\|delta] [--merge <file>] [--markdown\|--csv\|--json]` | Bootstrap CIs + pairwise Mann-Whitney U (Holm-Bonferroni) + Cliff's delta. `--metric` ∈ `resilience, recovery, d2s, s2r`; `--sort` orders the pairwise table; output as table (default), `--markdown`, `--csv`, or `--json`. |
 | `power -s <summary> [--metric m] [--target-delta d] [--alpha a] [--power p] [--json]` | Required sample size per strategy for a target effect. |
 | `recommend -s <summary> [--metric m] [--alpha a] [--json]` | Statistically-justified placement recommendation. `--metric` ∈ `resilience, recovery`. |
 | `inspect -s <summary> --strategy <name> -i <n> [--json]` | Per-iteration drill-down (verdict, probes, recovery split, snapshots). |

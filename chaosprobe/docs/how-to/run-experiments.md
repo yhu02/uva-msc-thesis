@@ -26,6 +26,11 @@ dependency-aware`. Each run deploys the workload, applies the placement, injects
 the fault, and collects recovery/latency/resource metrics + probe verdicts into
 Neo4j and a `summary.json`.
 
+The `summary.json` (and charts) are written to the run's output directory;
+override its location with `-o/--output-dir`. That file is the input to every
+[analysis command](analyze-results.md) — the `<run-output>/summary.json` paths
+below refer to it.
+
 ### Common variations
 
 ```bash
