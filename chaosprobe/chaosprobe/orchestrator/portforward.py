@@ -23,15 +23,13 @@ _monitor_thread: Optional[threading.Thread] = None
 
 def check_port(host: str, port: int) -> bool:
     """Check if a TCP port is reachable."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(3)
-    try:
-        sock.connect((host, port))
-        sock.close()
-        return True
-    except (ConnectionRefusedError, OSError):
-        sock.close()
-        return False
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(3)
+        try:
+            sock.connect((host, port))
+            return True
+        except (ConnectionRefusedError, OSError):
+            return False
 
 
 def start(svc: str, ns: str, ports: list[str]):
