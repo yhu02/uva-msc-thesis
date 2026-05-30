@@ -187,10 +187,15 @@ between iterations; surface results and keep going.
   These are the user's research-validity calls; diagnose and recommend, don't
   silently ship.
 
-**Known non-code issues** (diagnose, don't "fix" in code): the recurring
-`app-ready check timed out` / tainted-iteration warnings are a cluster-capacity +
-1 s gRPC-probe-timeout effect on this libvirt cluster, not a code bug. Likewise
-verify the per-node registry trust before a run (probe-image pull) — see
+**Known non-code issues** (diagnose, don't "fix" in code): after PR #162 fixed
+the east-west gRPC probing bug (the `/healthz` HTTP probe of gRPC-only backends
+that returned 100% errors and false-tainted *every* iteration), the **residual**
+`app-ready check timed out` / tainted-iteration warnings are a cluster-capacity
+effect on this libvirt cluster — still not a code bug. **But re-attribute to
+capacity only after ruling out a fresh probing regression:** if any single route
+in the pre-chaos phase shows 0 successful samples / ~100% errors, that's a broken
+probe (wrong protocol/port), not degradation — fix it. Likewise verify the
+per-node registry trust before a run (probe-image pull) — see
 [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md).
 
 ---

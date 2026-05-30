@@ -129,17 +129,18 @@ def wait_for_app_ready(
     target_deployment: str,
     timeout: int = 180,
     http_routes: Optional[List[tuple]] = None,
+    service_routes: Optional[List[tuple]] = None,
     required_consecutive: int = 5,
     sustained_period_s: int = 15,
     latency_budget_ms: int = 5000,
 ) -> None:
-    """Wait until all probed routes respond with HTTP 200 and stay stable.
+    """Wait until all probed routes respond successfully and stay stable.
 
     Two-phase functional gate:
 
-    1. **Consecutive-OK phase**: every probed route must return 200
-       within ``latency_budget_ms`` for ``required_consecutive`` checks
-       in a row.  This filters transient failures.
+    1. **Consecutive-OK phase**: every probed route must respond
+       successfully within ``latency_budget_ms`` for ``required_consecutive``
+       checks in a row.  This filters transient failures.
 
     2. **Sustained-clean phase**: after the consecutive gate passes,
        keep sampling for ``sustained_period_s`` seconds.  Any single
@@ -154,8 +155,14 @@ def wait_for_app_ready(
 
     K8s readiness probes may pass while the application isn't fully
     serving traffic (e.g. during connection pool warm-up).  This does
-    actual HTTP checks from a probe pod to confirm end-to-end readiness
-    across ALL routes that will be probed during the experiment.
+    actual probes from a probe pod to confirm end-to-end readiness across
+    the routes the experiment will measure: north-south ``http_routes``
+    via HTTP, and east-west ``service_routes`` (``(source, target,
+    host:port, protocol, desc)`` tuples) via a TCP connect to the real
+    ``host:port`` — the correct probe for gRPC/TCP backends that expose no
+    HTTP endpoint.  The TCP gate is only applied when the probe pod has
+    python3; otherwise those backends fall back to K8s-native gRPC
+    readiness (already enforced by the deployment-readiness wait).
     """
     from chaosprobe.metrics.base import exec_in_pod, find_probe_pod
 
@@ -182,12 +189,66 @@ def wait_for_app_ready(
     if not urls_to_check:
         urls_to_check = [("/_healthz", f"http://frontend.{namespace}.svc.cluster.local/_healthz")]
 
-    def _check_all_routes() -> bool:
-        """Return True iff every route returns successfully within the budget.
+    # East-west gRPC/TCP targets (host:port), deduplicated, gated via a
+    # python3 socket connect when the probe pod supports it.
+    tcp_targets: List[Tuple[str, str]] = []
+    if service_routes:
+        seen_hosts = set()
+        for _src, _tgt, host, _proto, label in service_routes:
+            if host and host not in seen_hosts:
+                tcp_targets.append((label, host))
+                seen_hosts.add(host)
 
-        Uses ``wget``'s exit code as the success signal — busybox wget
-        exits non-zero on connect failure, timeout, and 4xx/5xx
-        responses, so this is sufficient for "did the URL respond OK".
+    # Tri-state cache: None = not yet probed, False = probe pod lacks
+    # python3 (skip all TCP checks), True = python3 available.
+    python3_supported: Optional[bool] = None
+
+    def _tcp_connect_ok(host: str, budget_s: int) -> Optional[bool]:
+        """TCP-connect to ``host`` (``host:port``) from the probe pod.
+
+        Returns True on a successful connect, False on refusal/timeout,
+        and None when python3 is unavailable in the pod (caller skips the
+        TCP gate).
+        """
+        nonlocal pod
+        if ":" in host:
+            hostname, port = host.rsplit(":", 1)
+        else:
+            hostname, port = host, "80"
+        py_script = (
+            "import socket,sys\n"
+            "try:\n"
+            " s=socket.socket();s.settimeout(int(sys.argv[2]));"
+            "s.connect((sys.argv[1],int(sys.argv[3])));s.close();print('OK')\n"
+            "except Exception as ex:\n"
+            " print('FAIL',str(ex)[:80])"
+        )
+        assert pod is not None
+        out = exec_in_pod(
+            core,
+            namespace,
+            pod,
+            ["python3", "-c", py_script, hostname, str(budget_s), port],
+        )
+        low = out.lower()
+        if (
+            not out.strip()
+            or "no such file" in low
+            or "not found" in low
+            or "executable file" in low
+        ):
+            return None
+        return "OK" in out
+
+    def _check_all_routes() -> bool:
+        """Return True iff every route responds successfully within the budget.
+
+        HTTP routes use ``wget``'s exit code as the success signal —
+        busybox wget exits non-zero on connect failure, timeout, and
+        4xx/5xx responses, so this is sufficient for "did the URL respond
+        OK".  East-west service routes use a TCP connect to the real
+        ``host:port`` (gRPC/TCP backends serve no HTTP), skipped when the
+        probe pod has no python3.
 
         Previous attempt (``wget -q -S ... | grep ' 200'``) silently
         broke in this environment: busybox wget's ``-q`` flag suppresses
@@ -197,7 +258,7 @@ def wait_for_app_ready(
         results/20260520-163953 trace where every iteration printed the
         timeout warning yet still scored normally.
         """
-        nonlocal pod
+        nonlocal pod, python3_supported
         budget_s = max(1, latency_budget_ms // 1000 + 1)
         for _path, url in urls_to_check:
             cmd = (
@@ -220,6 +281,19 @@ def wait_for_app_ready(
                     if new_pod and new_pod != pod:
                         pod = new_pod
                 return False
+
+        # East-west gRPC/TCP gate, only while python3 is available.
+        if tcp_targets and python3_supported is not False:
+            for _label, host in tcp_targets:
+                result = _tcp_connect_ok(host, budget_s)
+                if result is None:
+                    # Probe pod lacks python3 — stop trying TCP checks and
+                    # rely on K8s-native gRPC readiness for these backends.
+                    python3_supported = False
+                    break
+                python3_supported = True
+                if not result:
+                    return False
         return True
 
     consecutive_ok = 0

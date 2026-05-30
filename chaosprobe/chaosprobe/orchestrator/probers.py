@@ -28,6 +28,7 @@ def create_and_start_probers(
     measure_prometheus: bool,
     prometheus_url: Tuple[str, ...],
     http_routes: Any = None,
+    service_routes: Any = None,
     expected_chaos_duration: float | None = None,
 ) -> Dict[str, Any]:
     """Create continuous probers and start them in parallel.
@@ -46,6 +47,7 @@ def create_and_start_probers(
         ContinuousLatencyProber(
             namespace,
             http_routes=http_routes,
+            service_routes=service_routes,
             exclude_prefixes=[target_deployment],
             expected_chaos_duration=expected_chaos_duration,
         )

@@ -10,8 +10,7 @@ from chaosprobe.orchestrator.strategy_runner import (
     _aggregate_strategy,
     _build_iteration_routes,
     _build_route_view_for_iteration,
-    _generate_east_west_routes,
-    _is_non_http_target,
+    _consolidate_service_routes,
     _snapshot_cluster_state,
     _sync_neo4j,
 )
@@ -242,134 +241,84 @@ class TestShellEscape:
         assert shell_escape(url) == url
 
 
-class TestIsNonHttpTarget:
-    """`_is_non_http_target` skips services that don't speak HTTP so
-    east-west route generation doesn't emit useless probes for Redis /
-    Postgres / Kafka / etc."""
+class TestConsolidateServiceRoutes:
+    """`_consolidate_service_routes` collapses dependency routes to one
+    probe per target host, preserving the protocol + real ``host:port`` so
+    gRPC/TCP backends are probed over their actual port instead of a
+    non-existent HTTP ``/healthz``."""
 
-    def test_redis_variants(self):
-        assert _is_non_http_target("redis-cart") is True
-        assert _is_non_http_target("redis") is True
-        assert _is_non_http_target("Redis-Master") is True  # case-insensitive
+    def test_empty_returns_empty(self):
+        assert _consolidate_service_routes([]) == []
 
-    def test_other_databases(self):
-        assert _is_non_http_target("postgres-primary") is True
-        assert _is_non_http_target("mysql") is True
-        assert _is_non_http_target("mongodb") is True
-        assert _is_non_http_target("kafka-broker") is True
-        assert _is_non_http_target("memcached") is True
+    def test_basic_route_preserved(self):
+        routes = _consolidate_service_routes(
+            [("checkout", "currency", "currency:7000", "grpc", "Currency Service")]
+        )
+        assert len(routes) == 1
+        src, tgt, host, proto, desc = routes[0]
+        assert (src, tgt, host, proto) == ("checkout", "currency", "currency:7000", "grpc")
+        # Description is rewritten to the source->target edge label.
+        assert desc == "checkout->currency"
 
-    def test_http_services_not_filtered(self):
-        for svc in (
-            "frontend",
-            "productcatalogservice",
-            "checkoutservice",
-            "currencyservice",
-            "recommendationservice",
-            "adservice",
-            "shippingservice",
-            "paymentservice",
-            "cartservice",
-            "emailservice",
-        ):
-            assert _is_non_http_target(svc) is False, f"{svc} unexpectedly filtered"
-
-
-class TestEastWestRouteGeneration:
-    """`_generate_east_west_routes` turns a dependency-edge list into
-    LatencyProber route tuples so the H1/H6 hypotheses can be tested
-    against inter-service paths, not just frontend probes."""
-
-    def test_empty_edge_list_returns_empty(self):
-        assert _generate_east_west_routes([]) == []
-
-    def test_basic_edge_becomes_route(self):
-        routes = _generate_east_west_routes([("checkout", "currency")])
-        assert routes == [("currency", "/healthz", "checkout->currency", "GET")]
-
-    def test_multiple_edges_per_target_dedupe_with_combined_description(self):
-        """Two services depending on the same target produce one route whose
-        description records both originating edges (so attribution is
-        preserved in the surfaced metrics)."""
-        routes = _generate_east_west_routes(
+    def test_duplicate_host_merged_with_combined_label(self):
+        """Two services depending on the same backend produce one probe
+        whose label records both edges, preserving attribution."""
+        routes = _consolidate_service_routes(
             [
-                ("checkout", "currency"),
-                ("frontend", "currency"),
+                ("checkout", "currency", "currency:7000", "grpc", "x"),
+                ("frontend", "currency", "currency:7000", "grpc", "y"),
             ]
         )
         assert len(routes) == 1
-        target, path, description, method = routes[0]
-        assert target == "currency"
-        assert path == "/healthz"
-        assert "checkout->currency" in description
-        assert "frontend->currency" in description
-        assert method == "GET"
+        _src, _tgt, host, proto, desc = routes[0]
+        assert (host, proto) == ("currency:7000", "grpc")
+        assert "checkout->currency" in desc
+        assert "frontend->currency" in desc
 
-    def test_non_http_target_skipped(self):
-        """Redis-style targets are excluded so the probe doesn't generate
-        always-failing samples on TCP-only backends."""
-        routes = _generate_east_west_routes([("cart", "redis-cart")])
-        assert routes == []
+    def test_tcp_protocol_preserved(self):
+        """Redis-style ``tcp`` targets are kept (probed via TCP connect),
+        not dropped as the old HTTP-only generator did."""
+        routes = _consolidate_service_routes(
+            [("cart", "redis-cart", "redis-cart:6379", "tcp", "Redis")]
+        )
+        assert len(routes) == 1
+        assert routes[0][2] == "redis-cart:6379"
+        assert routes[0][3] == "tcp"
 
-    def test_mixed_edges_skip_only_non_http(self):
-        routes = _generate_east_west_routes(
+    def test_distinct_hosts_kept_separate(self):
+        routes = _consolidate_service_routes(
             [
-                ("checkout", "currency"),
-                ("cart", "redis-cart"),
-                ("frontend", "checkout"),
+                ("checkout", "currency", "currency:7000", "grpc", "x"),
+                ("frontend", "checkout", "checkout:5050", "grpc", "y"),
             ]
         )
-        targets = {r[0] for r in routes}
-        assert targets == {"currency", "checkout"}
-        assert "redis-cart" not in targets
+        assert {r[2] for r in routes} == {"currency:7000", "checkout:5050"}
 
-    def test_malformed_edge_skipped(self):
-        """Edges that aren't 2-tuples (empty, single-element, None) are
-        skipped without raising — defensive against upstream callers that
-        emit partial data."""
-        routes = _generate_east_west_routes(
+    def test_edges_missing_source_target_or_host_dropped(self):
+        """Defensive: edges lacking a source, target, or host are skipped
+        without raising, so only the well-formed edge survives."""
+        routes = _consolidate_service_routes(
             [
-                (),
-                ("checkout",),
-                None,
-                ("", "currency"),
-                ("checkout", ""),
-                ("checkout", "currency"),  # the only valid one
+                ("", "currency", "currency:7000", "grpc", "x"),
+                ("checkout", "", "currency:7000", "grpc", "x"),
+                ("checkout", "currency", "", "grpc", "x"),
+                ("checkout", "currency", "currency:7000", "grpc", "ok"),
             ]
         )
         assert len(routes) == 1
-        assert routes[0][0] == "currency"
+        assert routes[0][0] == "checkout"
+        assert routes[0][2] == "currency:7000"
 
-    def test_custom_healthz_path(self):
-        routes = _generate_east_west_routes(
-            [("checkout", "currency")],
-            healthz_path="/ready",
-        )
-        assert routes[0][1] == "/ready"
-
-    def test_all_routes_use_get_method(self):
-        """East-west routes always use GET for healthz probes; the LatencyProber
-        encodes method via the tuple shape so consumers can rely on it."""
-        routes = _generate_east_west_routes(
+    def test_duplicate_edge_label_not_repeated(self):
+        """The same source->target edge appearing twice doesn't duplicate
+        its label in the merged description."""
+        routes = _consolidate_service_routes(
             [
-                ("a", "b"),
-                ("c", "d"),
+                ("checkout", "currency", "currency:7000", "grpc", "x"),
+                ("checkout", "currency", "currency:7000", "grpc", "x"),
             ]
         )
-        for route in routes:
-            assert route[3] == "GET"
-
-    def test_route_tuple_shape_matches_extract_http_routes(self):
-        """East-west routes drop into the same prober plumbing as the
-        scenario-extracted routes — same 4-tuple shape."""
-        routes = _generate_east_west_routes([("checkout", "currency")])
-        for route in routes:
-            assert len(route) == 4
-            target, path, description, method = route
-            assert isinstance(target, str)
-            assert isinstance(path, str)
-            assert isinstance(description, str)
-            assert isinstance(method, str)
+        assert routes[0][4] == "checkout->currency"
 
 
 def _make_pod(name, node="worker-1", phase="Running", ready=True, restart_count=0):
@@ -615,86 +564,89 @@ def _make_ctx(mutator):
 
 
 class TestBuildIterationRoutes:
-    """`_build_iteration_routes` is the single integration point that
-    activates slice 5's east-west generator on the live run path.  These
-    tests pin the contract: north-south always preserved; east-west
-    appended; the combined list capped at the probe budget."""
+    """`_build_iteration_routes` splits the iteration's probe set into
+    north-south HTTP routes (always preserved) and east-west service
+    routes (grpc/tcp with the real ``host:port``), capping the combined
+    count at the probe budget.  Returns a ``(north_south, east_west)``
+    tuple."""
 
-    def test_combines_north_south_and_east_west(self):
+    def test_splits_north_south_and_east_west(self):
         scenario = _make_scenario(["/", "/cart"])
         mutator = MagicMock()
-        mutator.get_service_dependencies.return_value = [
-            ("checkout", "currency"),
-            ("frontend", "checkout"),
+        mutator.get_service_dependency_routes.return_value = [
+            ("checkout", "currency", "currency:7000", "grpc", "x"),
+            ("frontend", "checkout", "checkout:5050", "grpc", "y"),
         ]
         ctx = _make_ctx(mutator)
 
-        routes = _build_iteration_routes(scenario, ctx)
+        north_south, east_west = _build_iteration_routes(scenario, ctx)
 
-        # 2 north-south + 2 east-west = 4 entries
-        assert len(routes) == 4
-        targets = [r[0] for r in routes]
-        # North-south are scenario-extracted (target = "frontend")
-        assert targets[0] == "frontend"
-        assert targets[1] == "frontend"
-        # East-west are dependency-graph generated
-        assert "currency" in targets
-        assert "checkout" in targets
+        # North-south are scenario-extracted HTTP routes (target = "frontend")
+        assert [r[0] for r in north_south] == ["frontend", "frontend"]
+        # East-west are dependency-graph service routes with protocol + port,
+        # never an HTTP /healthz path.
+        assert {r[1] for r in east_west} == {"currency", "checkout"}
+        for r in east_west:
+            assert r[3] in ("grpc", "tcp")
+            assert ":" in r[2]
 
-    def test_no_dependencies_returns_only_north_south(self):
+    def test_no_dependencies_returns_empty_east_west(self):
         scenario = _make_scenario(["/", "/cart"])
         mutator = MagicMock()
-        mutator.get_service_dependencies.return_value = []
+        mutator.get_service_dependency_routes.return_value = []
         ctx = _make_ctx(mutator)
 
-        routes = _build_iteration_routes(scenario, ctx)
-        assert len(routes) == 2  # only the scenario probes
+        north_south, east_west = _build_iteration_routes(scenario, ctx)
+        assert len(north_south) == 2  # only the scenario probes
+        assert east_west == []
 
     def test_dependency_fetch_failure_falls_back_to_north_south(self):
         """A K8s API failure when fetching dependencies must not break the
         iteration — log the warning, fall back to north-south only."""
         scenario = _make_scenario(["/"])
         mutator = MagicMock()
-        mutator.get_service_dependencies.side_effect = RuntimeError("timeout")
+        mutator.get_service_dependency_routes.side_effect = RuntimeError("timeout")
         ctx = _make_ctx(mutator)
 
-        routes = _build_iteration_routes(scenario, ctx)
-        assert len(routes) == 1  # north-south survives
+        north_south, east_west = _build_iteration_routes(scenario, ctx)
+        assert len(north_south) == 1  # north-south survives
+        assert east_west == []
 
     def test_budget_cap_trims_east_west_preserving_north_south(self):
         """With the cap at 15, supplying 7 scenario probes and 12 dep-graph
         edges should keep all 7 scenario probes and trim east-west to 8."""
         scenario = _make_scenario([f"/p{i}" for i in range(7)])
         mutator = MagicMock()
-        mutator.get_service_dependencies.return_value = [
-            (f"src{i}", f"target{i}") for i in range(12)
+        mutator.get_service_dependency_routes.return_value = [
+            (f"src{i}", f"target{i}", f"target{i}:8080", "grpc", "x") for i in range(12)
         ]
         ctx = _make_ctx(mutator)
 
-        routes = _build_iteration_routes(scenario, ctx)
+        north_south, east_west = _build_iteration_routes(scenario, ctx)
 
-        assert len(routes) == _PROBE_BUDGET_CAP
-        north_south_targets = [r[0] for r in routes[:7]]
-        # All 7 scenario probes preserved
-        assert all(t == "frontend" for t in north_south_targets)
-        # Exactly headroom-many east-west routes survive
-        east_west_targets = [r[0] for r in routes[7:]]
-        assert len(east_west_targets) == _PROBE_BUDGET_CAP - 7
+        assert len(north_south) == 7
+        assert all(r[0] == "frontend" for r in north_south)
+        # Exactly headroom-many east-west routes survive.
+        assert len(east_west) == _PROBE_BUDGET_CAP - 7
 
-    def test_budget_cap_with_oversized_north_south_only_drops_east_west(self):
+    def test_budget_cap_with_oversized_north_south_drops_all_east_west(self):
         """If the scenario alone exceeds the budget (pathological config),
         keep every scenario probe and emit zero east-west routes — never
         trim a user-defined probe."""
         scenario = _make_scenario([f"/p{i}" for i in range(_PROBE_BUDGET_CAP + 3)])
         mutator = MagicMock()
-        mutator.get_service_dependencies.return_value = [("a", "b"), ("c", "d")]
+        mutator.get_service_dependency_routes.return_value = [
+            ("a", "b", "b:1", "grpc", "x"),
+            ("c", "d", "d:2", "grpc", "y"),
+        ]
         ctx = _make_ctx(mutator)
 
-        routes = _build_iteration_routes(scenario, ctx)
+        north_south, east_west = _build_iteration_routes(scenario, ctx)
 
-        # Every scenario probe survives; no east-west snuck in
-        assert len(routes) == _PROBE_BUDGET_CAP + 3
-        assert all(r[0] == "frontend" for r in routes)
+        # Every scenario probe survives; no east-west snuck in.
+        assert len(north_south) == _PROBE_BUDGET_CAP + 3
+        assert all(r[0] == "frontend" for r in north_south)
+        assert east_west == []
 
 
 class TestBuildRouteViewForIteration:
