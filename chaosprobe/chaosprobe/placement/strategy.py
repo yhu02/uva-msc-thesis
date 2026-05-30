@@ -360,7 +360,10 @@ def _compute_adversarial(
         score = d.cpu_request_millicores + mem_score
         scored.append((score, d))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # Sort by score descending, tie-broken by deployment name, so equal-weight
+    # deployments split into the heavy/light halves deterministically regardless
+    # of input order (matches the name-ordering the spread strategy relies on).
+    scored.sort(key=lambda x: (-x[0], x[1].name))
 
     # Heavy half goes to node with most resources, light half to the rest
     heavy_node = _pick_best_worker(nodes)
