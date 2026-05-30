@@ -27,6 +27,12 @@ _METRIC_SPECS: Dict[str, Tuple[str, str, bool]] = {
     "recovery": ("metrics.recovery.summary.meanRecovery_ms", "meanRecovery_ms", False),
 }
 
+# Methodology-control strategies: these swap the destructive fault for a trivial
+# no-op (see orchestrator/strategy_runner _baseline handling), so their scores
+# reflect "no real chaos" rather than placement resilience. They are not
+# deployable placements and must not be *recommended* — excluded by default.
+_CONTROL_STRATEGIES = frozenset({"baseline"})
+
 
 def _as_float(value: object) -> float:
     """Narrow a numeric pairwise-row field (typed ``object``) to ``float``.
@@ -219,7 +225,16 @@ def _fmt(value: object) -> str:
     is_flag=True,
     help="Emit the recommendation as JSON.",
 )
-def recommend(summary: Path, metric: str, alpha: str, as_json: bool):
+@click.option(
+    "--include-control",
+    is_flag=True,
+    help=(
+        "Include methodology-control strategies (e.g. 'baseline', which injects "
+        "no real fault) in the ranking. Excluded by default — they are not "
+        "deployable placements and their scores are no-chaos artifacts."
+    ),
+)
+def recommend(summary: Path, metric: str, alpha: str, as_json: bool, include_control: bool):
     """Recommend a placement strategy from a multi-strategy summary.json.
 
     \b
@@ -232,8 +247,17 @@ def recommend(summary: Path, metric: str, alpha: str, as_json: bool):
     _path, metric_label, higher_is_better = _METRIC_SPECS[metric]
     raw = json.loads(summary.read_text())
     samples = _samples_by_strategy(raw, metric)
+
+    # Drop methodology controls (e.g. 'baseline') unless explicitly asked for —
+    # they inject no real fault, so recommending them as a placement is wrong.
+    excluded_controls: List[str] = []
+    if not include_control:
+        excluded_controls = sorted(n for n in samples if n in _CONTROL_STRATEGIES)
+        samples = {n: s for n, s in samples.items() if n not in _CONTROL_STRATEGIES}
+
     result = _recommend(samples, higher_is_better, alpha_f)
     result["metric"] = metric_label
+    result["excludedControls"] = excluded_controls
 
     if as_json:
         click.echo(json.dumps({"source": str(summary), **result}, indent=2))
@@ -242,8 +266,14 @@ def recommend(summary: Path, metric: str, alpha: str, as_json: bool):
     direction = "higher is better" if higher_is_better else "lower is better"
     click.echo(f"Placement recommendation by {metric_label} ({direction}):")
     click.echo("")
+    if excluded_controls:
+        click.echo(
+            f"  (excluded control strategy: {', '.join(excluded_controls)} — "
+            "injects no real fault; pass --include-control to include)"
+        )
+        click.echo("")
     if not result["ranking"]:
-        click.echo("  No strategy has data for this metric.")
+        click.echo("  No placement strategy has data for this metric.")
         return
 
     click.echo(f"  {'rank':>4}  {'strategy':<20} {'n':>3} {'mean':>10}  {'95% CI':>20}")
