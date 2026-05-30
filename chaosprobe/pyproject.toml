@@ -93,13 +93,17 @@ files = [
     "chaosprobe/commands/summarize_cmd.py",
     # CLI command modules for cluster / placement / probe management.
     # Raw kubernetes calls are handled by the ignore_missing_imports override.
+    "chaosprobe/commands/cleanup_cmd.py",
     "chaosprobe/commands/cluster_cmd.py",
+    "chaosprobe/commands/compare_cmd.py",
     "chaosprobe/commands/dashboard_cmd.py",
     "chaosprobe/commands/delete_cmd.py",
     "chaosprobe/commands/graph_cmd.py",
     "chaosprobe/commands/init_cmd.py",
     "chaosprobe/commands/placement_cmd.py",
     "chaosprobe/commands/probe_cmd.py",
+    "chaosprobe/commands/provision_cmd.py",
+    "chaosprobe/commands/status_cmd.py",
     # output/ — the schema-writing half of the analysis contract.  The
     # matplotlib / pyarrow imports are handled by the ignore_missing_imports
     # override below; ml_export's lazy neo4j import resolves through the
