@@ -1061,3 +1061,61 @@ class TestSyncTimeSeriesPrometheusNonFinite:
         s = _written_samples(tx)[0]
         assert s["prom:node_cpu:sum"] == 3.0
         assert s["prom:node_cpu:avg"] == 3.0
+
+
+class TestSessionVisualizationMedian:
+    """`get_session_visualization_data` must report the true median recovery
+    time — the average of the two middle values for an even-length list, not
+    the naive upper-middle element."""
+
+    def _reader(self, runs, outputs):
+        from chaosprobe.storage.neo4j_reader import Neo4jReaderMixin
+
+        reader = Neo4jReaderMixin.__new__(Neo4jReaderMixin)
+        reader.get_session_runs = lambda session_id: runs
+        reader.get_run_output = lambda run_id: outputs[run_id]
+        return reader
+
+    @staticmethod
+    def _run_output(verdict, score, mean_recovery):
+        return {
+            "summary": {"overallVerdict": verdict, "resilienceScore": score},
+            "metrics": {"recovery": {"summary": {"meanRecovery_ms": mean_recovery}}},
+        }
+
+    def test_even_length_median_is_average_of_middle(self):
+        runs = [
+            {"strategy": "colocate", "run_id": "r1"},
+            {"strategy": "colocate", "run_id": "r2"},
+        ]
+        outputs = {
+            "r1": self._run_output("PASS", 80, 100.0),
+            "r2": self._run_output("PASS", 90, 200.0),
+        }
+        reader = self._reader(runs, outputs)
+
+        result = reader.get_session_visualization_data("sess-1")
+        agg = result["strategies"]["colocate"]["aggregated"]
+
+        # True median of [100, 200] is 150 (average), not the naive 200.
+        assert agg["medianRecoveryTime_ms"] == 150.0
+        assert agg["meanRecoveryTime_ms"] == 150.0
+
+    def test_odd_length_median_is_middle_value(self):
+        runs = [
+            {"strategy": "spread", "run_id": "r1"},
+            {"strategy": "spread", "run_id": "r2"},
+            {"strategy": "spread", "run_id": "r3"},
+        ]
+        outputs = {
+            "r1": self._run_output("PASS", 70, 100.0),
+            "r2": self._run_output("PASS", 80, 300.0),
+            "r3": self._run_output("PASS", 90, 200.0),
+        }
+        reader = self._reader(runs, outputs)
+
+        result = reader.get_session_visualization_data("sess-2")
+        agg = result["strategies"]["spread"]["aggregated"]
+
+        # Odd-length median is unchanged: the middle of sorted [100, 200, 300].
+        assert agg["medianRecoveryTime_ms"] == 200.0
