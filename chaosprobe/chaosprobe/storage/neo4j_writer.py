@@ -6,6 +6,7 @@ topology sync, run sync, and all ``_sync_*`` helpers.
 
 import json
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -700,12 +701,22 @@ class Neo4jWriterMixin:
                     total = 0.0
                     count = 0
                     for v in values:
+                        if not isinstance(v, dict):
+                            continue
                         try:
-                            if isinstance(v, dict):
-                                total += float(v.get("value", [0, "0"])[1])
-                                count += 1
+                            value = float(v.get("value", [0, "0"])[1])
                         except (ValueError, IndexError, TypeError):
-                            pass
+                            continue
+                        # Prometheus emits "NaN"/"+Inf"/"-Inf" for no-data and
+                        # float() parses those without raising.  Drop them so a
+                        # non-finite value never poisons the sum/avg — Neo4j
+                        # rejects non-finite float properties and it would
+                        # serialise as invalid JSON.  Mirrors the guards in
+                        # timeseries.py / utilization.py / prometheus.py.
+                        if not math.isfinite(value):
+                            continue
+                        total += value
+                        count += 1
                     if count > 0:
                         s[f"prom:{metric_name}:sum"] = round(total, 4)
                         s[f"prom:{metric_name}:avg"] = round(total / count, 4)
