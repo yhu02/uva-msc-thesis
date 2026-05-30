@@ -208,8 +208,9 @@ The `probes/` directory contains custom Rust cmdProbes that test service health 
 # Build locally
 chaosprobe probe build scenarios/online-boutique
 
-# Build and push to GHCR
-chaosprobe probe build scenarios/online-boutique -r ghcr.io/<user> --push
+# Build and push to the in-cluster registry (chaosprobe run does this
+# automatically; the address is what `chaosprobe init` prints, e.g. 192.168.56.11:30500)
+chaosprobe probe build scenarios/online-boutique -r 192.168.56.11:30500 --push
 
 # List discovered probes
 chaosprobe probe list scenarios/online-boutique
