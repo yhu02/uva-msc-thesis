@@ -41,7 +41,8 @@ operations — do not attempt them; stop and hand over (suggest they run it via
 - ⚠️ `cluster vagrant setup` / `deploy` when they need **sudo or libvirt** (VM
   provider setup, ansible "become" password).
 - ⚠️ The one-time **in-cluster registry trust** step on each node's containerd
-  and the build host (see [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md)).
+  (for image *pull*; `run` pushes via a port-forward tunnel so the build host
+  needs no trust — see [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md)).
 - ⚠️ Any node restart or containerd reload.
 
 ---
@@ -99,8 +100,9 @@ isn't installed (no off-cluster fallback).
 - **Check:** `kubectl get ns registry` (and `kubectl get pods -n registry -l app=registry`).
 - **Registry present** → skip `init` entirely; go to step 8.
 - **Registry absent** → `uv run chaosprobe init` to install it (⚠️ the one-time
-  insecure-registry trust on the build host + each node's containerd is
-  user-owned — see [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md)).
+  insecure-registry trust on each node's containerd is user-owned; the build
+  host needs none — `run` pushes via a port-forward tunnel — see
+  [`chaosprobe/manifests/README.md`](chaosprobe/manifests/README.md)).
   `run` self-heals all other infra but never the registry.
 
 > Tip: you can skip `init` and let `run` bootstrap the rest — the trade-off is

@@ -1,5 +1,7 @@
 """Tests for the Rust cmdProbe builder pipeline."""
 
+import socket
+import subprocess
 import textwrap
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +11,7 @@ from chaosprobe.probes.builder import (
     MUSL_TARGET,
     ProbeBuilderError,
     RustProbeBuilder,
+    _port_accepts,
     _require_tool,
     _run_cmd,
     patch_probe_images,
@@ -256,6 +259,190 @@ class TestBuildAll:
 
         # scenario_name defaults to directory name
         mock_image.assert_called_once_with("p", "/tmp/p", "my-scenario")
+
+
+# ── Push-tunnel tests ─────────────────────────────────────────
+
+
+class TestPushTunnel:
+    @patch("chaosprobe.probes.builder.subprocess.run")
+    @patch("chaosprobe.probes.builder._run_cmd")
+    def test_push_image_retags_through_localhost_tunnel(self, mock_run_cmd, mock_sub_run):
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        b._push_host = "127.0.0.1:45000"
+        b._push_image("192.168.56.11:30500/sc-check:abc123")
+
+        tag_cmd = mock_run_cmd.call_args_list[0][0][0]
+        push_cmd = mock_run_cmd.call_args_list[1][0][0]
+        # re-addressed to localhost; the repo:tag is preserved
+        assert tag_cmd == [
+            "docker",
+            "tag",
+            "192.168.56.11:30500/sc-check:abc123",
+            "127.0.0.1:45000/sc-check:abc123",
+        ]
+        assert push_cmd == ["docker", "push", "127.0.0.1:45000/sc-check:abc123"]
+        # temporary localhost tag is cleaned up
+        assert mock_sub_run.call_args[0][0] == ["docker", "rmi", "127.0.0.1:45000/sc-check:abc123"]
+
+    @patch("chaosprobe.probes.builder._run_cmd")
+    def test_push_image_direct_when_no_tunnel(self, mock_run_cmd):
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        b._push_image("192.168.56.11:30500/sc-check:abc123")
+        assert mock_run_cmd.call_count == 1
+        assert mock_run_cmd.call_args[0][0] == [
+            "docker",
+            "push",
+            "192.168.56.11:30500/sc-check:abc123",
+        ]
+
+    @patch("chaosprobe.probes.builder.time.sleep")
+    @patch("chaosprobe.probes.builder.time.time", side_effect=[1000.0, 1001.0, 1002.0])
+    @patch("chaosprobe.probes.builder._port_accepts", side_effect=[False, True])
+    @patch("chaosprobe.probes.builder.subprocess.Popen")
+    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/kubectl")
+    def test_open_tunnel_waits_until_ready(
+        self, mock_which, mock_popen, mock_acc, mock_time, mock_sleep
+    ):
+        proc = MagicMock()
+        proc.poll.return_value = None  # alive; reachable on the second check
+        mock_popen.return_value = proc
+
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        b._open_push_tunnel()
+        assert b._push_host is not None
+        mock_sleep.assert_called_once()  # waited one iteration before it came up
+
+    @patch("chaosprobe.probes.builder._port_accepts", return_value=True)
+    @patch("chaosprobe.probes.builder.subprocess.Popen")
+    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/kubectl")
+    def test_open_tunnel_forwards_registry_service(self, mock_which, mock_popen, mock_accepts):
+        proc = MagicMock()
+        proc.poll.return_value = None
+        mock_popen.return_value = proc
+
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        b._open_push_tunnel()
+
+        assert b._push_host is not None and b._push_host.startswith("127.0.0.1:")
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[:4] == ["kubectl", "port-forward", "-n", "registry"]
+        assert "svc/registry" in cmd
+
+        b._close_push_tunnel()
+        assert b._push_host is None and b._tunnel is None
+
+    @patch("chaosprobe.probes.builder._port_accepts", return_value=False)
+    @patch("chaosprobe.probes.builder.subprocess.Popen")
+    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/kubectl")
+    def test_open_tunnel_raises_when_forward_exits(self, mock_which, mock_popen, mock_accepts):
+        proc = MagicMock()
+        proc.poll.return_value = 1  # exited immediately
+        proc.stderr.read.return_value = b"error: services 'registry' not found"
+        mock_popen.return_value = proc
+
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        with pytest.raises(ProbeBuilderError, match="port-forward failed"):
+            b._open_push_tunnel()
+
+    @patch("chaosprobe.probes.builder.time.sleep")
+    @patch("chaosprobe.probes.builder.time.time", side_effect=[1000.0, 1031.0])
+    @patch("chaosprobe.probes.builder._port_accepts", return_value=False)
+    @patch("chaosprobe.probes.builder.subprocess.Popen")
+    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/kubectl")
+    def test_open_tunnel_times_out(self, mock_which, mock_popen, mock_acc, mock_time, mock_sleep):
+        proc = MagicMock()
+        proc.poll.return_value = None  # stays alive but never reachable
+        mock_popen.return_value = proc
+
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        with pytest.raises(ProbeBuilderError, match="did not become ready"):
+            b._open_push_tunnel()
+
+    def test_close_tunnel_kills_on_wait_timeout(self):
+        b = RustProbeBuilder(push=True)
+        proc = MagicMock()
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="kubectl", timeout=5)
+        b._tunnel = proc
+        b._close_push_tunnel()
+        proc.kill.assert_called_once()
+        assert b._tunnel is None
+
+    @patch("chaosprobe.probes.builder.subprocess.run")
+    @patch("chaosprobe.probes.builder.time.sleep")
+    @patch("chaosprobe.probes.builder._run_cmd")
+    def test_push_image_retries_then_succeeds(self, mock_run_cmd, mock_sleep, mock_sub_run):
+        # tag ok; push fails once, then succeeds
+        mock_run_cmd.side_effect = [None, ProbeBuilderError("net"), None]
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        b._push_host = "127.0.0.1:45000"
+        b._push_image("192.168.56.11:30500/sc-check:abc", retries=3)
+        assert mock_run_cmd.call_count == 3  # 1 tag + 2 push attempts
+        mock_sleep.assert_called_once()
+
+    @patch("chaosprobe.probes.builder.subprocess.run")
+    @patch("chaosprobe.probes.builder.time.sleep")
+    @patch("chaosprobe.probes.builder._run_cmd")
+    def test_push_image_raises_after_retries(self, mock_run_cmd, mock_sleep, mock_sub_run):
+        mock_run_cmd.side_effect = [None] + [
+            ProbeBuilderError("net")
+        ] * 3  # tag ok, all pushes fail
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        b._push_host = "127.0.0.1:45000"
+        with pytest.raises(ProbeBuilderError, match="net"):
+            b._push_image("192.168.56.11:30500/sc-check:abc", retries=3)
+
+    @patch("chaosprobe.probes.builder._run_cmd")
+    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/docker")
+    def test_build_image_pushes_when_enabled(self, mock_which, mock_run, tmp_path):
+        binary = tmp_path / "p"
+        binary.write_bytes(b"bin")
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        with patch.object(b, "_push_image") as mock_push:
+            b.build_image("p", str(binary), "sc")
+        assert mock_push.call_count == 2  # the hash tag + :latest
+
+    @patch.object(RustProbeBuilder, "_close_push_tunnel")
+    @patch.object(RustProbeBuilder, "_open_push_tunnel")
+    @patch.object(RustProbeBuilder, "build_image", return_value="192.168.56.11:30500/sc-p:abc")
+    @patch.object(RustProbeBuilder, "compile_probe")
+    @patch.object(RustProbeBuilder, "discover_probes")
+    def test_build_all_opens_and_closes_tunnel_when_pushing(
+        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, tmp_path
+    ):
+        mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
+        mock_comp.return_value = str(tmp_path / "p")
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        b.build_all(str(tmp_path))
+        mock_open.assert_called_once()
+        mock_close.assert_called_once()
+
+    @patch.object(RustProbeBuilder, "_close_push_tunnel")
+    @patch.object(RustProbeBuilder, "_open_push_tunnel")
+    @patch.object(RustProbeBuilder, "build_image", side_effect=ProbeBuilderError("push failed"))
+    @patch.object(RustProbeBuilder, "compile_probe")
+    @patch.object(RustProbeBuilder, "discover_probes")
+    def test_build_all_closes_tunnel_even_on_failure(
+        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, tmp_path
+    ):
+        mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
+        mock_comp.return_value = str(tmp_path / "p")
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        with pytest.raises(ProbeBuilderError, match="failed to build"):
+            b.build_all(str(tmp_path))
+        mock_close.assert_called_once()  # tunnel torn down via finally despite the failure
+
+    def test_port_accepts_open_and_closed(self):
+        # An open listening socket is accepted; a closed port is not.
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        open_port = srv.getsockname()[1]
+        try:
+            assert _port_accepts(open_port) is True
+        finally:
+            srv.close()
+        assert _port_accepts(open_port) is False  # now closed
 
 
 # ── Patching tests ────────────────────────────────────────────

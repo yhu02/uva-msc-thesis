@@ -11,8 +11,10 @@ Supported layouts:
 
 import hashlib
 import shutil
+import socket
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,8 +27,35 @@ from chaosprobe.probes.templates import (
 # caller resolves and passes in; ChaosProbe does not use any external registry.
 LOCAL_IMAGE_PREFIX = "chaosprobe"
 
+# The in-cluster registry Service (installed by `chaosprobe init`). Pushes go
+# through a `kubectl port-forward` to this Service rather than dialing the
+# registry's NodePort directly, so the build host only needs kubectl access —
+# not a network route to the cluster's node network (which breaks on Docker
+# Desktop, remote build hosts, etc.).
+REGISTRY_SERVICE = "registry"
+REGISTRY_NAMESPACE = "registry"
+REGISTRY_TARGET_PORT = 5000
+
 # Rust musl target for static Linux binaries
 MUSL_TARGET = "x86_64-unknown-linux-musl"
+
+
+def _free_local_port() -> int:
+    """Pick an unused localhost TCP port for the push tunnel."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _port_accepts(port: int) -> bool:
+    """True if 127.0.0.1:port accepts a TCP connection."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        try:
+            s.connect(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
 
 
 class ProbeBuilderError(Exception):
@@ -41,9 +70,14 @@ class RustProbeBuilder:
             ``chaosprobe`` prefix for build-only use. To push to the cluster,
             pass the in-cluster registry address (``<node-ip>:<nodePort>``),
             which the caller resolves via ``resolve_probe_registry``.
-        push: If True, push the built image to *registry*. The in-cluster
-            registry is an unauthenticated, insecure HTTP registry, so no
-            ``docker login`` is performed.
+        push: If True, push the built image to the in-cluster registry. The
+            push goes through a ``kubectl port-forward`` tunnel to ``localhost``
+            (so the build host needs only kubectl access, not a route to the
+            registry's NodePort), and ``127.0.0.0/8`` is insecure-by-default in
+            docker, so no ``docker login`` or build-host registry trust is
+            needed. The image is *tagged* with *registry* (the node-reachable
+            address cmdProbe pods pull from); only the bytes travel via the
+            tunnel.
     """
 
     def __init__(
@@ -53,6 +87,8 @@ class RustProbeBuilder:
     ):
         self.registry = registry.rstrip("/")
         self.push = push
+        self._push_host: Optional[str] = None  # 127.0.0.1:<port> while tunnel is open
+        self._tunnel: Optional[subprocess.Popen] = None
 
     # ── Discovery ─────────────────────────────────────────
 
@@ -247,29 +283,87 @@ class RustProbeBuilder:
     def _push_image(self, image_tag: str, retries: int = 3) -> None:
         """Push an image to the in-cluster registry with retries.
 
-        The in-cluster registry is unauthenticated insecure HTTP, so no
-        ``docker login`` is needed; the build host's docker must trust it
-        as an insecure registry (see chaosprobe/manifests/README.md).
+        Pushes through the localhost port-forward tunnel opened by
+        :meth:`build_all`: the image is re-tagged to ``127.0.0.1:<port>/<repo>``
+        and that tag is pushed (then removed). The original *image_tag* keeps the
+        node-reachable address that cmdProbe pods pull from. With no tunnel open
+        (e.g. a direct ``probe build --push -r``), pushes *image_tag* as-is.
         """
-        import time as _time
+        if self._push_host:
+            # Strip the registry host, keep "<repo>:<tag>", re-address to localhost.
+            repo_tag = image_tag.split("/", 1)[1]
+            push_ref = f"{self._push_host}/{repo_tag}"
+            _run_cmd(["docker", "tag", image_tag, push_ref], f"Failed to tag {push_ref}")
+        else:
+            push_ref = image_tag
 
-        for attempt in range(retries):
-            try:
-                _run_cmd(
-                    ["docker", "push", image_tag],
-                    f"Failed to push image {image_tag}",
-                )
+        try:
+            for attempt in range(retries):
+                try:
+                    _run_cmd(["docker", "push", push_ref], f"Failed to push image {push_ref}")
+                    return
+                except ProbeBuilderError:
+                    if attempt < retries - 1:
+                        wait = 5 * (attempt + 1)
+                        print(
+                            f"    Push failed (attempt {attempt + 1}/{retries}), "
+                            f"retrying in {wait}s..."
+                        )
+                        time.sleep(wait)
+                    else:
+                        raise
+        finally:
+            if self._push_host:
+                # Best-effort cleanup of the temporary localhost tag.
+                subprocess.run(["docker", "rmi", push_ref], capture_output=True)
+
+    def _open_push_tunnel(self) -> None:
+        """Open a `kubectl port-forward` to the in-cluster registry Service.
+
+        Sets ``self._push_host`` to ``127.0.0.1:<port>`` once reachable. Uses
+        whatever kubeconfig is in the environment (the caller sets KUBECONFIG).
+        """
+        _require_tool("kubectl", "kubectl not found — needed to reach the in-cluster registry.")
+        port = _free_local_port()
+        self._tunnel = subprocess.Popen(
+            [
+                "kubectl",
+                "port-forward",
+                "-n",
+                REGISTRY_NAMESPACE,
+                f"svc/{REGISTRY_SERVICE}",
+                f"{port}:{REGISTRY_TARGET_PORT}",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if _port_accepts(port):
+                self._push_host = f"127.0.0.1:{port}"
                 return
-            except ProbeBuilderError:
-                if attempt < retries - 1:
-                    wait = 5 * (attempt + 1)
-                    print(
-                        f"    Push failed (attempt {attempt + 1}/{retries}), "
-                        f"retrying in {wait}s..."
-                    )
-                    _time.sleep(wait)
-                else:
-                    raise
+            if self._tunnel.poll() is not None:
+                err = self._tunnel.stderr.read().decode().strip() if self._tunnel.stderr else ""
+                self._close_push_tunnel()
+                raise ProbeBuilderError(f"registry port-forward failed: {err or 'exited early'}")
+            time.sleep(0.5)
+        self._close_push_tunnel()
+        raise ProbeBuilderError(
+            "registry port-forward did not become ready. Is the in-cluster "
+            "registry installed? Run `chaosprobe init`."
+        )
+
+    def _close_push_tunnel(self) -> None:
+        """Tear down the push tunnel (idempotent)."""
+        if self._tunnel is not None:
+            self._tunnel.terminate()
+            try:
+                self._tunnel.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._tunnel.kill()
+            self._tunnel = None
+        self._push_host = None
 
     def _image_prefix(self) -> str:
         """Image prefix used for tagging — just the registry/prefix.
@@ -311,18 +405,24 @@ class RustProbeBuilder:
         failures: List[Tuple[str, str]] = []
 
         with tempfile.TemporaryDirectory(prefix="chaosprobe-build-") as tmp:
-            for probe in probes:
-                name = probe["name"]
-                print(f"  Building Rust probe '{name}' ({probe['kind']})...")
+            # One push tunnel for the whole batch (only needed when pushing).
+            if self.push:
+                self._open_push_tunnel()
+            try:
+                for probe in probes:
+                    name = probe["name"]
+                    print(f"  Building Rust probe '{name}' ({probe['kind']})...")
 
-                try:
-                    binary_path = self.compile_probe(probe, tmp)
-                    image_tag = self.build_image(name, binary_path, scenario_name)
-                    built_images[name] = image_tag
-                    print(f"    → {image_tag}")
-                except (ProbeBuilderError, Exception) as exc:
-                    print(f"    ERROR: probe '{name}' failed: {exc}")
-                    failures.append((name, str(exc)))
+                    try:
+                        binary_path = self.compile_probe(probe, tmp)
+                        image_tag = self.build_image(name, binary_path, scenario_name)
+                        built_images[name] = image_tag
+                        print(f"    → {image_tag}")
+                    except (ProbeBuilderError, Exception) as exc:
+                        print(f"    ERROR: probe '{name}' failed: {exc}")
+                        failures.append((name, str(exc)))
+            finally:
+                self._close_push_tunnel()
 
         if failures:
             # Fail-fast: silent drops produce experiments that *look* complete

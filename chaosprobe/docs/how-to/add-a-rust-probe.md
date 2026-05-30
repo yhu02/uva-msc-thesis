@@ -47,10 +47,11 @@ external registry). `chaosprobe run` resolves its address automatically and
 pushes there; if it isn't installed, `run` fails with a clear message telling
 you to run `chaosprobe init`.
 
-The in-cluster registry is an unauthenticated, insecure HTTP registry, so it
-needs no `docker login` — but each node's containerd **and** your build-host
-docker need a one-time "insecure registry" trust step (this is node/host config
-outside the Kubernetes API). The full runbook is in
+`run` pushes through a `kubectl port-forward` tunnel to the registry, so **the
+build host needs no docker config** — just kubectl access (the push goes to
+`127.0.0.1`, insecure-by-default, no `docker login`). The one manual step is a
+one-time "insecure registry" trust on **each node's containerd**, so the kubelet
+can *pull* the images over plain HTTP. The full runbook is in
 [`../../manifests/README.md`](../../manifests/README.md).
 
 The standalone `probe build` command builds local images by default; to push to
