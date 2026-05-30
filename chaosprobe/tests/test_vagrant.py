@@ -17,7 +17,7 @@ class TestLibvirtOnly:
     def test_get_vagrant_env_forces_libvirt_even_when_not_ready(self):
         setup = _setup()
         # Even when libvirt isn't reported ready, the provider is still forced —
-        # vagrant must never fall back to its built-in VirtualBox default.
+        # vagrant must never fall back to its built-in default provider.
         with patch.object(setup, "_check_libvirt", return_value={"all_ready": False}):
             env = setup._get_vagrant_env()
         assert env["VAGRANT_DEFAULT_PROVIDER"] == "libvirt"
