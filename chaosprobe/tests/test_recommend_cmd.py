@@ -219,7 +219,49 @@ class TestRecommendCli:
         path = self._write(tmp_path, {"x": [{"nope": 1}]})
         result = CliRunner().invoke(recommend, ["-s", path])
         assert result.exit_code == 0
-        assert "No strategy has data" in result.output
+        assert "No placement strategy has data" in result.output
+
+    def test_excludes_baseline_control_by_default(self, tmp_path):
+        # baseline (no-real-chaos control) has the top score but must not be
+        # recommended as a placement; the real leader 'spread' wins instead.
+        path = self._write(
+            tmp_path,
+            {
+                "baseline": _resilience([97, 98, 99]),
+                "spread": _resilience([80, 81, 82]),
+                "colocate": _resilience([40, 41, 42]),
+            },
+        )
+        result = CliRunner().invoke(recommend, ["-s", path])
+        assert result.exit_code == 0
+        assert "Recommended: spread" in result.output
+        assert "excluded control strategy: baseline" in result.output
+        # 'baseline' appears only in the exclusion note, never as a ranking row.
+        assert result.output.count("baseline") == 1
+
+    def test_include_control_flag_includes_baseline(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"baseline": _resilience([97, 98, 99]), "spread": _resilience([80, 81, 82])},
+        )
+        result = CliRunner().invoke(recommend, ["-s", path, "--include-control"])
+        assert result.exit_code == 0
+        assert "Recommended: baseline" in result.output
+        assert "excluded control" not in result.output
+
+    def test_json_excluded_controls_field(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"baseline": _resilience([97, 98, 99]), "spread": _resilience([80, 81, 82])},
+        )
+        default = json.loads(CliRunner().invoke(recommend, ["-s", path, "--json"]).output)
+        assert default["excludedControls"] == ["baseline"]
+        assert default["recommended"] == "spread"
+        included = json.loads(
+            CliRunner().invoke(recommend, ["-s", path, "--json", "--include-control"]).output
+        )
+        assert included["excludedControls"] == []
+        assert included["recommended"] == "baseline"
 
     def test_missing_summary_file_errors(self):
         result = CliRunner().invoke(recommend, ["-s", "/nonexistent/summary.json"])
