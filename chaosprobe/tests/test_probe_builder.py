@@ -265,36 +265,29 @@ class TestBuildAll:
 
 
 class TestPushTunnel:
-    @patch("chaosprobe.probes.builder.subprocess.run")
     @patch("chaosprobe.probes.builder._run_cmd")
-    def test_push_image_retags_through_localhost_tunnel(self, mock_run_cmd, mock_sub_run):
+    def test_push_image_saves_and_cranes_through_tunnel(self, mock_run_cmd):
         b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
         b._push_host = "127.0.0.1:45000"
         b._push_image("192.168.56.11:30500/sc-check:abc123")
 
-        tag_cmd = mock_run_cmd.call_args_list[0][0][0]
+        save_cmd = mock_run_cmd.call_args_list[0][0][0]
         push_cmd = mock_run_cmd.call_args_list[1][0][0]
-        # re-addressed to localhost; the repo:tag is preserved
-        assert tag_cmd == [
-            "docker",
-            "tag",
-            "192.168.56.11:30500/sc-check:abc123",
-            "127.0.0.1:45000/sc-check:abc123",
-        ]
-        assert push_cmd == ["docker", "push", "127.0.0.1:45000/sc-check:abc123"]
-        # temporary localhost tag is cleaned up
-        assert mock_sub_run.call_args[0][0] == ["docker", "rmi", "127.0.0.1:45000/sc-check:abc123"]
+        # docker save the built image, then daemon-less crane push to the tunnel
+        assert save_cmd[:3] == ["docker", "save", "192.168.56.11:30500/sc-check:abc123"]
+        assert push_cmd[:3] == ["crane", "push", "--insecure"]
+        # re-addressed to the localhost tunnel; repo path preserved
+        assert push_cmd[-1] == "127.0.0.1:45000/sc-check:abc123"
 
     @patch("chaosprobe.probes.builder._run_cmd")
     def test_push_image_direct_when_no_tunnel(self, mock_run_cmd):
         b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
         b._push_image("192.168.56.11:30500/sc-check:abc123")
-        assert mock_run_cmd.call_count == 1
-        assert mock_run_cmd.call_args[0][0] == [
-            "docker",
-            "push",
-            "192.168.56.11:30500/sc-check:abc123",
-        ]
+        # docker save + crane push straight to image_tag (no tunnel re-address)
+        assert mock_run_cmd.call_args_list[0][0][0][:2] == ["docker", "save"]
+        push_cmd = mock_run_cmd.call_args_list[1][0][0]
+        assert push_cmd[:3] == ["crane", "push", "--insecure"]
+        assert push_cmd[-1] == "192.168.56.11:30500/sc-check:abc123"
 
     @patch("chaosprobe.probes.builder.time.sleep")
     @patch("chaosprobe.probes.builder.time.time", side_effect=[1000.0, 1001.0, 1002.0])
@@ -402,13 +395,14 @@ class TestPushTunnel:
             b.build_image("p", str(binary), "sc")
         assert mock_push.call_count == 2  # the hash tag + :latest
 
+    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/crane")
     @patch.object(RustProbeBuilder, "_close_push_tunnel")
     @patch.object(RustProbeBuilder, "_open_push_tunnel")
     @patch.object(RustProbeBuilder, "build_image", return_value="192.168.56.11:30500/sc-p:abc")
     @patch.object(RustProbeBuilder, "compile_probe")
     @patch.object(RustProbeBuilder, "discover_probes")
     def test_build_all_opens_and_closes_tunnel_when_pushing(
-        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, tmp_path
+        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, mock_which, tmp_path
     ):
         mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
         mock_comp.return_value = str(tmp_path / "p")
@@ -417,13 +411,14 @@ class TestPushTunnel:
         mock_open.assert_called_once()
         mock_close.assert_called_once()
 
+    @patch("chaosprobe.probes.builder.shutil.which", return_value="/usr/bin/crane")
     @patch.object(RustProbeBuilder, "_close_push_tunnel")
     @patch.object(RustProbeBuilder, "_open_push_tunnel")
     @patch.object(RustProbeBuilder, "build_image", side_effect=ProbeBuilderError("push failed"))
     @patch.object(RustProbeBuilder, "compile_probe")
     @patch.object(RustProbeBuilder, "discover_probes")
     def test_build_all_closes_tunnel_even_on_failure(
-        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, tmp_path
+        self, mock_disc, mock_comp, mock_img, mock_open, mock_close, mock_which, tmp_path
     ):
         mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
         mock_comp.return_value = str(tmp_path / "p")
@@ -431,6 +426,14 @@ class TestPushTunnel:
         with pytest.raises(ProbeBuilderError, match="failed to build"):
             b.build_all(str(tmp_path))
         mock_close.assert_called_once()  # tunnel torn down via finally despite the failure
+
+    @patch("chaosprobe.probes.builder.shutil.which", return_value=None)
+    @patch.object(RustProbeBuilder, "discover_probes")
+    def test_build_all_requires_crane_when_pushing(self, mock_disc, mock_which, tmp_path):
+        mock_disc.return_value = [{"name": "p", "path": "/x.rs", "kind": "single_file"}]
+        b = RustProbeBuilder(registry="192.168.56.11:30500", push=True)
+        with pytest.raises(ProbeBuilderError, match="crane not found"):
+            b.build_all(str(tmp_path))
 
     def test_port_accepts_open_and_closed(self):
         # An open listening socket is accepted; a closed port is not.
