@@ -91,7 +91,8 @@ def _parse_execution_data(execution_data: Any) -> Dict[str, Any]:
                     verdicts[name] = "Pass" if "Pass" in status else "Fail"
 
         return {"verdicts": verdicts, "rawProbeStatuses": raw_statuses}
-    except Exception:
+    except Exception as exc:
+        logger.debug("failed to parse ChaosCenter executionData: %s", exc, exc_info=True)
         return {"verdicts": {}, "rawProbeStatuses": {}}
 
 

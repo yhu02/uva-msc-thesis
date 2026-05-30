@@ -177,3 +177,19 @@ class TestExtractProbeVerdictsBackcompat:
 
     def test_none_returns_empty_dict(self):
         assert _extract_probe_verdicts_from_execution_data(None) == {}
+
+
+def test_parse_execution_data_malformed_probestatuses_returns_empty():
+    """A structurally-invalid executionData (non-iterable probeStatuses)
+    is caught and degrades to an empty result rather than raising."""
+    data = {
+        "nodes": {
+            "n1": {
+                "chaosData": {
+                    "chaosResult": {"status": {"probeStatuses": 123}},
+                },
+            },
+        },
+    }
+    result = _parse_execution_data(data)
+    assert result == {"verdicts": {}, "rawProbeStatuses": {}}

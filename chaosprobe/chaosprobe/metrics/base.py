@@ -31,7 +31,8 @@ def find_ready_pod(core_api: Any, namespace: str, service_name: str) -> Optional
             label_selector=f"app={service_name}",
             field_selector="status.phase=Running",
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("pod listing failed: %s", exc, exc_info=True)
         return None
 
     for pod in pods.items:
@@ -60,7 +61,8 @@ def pod_has_shell(core_api: Any, namespace: str, pod_name: str) -> bool:
             tty=False,
         )
         return "ok" in out
-    except Exception:
+    except Exception as exc:
+        logger.debug("pod capability probe failed: %s", exc, exc_info=True)
         return False
 
 
@@ -80,7 +82,8 @@ def _pod_has_python3(core_api: Any, namespace: str, pod_name: str) -> bool:
             tty=False,
         )
         return "ok" in out
-    except Exception:
+    except Exception as exc:
+        logger.debug("pod capability probe failed: %s", exc, exc_info=True)
         return False
 
 
@@ -108,7 +111,8 @@ def find_probe_pod(
             namespace,
             field_selector="status.phase=Running",
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("pod listing failed: %s", exc, exc_info=True)
         return None
 
     _exclude = tuple(exclude_prefixes) if exclude_prefixes else ()
@@ -173,7 +177,8 @@ def find_probe_pods_per_node(
             namespace,
             field_selector="status.phase=Running",
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("pod listing failed: %s", exc, exc_info=True)
         return []
 
     _exclude = tuple(exclude_prefixes) if exclude_prefixes else ()
@@ -223,7 +228,8 @@ def find_all_probe_pods_with_node(
             namespace,
             field_selector="status.phase=Running",
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("pod listing failed: %s", exc, exc_info=True)
         return []
 
     _exclude = tuple(exclude_prefixes) if exclude_prefixes else ()
@@ -272,7 +278,8 @@ def find_all_probe_pods(
             namespace,
             field_selector="status.phase=Running",
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("pod listing failed: %s", exc, exc_info=True)
         return []
 
     _exclude = tuple(exclude_prefixes) if exclude_prefixes else ()
