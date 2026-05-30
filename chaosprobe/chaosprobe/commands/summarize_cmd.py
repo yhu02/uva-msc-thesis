@@ -121,8 +121,10 @@ def _render_strategy(name: str, sdata: Dict[str, Any]) -> List[str]:
         for reason in sorted(sched.keys()):
             d = sched[reason]
             lines.append(
-                f"    {reason:<20} total={d['total']} mean/iter={d['meanPerIteration']} "
-                f"max/iter={d['maxPerIteration']} (in {d['iterationsObserved']} iter)"
+                f"    {reason:<20} total={d.get('total', 0)} "
+                f"mean/iter={d.get('meanPerIteration', 0)} "
+                f"max/iter={d.get('maxPerIteration', 0)} "
+                f"(in {d.get('iterationsObserved', 0)} iter)"
             )
 
     # OOMKills / restarts.
@@ -151,8 +153,8 @@ def _render_strategy(name: str, sdata: Dict[str, Any]) -> List[str]:
         lines.append("  node pressure:")
         for cond, d in fired.items():
             lines.append(
-                f"    {cond:<20} iter={d['iterationsWithEvent']} "
-                f"total_events={d['totalNodeEvents']}"
+                f"    {cond:<20} iter={d.get('iterationsWithEvent', 0)} "
+                f"total_events={d.get('totalNodeEvents', 0)}"
             )
 
     # Tainted iterations.
