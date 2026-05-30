@@ -1,6 +1,7 @@
 """Tests for the load generation module."""
 
 import os
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -75,6 +76,16 @@ class TestLoadStats:
 
 class TestLocustRunner:
     """Tests for LocustRunner (unit tests, no actual Locust execution)."""
+
+    def test_stop_drain_stderr_failure_no_crash(self):
+        runner = LocustRunner(target_url="http://localhost:8080")
+        proc = MagicMock()
+        proc.poll.return_value = 0  # already exited — skip terminate path
+        proc.stderr.read.side_effect = OSError("broken pipe")
+        runner._process = proc
+        runner.stop()  # must swallow the drain failure, not raise
+        proc.stderr.read.assert_called_once()
+        proc.stderr.close.assert_not_called()  # read raised before close
 
     def test_get_locustfile_default(self):
         runner = LocustRunner(target_url="http://localhost:8080")

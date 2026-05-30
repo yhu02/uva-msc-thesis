@@ -10,6 +10,7 @@ rather than crashing the whole run.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import subprocess
@@ -17,6 +18,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, TypedDict
 
 from chaosprobe import __version__ as CHAOSPROBE_VERSION
+
+logger = logging.getLogger(__name__)
 
 _GIT_COMMAND_TIMEOUT = 5.0
 
@@ -85,7 +88,7 @@ def _kubernetes_server_info(core_api: Optional[Any]) -> Dict[str, Optional[str]]
         ver = version_api.get_code()
         info["serverVersion"] = getattr(ver, "git_version", None)
     except Exception:
-        pass
+        logger.debug("failed to read cluster server version", exc_info=True)
     try:
         nodes = core_api.list_node(limit=1)
         if nodes.items:
@@ -99,7 +102,7 @@ def _kubernetes_server_info(core_api: Optional[Any]) -> Dict[str, Optional[str]]
                 if os_image:
                     info["firstNodeOS"] = os_image
     except Exception:
-        pass
+        logger.debug("failed to read first-node info", exc_info=True)
     return info
 
 

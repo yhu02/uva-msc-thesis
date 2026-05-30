@@ -6,6 +6,7 @@ so the top-level orchestrator stays small and readable.
 
 from __future__ import annotations
 
+import logging
 import statistics
 import sys
 import time
@@ -20,6 +21,8 @@ from chaosprobe.orchestrator.preflight import (
     wait_for_healthy_deployments,
 )
 from chaosprobe.provisioner.setup import LitmusSetup
+
+logger = logging.getLogger(__name__)
 
 LOAD_TARGET_LOCAL_PORT = 8089
 
@@ -206,7 +209,7 @@ def _restart_unhealthy_infra(namespace: str) -> None:
                             click.echo(f"  {dep_name}: recovered")
                             break
                     except Exception:
-                        pass
+                        logger.debug("deployment readiness re-check failed", exc_info=True)
                 else:
                     click.echo(f"  WARNING: {dep_name} did not recover after restart", err=True)
     except Exception as e:
@@ -244,7 +247,7 @@ def _setup_neo4j_pf(neo4j_uri: Optional[str]) -> None:
             host, port_str = parsed.rsplit(":", 1)
             port = int(port_str)
     except Exception:
-        pass
+        logger.debug("failed to parse Neo4j URI host:port; using defaults", exc_info=True)
     if pf.check_port(host, port):
         click.echo(f"  Neo4j bolt:  {host}:{port} reachable")
         return
@@ -732,7 +735,7 @@ def write_run_results(
             if dash_url:
                 click.echo(f"  ChaosCenter dashboard: {dash_url}")
     except Exception:
-        pass
+        logger.debug("failed to resolve ChaosCenter dashboard URL", exc_info=True)
 
     click.echo("")
 

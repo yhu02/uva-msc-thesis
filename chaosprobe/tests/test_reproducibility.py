@@ -92,6 +92,13 @@ class TestKubernetesServerInfo:
         out = _kubernetes_server_info(core)
         assert out["containerRuntimeOnFirstNode"] is None
 
+    def test_server_version_failure_no_crash(self):
+        core = MagicMock()
+        core.list_node.return_value = MagicMock(items=[])
+        with patch("kubernetes.client.VersionApi", side_effect=Exception("boom")):
+            out = _kubernetes_server_info(core)
+        assert out["serverVersion"] is None
+
 
 class TestCNIHint:
     def test_none_core_api_returns_none(self):

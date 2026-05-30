@@ -1,5 +1,6 @@
 """Automatic setup and installation of LitmusChaos and dependencies."""
 
+import logging
 import os
 import platform
 import shutil
@@ -16,6 +17,8 @@ from chaosprobe.provisioner.chaoscenter import _ChaosCenterMixin
 from chaosprobe.provisioner.chaoscenter_api import _ChaosCenterAPIMixin
 from chaosprobe.provisioner.components import _ComponentsMixin
 from chaosprobe.provisioner.vagrant import _VagrantMixin
+
+logger = logging.getLogger(__name__)
 
 
 class UnknownExperimentType(ValueError):
@@ -207,7 +210,7 @@ end
                 info["is_local"] = any(ind in server.lower() for ind in local_indicators)
 
         except Exception:
-            pass
+            logger.debug("failed to classify cluster locality", exc_info=True)
 
         return info
 

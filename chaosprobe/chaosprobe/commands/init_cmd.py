@@ -1,5 +1,6 @@
 """CLI command: chaosprobe init — install all infrastructure on a Kubernetes cluster."""
 
+import logging
 import sys
 
 import click
@@ -9,6 +10,8 @@ from chaosprobe.orchestrator.preflight import check_pods_ready
 from chaosprobe.probes.builder import ensure_crane
 from chaosprobe.provisioner.components import get_registry_address
 from chaosprobe.provisioner.setup import LitmusSetup
+
+logger = logging.getLogger(__name__)
 
 
 def _pf_ensure(svc: str, ns: str, ports: list[str], host: str, port: int) -> bool:
@@ -199,7 +202,7 @@ def init(namespace: str, skip_litmus: bool, skip_dashboard: bool, skip_registry:
                     setup.install_metrics_server(wait=True)
                     return "metrics-server", "repaired (added --kubelet-insecure-tls)"
             except Exception:
-                pass
+                logger.debug("failed to inspect metrics-server args", exc_info=True)
             return "metrics-server", "already installed"
         if setup.install_metrics_server(wait=True):
             return "metrics-server", "installed"

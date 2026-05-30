@@ -4,12 +4,15 @@ Verifies node readiness, cleans up stale resources, checks
 infrastructure pods, and waits for deployment health.
 """
 
+import logging
 import time
 from typing import Any, Dict, List
 
 import click
 
 from chaosprobe.k8s import ensure_k8s_config
+
+logger = logging.getLogger(__name__)
 
 # Litmus infrastructure deployments to exclude from readiness checks
 LITMUS_INFRA_DEPLOYMENTS = frozenset(
@@ -218,7 +221,7 @@ def _remediate_unhealthy_deployments(
                 try:
                     core_api.delete_namespaced_pod(pod_name, namespace, grace_period_seconds=0)
                 except Exception:
-                    pass
+                    logger.debug("failed to delete stuck pod %s", pod_name, exc_info=True)
         else:
             # No stuck pods but deployment isn't ready — trigger rollout restart
             click.echo(f"    Triggering rollout restart for {dep_name}")

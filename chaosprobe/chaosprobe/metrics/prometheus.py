@@ -702,7 +702,7 @@ class ContinuousPrometheusProber(ContinuousProberBase):
             proc.terminate()
             proc.wait(timeout=5)
         except Exception:
-            pass
+            logger.debug("failed to terminate Prometheus port-forward after timeout", exc_info=True)
         return None
 
     def _cleanup_port_forwards(self) -> None:
@@ -716,7 +716,7 @@ class ContinuousPrometheusProber(ContinuousProberBase):
                 try:
                     proc.wait(timeout=5)
                 except Exception:
-                    pass
+                    logger.debug("port-forward did not exit after kill", exc_info=True)
             except Exception:
-                pass
+                logger.debug("failed to terminate port-forward process", exc_info=True)
         self._port_forward_procs.clear()

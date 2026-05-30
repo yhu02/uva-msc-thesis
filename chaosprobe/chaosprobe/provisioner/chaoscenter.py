@@ -6,6 +6,7 @@ and the ``ensure_chaoscenter_configured`` orchestrator.
 Low-level API / GraphQL helpers live in ``chaoscenter_api.py``.
 """
 
+import logging
 import os
 import subprocess
 import tempfile
@@ -16,6 +17,8 @@ from urllib.parse import urlparse
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.provisioner._setup_base import _LitmusSetupBase
+
+logger = logging.getLogger(__name__)
 
 
 def _scheme_and_host(url: str) -> str:
@@ -196,7 +199,7 @@ class _ChaosCenterMixin(_LitmusSetupBase):
                     print(msg)
                     last_status = msg
             except Exception:
-                pass
+                logger.debug("failed to read ChaosCenter pod statuses", exc_info=True)
             time.sleep(10)
         return False
 
@@ -229,7 +232,7 @@ class _ChaosCenterMixin(_LitmusSetupBase):
                     }
                 )
         except Exception:
-            pass
+            logger.debug("failed to list ChaosCenter pods for status", exc_info=True)
 
         result["frontend_url"] = self.get_dashboard_url()
         return result
@@ -289,7 +292,7 @@ class _ChaosCenterMixin(_LitmusSetupBase):
                         address: Optional[str] = addr.address
                         return address
         except Exception:
-            pass
+            logger.debug("failed to read node internal IP", exc_info=True)
         return None
 
     def _ensure_litmus_crds(self) -> bool:
@@ -531,7 +534,7 @@ spec:
                             },
                         )
                     except Exception:
-                        pass
+                        logger.debug("failed to annotate deployment for CRD repair", exc_info=True)
                 # Brief pause for new pods to start
                 time.sleep(10)
             # Ensure subscriber deployment exists — it may have been
@@ -597,7 +600,7 @@ spec:
                         print("  ChaosCenter: subscriber pod ready")
                         break
                 except Exception:
-                    pass
+                    logger.debug("failed to poll subscriber pod readiness", exc_info=True)
                 time.sleep(5)
             else:
                 # Collect diagnostic info
@@ -633,7 +636,7 @@ spec:
                         print("  ChaosCenter: subscriber pod ready")
                         break
                 except Exception:
-                    pass
+                    logger.debug("failed to poll subscriber pod readiness", exc_info=True)
                 time.sleep(5)
             else:
                 diag = self._subscriber_diagnostics(namespace)
