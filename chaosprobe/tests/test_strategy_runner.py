@@ -866,6 +866,26 @@ class TestAggregateStrategy:
         )
         assert result is False
 
+    def test_multi_iteration_recovery_mean_without_max(self):
+        # Recovery summaries with meanRecovery_ms but no maxRecovery_ms make
+        # aggregate_iterations set meanRecoveryTime_ms while maxRecoveryTime_ms
+        # stays None — the echo must not crash formatting a None max.
+        def _mean_only(verdict, score):
+            it = _iteration(verdict, score)
+            it["metrics"]["recovery"]["summary"] = {"meanRecovery_ms": 1000.0}
+            return it
+
+        sr = {}
+        result = _aggregate_strategy(
+            SimpleNamespace(iterations=2),
+            "spread",
+            sr,
+            [_mean_only("PASS", 80), _mean_only("PASS", 90)],
+        )
+        assert result is True
+        assert sr["aggregated"]["meanRecoveryTime_ms"] is not None
+        assert sr["aggregated"]["maxRecoveryTime_ms"] is None
+
 
 def _neo4j_ctx(store):
     return SimpleNamespace(
