@@ -5,7 +5,7 @@ from pathlib import Path
 
 import click
 
-from chaosprobe.probes.builder import DEFAULT_REGISTRY
+from chaosprobe.probes.builder import LOCAL_IMAGE_PREFIX
 
 
 @click.group()
@@ -105,12 +105,13 @@ def probe_init(name: str, scenario: str, single_file: bool):
 @click.option(
     "--registry",
     "-r",
-    default=DEFAULT_REGISTRY,
-    envvar="CHAOSPROBE_REGISTRY",
+    default=LOCAL_IMAGE_PREFIX,
     show_default=True,
     help=(
-        "Container registry host (env: CHAOSPROBE_REGISTRY)."
-        " The image namespace comes from CHAOSPROBE_REGISTRY_USER."
+        "Image prefix for local builds. To push to the cluster, pass the "
+        "in-cluster registry address (<node-ip>:<nodePort>) with --push. "
+        "`chaosprobe run` resolves and pushes to the in-cluster registry "
+        "automatically."
     ),
 )
 @click.option(
@@ -128,7 +129,7 @@ def probe_build(scenario: str, registry: str, push: bool):
     \b
     Examples:
       chaosprobe probe build scenarios/online-boutique
-      chaosprobe probe build scenarios/nginx -r ghcr.io/user --push
+      chaosprobe probe build scenarios/nginx -r 192.168.56.11:30500 --push
     """
     from chaosprobe.probes.builder import ProbeBuilderError, RustProbeBuilder
 

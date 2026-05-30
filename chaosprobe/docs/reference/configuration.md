@@ -11,9 +11,10 @@ the project root. **Shell-exported variables take precedence** over `.env`.
 | `NEO4J_USER` | `neo4j` | Neo4j username. |
 | `NEO4J_PASSWORD` | `chaosprobe` | Neo4j password. |
 | `KUBECONFIG` | `~/.kube/config` | Path to the kubeconfig ChaosProbe acts against. |
-| `CHAOSPROBE_REGISTRY` | in-cluster registry, else `ghcr.io` | Registry host for Rust probe images. Unset, `run` uses the in-cluster registry from `chaosprobe init` if present, otherwise `ghcr.io`. |
-| `CHAOSPROBE_REGISTRY_USER` | *(empty)* | Registry namespace / login user (e.g. `yhu02`). |
-| `CHAOSPROBE_REGISTRY_PASSWORD` | *(empty)* | Registry login token/password. Set together with `CHAOSPROBE_REGISTRY_USER` to `docker login` an authenticated registry (e.g. GHCR) before pushing probe images. The default in-cluster registry needs neither. |
+
+Rust probe images use the **in-cluster registry exclusively** (installed by
+`chaosprobe init`); there is no external-registry configuration. See
+[Add a Rust probe](../how-to/add-a-rust-probe.md).
 
 ## Rust probe runtime variables
 

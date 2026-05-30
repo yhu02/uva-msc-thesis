@@ -10,7 +10,6 @@ Supported layouts:
 """
 
 import hashlib
-import os
 import shutil
 import subprocess
 import tempfile
@@ -21,11 +20,10 @@ from chaosprobe.probes.templates import (
     generate_dockerfile,
 )
 
-# Default container registry host. Override with the CHAOSPROBE_REGISTRY
-# env var or the --registry flag on `chaosprobe probe build`. The image
-# namespace comes from CHAOSPROBE_REGISTRY_USER, so the final image path
-# is ``{registry}/{user}/{scenario}-{probe}:{hash}``.
-DEFAULT_REGISTRY = "ghcr.io"
+# Default image prefix for local (build-only) images. Probe images destined
+# for the cluster are pushed to the in-cluster registry, whose address the
+# caller resolves and passes in; ChaosProbe does not use any external registry.
+LOCAL_IMAGE_PREFIX = "chaosprobe"
 
 # Rust musl target for static Linux binaries
 MUSL_TARGET = "x86_64-unknown-linux-musl"
@@ -39,25 +37,22 @@ class RustProbeBuilder:
     """Compile Rust probes and package them as container images.
 
     Args:
-        registry: Container registry host (e.g. ``ghcr.io``). May also be
-            a host+namespace string like ``ghcr.io/some-org`` to override
-            the namespace; in that case ``user`` is ignored for the image
-            path (but still used for ``docker login``).
-        user: Registry namespace and login user (e.g. ``yhu02``). Falls
-            back to the ``CHAOSPROBE_REGISTRY_USER`` env var.
-        push: If True, push the built image to the remote registry.
+        registry: Image prefix / registry. Defaults to the local
+            ``chaosprobe`` prefix for build-only use. To push to the cluster,
+            pass the in-cluster registry address (``<node-ip>:<nodePort>``),
+            which the caller resolves via ``resolve_probe_registry``.
+        push: If True, push the built image to *registry*. The in-cluster
+            registry is an unauthenticated, insecure HTTP registry, so no
+            ``docker login`` is performed.
     """
 
     def __init__(
         self,
-        registry: str = DEFAULT_REGISTRY,
-        user: Optional[str] = None,
+        registry: str = LOCAL_IMAGE_PREFIX,
         push: bool = False,
     ):
         self.registry = registry.rstrip("/")
-        self.user = user if user is not None else os.environ.get("CHAOSPROBE_REGISTRY_USER", "")
         self.push = push
-        self._login_done = False
 
     # ── Discovery ─────────────────────────────────────────
 
@@ -227,12 +222,8 @@ class RustProbeBuilder:
             shutil.copy2(binary_path, str(dest_binary))
             dest_binary.chmod(0o755)
 
-            # Write Dockerfile.  CHAOSPROBE_SOURCE_REPO (if set) is written
-            # as the OCI image source label so GHCR auto-links the package
-            # to that repo on the package's GitHub page.
-            source_repo = os.environ.get("CHAOSPROBE_SOURCE_REPO", "")
             dockerfile = build_dir / "Dockerfile"
-            dockerfile.write_text(generate_dockerfile(probe_name, source_repo))
+            dockerfile.write_text(generate_dockerfile(probe_name))
 
             # Build
             cmd = [
@@ -246,19 +237,22 @@ class RustProbeBuilder:
             ]
             _run_cmd(cmd, f"Failed to build Docker image for probe '{probe_name}'")
 
-        # Optionally push to remote registry
+        # Optionally push to the in-cluster registry
         if self.push:
             self._push_image(image_tag)
             self._push_image(f"{image_name}:latest")
-            self._print_visibility_hint(image_name)
 
         return image_tag
 
     def _push_image(self, image_tag: str, retries: int = 3) -> None:
-        """Push an image to the remote container registry with retries."""
+        """Push an image to the in-cluster registry with retries.
+
+        The in-cluster registry is unauthenticated insecure HTTP, so no
+        ``docker login`` is needed; the build host's docker must trust it
+        as an insecure registry (see chaosprobe/manifests/README.md).
+        """
         import time as _time
 
-        self._ensure_login()
         for attempt in range(retries):
             try:
                 _run_cmd(
@@ -277,102 +271,12 @@ class RustProbeBuilder:
                 else:
                     raise
 
-    def _print_visibility_hint(self, image_name: str) -> None:
-        """Print the GHCR settings URL when a pushed package is still private.
-
-        GitHub does not expose package visibility changes via REST for
-        user-owned container packages -- it must be flipped once via the
-        web UI (Settings -> Change visibility -> Public).  We GET the
-        package's current visibility and print the settings URL only
-        when it's still private, so the hint disappears after the
-        one-time manual flip.
-        """
-        if self._registry_host() != "ghcr.io":
-            return
-        token = os.environ.get("CHAOSPROBE_REGISTRY_PASSWORD")
-        if not token:
-            return
-
-        parts = image_name.split("/", 2)
-        if len(parts) < 3:
-            return
-        owner, package_name = parts[1], parts[2]
-
-        import json
-        import urllib.parse
-        import urllib.request
-
-        encoded = urllib.parse.quote(package_name, safe="")
-        get_url = f"https://api.github.com/user/packages/container/{encoded}"
-        req = urllib.request.Request(
-            get_url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
-        visibility = None
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                visibility = json.loads(resp.read()).get("visibility")
-        except Exception:
-            pass  # Lookup is best-effort; fall through and show the hint.
-
-        if visibility == "public":
-            return
-
-        settings_url = f"https://github.com/users/{owner}/packages/container/{encoded}/settings"
-        print(f"    Set visibility to Public: {settings_url}")
-
-    def _registry_host(self) -> str:
-        """Return the registry hostname (e.g. ``ghcr.io``).
-
-        Treats the first path segment as a hostname if it contains a dot.
-        Bare prefixes like ``myuser`` map to ``docker.io`` (Docker's
-        convention for unqualified image names).
-        """
-        head = self.registry.split("/", 1)[0]
-        return head if "." in head else "docker.io"
-
     def _image_prefix(self) -> str:
-        """Compose the full image prefix used for tagging.
+        """Image prefix used for tagging — just the registry/prefix.
 
-        - ``ghcr.io`` + user ``yhu02`` → ``ghcr.io/yhu02``
-        - ``ghcr.io/some-org`` (registry already includes a namespace)
-          + any user → ``ghcr.io/some-org`` (user is not appended)
-        - ``chaosprobe`` (local-only prefix, no user) → ``chaosprobe``
+        e.g. ``chaosprobe`` (local) or ``192.168.56.11:30500`` (in-cluster).
         """
-        if self.user and "/" not in self.registry:
-            return f"{self.registry}/{self.user}"
         return self.registry
-
-    def _ensure_login(self) -> None:
-        """Run ``docker login`` once per builder before the first push.
-
-        If ``CHAOSPROBE_REGISTRY_PASSWORD`` (and a user) are set, performs
-        a programmatic ``docker login`` via ``--password-stdin``.  Otherwise
-        assumes the user has already authenticated (e.g. ``docker login
-        ghcr.io``) and credentials exist in ``~/.docker/config.json``.
-        """
-        if self._login_done:
-            return
-        host = self._registry_host()
-        password = os.environ.get("CHAOSPROBE_REGISTRY_PASSWORD")
-        if self.user and password:
-            try:
-                subprocess.run(
-                    ["docker", "login", host, "-u", self.user, "--password-stdin"],
-                    input=password.encode(),
-                    capture_output=True,
-                    check=True,
-                )
-            except subprocess.CalledProcessError as e:
-                stderr = (e.stderr or b"").decode().strip()
-                raise ProbeBuilderError(
-                    f"docker login {host} failed: {stderr or e.returncode}"
-                ) from e
-        self._login_done = True
 
     # ── Orchestrator ──────────────────────────────────────
 
@@ -509,84 +413,6 @@ def _run_cmd(cmd: List[str], error_msg: str) -> subprocess.CompletedProcess:
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() or exc.stdout.strip() or str(exc)
         raise ProbeBuilderError(f"{error_msg}: {detail}") from exc
-
-
-def ensure_image_pull_secret(
-    namespace: str,
-    registry: str = DEFAULT_REGISTRY,
-    user: Optional[str] = None,
-    password: Optional[str] = None,
-    secret_name: str = "chaosprobe-registry",
-) -> bool:
-    """Create or update a docker-registry imagePullSecret and attach it to
-    the ``default`` service account so that LitmusChaos probe pods can pull
-    private images.
-
-    Returns True if the secret was created/updated, False if credentials
-    are not available (skipped silently).
-    """
-    user = user or os.environ.get("CHAOSPROBE_REGISTRY_USER", "")
-    password = password or os.environ.get("CHAOSPROBE_REGISTRY_PASSWORD", "")
-    if not user or not password:
-        return False
-
-    # Determine registry server hostname
-    head = registry.split("/", 1)[0]
-    server = head if "." in head else "https://index.docker.io/v1/"
-
-    # Create or replace the docker-registry secret
-    _run_cmd(
-        [
-            "kubectl",
-            "delete",
-            "secret",
-            secret_name,
-            "-n",
-            namespace,
-            "--ignore-not-found",
-        ],
-        "Failed to delete old imagePullSecret",
-    )
-    _run_cmd(
-        [
-            "kubectl",
-            "create",
-            "secret",
-            "docker-registry",
-            secret_name,
-            "-n",
-            namespace,
-            f"--docker-server={server}",
-            f"--docker-username={user}",
-            f"--docker-password={password}",
-        ],
-        "Failed to create imagePullSecret",
-    )
-
-    # Patch the default and litmus service accounts to use it
-    import json as _json_mod
-
-    patch = {"imagePullSecrets": [{"name": secret_name}]}
-    patch_json = _json_mod.dumps(patch)
-    for sa in ("default", "litmus-admin", "argo-chaos", "litmus"):
-        try:
-            _run_cmd(
-                [
-                    "kubectl",
-                    "patch",
-                    "serviceaccount",
-                    sa,
-                    "-n",
-                    namespace,
-                    "-p",
-                    patch_json,
-                ],
-                f"Failed to patch SA {sa}",
-            )
-        except ProbeBuilderError:
-            pass  # SA may not exist in this namespace
-
-    return True
 
 
 def extract_cmdprobe_images(experiments: List[Dict[str, Any]]) -> List[str]:

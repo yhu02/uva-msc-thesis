@@ -161,23 +161,17 @@ def get_registry_address(core_api: Any) -> Optional[str]:
 
 
 def resolve_probe_registry(core_api: Any) -> str:
-    """Pick the registry for probe images.
+    """Return the in-cluster registry address for probe images.
 
-    Prefers the in-cluster registry. An explicit ``CHAOSPROBE_REGISTRY`` env var
-    overrides it (for a deliberate external registry). There is **no silent GHCR
-    fallback**: if neither is available, raise so the operator installs the
-    in-cluster registry rather than unexpectedly pushing images off-cluster.
+    ChaosProbe uses the in-cluster registry exclusively — there is no external
+    registry. If it isn't installed, raise so the operator installs it.
     """
-    override = os.environ.get("CHAOSPROBE_REGISTRY")
-    if override:
-        return override
     in_cluster = get_registry_address(core_api)
     if in_cluster:
         return in_cluster
     raise RuntimeError(
-        "No probe-image registry available. Run `chaosprobe init` to install the "
-        "in-cluster registry (without --skip-registry), or set CHAOSPROBE_REGISTRY "
-        "to an external registry."
+        "In-cluster registry not found. Run `chaosprobe init` to install it "
+        "(without --skip-registry)."
     )
 
 

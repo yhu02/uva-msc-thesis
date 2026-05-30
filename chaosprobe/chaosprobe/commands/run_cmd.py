@@ -43,7 +43,6 @@ from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
 from chaosprobe.probes.builder import (
     RustProbeBuilder,
-    ensure_image_pull_secret,
     extract_cmdprobe_images,
     patch_probe_images,
     prepull_probe_images,
@@ -346,10 +345,9 @@ def _load_and_prepare_scenario(
     else:
         click.echo("  Topology:   no deploy/ directory found; service dependency graph empty")
 
-    # Auto-build Rust cmdProbes if probes/ directory exists. Always pushes to a
-    # registry — cluster nodes can only pull the image via `docker pull`. The
-    # registry is the CHAOSPROBE_REGISTRY override, else the in-cluster registry
-    # installed by `chaosprobe init`, else the GHCR default.
+    # Auto-build Rust cmdProbes if probes/ directory exists. Always pushes to
+    # the in-cluster registry (installed by `chaosprobe init`) so cluster nodes
+    # can `docker pull` the images; resolve_probe_registry raises if it's absent.
     if shared_scenario.get("probes"):
         click.echo(f"\n  Found {len(shared_scenario['probes'])} Rust probe(s), building...")
         registry = resolve_probe_registry(k8s_client.CoreV1Api())
@@ -372,8 +370,6 @@ def _load_and_prepare_scenario(
             )
         n = patch_probe_images(shared_scenario["experiments"], built_images)
         click.echo(f"  Built and patched {n} cmdProbe image(s)")
-        if ensure_image_pull_secret(namespace, registry):
-            click.echo("  Registry credentials synced to cluster")
 
         # Defensive belt: if any cmdProbe in the spec still has the
         # placeholder image (shouldn't happen given the strictness above,

@@ -41,27 +41,24 @@ uv run chaosprobe probe list <scenario>                             # list, don'
 
 ## Where probe images go (the registry)
 
-Probe images must live in a registry the cluster can `docker pull` from.
-`chaosprobe run` resolves the push/pull registry in this order:
+Probe images live in the **in-cluster registry** that `chaosprobe init` installs
+on the control-plane node — ChaosProbe uses this registry exclusively (no
+external registry). `chaosprobe run` resolves its address automatically and
+pushes there; if it isn't installed, `run` fails with a clear message telling
+you to run `chaosprobe init`.
 
-1. `CHAOSPROBE_REGISTRY` (env override),
-2. the **in-cluster registry** that `chaosprobe init` installs on the
-   control-plane node (default; no `docker login` needed),
-3. the `ghcr.io` fallback.
+The in-cluster registry is an unauthenticated, insecure HTTP registry, so it
+needs no `docker login` — but each node's containerd **and** your build-host
+docker need a one-time "insecure registry" trust step (this is node/host config
+outside the Kubernetes API). The full runbook is in
+[`../../manifests/README.md`](../../manifests/README.md).
 
-The in-cluster registry serves plain HTTP, so each node's containerd and your
-build-host docker need a one-time "insecure registry" trust step — the full
-runbook is in [`../../manifests/README.md`](../../manifests/README.md). Opt out of the
-in-cluster registry with `chaosprobe init --skip-registry`.
-
-To build and push to an external registry instead:
+The standalone `probe build` command builds local images by default; to push to
+the cluster manually, pass the in-cluster registry address:
 
 ```bash
-uv run chaosprobe probe build scenarios/online-boutique -r ghcr.io/<user> --push
+uv run chaosprobe probe build scenarios/online-boutique -r <node-ip>:30500 --push
 ```
-
-Authenticated registries read `CHAOSPROBE_REGISTRY_USER` /
-`CHAOSPROBE_REGISTRY_PASSWORD` — see [Configuration](../reference/configuration.md).
 
 ## Next
 

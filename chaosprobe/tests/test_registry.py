@@ -82,22 +82,18 @@ class TestGetRegistryAddress:
 
 
 class TestResolveProbeRegistry:
-    def test_env_override_wins(self, monkeypatch):
-        monkeypatch.setenv("CHAOSPROBE_REGISTRY", "myreg:5000")
-        assert resolve_probe_registry(MagicMock()) == "myreg:5000"
-
-    def test_uses_incluster_when_no_override(self, monkeypatch):
-        monkeypatch.delenv("CHAOSPROBE_REGISTRY", raising=False)
+    def test_returns_incluster_address(self):
+        # Internal registry only: returns the in-cluster address, ignoring any
+        # CHAOSPROBE_REGISTRY env (which no longer exists as an override).
         with patch(
             "chaosprobe.provisioner.components.get_registry_address",
             return_value="192.168.56.11:30500",
         ):
             assert resolve_probe_registry(MagicMock()) == "192.168.56.11:30500"
 
-    def test_raises_when_no_registry_and_no_override(self, monkeypatch):
-        # No env override and no in-cluster registry: must raise, never fall
-        # back to GHCR. The error points the operator at `chaosprobe init`.
-        monkeypatch.delenv("CHAOSPROBE_REGISTRY", raising=False)
+    def test_raises_when_registry_absent(self):
+        # No in-cluster registry: must raise (no GHCR / external fallback),
+        # pointing the operator at `chaosprobe init`.
         with patch(
             "chaosprobe.provisioner.components.get_registry_address",
             return_value=None,

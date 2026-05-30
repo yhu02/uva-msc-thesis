@@ -9,9 +9,6 @@ import pytest
 # leaks state between tests, so we strip them at session start and again
 # before each test that does not opt in via the `with_env` fixture.
 _LEAK_PRONE_VARS = (
-    "CHAOSPROBE_REGISTRY",
-    "CHAOSPROBE_REGISTRY_USER",
-    "CHAOSPROBE_REGISTRY_PASSWORD",
     "NEO4J_URI",
     "NEO4J_USER",
     "NEO4J_PASSWORD",
