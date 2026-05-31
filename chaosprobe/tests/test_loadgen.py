@@ -144,6 +144,18 @@ class TestLocustRunner:
         """Test that DEFAULT_LOCUSTFILE is valid Python syntax."""
         compile(DEFAULT_LOCUSTFILE, "<string>", "exec")
 
+    def test_default_locustfile_posts_form_encoded_not_json(self):
+        """POST tasks must send form data, not JSON.
+
+        The online-boutique frontend reads HTML form fields
+        (x-www-form-urlencoded); a JSON body leaves the form empty and the
+        handler returns 400, which previously caused 100% Locust failures on
+        /cart and /cart/checkout. Lock the tasks to ``data=`` (regression).
+        """
+        assert "json=" not in DEFAULT_LOCUSTFILE
+        # Both POST tasks (add_to_cart, checkout) send form data.
+        assert DEFAULT_LOCUSTFILE.count("data={") == 2
+
 
 class TestParseStatsCsv:
     """Locust writes 'N/A' for percentiles on zero-request rows; parsing must
