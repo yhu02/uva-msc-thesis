@@ -28,22 +28,6 @@ logger = logging.getLogger(__name__)
 LOAD_TARGET_LOCAL_PORT = 8089
 
 
-def _percentile(sorted_values: List[float], p: float) -> float:
-    """Linear-interpolated percentile from an already-sorted sequence."""
-    if not sorted_values:
-        return 0.0
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-    import math as _m
-
-    k = (len(sorted_values) - 1) * p
-    f = _m.floor(k)
-    c = _m.ceil(k)
-    if f == c:
-        return float(sorted_values[int(k)])
-    return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
-
-
 # ---------------------------------------------------------------------------
 # 1.  Pre-flight sub-steps
 # ---------------------------------------------------------------------------
@@ -869,6 +853,8 @@ def aggregate_iterations(
     # quality.  Surface them so the user can pick the right point estimate
     # for their argument and so the discussion can refer to actual tail
     # percentiles rather than just the mean.
+    from chaosprobe.metrics.statistics import _percentile
+
     sorted_valid = sorted(valid_scores)
     p25_score = _percentile(sorted_valid, 0.25)
     # Harmonic mean penalises low values disproportionately.  Compute on
