@@ -184,9 +184,14 @@ def mann_whitney_u(
         z = 0.0
         p = 1.0
     else:
-        # Continuity correction
-        z = (u - mean_u + 0.5 * (1 if u > mean_u else -1)) / math.sqrt(var_u)
-        p = 2.0 * _standard_normal_sf(abs(z))
+        # Continuity correction: shrink the deviation |U - mean_u| toward the
+        # mean by 0.5 (clamped at 0) so the normal approximation stays
+        # conservative.  U = min(u_a, u_b) is always <= mean_u, so subtracting
+        # 0.5 from the deviation's magnitude is the standard correction and
+        # matches SciPy's mannwhitneyu(use_continuity=True).  z is therefore
+        # non-negative — it is the magnitude of the (corrected) deviation.
+        z = max(0.0, abs(u - mean_u) - 0.5) / math.sqrt(var_u)
+        p = 2.0 * _standard_normal_sf(z)
 
     return {
         "u_statistic": round(u, 2),

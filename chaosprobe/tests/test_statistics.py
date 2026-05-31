@@ -91,11 +91,35 @@ class TestMannWhitneyU:
         assert 0.0 < out["p_two_sided"] <= 1.0
         assert math.isfinite(out["z"])
 
+    def test_continuity_correction_is_conservative(self):
+        # n=3 fully-separated samples: the exact two-sided p is 0.10 and the
+        # continuity-corrected normal approximation gives ~0.081 — NOT
+        # significant at alpha=0.05.  Regression guard against the old bug
+        # that applied the correction in the wrong direction and returned
+        # ~0.029, overstating significance.
+        out = mann_whitney_u([1, 2, 3], [4, 5, 6])
+        assert out["p_two_sided"] == pytest.approx(0.081, abs=0.005)
+        assert out["p_two_sided"] > 0.05
+        # z is the corrected deviation magnitude (non-negative).
+        assert out["z"] == pytest.approx(1.746, abs=0.005)
+
+    def test_correction_clamps_at_zero_for_near_equal(self):
+        # When |U - mean_u| <= 0.5 the corrected deviation clamps at 0, so z is
+        # 0 and the two-sided p is 1.0 — no evidence of a difference.  (var_u is
+        # still > 0 here, so this exercises the corrected branch, not the
+        # degenerate zero-variance branch.)
+        out = mann_whitney_u([1, 2, 3, 100], [1, 2, 3, 100])
+        assert out["z"] == 0.0
+        assert out["p_two_sided"] == 1.0
+
 
 class TestPairwiseComparisons:
     def test_two_label_pair(self):
+        # n=5 fully-separated samples — genuinely significant at alpha=0.05
+        # (corrected two-sided p ~0.012).  n=3 separation is NOT significant
+        # (exact p=0.10), so a smaller fixture would not exercise this path.
         rows = pairwise_comparisons(
-            {"a": [1, 2, 3], "b": [10, 11, 12]},
+            {"a": [1, 2, 3, 4, 5], "b": [10, 11, 12, 13, 14]},
             holm_bonferroni=False,
         )
         assert len(rows) == 1
@@ -128,8 +152,10 @@ class TestPairwiseComparisons:
         assert rows[0]["p_holm"] <= 1.0
 
     def test_default_significant_05_threshold(self):
+        # n=5 separated samples so the significant path is exercised with a
+        # statistically valid sample size (corrected two-sided p ~0.012).
         rows = pairwise_comparisons(
-            {"hi": [100, 101, 102], "lo": [1, 2, 3]},
+            {"hi": [100, 101, 102, 103, 104], "lo": [1, 2, 3, 4, 5]},
             holm_bonferroni=False,
         )
         assert rows[0]["significant_05"] is True
