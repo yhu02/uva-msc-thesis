@@ -651,6 +651,40 @@ def _unique_probe_images(
     return images
 
 
+def _snapshot_node_usage_for_bestfit(
+    mutator: PlacementMutator, namespace: str
+) -> Dict[str, Tuple[int, int]]:
+    """Snapshot per-node pod-request usage ONCE per run for reproducible best-fit.
+
+    Reused for every best-fit invocation so its computed topology is stable
+    across strategies (otherwise lingering chaos-infra / monitoring pods from
+    earlier strategies silently shift best-fit's bin capacity, making results
+    non-comparable within a run).
+
+    CRITICAL: excludes the app deployments' own pods — best-fit is about to
+    repack them, so their current footprint isn't "already used" capacity it
+    must work around. Leaving them in would make nodes look fuller than reality
+    and push best-fit to over-spread. The snapshot represents only the immovable
+    baseline (kube-system, monitoring, chaos infra, loadgen, etc.).
+
+    Stores the result on ``mutator.usage_snapshot`` and returns it.
+    """
+    click.echo("Snapshotting node pod-request usage for reproducible best-fit...")
+    app_dep_names = [d.name for d in mutator.get_deployments() if d.replicas > 0]
+    app_pods_by_node = mutator.observe_pod_placements(app_dep_names)
+    app_pod_keys = {(namespace, pod_name) for pod_name in app_pods_by_node}
+    node_usage_snapshot = mutator.get_node_pod_usage(exclude_pods=app_pod_keys)
+    mutator.usage_snapshot = node_usage_snapshot
+    click.echo(
+        f"  Excluded {len(app_pod_keys)} app-deployment pod(s) from "
+        f"snapshot (they are about to be repacked)"
+    )
+    for node_name in sorted(node_usage_snapshot):
+        cpu_m, mem_b = node_usage_snapshot[node_name]
+        click.echo(f"  {node_name}: {cpu_m}m CPU, {mem_b // (1024 * 1024)}MiB memory in use")
+    return node_usage_snapshot
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -1020,35 +1054,10 @@ def run(
             )
             sys.exit(1)
 
-    # Snapshot node pod-request usage ONCE per run.  Reused for every
-    # best-fit invocation so its computed topology is reproducible across
-    # strategies (otherwise lingering chaos infra / monitoring pods from
-    # earlier strategies silently shift best-fit's bin capacity, making
-    # results non-comparable between strategies in the same run).
-    #
-    # CRITICAL: exclude the app deployments' own pods from the snapshot.
-    # Best-fit is about to repack those pods; their current footprint is
-    # not "already used" capacity it has to work around.  If we left them
-    # in, best-fit would see nodes as far fuller than reality and
-    # over-spread to dodge imagined collisions.  The snapshot should
-    # represent only the *immovable* baseline: kube-system, monitoring,
-    # chaos infra, loadgen, etc.
-    click.echo("Snapshotting node pod-request usage for reproducible best-fit...")
-    app_dep_names = [d.name for d in mutator.get_deployments() if d.replicas > 0]
-    app_pods_by_node = mutator.observe_pod_placements(app_dep_names)
-    app_pod_keys = {(namespace, pod_name) for pod_name in app_pods_by_node}
-    node_usage_snapshot = mutator.get_node_pod_usage(exclude_pods=app_pod_keys)
-    mutator.usage_snapshot = node_usage_snapshot
-    click.echo(
-        f"  Excluded {len(app_pod_keys)} app-deployment pod(s) from "
-        f"snapshot (they are about to be repacked)"
-    )
-    for node_name in sorted(node_usage_snapshot):
-        cpu_m, mem_b = node_usage_snapshot[node_name]
-        click.echo(f"  {node_name}: {cpu_m}m CPU, {mem_b // (1024 * 1024)}MiB memory in use")
-
-    # Persist the exact view best-fit was placed against so analysis can
-    # reproduce its decisions from the results JSON alone.
+    # Snapshot node pod-request usage once for reproducible best-fit (see
+    # _snapshot_node_usage_for_bestfit), then persist the exact view best-fit
+    # was placed against so analysis can reproduce its decisions from the JSON.
+    node_usage_snapshot = _snapshot_node_usage_for_bestfit(mutator, namespace)
     overall_results["nodeUsageSnapshot"] = {
         node: {"cpu_millicores": cpu_m, "memory_bytes": mem_b}
         for node, (cpu_m, mem_b) in node_usage_snapshot.items()
