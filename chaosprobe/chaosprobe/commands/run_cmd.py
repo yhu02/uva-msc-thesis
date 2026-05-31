@@ -788,6 +788,34 @@ def _connect_graph_store(
         ) from e
 
 
+def _init_overall_results(
+    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]],
+    namespace: str,
+    iterations: int,
+    core_api: Any,
+) -> Dict[str, Any]:
+    """Build the run's top-level results dict.
+
+    ``faults`` is the multi-fault matrix keyed ``faults[label][strategy]``; the
+    outer key is the scenario filename stem so downstream consumers have a
+    stable label even for the single-fault default. ``strategies`` is the flat
+    back-compat view used by the visualizer / HTML report / per-strategy file
+    writer — bare strategy names for a single fault, ``f"{fault}__{strategy}"``
+    across a matrix. Both views point at the same per-strategy dict, so a write
+    through either is observed by both.
+    """
+    return {
+        "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "runMetadata": gather_run_metadata(core_api=core_api),
+        "namespace": namespace,
+        "iterations": iterations,
+        "faults": {label: {"strategies": {}} for label, _, _ in fault_scenarios},
+        "faultExperiments": [label for label, _, _ in fault_scenarios],
+        "strategies": {},
+    }
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -1105,25 +1133,9 @@ def run(
 
     click.echo("")
 
-    overall_results: Dict[str, Any] = {
-        "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "runMetadata": gather_run_metadata(core_api=core_api),
-        "namespace": namespace,
-        "iterations": iterations,
-        # Multi-fault matrix: keyed as ``faults[label][strategy]``.  When
-        # only one fault is supplied (the historical default), the
-        # outer key is the scenario filename stem so downstream consumers
-        # can still find a stable label.
-        "faults": {label: {"strategies": {}} for label, _, _ in fault_scenarios},
-        "faultExperiments": [label for label, _, _ in fault_scenarios],
-        # Flat view, kept for backwards compatibility with the existing
-        # visualizer / HTML report / per-strategy file writer.  Keys are
-        # bare strategy names when there is one fault, ``f"{fault}__{strategy}"``
-        # otherwise.  Both views point at the same per-strategy dict, so
-        # writes through either are observed by both.
-        "strategies": {},
-    }
+    overall_results: Dict[str, Any] = _init_overall_results(
+        fault_scenarios, namespace, iterations, core_api
+    )
     _multi_fault = len(fault_scenarios) > 1
 
     total = len(strategy_list) * len(fault_scenarios)
