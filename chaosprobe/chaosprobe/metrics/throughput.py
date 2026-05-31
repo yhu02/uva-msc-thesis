@@ -27,6 +27,7 @@ from chaosprobe.metrics.base import (
     find_probe_pods_per_node,
     find_ready_pod,
 )
+from chaosprobe.metrics.statistics import _percentile
 
 logger = logging.getLogger(__name__)
 
@@ -174,9 +175,7 @@ class ThroughputResult:
             "minOpsPerSecond": round(min(ops_list), 2),
             "maxOpsPerSecond": round(max(ops_list), 2),
             "meanLatency_ms": round(statistics.mean(lat_list), 2),
-            "p95Latency_ms": round(
-                sorted(lat_list)[min(int(len(lat_list) * 0.95), len(lat_list) - 1)], 2
-            ),
+            "p95Latency_ms": round(_percentile(sorted(lat_list), 0.95), 2),
             "meanBytesPerSecond": round(statistics.mean(bps_list), 2) if bps_list else None,
         }
 

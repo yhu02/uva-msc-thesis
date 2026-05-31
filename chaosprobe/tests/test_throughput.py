@@ -90,6 +90,10 @@ class TestThroughputResult:
         assert summary["meanOpsPerSecond"] == 5000.0
         assert summary["minOpsPerSecond"] == 4000.0
         assert summary["maxOpsPerSecond"] == 6000.0
+        # Linear-interpolated p95 (statistics._percentile) of the latencies
+        # 1000/ops sorted = [0.1667, 0.1818, 0.20, 0.2222, 0.25]; index
+        # (n-1)*0.95 = 3.8 -> 0.2222 + 0.8*(0.25-0.2222) = 0.2444 -> 0.24.
+        assert summary["p95Latency_ms"] == 0.24
         assert summary["target"] == "redis"
         assert summary["operation"] == "write"
 

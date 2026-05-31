@@ -86,6 +86,11 @@ class TestLatencyResult:
         assert summary["median_ms"] == 30.0
         assert summary["min_ms"] == 10.0
         assert summary["max_ms"] == 50.0
+        # Linear-interpolated percentiles (statistics._percentile): for
+        # [10,20,30,40,50] the 0.95 point is at index (n-1)*0.95 = 3.8 ->
+        # 40 + 0.8*(50-40) = 48.0; the 0.99 point is at 3.96 -> 49.6.
+        assert summary["p95_ms"] == 48.0
+        assert summary["p99_ms"] == 49.6
         assert summary["source"] == "frontend"
         assert summary["target"] == "productcatalogservice"
 

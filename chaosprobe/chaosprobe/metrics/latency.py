@@ -32,6 +32,7 @@ from chaosprobe.metrics.base import (
     find_ready_pod,
     pod_has_shell,
 )
+from chaosprobe.metrics.statistics import _percentile
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +153,6 @@ class LatencyResult:
             }
 
         sorted_latencies = sorted(ok_latencies)
-        p95_idx = min(int(len(sorted_latencies) * 0.95), len(sorted_latencies) - 1)
-        p99_idx = min(int(len(sorted_latencies) * 0.99), len(sorted_latencies) - 1)
 
         return {
             "source": self.source,
@@ -167,8 +166,8 @@ class LatencyResult:
             "statusCodeDistribution": status_code_distribution,
             "mean_ms": round(statistics.mean(ok_latencies), 2),
             "median_ms": round(statistics.median(ok_latencies), 2),
-            "p95_ms": round(sorted_latencies[p95_idx], 2),
-            "p99_ms": round(sorted_latencies[p99_idx], 2),
+            "p95_ms": round(_percentile(sorted_latencies, 0.95), 2),
+            "p99_ms": round(_percentile(sorted_latencies, 0.99), 2),
             "min_ms": round(min(ok_latencies), 2),
             "max_ms": round(max(ok_latencies), 2),
             "stddev_ms": round(statistics.stdev(ok_latencies), 2) if len(ok_latencies) > 1 else 0.0,
@@ -1127,11 +1126,10 @@ class ContinuousLatencyProber(ContinuousProberBase):
             for route, latencies in route_latencies.items():
                 if latencies:
                     sorted_lats = sorted(latencies)
-                    p95_idx = min(int(len(sorted_lats) * 0.95), len(sorted_lats) - 1)
                     summary: Dict[str, Optional[float]] = {
                         "mean_ms": round(statistics.mean(latencies), 2),
                         "median_ms": round(statistics.median(latencies), 2),
-                        "p95_ms": round(sorted_lats[p95_idx], 2),
+                        "p95_ms": round(_percentile(sorted_lats, 0.95), 2),
                         "min_ms": round(min(latencies), 2),
                         "max_ms": round(max(latencies), 2),
                         "sampleCount": len(latencies),
