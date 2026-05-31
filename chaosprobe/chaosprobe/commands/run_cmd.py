@@ -383,6 +383,33 @@ def _load_and_prepare_scenario(
     return shared_scenario, namespace, experiment_file, service_routes
 
 
+def _build_fault_scenarios(
+    experiment: Tuple[str, ...],
+    primary_experiment: str,
+    shared_scenario: Dict[str, Any],
+    namespace: str,
+) -> List[Tuple[str, Dict[str, Any], List[str]]]:
+    """Build the ``(label, scenario, fault_types)`` triples for the fault matrix.
+
+    Each ``--experiment`` path becomes one fault: the label is the filename stem,
+    the primary reuses the already-prepared ``shared_scenario`` (deployed +
+    topology + probes), and any additional scenarios are loaded with
+    ``deploy=False`` against the same namespace. Pre-loading them here fails fast
+    on parse errors before cluster setup.
+    """
+    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]] = []
+    for exp_path in experiment:
+        label = Path(exp_path).stem
+        if exp_path == primary_experiment:
+            scenario_dict = shared_scenario
+        else:
+            scenario_dict, _ns, _file, _routes = _load_and_prepare_scenario(
+                exp_path, namespace, deploy=False
+            )
+        fault_scenarios.append((label, scenario_dict, extract_experiment_types(scenario_dict)))
+    return fault_scenarios
+
+
 def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
     """Clear leftover nodeSelector constraints and rollout-restart app deployments."""
     click.echo("Clearing stale placement constraints...")
@@ -1067,19 +1094,11 @@ def run(
         primary_experiment, namespace
     )
 
-    # Pre-load every additional scenario so any parse errors fail fast
-    # before we spin up the cluster setup.  Each entry is a (label,
-    # scenario_dict, fault_types) triple keyed for downstream loops.
-    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]] = []
-    for exp_path in experiment:
-        label = Path(exp_path).stem  # e.g. "placement-experiment" / "placement-cpu-hog"
-        if exp_path == primary_experiment:
-            scenario_dict = shared_scenario
-        else:
-            scenario_dict, _ns_unused, _file_unused, _routes_unused = _load_and_prepare_scenario(
-                exp_path, namespace, deploy=False
-            )
-        fault_scenarios.append((label, scenario_dict, extract_experiment_types(scenario_dict)))
+    # Pre-load every scenario into (label, scenario, fault_types) triples so
+    # parse errors fail fast before cluster setup (see _build_fault_scenarios).
+    fault_scenarios = _build_fault_scenarios(
+        experiment, primary_experiment, shared_scenario, namespace
+    )
 
     # Ensure LitmusChaos is ready once with all required experiment types
     # across the whole fault matrix.
