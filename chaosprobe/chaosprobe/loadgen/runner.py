@@ -153,9 +153,12 @@ class FrontendUser(HttpUser):
 
     @task(2)
     def add_to_cart(self):
+        # The frontend reads HTML form fields (x-www-form-urlencoded), so send
+        # form data, not JSON — a JSON body leaves the form empty and the
+        # handler returns 400 (100% failures on this route otherwise).
         self.client.post(
             "/cart",
-            json={
+            data={
                 "product_id": "OLJCESPC7Z",
                 "quantity": 1,
             },
@@ -165,7 +168,7 @@ class FrontendUser(HttpUser):
     def checkout(self):
         self.client.post(
             "/cart/checkout",
-            json={
+            data={
                 "email": "user@example.com",
                 "street_address": "1600 Amphitheatre Parkway",
                 "zip_code": "94043",
