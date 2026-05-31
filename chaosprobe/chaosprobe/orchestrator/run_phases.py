@@ -20,6 +20,7 @@ from chaosprobe.orchestrator.preflight import (
     LITMUS_INFRA_DEPLOYMENTS,
     wait_for_healthy_deployments,
 )
+from chaosprobe.output import SCHEMA_VERSION
 from chaosprobe.provisioner.setup import LitmusSetup
 
 logger = logging.getLogger(__name__)
@@ -630,6 +631,11 @@ def write_run_results(
     from chaosprobe.metrics.remediation import generate_remediation_log
 
     results_dir = Path(results_dir)
+
+    # Stamp the output schema version so analysis tools (doctor, stats,
+    # compare) can detect renamed/changed fields — consistent with the
+    # single-run / comparison writers in ``chaosprobe.output``.
+    overall_results["schemaVersion"] = SCHEMA_VERSION
 
     # Build comparison table
     iterations = overall_results.get("iterations", 1)
