@@ -116,8 +116,8 @@ Long (per iteration ≈ 60 s settle + 120 s chaos + 60 s post, × strategy ×
 iterations — hours for the full matrix). Background + poll; don't block.
 
 > **Default for "do an experiment run":** when the user asks for an experiment
-> run without specifying flags, use `-i 2 --strategies baseline,default,spread,colocate`
-> (2 iterations across those 4 strategies). Only deviate when they ask for a
+> run without specifying flags, use `-i 3 --strategies baseline,default,spread,colocate`
+> (3 iterations across those 4 strategies). Only deviate when they ask for a
 > different iteration count, strategy set, or the full matrix.
 
 `run` defaults to all 8 strategies
