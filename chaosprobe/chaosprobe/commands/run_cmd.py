@@ -685,6 +685,43 @@ def _snapshot_node_usage_for_bestfit(
     return node_usage_snapshot
 
 
+def _error_strategy_result(strategy_name: str, fault_label: str, error: str) -> Dict[str, Any]:
+    """The result record for a strategy whose ``execute_strategy`` raised."""
+    return {
+        "strategy": strategy_name,
+        "fault": fault_label,
+        "status": "error",
+        "placement": None,
+        "experiment": None,
+        "metrics": None,
+        "error": error,
+    }
+
+
+def _record_strategy_result(
+    overall_results: Dict[str, Any],
+    fault_label: str,
+    strategy_name: str,
+    strategy_result: Dict[str, Any],
+    strategy_passed: bool,
+    *,
+    multi_fault: bool,
+) -> bool:
+    """Store a strategy result in both the per-fault and flat views.
+
+    The flat key is the bare strategy name for a single-fault run, or
+    ``f"{fault}__{strategy}"`` across a multi-fault matrix. Both views point at
+    the same dict. Returns whether the result counts as a *pass* — only when it
+    didn't error AND its verdict passed; an errored or failed verdict is a
+    failure.
+    """
+    strategy_result["fault"] = fault_label
+    overall_results["faults"][fault_label]["strategies"][strategy_name] = strategy_result
+    flat_key = f"{fault_label}__{strategy_name}" if multi_fault else strategy_name
+    overall_results["strategies"][flat_key] = strategy_result
+    return strategy_result.get("status") != "error" and strategy_passed
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -1143,23 +1180,16 @@ def run(
                     f"under fault '{fault_label}': {e}",
                     err=True,
                 )
-                strategy_result = {
-                    "strategy": strategy_name,
-                    "fault": fault_label,
-                    "status": "error",
-                    "placement": None,
-                    "experiment": None,
-                    "metrics": None,
-                    "error": str(e),
-                }
+                strategy_result = _error_strategy_result(strategy_name, fault_label, str(e))
                 strategy_passed = False
-            strategy_result["fault"] = fault_label
-            overall_results["faults"][fault_label]["strategies"][strategy_name] = strategy_result
-            flat_key = f"{fault_label}__{strategy_name}" if _multi_fault else strategy_name
-            overall_results["strategies"][flat_key] = strategy_result
-            if strategy_result["status"] == "error":
-                failed += 1
-            elif strategy_passed:
+            if _record_strategy_result(
+                overall_results,
+                fault_label,
+                strategy_name,
+                strategy_result,
+                strategy_passed,
+                multi_fault=_multi_fault,
+            ):
                 passed += 1
             else:
                 failed += 1
