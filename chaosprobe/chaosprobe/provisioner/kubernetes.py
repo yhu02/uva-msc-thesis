@@ -269,6 +269,8 @@ class KubernetesProvisioner:
                         ready = True
                         break
                 except ApiException:
+                    # Deployment not readable yet (still creating / transient API
+                    # error) — retry after the sleep below.
                     pass
                 time.sleep(3)
             if ready:

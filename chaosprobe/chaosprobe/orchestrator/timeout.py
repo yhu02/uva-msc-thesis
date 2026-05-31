@@ -39,6 +39,7 @@ def extract_chaos_duration(scenario: Dict[str, Any]) -> int:
                     try:
                         chaos_duration = max(chaos_duration, int(env["value"]))
                     except (ValueError, KeyError):
+                        # Non-numeric / missing TOTAL_CHAOS_DURATION → keep the running max.
                         pass
     return chaos_duration
 

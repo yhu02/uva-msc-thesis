@@ -274,6 +274,7 @@ class _ComponentsMixin(_LitmusSetupBase):
                 if svc.metadata.name == "prometheus-server":
                     return True
         except ApiException:
+            # API error → report the component as not installed.
             pass
         return False
 
@@ -358,6 +359,7 @@ class _ComponentsMixin(_LitmusSetupBase):
                         if ready:
                             return True
             except ApiException:
+                # API error → pod not ready yet; retry after the sleep below.
                 pass
             time.sleep(5)
         return False
@@ -374,6 +376,7 @@ class _ComponentsMixin(_LitmusSetupBase):
                 if svc.metadata.name in ("neo4j", "neo4j-lb"):
                     return True
         except ApiException:
+            # API error → report the component as not installed.
             pass
         return False
 
@@ -485,6 +488,7 @@ class _ComponentsMixin(_LitmusSetupBase):
                     ):
                         return True
             except ApiException:
+                # API error → pod not ready yet; retry after the sleep below.
                 pass
             time.sleep(5)
         return False
@@ -646,6 +650,7 @@ class _ComponentsMixin(_LitmusSetupBase):
                         if ready:
                             return True
             except ApiException:
+                # API error → pod not ready yet; retry after the sleep below.
                 pass
             time.sleep(5)
         return False

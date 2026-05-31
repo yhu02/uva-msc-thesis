@@ -1437,6 +1437,7 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
                     neo4j_host, port_str = parsed.split(":", 1)
                     neo4j_port = int(port_str)
             except (ValueError, AttributeError):
+                # Unparseable neo4j URI → fall back to the localhost:7687 default.
                 pass
             if not pf.check_port(neo4j_host, neo4j_port):
                 # pf.ensure_all() polls check_port internally before
