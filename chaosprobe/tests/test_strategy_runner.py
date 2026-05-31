@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from chaosprobe.orchestrator import strategy_runner
 from chaosprobe.orchestrator.readiness import shell_escape
 from chaosprobe.orchestrator.strategy_runner import (
     _PROBE_BUDGET_CAP,
@@ -11,6 +12,7 @@ from chaosprobe.orchestrator.strategy_runner import (
     _build_iteration_routes,
     _build_route_view_for_iteration,
     _consolidate_service_routes,
+    _is_unknown_dominated,
     _snapshot_cluster_state,
     _sync_neo4j,
 )
@@ -868,3 +870,160 @@ class TestSyncNeo4j:
             result = _sync_neo4j(ctx, {"run": 1})
         assert result is True
         assert ctx.graph_store is MockStore.return_value
+
+
+class TestIsUnknownDominated:
+    """A majority (>50%) of Unknown probe verdicts = operator-level probe-
+    evaluation failure (retry candidate); real Fail verdicts never qualify."""
+
+    def test_empty_verdicts_not_dominated(self):
+        assert _is_unknown_dominated({"probeVerdicts": {}, "unknownProbeCount": 0}) is False
+
+    def test_missing_keys_not_dominated(self):
+        assert _is_unknown_dominated({}) is False
+
+    def test_minority_unknown_not_dominated(self):
+        ir = {
+            "probeVerdicts": {"a": "Pass", "b": "Fail", "c": "Pass", "d": "Unknown"},
+            "unknownProbeCount": 1,
+        }
+        assert _is_unknown_dominated(ir) is False
+
+    def test_exactly_half_not_dominated(self):
+        # 2 of 4 is not a strict majority.
+        ir = {
+            "probeVerdicts": {"a": "Unknown", "b": "Unknown", "c": "Pass", "d": "Fail"},
+            "unknownProbeCount": 2,
+        }
+        assert _is_unknown_dominated(ir) is False
+
+    def test_majority_unknown_is_dominated(self):
+        ir = {
+            "probeVerdicts": {"a": "Unknown", "b": "Unknown", "c": "Unknown", "d": "Fail"},
+            "unknownProbeCount": 3,
+        }
+        assert _is_unknown_dominated(ir) is True
+
+    def test_cycle3_eleven_of_twelve(self):
+        verdicts = {f"p{i}": "Unknown" for i in range(11)}
+        verdicts["check-tcp-connect"] = "Fail"
+        ir = {"probeVerdicts": verdicts, "unknownProbeCount": 11}
+        assert _is_unknown_dominated(ir) is True
+
+    def test_all_real_fail_not_dominated(self):
+        ir = {"probeVerdicts": {"a": "Fail", "b": "Fail"}, "unknownProbeCount": 0}
+        assert _is_unknown_dominated(ir) is False
+
+
+class TestRunIterationWithUnknownRetry:
+    """Bounded re-measurement of majority-Unknown iterations; taint on exhaustion."""
+
+    @staticmethod
+    def _good():
+        return {
+            "iteration": 1,
+            "verdict": "FAIL",
+            "resilienceScore": 75,
+            "probeVerdicts": {"a": "Pass", "b": "Fail", "c": "Pass"},
+            "unknownProbeCount": 0,
+        }
+
+    @staticmethod
+    def _unknown():
+        return {
+            "iteration": 1,
+            "verdict": "FAIL",
+            "resilienceScore": 0,
+            "probeVerdicts": {"a": "Unknown", "b": "Unknown", "c": "Fail"},
+            "unknownProbeCount": 2,
+        }
+
+    def _seq(self, monkeypatch, results):
+        it = iter(results)
+        monkeypatch.setattr(strategy_runner, "_run_single_iteration", lambda *a, **k: next(it))
+
+    def test_good_first_try_no_retry(self, monkeypatch):
+        self._seq(monkeypatch, [self._good()])
+        ir = strategy_runner._run_iteration_with_unknown_retry(MagicMock(), "default", {}, 1)
+        assert ir["retryCount"] == 0
+        assert ir["verdict"] == "FAIL"
+        assert "tainted" not in ir
+
+    def test_unknown_then_good_keeps_real_result(self, monkeypatch):
+        self._seq(monkeypatch, [self._unknown(), self._good()])
+        ir = strategy_runner._run_iteration_with_unknown_retry(MagicMock(), "default", {}, 1)
+        assert ir["retryCount"] == 1
+        assert ir["verdict"] == "FAIL"
+        assert ir["resilienceScore"] == 75
+        assert "tainted" not in ir
+
+    def test_persistent_unknown_taints_after_budget(self, monkeypatch):
+        # Default budget 2 → 1 initial call + 2 retries = 3 calls, all Unknown.
+        self._seq(monkeypatch, [self._unknown(), self._unknown(), self._unknown()])
+        ir = strategy_runner._run_iteration_with_unknown_retry(MagicMock(), "default", {}, 1)
+        assert ir["retryCount"] == 2
+        assert ir["verdict"] == "ERROR"
+        assert ir["tainted"] is True
+        assert "unknown_probes_after_retries" in ir["taintReasons"]
+
+    def test_taint_after_single_retry_budget_one(self, monkeypatch):
+        # budget=1 exercises the singular "retry" wording branch.
+        self._seq(monkeypatch, [self._unknown(), self._unknown()])
+        ir = strategy_runner._run_iteration_with_unknown_retry(
+            MagicMock(), "default", {}, 1, budget=1
+        )
+        assert ir["retryCount"] == 1
+        assert ir["verdict"] == "ERROR"
+        assert ir["tainted"] is True
+
+    def test_real_fail_never_retried(self, monkeypatch):
+        calls = []
+
+        def fake(*a, **k):
+            calls.append(1)
+            return {
+                "verdict": "FAIL",
+                "resilienceScore": 0,
+                "probeVerdicts": {"a": "Fail", "b": "Fail"},
+                "unknownProbeCount": 0,
+            }
+
+        monkeypatch.setattr(strategy_runner, "_run_single_iteration", fake)
+        ir = strategy_runner._run_iteration_with_unknown_retry(MagicMock(), "default", {}, 1)
+        assert len(calls) == 1
+        assert ir["retryCount"] == 0
+        assert ir["verdict"] == "FAIL"
+
+
+class TestRunIterationsRetryWiring:
+    """The retry helper is wired into the per-strategy iteration loop."""
+
+    def test_single_iteration_records_retry_count(self, monkeypatch):
+        monkeypatch.setattr(
+            strategy_runner,
+            "_run_single_iteration",
+            lambda *a, **k: {
+                "iteration": 1,
+                "verdict": "PASS",
+                "resilienceScore": 100,
+                "probeVerdicts": {"a": "Pass"},
+                "unknownProbeCount": 0,
+            },
+        )
+        ctx = SimpleNamespace(iterations=1)
+        results = strategy_runner._run_iterations(ctx, "default", {})
+        assert len(results) == 1
+        assert results[0]["retryCount"] == 0
+        assert results[0]["verdict"] == "PASS"
+
+    def test_iteration_exception_recorded_as_error(self, monkeypatch):
+        def boom(*a, **k):
+            raise RuntimeError("k8s down")
+
+        monkeypatch.setattr(strategy_runner, "_run_single_iteration", boom)
+        ctx = SimpleNamespace(iterations=1)
+        results = strategy_runner._run_iterations(ctx, "default", {})
+        assert len(results) == 1
+        assert results[0]["verdict"] == "ERROR"
+        assert results[0]["retryCount"] == 0
+        assert results[0]["error"] == "k8s down"
