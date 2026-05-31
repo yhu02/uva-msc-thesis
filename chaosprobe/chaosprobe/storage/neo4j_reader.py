@@ -332,6 +332,7 @@ class Neo4jReaderMixin:
                 try:
                     conditions = json.loads(p["conditions"])
                 except (json.JSONDecodeError, TypeError):
+                    # Tolerate malformed / legacy JSON in this stored column; keep the default.
                     pass
             pods.append(
                 {
@@ -353,6 +354,7 @@ class Neo4jReaderMixin:
             try:
                 timeline = json.loads(exp["event_timeline"])
             except (json.JSONDecodeError, TypeError):
+                # Tolerate malformed / legacy JSON in this stored column; keep the default.
                 pass
         metrics["eventTimeline"] = timeline
 
@@ -367,6 +369,7 @@ class Neo4jReaderMixin:
                     try:
                         routes = json.loads(mp["routes"])
                     except (json.JSONDecodeError, TypeError):
+                        # Tolerate malformed / legacy JSON in this stored column; keep the default.
                         pass
                 metrics["latency"]["phases"][phase] = {
                     "sampleCount": mp.get("sample_count", 0),
@@ -397,6 +400,7 @@ class Neo4jReaderMixin:
                     try:
                         prom_metrics = json.loads(mp["metrics_json"])
                     except (json.JSONDecodeError, TypeError):
+                        # Tolerate malformed / legacy JSON in this stored column; keep the default.
                         pass
                 metrics["prometheus"]["phases"][phase] = {
                     "sampleCount": mp.get("sample_count", 0),
@@ -409,6 +413,7 @@ class Neo4jReaderMixin:
                     try:
                         ops = json.loads(mp["operations"])
                     except (json.JSONDecodeError, TypeError):
+                        # Tolerate malformed / legacy JSON in this stored column; keep the default.
                         pass
                 metrics["redis"]["phases"][phase] = {
                     "sampleCount": mp.get("sample_count", 0),
@@ -421,6 +426,7 @@ class Neo4jReaderMixin:
                     try:
                         ops = json.loads(mp["operations"])
                     except (json.JSONDecodeError, TypeError):
+                        # Tolerate malformed / legacy JSON in this stored column; keep the default.
                         pass
                 metrics["disk"]["phases"][phase] = {
                     "sampleCount": mp.get("sample_count", 0),
@@ -464,6 +470,7 @@ class Neo4jReaderMixin:
             try:
                 scenario = json.loads(exp["scenario_json"])
             except (json.JSONDecodeError, TypeError):
+                # Tolerate malformed / legacy JSON in this stored column; keep the default.
                 pass
 
         # Anomaly labels
@@ -576,6 +583,7 @@ class Neo4jReaderMixin:
                 try:
                     samples.append(json.loads(r["data"]))
                 except (json.JSONDecodeError, TypeError):
+                    # Tolerate malformed / legacy JSON in this stored column; keep the default.
                     pass
 
         if not samples:
@@ -712,6 +720,7 @@ class Neo4jReaderMixin:
                 try:
                     events.append(json.loads(r["data"]))
                 except (json.JSONDecodeError, TypeError):
+                    # Tolerate malformed / legacy JSON in this stored column; keep the default.
                     pass
             return events
 

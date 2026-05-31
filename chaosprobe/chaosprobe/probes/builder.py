@@ -742,6 +742,7 @@ def prepull_probe_images(
                 name, namespace, body=_k8s_client.V1DeleteOptions(grace_period_seconds=0)
             )
         except _ApiException:
+            # Best-effort cleanup — the pod may already be gone or terminating.
             pass
 
     return len(succeeded) * len(images)

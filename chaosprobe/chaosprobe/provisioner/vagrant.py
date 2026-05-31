@@ -51,6 +51,7 @@ class _VagrantMixin(_LitmusSetupBase):
             )
             result["libvirtd_installed"] = True
         except (subprocess.CalledProcessError, FileNotFoundError):
+            # Probe failed (tool absent / non-zero exit) — leave the flag False.
             pass
 
         # Check if libvirtd is running
@@ -71,6 +72,7 @@ class _VagrantMixin(_LitmusSetupBase):
                 )
                 result["libvirtd_running"] = proc.returncode == 0
             except (subprocess.CalledProcessError, FileNotFoundError):
+                # Neither systemctl nor service worked — leave running=unset.
                 pass
 
         # Check if user is in libvirt and kvm groups
@@ -83,6 +85,7 @@ class _VagrantMixin(_LitmusSetupBase):
             groups = proc.stdout.strip().split()
             result["user_in_groups"] = "libvirt" in groups and "kvm" in groups
         except (subprocess.CalledProcessError, FileNotFoundError):
+            # Probe failed (tool absent / non-zero exit) — leave the flag False.
             pass
 
         # Check if vagrant-libvirt plugin is installed
@@ -94,6 +97,7 @@ class _VagrantMixin(_LitmusSetupBase):
             )
             result["vagrant_libvirt_plugin"] = "vagrant-libvirt" in proc.stdout
         except (subprocess.CalledProcessError, FileNotFoundError):
+            # Probe failed (tool absent / non-zero exit) — leave the flag False.
             pass
 
         result["all_ready"] = all(
@@ -338,6 +342,7 @@ class _VagrantMixin(_LitmusSetupBase):
                     recovered.append(vm_name)
                     print(f"  Recovered shutoff VM: {vm_name}")
                 except (subprocess.CalledProcessError, FileNotFoundError):
+                    # Both virsh start invocations failed — leave this VM unrecovered.
                     pass
 
         if recovered:

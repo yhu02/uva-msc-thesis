@@ -473,6 +473,8 @@ spec:
                     has_infra = True
                     break
                 except ApiException:
+                    # 404 / API error → this infra deployment isn't in other_ns;
+                    # keep checking the remaining names.
                     pass
             if has_infra:
                 print(
@@ -486,6 +488,7 @@ spec:
                             other_ns,
                         )
                     except ApiException:
+                        # Best-effort removal — the deployment may already be gone.
                         pass
 
         existing = [

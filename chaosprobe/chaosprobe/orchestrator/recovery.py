@@ -47,6 +47,7 @@ def wait_for_k8s_api(namespace: str, timeout: int = 300) -> None:
         api.list_namespace(limit=1)
         return  # API is reachable, proceed immediately
     except (ApiException, MaxRetryError, NewConnectionError, ConnectionError, OSError):
+        # API unreachable → fall through to the wait-for-recovery loop below.
         pass
 
     click.echo("  K8s API server unreachable — waiting for recovery...")

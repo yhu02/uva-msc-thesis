@@ -634,6 +634,7 @@ class LatencyProber:
                             status_code=status_code,
                         )
                 except (ValueError, OverflowError):
+                    # Drop a sample whose latency math was non-numeric / overflowed.
                     pass
 
             return LatencySample(

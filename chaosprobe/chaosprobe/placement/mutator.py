@@ -632,6 +632,7 @@ class PlacementMutator:
                     node_name: Optional[str] = pod.spec.node_name
                     return node_name
         except ApiException:
+            # API error → node unknown; report None and let the caller decide.
             pass
         return None
 
