@@ -87,6 +87,40 @@ class TestLocustRunner:
         proc.stderr.read.assert_called_once()
         proc.stderr.close.assert_not_called()  # read raised before close
 
+    def test_start_invokes_locust_as_module_not_wrapper(self, monkeypatch):
+        """Locust must launch via ``python -m locust``, never the console-script
+        wrapper (``<venv>/bin/locust``).
+
+        The wrapper's shebang embeds the venv's absolute path at creation time,
+        so it dies with FileNotFoundError/ENOENT once the project or venv is
+        relocated — which previously aborted every experiment iteration at load
+        generation. ``sys.executable -m locust`` uses the live interpreter and
+        is relocation-proof (regression).
+        """
+        import sys
+
+        from chaosprobe.loadgen import runner as runner_mod
+
+        runner = LocustRunner(target_url="http://localhost:8080")
+        captured = {}
+
+        def fake_popen(cmd, *args, **kwargs):
+            captured["cmd"] = cmd
+            proc = MagicMock()
+            proc.poll.return_value = None  # still running -> start() sees success
+            return proc
+
+        monkeypatch.setattr(runner_mod.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(runner_mod.time, "sleep", lambda *_a, **_k: None)
+
+        runner.start(LoadProfile.from_name("steady"))
+
+        cmd = captured["cmd"]
+        assert cmd[:3] == [sys.executable, "-m", "locust"]
+        assert "--headless" in cmd
+        # argv[0] is the interpreter, not a bare ``.../bin/locust`` wrapper path.
+        assert not cmd[0].endswith("/locust")
+
     def test_get_locustfile_default(self):
         runner = LocustRunner(target_url="http://localhost:8080")
         path = runner._get_locustfile()

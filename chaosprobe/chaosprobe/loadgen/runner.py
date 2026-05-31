@@ -242,8 +242,16 @@ class LocustRunner:
         self._temp_dirs.append(self._stats_dir)
         stats_prefix = os.path.join(self._stats_dir, "stats")
 
+        # Invoke Locust as a module via the live interpreter rather than the
+        # console-script wrapper (<venv>/bin/locust). The wrapper's shebang
+        # embeds the venv's absolute path at creation time, so it dies with
+        # FileNotFoundError/ENOENT once the project or venv is relocated —
+        # aborting every experiment iteration at load generation. sys.executable
+        # is always the running interpreter, so "-m locust" is relocation-proof.
         cmd = [
-            os.path.join(os.path.dirname(sys.executable), "locust"),
+            sys.executable,
+            "-m",
+            "locust",
             "--headless",
             "--locustfile",
             locustfile,
