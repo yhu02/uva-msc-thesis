@@ -174,13 +174,18 @@ def _collect_iteration_data(
     """Per-strategy per-iteration data used by the detailed charts.
 
     Returns ``{strategy_name: {"resilienceScores": [...], "recoveryTimes": [...]}}``
-    for every strategy that has iteration records.  Strategies with a
+    for every strategy that has non-error iteration records.  Strategies with a
     single iteration are omitted (their data is already captured in
     the normalized summary).
+
+    ERROR iterations (infra failures / exhausted-retry unknown-probe iters) are
+    excluded: they score a meaningless 0.0 and are already dropped from the
+    headline means, so plotting them as per-iteration points would misrepresent
+    the distribution.
     """
     iteration_data: Dict[str, Dict[str, list]] = {}
     for name, sdata in raw_strategies.items():
-        iters = sdata.get("iterations", [])
+        iters = [it for it in sdata.get("iterations", []) if it.get("verdict") != "ERROR"]
         if not iters:
             continue
         scores = [it.get("resilienceScore", 0) for it in iters]
