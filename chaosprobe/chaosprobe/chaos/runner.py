@@ -343,6 +343,11 @@ class ChaosRunner:
         # Extract deployment name from label like "app=productcatalogservice"
         target_deployment = target_label.split("=", 1)[1] if "=" in target_label else ""
 
+        # Initialised before the loop so the type checker sees it is always
+        # bound at the fallback return below. range(_MAX+1) always runs at
+        # least once and assigns ``result`` before any ``continue``, so the
+        # ``{}`` is never actually returned.
+        result: Dict[str, Any] = {}
         for attempt in range(_MAX_TARGET_RETRIES + 1):
             try:
                 notify_id = self._setup.chaoscenter_run_experiment(
@@ -390,7 +395,10 @@ class ChaosRunner:
             result["startTime"] = start_time
             return result
 
-        return result  # type: ignore[possibly-undefined]
+        # Unreachable: range(_MAX+1) runs at least once and the final attempt
+        # always returns above. Kept so the type checker sees a return on every
+        # path without resorting to a `# type: ignore`.
+        return result  # pragma: no cover
 
     def _wait_for_target_recovery(
         self,
