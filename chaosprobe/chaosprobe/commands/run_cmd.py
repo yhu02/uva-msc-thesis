@@ -722,6 +722,35 @@ def _record_strategy_result(
     return strategy_result.get("status") != "error" and strategy_passed
 
 
+def _prepull_probe_images_onto_workers(
+    mutator: PlacementMutator,
+    namespace: str,
+    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]],
+) -> None:
+    """Pre-pull cmdProbe images onto every schedulable worker node before
+    iterations start.
+
+    Combined with ``imagePullPolicy: IfNotPresent`` on the probe specs, this
+    eliminates the per-tick registry round-trips that were the dominant source
+    of "Unknown" probe verdicts under chaos (a cmdProbe pod couldn't pull in
+    time while the chaos pod burst CPU/network on the same node, dropping the
+    score ~8 points per missed probe even though the SUT was healthy). Pulls the
+    union of images across all fault scenarios so a later fault doesn't trigger
+    a fresh pull mid-run. No-op when there are no probe images or no workers.
+    """
+    all_probe_images = _unique_probe_images(fault_scenarios)
+    worker_node_names = [
+        n.name for n in mutator.get_nodes() if n.is_schedulable and not n.is_control_plane
+    ]
+    if all_probe_images and worker_node_names:
+        click.echo(
+            f"Pre-pulling {len(all_probe_images)} probe image(s) onto "
+            f"{len(worker_node_names)} worker node(s)..."
+        )
+        pulled = prepull_probe_images(namespace, all_probe_images, worker_node_names)
+        click.echo(f"  Pre-pulled {pulled} (node x image) combinations")
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -1100,26 +1129,9 @@ def run(
         for node, (cpu_m, mem_b) in node_usage_snapshot.items()
     }
 
-    # Pre-pull cmdProbe images onto every worker node BEFORE iterations
-    # start.  Combined with imagePullPolicy: IfNotPresent on the probe
-    # specs, this eliminates the per-tick registry round-trips that were
-    # the dominant source of "Unknown" probe verdicts under chaos (cmdProbe
-    # pods couldn't pull in time when the chaos pod was bursting CPU/network
-    # on the same node, dragging the score down by ~8 points per missed
-    # probe even though the SUT was healthy).
-    # Pre-pull probe images across the UNION of all fault scenarios so a
-    # later fault doesn't trigger a fresh image pull mid-run.
-    all_probe_images = _unique_probe_images(fault_scenarios)
-    worker_node_names = [
-        n.name for n in mutator.get_nodes() if n.is_schedulable and not n.is_control_plane
-    ]
-    if all_probe_images and worker_node_names:
-        click.echo(
-            f"Pre-pulling {len(all_probe_images)} probe image(s) onto "
-            f"{len(worker_node_names)} worker node(s)..."
-        )
-        pulled = prepull_probe_images(namespace, all_probe_images, worker_node_names)
-        click.echo(f"  Pre-pulled {pulled} (node x image) combinations")
+    # Pre-pull cmdProbe images onto the workers before iterations start (see
+    # _prepull_probe_images_onto_workers).
+    _prepull_probe_images_onto_workers(mutator, namespace, fault_scenarios)
 
     # ── Outer loop: per-fault scenario ─────────────────────────────────
     # When multiple --experiment / -e flags were passed, run the full
