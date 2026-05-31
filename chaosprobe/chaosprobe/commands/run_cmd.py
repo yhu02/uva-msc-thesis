@@ -629,7 +629,7 @@ def _print_run_banner(
     "--iterations",
     "-i",
     default=1,
-    type=int,
+    type=click.IntRange(min=1),
     help="Number of iterations per strategy (default: 1)",
 )
 @click.option(
