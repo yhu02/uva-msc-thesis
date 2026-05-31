@@ -565,6 +565,54 @@ def _print_run_banner(
     click.echo("")
 
 
+def _strategy_execution_order(name: str) -> int:
+    """Sort key for the strategy run order.
+
+    Low-contention strategies run first so lingering node pressure from heavy
+    strategies doesn't skew later results. ``baseline``/``default`` aren't in
+    the placement enum, so they sort first (-1 / 0). A ``:seed`` suffix on
+    multi-seed variants (e.g. ``random:42``) is stripped before the enum lookup.
+    """
+    base = name.split(":", 1)[0]
+    try:
+        return PlacementStrategy(base).execution_order
+    except ValueError:
+        return -1 if base == "baseline" else 0
+
+
+def _expand_random_seeds(strategy_list: List[str], seeds: Optional[str]) -> List[str]:
+    """Expand the ``random`` strategy into one entry per ``--seeds`` value.
+
+    Each becomes ``random:<seed>`` so downstream tooling (stats, doctor,
+    compare) sees per-seed variants as distinct strategies and can separate
+    per-seed variance from cross-strategy variance. Returns the list unchanged
+    when ``--seeds`` is unset or ``random`` isn't selected. Raises
+    ``click.ClickException`` on a non-integer or empty seed list.
+    """
+    if not seeds or "random" not in strategy_list:
+        return strategy_list
+
+    seed_list: List[int] = []
+    for tok in seeds.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            seed_list.append(int(tok))
+        except ValueError:
+            raise click.ClickException(f"--seeds entry '{tok}' is not an integer.")
+    if not seed_list:
+        raise click.ClickException("--seeds needs at least one integer.")
+
+    expanded: List[str] = []
+    for s in strategy_list:
+        if s == "random":
+            expanded.extend(f"random:{seed_val}" for seed_val in seed_list)
+        else:
+            expanded.append(s)
+    return expanded
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -766,53 +814,12 @@ def run(
             )
             sys.exit(1)
 
-    # Multi-seed: when --seeds is set, expand the `random` strategy into
-    # one entry per seed.  Each gets a name like 'random:42' so downstream
-    # tooling (stats, doctor, compare) sees them as separate strategies
-    # and can statistically distinguish per-seed variance from cross-
-    # strategy variance.
-    if seeds and "random" in strategy_list:
-        seed_list: List[int] = []
-        for tok in seeds.split(","):
-            tok = tok.strip()
-            if not tok:
-                continue
-            try:
-                seed_list.append(int(tok))
-            except ValueError:
-                click.echo(
-                    f"Error: --seeds entry '{tok}' is not an integer.",
-                    err=True,
-                )
-                sys.exit(1)
-        if len(seed_list) < 1:
-            click.echo("Error: --seeds needs at least one integer.", err=True)
-            sys.exit(1)
-        expanded: List[str] = []
-        for s in strategy_list:
-            if s == "random":
-                expanded.extend(f"random:{seed_val}" for seed_val in seed_list)
-            else:
-                expanded.append(s)
-        strategy_list = expanded
-
-    # Sort by contention severity: low-contention strategies first so
-    # lingering node pressure from heavy strategies doesn't skew results.
-    # baseline/default (not in the enum) get order 0/-1 to run first.
-    def _sort_key(name: str) -> int:
-        # Strip ':seed' suffix so the enum lookup works for multi-seed
-        # variants like 'random:42'.
-        base = name.split(":", 1)[0]
-        try:
-            return PlacementStrategy(base).execution_order
-        except ValueError:
-            return -1 if base == "baseline" else 0
-
-    strategy_list.sort(key=_sort_key)
-
-    if iterations < 1:
-        click.echo("Error: --iterations must be >= 1", err=True)
-        sys.exit(1)
+    # Expand `random` into per-seed variants (when --seeds is set), then order
+    # strategies by contention severity so lingering node pressure from heavy
+    # strategies doesn't skew later runs. (--iterations >= 1 is already enforced
+    # by the option's IntRange.)
+    strategy_list = _expand_random_seeds(strategy_list, seeds)
+    strategy_list.sort(key=_strategy_execution_order)
 
     # Create output directory
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
