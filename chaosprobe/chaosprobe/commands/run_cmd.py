@@ -613,6 +613,44 @@ def _expand_random_seeds(strategy_list: List[str], seeds: Optional[str]) -> List
     return expanded
 
 
+def _collect_experiment_types(
+    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]],
+    strategy_list: List[str],
+) -> List[str]:
+    """Order-preserving union of the LitmusChaos experiment types needed across
+    the whole fault matrix, so LitmusChaos can be set up once for all of them.
+
+    Adds ``pod-cpu-hog`` when ``baseline`` is selected — baseline swaps the
+    destructive fault for that trivial one.
+    """
+    experiment_types: List[str] = []
+    for _label, _scn, types in fault_scenarios:
+        for t in types:
+            if t not in experiment_types:
+                experiment_types.append(t)
+    if "baseline" in strategy_list and "pod-cpu-hog" not in experiment_types:
+        experiment_types.append("pod-cpu-hog")
+    return experiment_types
+
+
+def _unique_probe_images(
+    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]],
+) -> List[str]:
+    """Order-preserving union of cmdProbe images across the fault matrix.
+
+    Pre-pulling this union before iterations start stops a later fault from
+    triggering a fresh image pull mid-run.
+    """
+    images: List[str] = []
+    seen: set = set()
+    for _label, scn, _types in fault_scenarios:
+        for img in extract_cmdprobe_images(scn.get("experiments", [])):
+            if img not in seen:
+                seen.add(img)
+                images.append(img)
+    return images
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -880,14 +918,7 @@ def run(
 
     # Ensure LitmusChaos is ready once with all required experiment types
     # across the whole fault matrix.
-    experiment_types: List[str] = []
-    for _label, _scn, types in fault_scenarios:
-        for t in types:
-            if t not in experiment_types:
-                experiment_types.append(t)
-    # Baseline uses pod-cpu-hog (trivial fault) instead of pod-delete
-    if "baseline" in strategy_list and "pod-cpu-hog" not in experiment_types:
-        experiment_types.append("pod-cpu-hog")
+    experiment_types = _collect_experiment_types(fault_scenarios, strategy_list)
     if not _ensure_litmus_setup(namespace, experiment_types):
         click.echo("Error: LitmusChaos setup failed", err=True)
         sys.exit(1)
@@ -1032,13 +1063,7 @@ def run(
     # probe even though the SUT was healthy).
     # Pre-pull probe images across the UNION of all fault scenarios so a
     # later fault doesn't trigger a fresh image pull mid-run.
-    all_probe_images: List[str] = []
-    seen_images: set = set()
-    for _label, scn, _types in fault_scenarios:
-        for img in extract_cmdprobe_images(scn.get("experiments", [])):
-            if img not in seen_images:
-                seen_images.add(img)
-                all_probe_images.append(img)
+    all_probe_images = _unique_probe_images(fault_scenarios)
     worker_node_names = [
         n.name for n in mutator.get_nodes() if n.is_schedulable and not n.is_control_plane
     ]
