@@ -751,6 +751,43 @@ def _prepull_probe_images_onto_workers(
         click.echo(f"  Pre-pulled {pulled} (node x image) combinations")
 
 
+def _connect_graph_store(
+    neo4j_uri: Optional[str],
+    neo4j_user: str,
+    neo4j_password: str,
+    namespace: str,
+    service_routes: Any,
+) -> Any:
+    """Connect to the Neo4j graph store (the primary data store) and return it.
+
+    Returns ``None`` when ``neo4j_uri`` is unset. Neo4j is required, so a missing
+    driver or a failed connection raises ``click.ClickException`` (exit 1) to
+    abort the run rather than silently degrade.
+    """
+    if not neo4j_uri:
+        return None
+    click.echo("Connecting to Neo4j graph store...")
+    try:
+        graph_store = init_graph_store(
+            neo4j_uri,
+            neo4j_user,
+            neo4j_password,
+            namespace,
+            service_routes=service_routes,
+        )
+        click.echo("  Neo4j: connected and schema ready")
+        return graph_store
+    except ImportError:
+        raise click.ClickException(
+            "Neo4j driver not installed (install with: uv pip install chaosprobe[graph])"
+        ) from None
+    except Exception as e:
+        raise click.ClickException(
+            f"Neo4j connection failed ({e}). Neo4j is required as the primary data "
+            "store — check the connection and retry."
+        ) from e
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -1093,32 +1130,10 @@ def run(
     passed = 0
     failed = 0
 
-    # Neo4j graph store — primary data store
-    graph_store = None
-    if neo4j_uri:
-        click.echo("Connecting to Neo4j graph store...")
-        try:
-            graph_store = init_graph_store(
-                neo4j_uri,
-                neo4j_user,
-                neo4j_password,
-                namespace,
-                service_routes=service_routes,
-            )
-            click.echo("  Neo4j: connected and schema ready")
-        except ImportError:
-            click.echo(
-                "Error: Neo4j driver not installed"
-                " (install with: uv pip install chaosprobe[graph])",
-                err=True,
-            )
-            sys.exit(1)
-        except Exception as e:
-            click.echo(f"Error: Neo4j connection failed ({e})", err=True)
-            click.echo(
-                "Neo4j is required as the primary data store. Check connection and retry.", err=True
-            )
-            sys.exit(1)
+    # Neo4j graph store — the primary data store (see _connect_graph_store).
+    graph_store = _connect_graph_store(
+        neo4j_uri, neo4j_user, neo4j_password, namespace, service_routes
+    )
 
     # Snapshot node pod-request usage once for reproducible best-fit (see
     # _snapshot_node_usage_for_bestfit), then persist the exact view best-fit
