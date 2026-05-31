@@ -156,6 +156,18 @@ class TestLocustRunner:
         # Both POST tasks (add_to_cart, checkout) send form data.
         assert DEFAULT_LOCUSTFILE.count("data={") == 2
 
+    def test_checkout_credit_card_is_digits_only(self):
+        """The checkout card number must be digits only.
+
+        A dashed number (``4432-8015-6152-0454``) fails the payment service's
+        card validation, returning HTTP 422 on every /cart/checkout (regression).
+        """
+        import re
+
+        m = re.search(r'"credit_card_number":\s*"([^"]+)"', DEFAULT_LOCUSTFILE)
+        assert m is not None, "credit_card_number not found in locustfile"
+        assert m.group(1).isdigit(), f"card number must be digits only, got {m.group(1)!r}"
+
 
 class TestParseStatsCsv:
     """Locust writes 'N/A' for percentiles on zero-request rows; parsing must
