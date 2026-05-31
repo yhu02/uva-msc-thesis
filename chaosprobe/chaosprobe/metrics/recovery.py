@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from kubernetes import client, watch
 
 from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.statistics import _percentile
 
 logger = logging.getLogger(__name__)
 
@@ -442,8 +443,6 @@ class RecoveryWatcher:
             }
 
         sorted_times = sorted(recovery_times)
-        p95_idx = int(len(sorted_times) * 0.95)
-        p95_idx = min(p95_idx, len(sorted_times) - 1)
 
         # Split into the two phases.  Schedules under heavy contention
         # (colocate / best-fit / random-with-affinity-collision) can stall
@@ -465,7 +464,7 @@ class RecoveryWatcher:
             "medianRecovery_ms": round(statistics.median(recovery_times), 1),
             "minRecovery_ms": min(recovery_times),
             "maxRecovery_ms": max(recovery_times),
-            "p95Recovery_ms": round(sorted_times[p95_idx], 1),
+            "p95Recovery_ms": round(_percentile(sorted_times, 0.95), 1),
         }
 
         if d2s:

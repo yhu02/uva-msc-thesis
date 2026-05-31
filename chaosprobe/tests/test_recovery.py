@@ -76,6 +76,10 @@ class TestComputeSummary:
         assert summary["meanRecovery_ms"] == 2000.0
         assert summary["minRecovery_ms"] == 1000
         assert summary["maxRecovery_ms"] == 3000
+        # Linear-interpolated p95 (statistics._percentile): index (n-1)*0.95
+        # = 1.9 -> 2000 + 0.9*(3000-2000) = 2900.0 (was 3000 under the old
+        # nearest-rank index).
+        assert summary["p95Recovery_ms"] == 2900.0
 
     def test_mixed_complete_incomplete(self):
         cycles = [
