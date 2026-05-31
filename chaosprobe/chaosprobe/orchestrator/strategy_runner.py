@@ -1028,6 +1028,76 @@ def _run_single_iteration(
     return iter_result
 
 
+# Bounded re-measurement for iterations whose probes came back majority
+# Unknown.  A >50%-Unknown result means the LitmusChaos operator never
+# populated the ChaosResult CRD (it crash-looped mid-experiment) — an
+# infrastructure/measurement failure, NOT a resilience outcome.  Re-run the
+# iteration up to this many times before giving up.  Iterations that returned
+# real Pass/Fail verdicts are never retried (that would bias scores).
+_UNKNOWN_RETRY_BUDGET = 2
+
+
+def _is_unknown_dominated(ir: Dict[str, Any]) -> bool:
+    """True when a majority (>50%) of evaluated probes came back ``Unknown``.
+
+    Signals an operator-level probe-evaluation failure (the ChaosResult CRD was
+    never populated) rather than a genuine resilience outcome — distinct from
+    probes that returned real ``Fail`` verdicts, which must never be retried.
+    """
+    verdicts = ir.get("probeVerdicts") or {}
+    if not verdicts:
+        return False
+    return int(ir.get("unknownProbeCount", 0)) * 2 > len(verdicts)
+
+
+def _run_iteration_with_unknown_retry(
+    ctx: RunContext,
+    strategy_name: str,
+    strategy_result: Dict[str, Any],
+    iteration: int,
+    budget: int = _UNKNOWN_RETRY_BUDGET,
+) -> Dict[str, Any]:
+    """Run one iteration, re-measuring when its probes are majority ``Unknown``.
+
+    A majority-Unknown result is an operator-level probe-evaluation failure (see
+    :func:`_is_unknown_dominated`), so re-run the whole iteration up to
+    ``budget`` times — ``_run_single_iteration`` re-cleans cluster state and
+    restarts unhealthy infra on each call.  If still majority-Unknown after the
+    budget is exhausted, taint the iteration and mark it ``ERROR`` so
+    :func:`aggregate_iterations` excludes it from statistics rather than letting
+    a meaningless ``0.0`` drag down the mean.  Iterations that returned real
+    ``Pass``/``Fail`` verdicts are returned unchanged on the first try.
+
+    Records ``retryCount`` on every iteration for transparency.
+    """
+    attempt = 0
+    while True:
+        ir = _run_single_iteration(ctx, strategy_name, strategy_result, iteration)
+        if _is_unknown_dominated(ir) and attempt < budget:
+            attempt += 1
+            n_unknown = ir.get("unknownProbeCount", 0)
+            n_total = len(ir.get("probeVerdicts") or {})
+            click.echo(
+                f"    Iteration {iteration}: {n_unknown}/{n_total} probes returned "
+                f"Unknown (>50%; operator-level probe-evaluation failure, not a "
+                f"resilience result) — re-measuring (retry {attempt}/{budget})..."
+            )
+            continue
+        break
+
+    ir["retryCount"] = attempt
+    if _is_unknown_dominated(ir):
+        ir["verdict"] = "ERROR"
+        ir["tainted"] = True
+        ir.setdefault("taintReasons", []).append("unknown_probes_after_retries")
+        click.echo(
+            f"    Iteration {iteration}: still >50% of probes Unknown after "
+            f"{attempt} retr{'y' if attempt == 1 else 'ies'} — tainted and "
+            f"excluded from statistics."
+        )
+    return ir
+
+
 def _run_iterations(
     ctx: RunContext,
     strategy_name: str,
@@ -1100,7 +1170,7 @@ def _run_iterations(
                 )
 
         try:
-            ir = _run_single_iteration(ctx, strategy_name, strategy_result, i)
+            ir = _run_iteration_with_unknown_retry(ctx, strategy_name, strategy_result, i)
         except Exception as e:
             click.echo(
                 f"\n    ERROR in iteration {i}/{ctx.iterations}: {e}",
@@ -1112,6 +1182,7 @@ def _run_iterations(
                 "resilienceScore": 0,
                 "probeVerdicts": {},
                 "unknownProbeCount": 0,
+                "retryCount": 0,
                 "metrics": {},
                 "runId": "",
                 "preChaosHealthy": False,

@@ -880,6 +880,8 @@ Each strategy iteration in `strategies.<name>.iterations[]` additionally carries
 | `metrics.latency.summary.meanCrossNodeStddev_ms` | `LatencyProber` | Per-pod cross-node latency stddev — pod-vs-pod variance signal for leakage analysis (H6). |
 | `experimentDuration_s` | `_run_single_iteration` | Wall-clock of the chaos window (`experiment_end - experiment_start`). Lets analysis correlate iteration latency with strategy behaviour. |
 | `preChaosTaintReasons` | `_run_single_iteration` | List of taint reasons that fired in pre-chaos baseline: `pre_chaos_errors_high`, `pre_chaos_latency_degraded`, `iteration_exception`. Replaces the previous bare `preChaosHealthy: bool`. |
+| `retryCount` | `_run_iteration_with_unknown_retry` | Times the iteration was re-measured because **>50% of its probes came back `Unknown`** — an operator-level probe-evaluation failure (the ChaosResult CRD was never populated), not a resilience outcome. `0` when the first attempt yielded real verdicts; capped at `_UNKNOWN_RETRY_BUDGET` (2). Iterations that returned real `Pass`/`Fail` verdicts are **never** retried (that would bias scores). |
+| `tainted` / `taintReasons` | `_run_iteration_with_unknown_retry` | Set when the iteration is *still* majority-`Unknown` after the retry budget is exhausted (`taintReasons` ⊇ `unknown_probes_after_retries`). The iteration is also forced to `verdict: "ERROR"` so `aggregate_iterations` excludes it from score statistics rather than letting a meaningless `0.0` drag down the mean. |
 
 ### Per-strategy aggregate fields
 
