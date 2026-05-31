@@ -83,7 +83,11 @@ def _extract_metric(
         iterations = sdata.get("iterations", [])
         if iterations:
             sorted_iters = sorted(
-                [it for it in iterations if it.get("metrics", {}).get(key)],
+                [
+                    it
+                    for it in iterations
+                    if it.get("metrics", {}).get(key) and it.get("verdict") != "ERROR"
+                ],
                 key=lambda it: it.get("resilienceScore", 0),
             )
             if sorted_iters:

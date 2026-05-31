@@ -165,6 +165,27 @@ class TestExtractMetric:
         # No iteration has 'latency', so result is empty
         assert _extract_metric(raw, "latency") == {}
 
+    def test_error_iterations_excluded_from_median_fallback(self):
+        raw = {
+            "default": {
+                "metrics": None,
+                "iterations": [
+                    {
+                        "verdict": "ERROR",
+                        "resilienceScore": 0,
+                        "metrics": {"latency": {"marker": "error-iter"}},
+                    },
+                    {
+                        "verdict": "FAIL",
+                        "resilienceScore": 50,
+                        "metrics": {"latency": {"marker": "valid"}},
+                    },
+                ],
+            }
+        }
+        # The ERROR iteration is ineligible; only the valid one can be picked.
+        assert _extract_metric(raw, "latency")["default"]["marker"] == "valid"
+
 
 # ---------------------------------------------------------------------------
 # RustProbeBuilder.discover_probes
@@ -373,6 +394,35 @@ class TestCollectIterationData:
         result = _collect_iteration_data(raw)
         assert result["spread"]["resilienceScores"] == [75, 80]
         assert result["spread"]["recoveryTimes"] == [1000, 1200]
+
+    def test_excludes_error_iterations(self):
+        raw = {
+            "default": {
+                "iterations": [
+                    {
+                        "verdict": "PASS",
+                        "resilienceScore": 83,
+                        "metrics": {"recovery": {"summary": {"meanRecovery_ms": 900}}},
+                    },
+                    {"verdict": "ERROR", "resilienceScore": 0, "metrics": {}},
+                    {
+                        "verdict": "FAIL",
+                        "resilienceScore": 33,
+                        "metrics": {"recovery": {"summary": {"meanRecovery_ms": 1500}}},
+                    },
+                ]
+            }
+        }
+        result = _collect_iteration_data(raw)
+        # The ERROR iteration's meaningless 0.0 is dropped from the points.
+        assert result["default"]["resilienceScores"] == [83, 33]
+        assert result["default"]["recoveryTimes"] == [900, 1500]
+
+    def test_strategy_with_only_error_iterations_omitted(self):
+        raw = {
+            "broken": {"iterations": [{"verdict": "ERROR", "resilienceScore": 0, "metrics": {}}]}
+        }
+        assert "broken" not in _collect_iteration_data(raw)
 
     def test_iteration_with_no_recovery_data_skipped_in_recovery_list(self):
         raw = {
