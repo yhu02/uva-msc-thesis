@@ -175,7 +175,9 @@ class FrontendUser(HttpUser):
                 "city": "Mountain View",
                 "state": "CA",
                 "country": "United States",
-                "credit_card_number": "4432-8015-6152-0454",
+                # Digits only — the payment service's card validation rejects a
+                # dashed number, which made every checkout return HTTP 422.
+                "credit_card_number": "4432801561520454",
                 "credit_card_expiration_month": 1,
                 "credit_card_expiration_year": 2030,
                 "credit_card_cvv": 672,
