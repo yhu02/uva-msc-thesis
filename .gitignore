@@ -5,6 +5,9 @@ build/
 *.egg
 **/results*
 
+# Rust probe build artifacts (cargo target dirs)
+**/probes/*/target/
+
 # Virtual environments
 .venv/
 venv/
