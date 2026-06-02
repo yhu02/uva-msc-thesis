@@ -887,8 +887,11 @@ Each strategy iteration in `strategies.<name>.iterations[]` additionally carries
 
 `aggregate_iterations` returns the per-strategy summary (`strategies.<name>.aggregated`). Beyond the headline `meanResilienceScore` and `meanRecoveryTime_ms` point estimates:
 
+ERROR iterations (infra failure / all-Unknown probes) are excluded from the score statistics. When *every* iteration of a strategy errored there is no valid measurement, so `meanResilienceScore` (and the other score moments) are `null` rather than a fabricated `0.0`, and `allIterationsError` is set — `null` means "no valid data", distinct from "genuinely scored zero".
+
 | Field | Purpose |
 |---|---|
+| `allIterationsError` | `true` when every iteration of the strategy errored, so the score statistics are `null` (no valid measurement) rather than a misleading `0.0`. Absent/`false` otherwise. The diagnostic roll-ups (`taintReasonCounts`, `probeVerdictTally`) still populate from the ERROR iterations. |
 | `meanResilienceScore_ci95` / `meanRecoveryTime_ms_ci95` | Bootstrap 95% CI on the headline + mechanism metric. Defends against "the gap is inside the noise" objections. |
 | `meanDeletionToScheduled_ms_ci95` / `meanScheduledToReady_ms_ci95` | Bootstrap CIs on the recovery split — answers which leg moved. |
 | `recoveryTimeCV` / `deletionToScheduledCV` / `scheduledToReadyCV` | Coefficient of variation. Decouples spread from scale: a low-CV strategy is "predictably fast" rather than just "fast on average". |
