@@ -11,6 +11,7 @@ from chaosprobe.orchestrator.strategy_runner import (
     _aggregate_strategy,
     _build_iteration_routes,
     _build_route_view_for_iteration,
+    _compute_pre_chaos_taint_reasons,
     _consolidate_service_routes,
     _is_unknown_dominated,
     _snapshot_cluster_state,
@@ -854,6 +855,53 @@ class TestAggregateStrategy:
         assert result is False
         assert sr["aggregated"]["allIterationsError"] is True
         assert sr["aggregated"]["meanResilienceScore"] is None
+
+
+def _pre_chaos(routes, sample_count=10):
+    return {"latency": {"phases": {"pre-chaos": {"sampleCount": sample_count, "routes": routes}}}}
+
+
+class TestPreChaosTaintReasons:
+    def test_app_ready_timeout_taints(self):
+        # A failed readiness gate is the strongest pre-chaos signal.
+        assert _compute_pre_chaos_taint_reasons(False, {}) == ["app_ready_timeout"]
+
+    def test_ready_with_no_latency_data_is_healthy(self):
+        assert _compute_pre_chaos_taint_reasons(True, {}) == []
+
+    def test_high_pre_chaos_error_rate_taints(self):
+        # 2 errors / (8 ok + 2 errors) = 20% > 10% threshold.
+        results = _pre_chaos({"/": {"sampleCount": 8, "errorCount": 2}})
+        assert _compute_pre_chaos_taint_reasons(True, results) == ["pre_chaos_errors_high"]
+
+    def test_low_error_rate_not_tainted(self):
+        # 5 / 105 ≈ 4.8% < 10%.
+        results = _pre_chaos({"/": {"sampleCount": 100, "errorCount": 5}}, sample_count=100)
+        assert _compute_pre_chaos_taint_reasons(True, results) == []
+
+    def test_slow_latency_baseline_taints(self):
+        # p95 2000 > 1500 AND mean 900 > 750 → degraded.
+        results = _pre_chaos(
+            {"/cart": {"sampleCount": 15, "errorCount": 0, "p95_ms": 2000.0, "mean_ms": 900.0}},
+            sample_count=15,
+        )
+        assert _compute_pre_chaos_taint_reasons(True, results) == ["pre_chaos_latency_degraded"]
+
+    def test_high_p95_but_low_mean_not_tainted(self):
+        # Outlier-driven p95 with a healthy mean must NOT taint.
+        results = _pre_chaos(
+            {"/": {"sampleCount": 15, "errorCount": 0, "p95_ms": 1600.0, "mean_ms": 252.0}},
+            sample_count=15,
+        )
+        assert _compute_pre_chaos_taint_reasons(True, results) == []
+
+    def test_timeout_and_latency_errors_both_recorded(self):
+        # app-ready timeout (recorded first) plus a degraded latency baseline.
+        results = _pre_chaos({"/": {"sampleCount": 7, "errorCount": 3}})
+        assert _compute_pre_chaos_taint_reasons(False, results) == [
+            "app_ready_timeout",
+            "pre_chaos_errors_high",
+        ]
 
 
 def _neo4j_ctx(store):

@@ -133,7 +133,7 @@ def wait_for_app_ready(
     required_consecutive: int = 5,
     sustained_period_s: int = 15,
     latency_budget_ms: int = 5000,
-) -> None:
+) -> bool:
     """Wait until all probed routes respond successfully and stay stable.
 
     Two-phase functional gate:
@@ -163,6 +163,11 @@ def wait_for_app_ready(
     HTTP endpoint.  The TCP gate is only applied when the probe pod has
     python3; otherwise those backends fall back to K8s-native gRPC
     readiness (already enforced by the deployment-readiness wait).
+
+    Returns ``True`` when the gate passed (or was skipped because no probe
+    pod was available), and ``False`` when it timed out — the caller treats a
+    timeout as a pre-chaos taint reason (``app_ready_timeout``) so the
+    iteration is excluded from the healthy-only statistics.
     """
     from chaosprobe.metrics.base import exec_in_pod, find_probe_pod
 
@@ -175,7 +180,9 @@ def wait_for_app_ready(
     )
     if not pod:
         click.echo("    Warning: no probe pod for app-ready check, skipping")
-        return
+        # No probe pod to assess readiness — this is a skip, not a timeout, so
+        # don't taint the iteration on it (preserves prior behaviour).
+        return True
 
     # Build the list of URLs to check: all probed routes + healthz fallback
     urls_to_check = []
@@ -392,7 +399,7 @@ def wait_for_app_ready(
                         f"{required_consecutive} consecutive + "
                         f"{sustained_period_s}s sustained + warmup)"
                     )
-                    return
+                    return True
         else:
             if sustained_until is not None:
                 click.echo("    App stability check failed — restarting consecutive-OK count")
@@ -422,3 +429,5 @@ def wait_for_app_ready(
             f"only {consecutive_ok}/{required_consecutive} consecutive OK. "
             f"Iteration may start with degraded system."
         )
+    # Gate timed out: signal the caller so it can taint the iteration.
+    return False

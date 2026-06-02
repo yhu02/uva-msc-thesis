@@ -577,6 +577,88 @@ def _apply_placement(
             click.echo(f"      {node}: {count} deployment(s)")
 
 
+def _compute_pre_chaos_taint_reasons(
+    app_ready: bool,
+    prober_results: Dict[str, Any],
+) -> List[str]:
+    """Assess whether an iteration started from a degraded pre-chaos baseline.
+
+    An iteration is *tainted* when its pre-chaos baseline was already degraded,
+    so its score reflects accumulated damage from a previous iteration rather
+    than the placement strategy's actual resilience.
+
+    Reasons accumulate into a list rather than a single bool so the per-strategy
+    aggregator can distinguish "every tainted iteration was caused by lingering
+    errors" from "every tainted iteration was latency-degraded" — different root
+    causes, different fixes.
+
+    Extracted from ``_run_single_iteration``'s integration-scope body so the
+    taint wiring can be unit-tested.
+    """
+    reasons: List[str] = []
+    # The proactive functional readiness gate (wait_for_app_ready) is the
+    # strongest pre-chaos signal: if it timed out, the iteration started from a
+    # degraded baseline and its score reflects accumulated damage rather than
+    # the placement strategy.  Record it so the iteration is excluded from the
+    # healthy-only statistics; the latency-prober checks below remain a
+    # secondary backstop for starts that pass the gate but are still
+    # measurably degraded.
+    if not app_ready:
+        reasons.append("app_ready_timeout")
+    latency_phases = (prober_results.get("latency") or {}).get("phases", {})
+    pre_chaos = latency_phases.get("pre-chaos", {})
+    if pre_chaos.get("sampleCount", 0) > 0:
+        total_errors = 0
+        total_ok = 0
+        for route_data in pre_chaos.get("routes", {}).values():
+            total_errors += route_data.get("errorCount", 0)
+            total_ok += route_data.get("sampleCount", 0)
+        # sampleCount counts successful measurements only; errorCount counts
+        # failed ones.  Total attempts = total_ok + total_errors.  Threshold
+        # lowered from 50% → 10%: empirically the BAD iterations observed in
+        # the 20260518-131302 run had 0% pre-chaos errors (the marginal-recovery
+        # state shows up only under chaos load), so this gate is a backstop for
+        # grossly-tainted starts, not a primary detector.  The proactive
+        # functional gate in wait_for_app_ready is the main defence.
+        total_attempts = total_ok + total_errors
+        if total_attempts > 0 and total_errors / total_attempts > 0.1:
+            reasons.append("pre_chaos_errors_high")
+            click.echo(
+                f"    WARNING: Pre-chaos baseline was degraded "
+                f"({total_errors}/{total_attempts} samples had errors). "
+                f"Score may not reflect strategy resilience."
+            )
+
+        # Latency-based taint check: require BOTH p95 AND mean above threshold,
+        # since pre-chaos samples are sparse (N≈15) and p95 alone is dominated
+        # by single-outlier spikes that don't reflect cluster health.
+        # Investigation in results/20260521-073913: adversarial iter3 had
+        # pre-chaos `/` max=1160ms (outlier) but mean=252ms and scored 75
+        # cleanly — high p95 alone falsely flagged it as tainted.  Requiring
+        # mean > threshold/2 filters outlier-driven false positives.
+        SLOW_BASELINE_P95_MS = 1500.0
+        slow_routes = []
+        for route_name, route_data in pre_chaos.get("routes", {}).items():
+            p95 = route_data.get("p95_ms")
+            mean = route_data.get("mean_ms")
+            if (
+                p95 is not None
+                and mean is not None
+                and p95 > SLOW_BASELINE_P95_MS
+                and mean > SLOW_BASELINE_P95_MS / 2
+            ):
+                slow_routes.append((route_name, p95, mean))
+        if slow_routes:
+            reasons.append("pre_chaos_latency_degraded")
+            slow_summary = ", ".join(f"{r}=p95:{p:.0f}/mean:{m:.0f}ms" for r, p, m in slow_routes)
+            click.echo(
+                f"    WARNING: Pre-chaos baseline latency degraded on "
+                f"{len(slow_routes)} route(s) [{slow_summary}]. "
+                f"Cluster likely tainted by previous iteration."
+            )
+    return reasons
+
+
 def _run_single_iteration(
     ctx: RunContext,
     strategy_name: str,
@@ -653,7 +735,7 @@ def _run_single_iteration(
     # 240s upper bound: consecutive-OK (≥15s) + sustained period (15s) +
     # generous slack for slow JVM warm-up between iterations.  The function
     # returns early as soon as the gate passes.
-    wait_for_app_ready(
+    app_ready = wait_for_app_ready(
         ctx.namespace,
         ctx.target_deployment,
         timeout=240,
@@ -844,69 +926,10 @@ def _run_single_iteration(
 
     click.echo(f"\n    Verdict: {verdict} | Resilience Score: {score:.1f}{recovery_str}")
 
-    # Assess pre-chaos baseline health from latency prober data.
-    # If most routes had errors before chaos even started, the iteration
-    # is "tainted" — its score reflects accumulated damage from a previous
-    # iteration rather than the placement strategy's actual resilience.
-    #
-    # Reasons accumulate into a list rather than a single bool so the
-    # per-strategy aggregator can distinguish "every tainted iteration
-    # was caused by lingering errors" from "every tainted iteration was
-    # latency-degraded" — different root causes, different fixes.
-    pre_chaos_taint_reasons: List[str] = []
-    latency_phases = (prober_results.get("latency") or {}).get("phases", {})
-    pre_chaos = latency_phases.get("pre-chaos", {})
-    if pre_chaos.get("sampleCount", 0) > 0:
-        total_errors = 0
-        total_ok = 0
-        for route_data in pre_chaos.get("routes", {}).values():
-            total_errors += route_data.get("errorCount", 0)
-            total_ok += route_data.get("sampleCount", 0)
-        # sampleCount counts successful measurements only; errorCount
-        # counts failed ones.  Total attempts = total_ok + total_errors.
-        # Threshold lowered from 50% → 10%: empirically the BAD iterations
-        # observed in the 20260518-131302 run had 0% pre-chaos errors
-        # (the marginal-recovery state shows up only under chaos load),
-        # so this gate is a backstop for grossly-tainted starts, not a
-        # primary detector.  The proactive functional gate in
-        # _wait_for_app_ready is the main defence.
-        total_attempts = total_ok + total_errors
-        if total_attempts > 0 and total_errors / total_attempts > 0.1:
-            pre_chaos_taint_reasons.append("pre_chaos_errors_high")
-            click.echo(
-                f"    WARNING: Pre-chaos baseline was degraded "
-                f"({total_errors}/{total_attempts} samples had errors). "
-                f"Score may not reflect strategy resilience."
-            )
-
-        # Latency-based taint check: require BOTH p95 AND mean above
-        # threshold, since pre-chaos samples are sparse (N≈15) and p95
-        # alone is dominated by single-outlier spikes that don't reflect
-        # cluster health.  Investigation in results/20260521-073913:
-        # adversarial iter3 had pre-chaos `/` max=1160ms (outlier) but
-        # mean=252ms and scored 75 cleanly — high p95 alone falsely
-        # flagged it as tainted.  Requiring mean > threshold/2 filters
-        # outlier-driven false positives.
-        SLOW_BASELINE_P95_MS = 1500.0
-        slow_routes = []
-        for route_name, route_data in pre_chaos.get("routes", {}).items():
-            p95 = route_data.get("p95_ms")
-            mean = route_data.get("mean_ms")
-            if (
-                p95 is not None
-                and mean is not None
-                and p95 > SLOW_BASELINE_P95_MS
-                and mean > SLOW_BASELINE_P95_MS / 2
-            ):
-                slow_routes.append((route_name, p95, mean))
-        if slow_routes:
-            pre_chaos_taint_reasons.append("pre_chaos_latency_degraded")
-            slow_summary = ", ".join(f"{r}=p95:{p:.0f}/mean:{m:.0f}ms" for r, p, m in slow_routes)
-            click.echo(
-                f"    WARNING: Pre-chaos baseline latency degraded on "
-                f"{len(slow_routes)} route(s) [{slow_summary}]. "
-                f"Cluster likely tainted by previous iteration."
-            )
+    # Assess pre-chaos baseline health: an app-ready timeout or a degraded
+    # latency baseline taints the iteration (see
+    # _compute_pre_chaos_taint_reasons).
+    pre_chaos_taint_reasons = _compute_pre_chaos_taint_reasons(app_ready, prober_results)
 
     # Extract per-probe verdicts for diagnostic analysis.
     # LitmusChaos probe status is a dict of phase→verdict strings like
