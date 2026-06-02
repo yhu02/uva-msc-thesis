@@ -1024,5 +1024,77 @@ class TestIntentVsActualDiff:
         assert diff["matchRate"] == 0.0
 
 
+class TestNodeAssignmentSerialization:
+    """``to_dict`` / ``from_dict`` must produce independent copies, so a
+    serialized snapshot can't be mutated by later in-place edits to the source
+    assignment (and vice-versa)."""
+
+    def test_to_dict_is_independent_of_assignment(self):
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.COLOCATE,
+            assignments={"frontend": "worker-1"},
+            seed=7,
+            metadata={"description": "colocate"},
+        )
+
+        snapshot = assignment.to_dict()
+        # Mutating the snapshot must not leak back into the assignment.
+        snapshot["assignments"]["cartservice"] = "worker-2"
+        snapshot["metadata"]["intendedActualDiff"] = {"matchRate": 0.5}
+
+        assert assignment.assignments == {"frontend": "worker-1"}
+        assert assignment.metadata == {"description": "colocate"}
+
+    def test_assignment_mutation_does_not_leak_into_prior_snapshot(self):
+        assignment = NodeAssignment(
+            strategy=PlacementStrategy.COLOCATE,
+            assignments={"frontend": "worker-1"},
+            metadata={"description": "colocate"},
+        )
+
+        snapshot = assignment.to_dict()
+        # The mutator records this on the live assignment *after* serialization.
+        assignment.metadata["intendedActualDiff"] = {"matchRate": 0.0}
+
+        assert "intendedActualDiff" not in snapshot["metadata"]
+
+    def test_from_dict_does_not_alias_source(self):
+        data = {
+            "strategy": "spread",
+            "seed": 42,
+            "assignments": {"frontend": "worker-1"},
+            "metadata": {"description": "spread"},
+        }
+
+        assignment = NodeAssignment.from_dict(data)
+        assignment.assignments["cartservice"] = "worker-2"
+        assignment.metadata["intendedActualDiff"] = {"matchRate": 1.0}
+
+        assert data["assignments"] == {"frontend": "worker-1"}
+        assert data["metadata"] == {"description": "spread"}
+
+    def test_from_dict_defaults_when_keys_absent(self):
+        assignment = NodeAssignment.from_dict({"strategy": "spread"})
+
+        assert assignment.assignments == {}
+        assert assignment.metadata == {}
+        assert assignment.seed is None
+
+    def test_round_trip_preserves_fields(self):
+        original = NodeAssignment(
+            strategy=PlacementStrategy.DEPENDENCY_AWARE,
+            assignments={"frontend": "worker-1", "cartservice": "worker-2"},
+            seed=137,
+            metadata={"description": "dependency-aware", "nodesUsed": 2},
+        )
+
+        restored = NodeAssignment.from_dict(original.to_dict())
+
+        assert restored.strategy == original.strategy
+        assert restored.seed == original.seed
+        assert restored.assignments == original.assignments
+        assert restored.metadata == original.metadata
+
+
 # Need ApiException for the last test — re-import at module scope above
 from kubernetes.client.rest import ApiException  # noqa: E402, F401

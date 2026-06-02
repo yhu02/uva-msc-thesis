@@ -133,22 +133,32 @@ class NodeAssignment:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialise to a dictionary."""
+        """Serialise to a dictionary.
+
+        ``assignments`` and ``metadata`` are copied so the returned dict is an
+        independent snapshot: callers (e.g. ``strategy_result["placement"]``)
+        must not observe later in-place edits to this assignment, such as the
+        ``metadata["intendedActualDiff"]`` the mutator records after the fact.
+        """
         return {
             "strategy": self.strategy.value,
             "seed": self.seed,
             "assignments": dict(self.assignments),
-            "metadata": self.metadata,
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "NodeAssignment":
-        """Deserialise from a dictionary."""
+        """Deserialise from a dictionary.
+
+        The mutable ``assignments`` and ``metadata`` are copied so the new
+        assignment does not alias — and later mutate — the caller's input dict.
+        """
         return cls(
             strategy=PlacementStrategy(data["strategy"]),
-            assignments=data.get("assignments", {}),
+            assignments=dict(data.get("assignments", {})),
             seed=data.get("seed"),
-            metadata=data.get("metadata", {}),
+            metadata=dict(data.get("metadata", {})),
         )
 
 
