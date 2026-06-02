@@ -840,6 +840,21 @@ class TestAggregateStrategy:
         assert sr["aggregated"]["meanRecoveryTime_ms"] is not None
         assert sr["aggregated"]["maxRecoveryTime_ms"] is None
 
+    def test_multi_iteration_all_error_renders_na_without_crashing(self):
+        # Every iteration ERROR → aggregate_iterations reports
+        # meanResilienceScore=None + allIterationsError; the per-strategy echo
+        # must render "n/a" rather than crash formatting None with ``:.1f``.
+        sr = {}
+        result = _aggregate_strategy(
+            SimpleNamespace(iterations=2),
+            "colocate",
+            sr,
+            [_iteration("ERROR", 0), _iteration("ERROR", 0)],
+        )
+        assert result is False
+        assert sr["aggregated"]["allIterationsError"] is True
+        assert sr["aggregated"]["meanResilienceScore"] is None
+
 
 def _neo4j_ctx(store):
     return SimpleNamespace(

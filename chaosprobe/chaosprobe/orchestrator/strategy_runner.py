@@ -1358,9 +1358,16 @@ def _aggregate_strategy(
         iter_passed = sum(1 for ir in iteration_results if ir["verdict"] == "PASS")
         tainted = agg.get("taintedIterations", 0)
         taint_str = f" ({tainted} tainted)" if tainted > 0 else ""
+        # meanResilienceScore is None when every iteration errored (see
+        # aggregate_iterations' all-ERROR guard) — render that, don't crash
+        # formatting None with ``:.1f``.
+        mean_score = agg.get("meanResilienceScore")
+        mean_score_str = (
+            f"{mean_score:.1f}" if mean_score is not None else "n/a (all iterations errored)"
+        )
         click.echo(
             f"\n    Aggregated: {iter_passed}/{ctx.iterations} passed | "
-            f"Mean Score: {agg['meanResilienceScore']:.1f}{taint_str}"
+            f"Mean Score: {mean_score_str}{taint_str}"
         )
         if tainted > 0:
             click.echo(f"    Healthy-only Mean Score: {agg['meanResilienceScore_healthyOnly']:.1f}")

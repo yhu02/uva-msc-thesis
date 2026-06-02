@@ -138,3 +138,34 @@ class TestAggregateIterationsRecoveryCIs:
         ci = agg["meanRecoveryTime_ms_ci95"]
         assert ci["n"] == 1
         assert ci["low"] == ci["high"] == agg["meanRecoveryTime_ms"]
+
+
+class TestAggregateIterationsAllError:
+    """When every iteration is ERROR there is no valid measurement: the
+    roll-up must report ``null`` score statistics plus ``allIterationsError``
+    rather than fabricating a 0.0 mean from the excluded ERROR scores."""
+
+    def test_all_error_reports_null_mean_and_flag(self):
+        agg = aggregate_iterations(
+            [_iter(score=0.0, verdict="ERROR"), _iter(score=0.0, verdict="ERROR")]
+        )
+        assert agg["allIterationsError"] is True
+        assert agg["meanResilienceScore"] is None
+        assert agg["errors"] == 2
+        assert agg["totalExperiments"] == 2
+        assert agg["passed"] == 0
+        # Raw per-iteration scores are still surfaced for debugging; they are
+        # simply not summarised into a (meaningless) mean.
+        assert agg["perIterationScores"] == [0.0, 0.0]
+        # No fabricated point estimates leak through.
+        assert "meanResilienceScore_ci95" not in agg
+        assert "harmonicMeanResilienceScore" not in agg
+
+    def test_one_valid_iteration_is_not_all_error(self):
+        agg = aggregate_iterations(
+            [_iter(score=70.0, verdict="PASS"), _iter(score=0.0, verdict="ERROR")]
+        )
+        assert agg.get("allIterationsError") is not True
+        # The single valid iteration drives the mean; the ERROR is excluded.
+        assert agg["meanResilienceScore"] == 70.0
+        assert agg["errors"] == 1

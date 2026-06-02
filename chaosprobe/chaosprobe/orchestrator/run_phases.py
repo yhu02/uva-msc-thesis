@@ -832,7 +832,8 @@ def aggregate_iterations(
     # without reflecting actual strategy resilience.
     valid_iters = [ir for ir in iteration_results if ir["verdict"] != "ERROR"]
     error_count = len(iteration_results) - len(valid_iters)
-    valid_scores = [ir["resilienceScore"] for ir in valid_iters] if valid_iters else scores
+
+    valid_scores = [ir["resilienceScore"] for ir in valid_iters]
 
     # Track how many iterations had a healthy pre-chaos baseline.
     # Tainted iterations (pre-chaos already degraded) produce unreliable
@@ -844,55 +845,85 @@ def aggregate_iterations(
         [ir["resilienceScore"] for ir in healthy_iters] if healthy_iters else valid_scores
     )
 
-    healthy_stddev = round(statistics.stdev(healthy_scores), 1) if len(healthy_scores) > 1 else 0.0
-    valid_stddev = round(statistics.stdev(valid_scores), 1) if len(valid_scores) > 1 else 0.0
-
-    # ── Tail-aware score variants ──────────────────────────────────────
-    # The arithmetic mean hides exactly the tail failures Dean & Barroso
-    # ("The Tail at Scale", CACM 2013) argue dominate user-perceived
-    # quality.  Surface them so the user can pick the right point estimate
-    # for their argument and so the discussion can refer to actual tail
-    # percentiles rather than just the mean.
-    from chaosprobe.metrics.statistics import _percentile
-
-    sorted_valid = sorted(valid_scores)
-    p25_score = _percentile(sorted_valid, 0.25)
-    # Harmonic mean penalises low values disproportionately.  Compute on
-    # (score + 1) to avoid divide-by-zero when a probe was fully wiped
-    # out (score=0); subtract 1 after.  Bounded to [0, 100] for sanity.
-    harm_mean = statistics.harmonic_mean([s + 1.0 for s in valid_scores]) - 1.0
-    harm_mean = max(0.0, min(100.0, harm_mean))
-
-    # ── Bootstrap CI for the mean ──────────────────────────────────────
-    # With n=3 and stddev~25-30, the point-estimate gap between many
-    # strategies is well inside the noise floor.  Reporting a bootstrap
-    # 95% CI makes the uncertainty visible up-front rather than burying
-    # it.
+    # bootstrap_ci feeds both the resilience-score CI (only computed when there
+    # are valid scores) and the recovery CI further down (which runs even for
+    # all-ERROR strategies that still produced recovery data), so import it
+    # unconditionally here rather than inside the valid-scores branch.
     from chaosprobe.metrics.statistics import bootstrap_ci
 
-    mean_ci = bootstrap_ci(valid_scores, statistic="mean")
+    # When *every* iteration errored (infra failure / all-Unknown probes),
+    # there is no valid measurement to summarise.  Computing the score stats
+    # from the raw scores would re-inject exactly the meaningless 0.0s the
+    # ERROR verdict exists to exclude — strategy_runner marks all-Unknown-probe
+    # iterations ERROR precisely so "Score 0.0 ... is not a valid resilience
+    # measurement; it's an infrastructure failure" never enters the stats.
+    # Emit null score statistics (not a fabricated 0.0) plus the
+    # ``allIterationsError`` flag so analysis can tell "no valid data" apart
+    # from "genuinely scored zero".  The diagnostic roll-ups further down
+    # (taintReasonCounts, probeVerdictTally, recovery) still populate from the
+    # ERROR iterations.
+    if valid_scores:
+        healthy_stddev = (
+            round(statistics.stdev(healthy_scores), 1) if len(healthy_scores) > 1 else 0.0
+        )
+        valid_stddev = round(statistics.stdev(valid_scores), 1) if len(valid_scores) > 1 else 0.0
+
+        # ── Tail-aware score variants ──────────────────────────────────────
+        # The arithmetic mean hides exactly the tail failures Dean & Barroso
+        # ("The Tail at Scale", CACM 2013) argue dominate user-perceived
+        # quality.  Surface them so the user can pick the right point estimate
+        # for their argument and so the discussion can refer to actual tail
+        # percentiles rather than just the mean.
+        from chaosprobe.metrics.statistics import _percentile
+
+        sorted_valid = sorted(valid_scores)
+        p25_score = _percentile(sorted_valid, 0.25)
+        # Harmonic mean penalises low values disproportionately.  Compute on
+        # (score + 1) to avoid divide-by-zero when a probe was fully wiped
+        # out (score=0); subtract 1 after.  Bounded to [0, 100] for sanity.
+        harm_mean = statistics.harmonic_mean([s + 1.0 for s in valid_scores]) - 1.0
+        harm_mean = max(0.0, min(100.0, harm_mean))
+
+        # ── Bootstrap CI for the mean ──────────────────────────────────────
+        # With n=3 and stddev~25-30, the point-estimate gap between many
+        # strategies is well inside the noise floor.  Reporting a bootstrap
+        # 95% CI makes the uncertainty visible up-front rather than burying
+        # it.
+        mean_ci = bootstrap_ci(valid_scores, statistic="mean")
+
+        score_stats: Dict[str, Any] = {
+            "meanResilienceScore": round(statistics.mean(valid_scores), 1),
+            "meanResilienceScore_healthyOnly": round(statistics.mean(healthy_scores), 1),
+            "stddevResilienceScore": valid_stddev,
+            "stddevResilienceScore_healthyOnly": healthy_stddev,
+            "minResilienceScore": min(valid_scores),
+            "maxResilienceScore": max(valid_scores),
+            "p25ResilienceScore": round(p25_score, 1),
+            "harmonicMeanResilienceScore": round(harm_mean, 1),
+            "meanResilienceScore_ci95": {
+                "low": mean_ci["ci_low"],
+                "high": mean_ci["ci_high"],
+                "n": mean_ci["n"],
+                "n_resamples": mean_ci["n_resamples"],
+            },
+        }
+    else:
+        score_stats = {
+            "meanResilienceScore": None,
+            "stddevResilienceScore": None,
+            "minResilienceScore": None,
+            "maxResilienceScore": None,
+        }
 
     agg: Dict[str, Any] = {
         "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
         "passRate": round(pass_count / len(verdicts), 2),
-        "meanResilienceScore": round(statistics.mean(valid_scores), 1),
-        "meanResilienceScore_healthyOnly": round(statistics.mean(healthy_scores), 1),
-        "stddevResilienceScore": valid_stddev,
-        "stddevResilienceScore_healthyOnly": healthy_stddev,
-        "minResilienceScore": min(valid_scores),
-        "maxResilienceScore": max(valid_scores),
-        "p25ResilienceScore": round(p25_score, 1),
-        "harmonicMeanResilienceScore": round(harm_mean, 1),
-        "meanResilienceScore_ci95": {
-            "low": mean_ci["ci_low"],
-            "high": mean_ci["ci_high"],
-            "n": mean_ci["n"],
-            "n_resamples": mean_ci["n_resamples"],
-        },
+        **score_stats,
         "totalExperiments": len(iteration_results),
         "passed": pass_count,
         "failed": len(verdicts) - pass_count - error_count,
         "errors": error_count,
+        "allIterationsError": not valid_iters,
         "taintedIterations": tainted_count,
         "allIterationsTainted": all_tainted,
         "perIterationScores": scores,
