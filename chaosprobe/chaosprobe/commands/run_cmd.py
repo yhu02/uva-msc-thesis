@@ -607,6 +607,18 @@ def _strategy_execution_order(name: str) -> int:
         return -1 if base == "baseline" else 0
 
 
+def _global_strategy_index(fault_pos: int, strat_pos: int, n_strategies: int) -> int:
+    """1-based position of a strategy within the full multi-fault matrix.
+
+    ``fault_pos`` is the 0-based index of the fault scenario in the matrix and
+    ``strat_pos`` the 1-based index of the strategy within that fault. Counting
+    continuously across faults means a 2-fault x 8-strategy run reports
+    ``[1/16]`` .. ``[16/16]`` instead of restarting at ``[1/16]`` for the second
+    fault — which looks like the run restarted and under-reports progress.
+    """
+    return fault_pos * n_strategies + strat_pos
+
+
 def _expand_random_seeds(strategy_list: List[str], seeds: Optional[str]) -> List[str]:
     """Expand the ``random`` strategy into one entry per ``--seeds`` value.
 
@@ -1184,7 +1196,7 @@ def run(
     # placement matrix once per fault.  This realises the "test fault
     # class to refute or confirm the churn-vs-contention story"
     # recommendation from the critical review.
-    for fault_label, fault_scenario, _fault_types in fault_scenarios:
+    for fault_pos, (fault_label, fault_scenario, _fault_types) in enumerate(fault_scenarios):
         click.echo(f"\n{'═' * 60}")
         click.echo(f"  FAULT: {fault_label}")
         click.echo(f"{'═' * 60}")
@@ -1224,7 +1236,8 @@ def run(
             ts=ts,
         )
 
-        for idx, strategy_name in enumerate(strategy_list, 1):
+        for strat_pos, strategy_name in enumerate(strategy_list, 1):
+            idx = _global_strategy_index(fault_pos, strat_pos, len(strategy_list))
             try:
                 strategy_result, strategy_passed = execute_strategy(
                     run_ctx,
