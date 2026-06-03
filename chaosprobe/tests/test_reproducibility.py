@@ -3,9 +3,11 @@
 from unittest.mock import MagicMock, patch
 
 from chaosprobe.metrics.reproducibility import (
+    _affects_reproducibility,
     _cni_hint,
     _git_describe,
     _kubernetes_server_info,
+    _porcelain_paths,
     gather_run_metadata,
 )
 
@@ -43,6 +45,43 @@ class TestGitDescribe:
             out = _git_describe(repo_dir=str(tmp_path))
         assert out["dirty"] is True
 
+    def test_only_generated_artifacts_and_docs_are_not_dirty(self, tmp_path):
+        # Regression: a regenerated presentation, run outputs, and prose docs
+        # must not flip the reproducibility flag — they don't change the code.
+        porcelain = (
+            " M ChaosProbe_Presentation.pptx\n"
+            " M CLAUDE.md\n"
+            "?? chaosprobe/results/20260603-052645/summary.json\n"
+        )
+        with patch("chaosprobe.metrics.reproducibility.subprocess.run") as mock_run:
+
+            def side_effect(cmd, *a, **kw):
+                if cmd[1] == "rev-parse":
+                    return MagicMock(returncode=0, stdout="deadbeef" * 5 + "\n")
+                if cmd[1] == "status":
+                    return MagicMock(returncode=0, stdout=porcelain)
+                return MagicMock(returncode=1, stdout="")
+
+            mock_run.side_effect = side_effect
+            out = _git_describe(repo_dir=str(tmp_path))
+        assert out["dirty"] is False
+
+    def test_dirty_code_amid_ignored_artifacts_still_dirty(self, tmp_path):
+        # A real code change alongside generated artifacts must still count.
+        porcelain = " M ChaosProbe_Presentation.pptx\n M chaosprobe/commands/run_cmd.py\n"
+        with patch("chaosprobe.metrics.reproducibility.subprocess.run") as mock_run:
+
+            def side_effect(cmd, *a, **kw):
+                if cmd[1] == "rev-parse":
+                    return MagicMock(returncode=0, stdout="deadbeef" * 5 + "\n")
+                if cmd[1] == "status":
+                    return MagicMock(returncode=0, stdout=porcelain)
+                return MagicMock(returncode=1, stdout="")
+
+            mock_run.side_effect = side_effect
+            out = _git_describe(repo_dir=str(tmp_path))
+        assert out["dirty"] is True
+
     def test_git_not_installed_returns_all_none(self, tmp_path):
         with patch(
             "chaosprobe.metrics.reproducibility.subprocess.run",
@@ -67,6 +106,30 @@ class TestGitDescribe:
             out = _git_describe(repo_dir=str(tmp_path))
         assert out["commit"] is None
         assert out["dirty"] is None
+
+
+class TestAffectsReproducibility:
+    def test_code_scenarios_manifests_count(self):
+        assert _affects_reproducibility("chaosprobe/commands/run_cmd.py") is True
+        assert _affects_reproducibility("scenarios/online-boutique/placement.yaml") is True
+        assert _affects_reproducibility("deploy/frontend.yaml") is True
+
+    def test_generated_artifacts_and_docs_ignored(self):
+        assert _affects_reproducibility("ChaosProbe_Presentation.pptx") is False
+        assert _affects_reproducibility("CLAUDE.md") is False
+        assert _affects_reproducibility("chaosprobe/results/20260603/summary.json") is False
+        assert _affects_reproducibility("chaosprobe/results/20260603/charts/report.html") is False
+
+
+class TestPorcelainPaths:
+    def test_parses_status_codes_and_renames(self):
+        out = _porcelain_paths(
+            " M a.py\n?? b.txt\nR  old.py -> new.py\n A  c.py\n\n",
+        )
+        assert out == ["a.py", "b.txt", "new.py", "c.py"]
+
+    def test_strips_quotes_on_unusual_paths(self):
+        assert _porcelain_paths(' M "weird name.py"\n') == ["weird name.py"]
 
 
 class TestKubernetesServerInfo:
