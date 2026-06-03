@@ -264,6 +264,31 @@ def _assert_no_unbuilt_cmdprobes(experiments: List[Dict[str, Any]]) -> None:
         )
 
 
+def _collect_built_images(experiments: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Map cmdProbe name → resolved image from already-patched experiments.
+
+    The primary scenario's cmdProbe images are patched to the in-cluster
+    registry by :func:`patch_probe_images`. Secondary fault scenarios in a
+    multi-fault run carry the same probes but with the placeholder
+    ``image: auto`` and are loaded with ``deploy=False`` (so they never build
+    or patch their own images). Reusing the primary's resolved tags lets the
+    fault matrix patch them too; probes still on the placeholder are skipped.
+    """
+    images: Dict[str, str] = {}
+    for exp_entry in experiments:
+        engine_spec = exp_entry.get("spec", {}).get("spec", {})
+        for exp in engine_spec.get("experiments", []):
+            for probe in exp.get("spec", {}).get("probe", []):
+                if probe.get("type") != "cmdProbe":
+                    continue
+                source = probe.get("cmdProbe/inputs", {}).get("source", {})
+                image = source.get("image")
+                name = probe.get("name")
+                if name and image and image not in ("auto", ""):
+                    images[name] = image
+    return images
+
+
 def _load_and_prepare_scenario(
     experiment: str,
     namespace: Optional[str],
@@ -396,7 +421,13 @@ def _build_fault_scenarios(
     topology + probes), and any additional scenarios are loaded with
     ``deploy=False`` against the same namespace. Pre-loading them here fails fast
     on parse errors before cluster setup.
+
+    Because secondary scenarios skip the build/patch step (``deploy=False``),
+    their cmdProbes would otherwise ship the placeholder ``image: auto`` and
+    fail to pull on the cluster. We reuse the primary's already-resolved probe
+    images to patch them, so every fault in the matrix runs the same probes.
     """
+    built_images = _collect_built_images(shared_scenario.get("experiments", []))
     fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]] = []
     for exp_path in experiment:
         label = Path(exp_path).stem
@@ -406,6 +437,9 @@ def _build_fault_scenarios(
             scenario_dict, _ns, _file, _routes = _load_and_prepare_scenario(
                 exp_path, namespace, deploy=False
             )
+            if built_images:
+                patch_probe_images(scenario_dict.get("experiments", []), built_images)
+                _assert_no_unbuilt_cmdprobes(scenario_dict.get("experiments", []))
         fault_scenarios.append((label, scenario_dict, extract_experiment_types(scenario_dict)))
     return fault_scenarios
 
