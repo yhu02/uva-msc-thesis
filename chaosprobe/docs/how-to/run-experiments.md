@@ -59,8 +59,8 @@ constant while varying only the fault — by passing multiple experiment files:
 
 ```bash
 uv run chaosprobe run -n online-boutique \
-    -e scenarios/online-boutique/placement-experiment.yaml \
-    -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
+    -e scenarios/online-boutique/pod-delete.yaml \
+    -e scenarios/online-boutique/cpu-hog.yaml \
     -i 5
 ```
 

@@ -940,7 +940,7 @@ def _init_overall_results(
     "--experiment",
     "-e",
     multiple=True,
-    default=("scenarios/online-boutique/placement-experiment.yaml",),
+    default=("scenarios/online-boutique/pod-delete.yaml",),
     help=(
         "Path to a placement-experiment YAML file. Pass -e multiple times "
         "to run a multi-fault matrix: every placement strategy is executed "

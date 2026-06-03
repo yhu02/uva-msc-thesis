@@ -1,6 +1,6 @@
 # Placement Experiment — pod-cpu-hog on frontend
 #
-# Companion to placement-experiment.yaml (pod-delete on productcatalogservice).
+# Companion to pod-delete.yaml (pod-delete on productcatalogservice).
 # Together the two files form the multi-fault matrix that tests the central
 # thesis claim from the critical review: pod-delete is a CHURN-based fault and
 # the literature's spread-is-best intuition fails under it.  pod-cpu-hog is a
@@ -16,11 +16,11 @@
 #
 # Usage (automated multi-fault matrix):
 #   chaosprobe run -n online-boutique \
-#     -e scenarios/online-boutique/placement-experiment.yaml \
-#     -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
+#     -e scenarios/online-boutique/pod-delete.yaml \
+#     -e scenarios/online-boutique/cpu-hog.yaml \
 #     -i 5
 #
-# Probe set is identical to placement-experiment.yaml so that
+# Probe set is identical to pod-delete.yaml so that
 # resilience scores are directly comparable across the two fault classes.
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine

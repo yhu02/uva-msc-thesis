@@ -569,7 +569,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 | `-o, --output-dir` | `results` | Base results directory (timestamped subdir created) |
 | `-s, --strategies` | `baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware` | Comma-separated strategies |
 | `-i, --iterations` | 1 | Iterations per strategy |
-| `-e, --experiment` | `scenarios/online-boutique/placement-experiment.yaml` | Experiment YAML file |
+| `-e, --experiment` | `scenarios/online-boutique/pod-delete.yaml` | Experiment YAML file |
 | `-t, --timeout` | 300 | Timeout per experiment (seconds) |
 | `--seed` | 42 | Random strategy seed |
 | `--seeds 42,137,271` | — | Multi-seed: expand `random` into one entry per seed (e.g. `random:42`, `random:137`). Each runs the full iteration count. Downstream tooling sees them as separate strategies. Overrides `--seed`. |
@@ -1087,7 +1087,8 @@ chaosprobe/
   scenarios/
     online-boutique/
       deploy/                # 12 microservice manifests
-      placement-experiment.yaml
+      pod-delete.yaml        # churn fault (pod-delete on productcatalogservice)
+      cpu-hog.yaml           # contention fault (pod-cpu-hog on frontend)
       contention-*/          # CPU, memory, IO, network, Redis, latency, throughput variants
     examples/
       nginx-pod-delete/      # Simple example scenario

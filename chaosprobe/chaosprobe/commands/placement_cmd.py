@@ -35,7 +35,7 @@ def placement():
       2. Apply a placement strategy:
          chaosprobe placement apply colocate -n online-boutique
       3. Run chaos experiments under that placement:
-         chaosprobe run scenarios/online-boutique/placement-experiment.yaml --output-dir results/
+         chaosprobe run scenarios/online-boutique/pod-delete.yaml --output-dir results/
       4. Clear placement and try another strategy:
          chaosprobe placement clear -n online-boutique
     """

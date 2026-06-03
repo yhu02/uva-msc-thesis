@@ -7,7 +7,7 @@
 #
 # Usage (manual):
 #   chaosprobe placement apply colocate -n online-boutique
-#   chaosprobe run scenarios/online-boutique/placement-experiment.yaml -o colocate.json
+#   chaosprobe run scenarios/online-boutique/pod-delete.yaml -o colocate.json
 #   chaosprobe placement clear -n online-boutique
 #
 # Hypothesis: Microservice resilience under chaos varies with pod placement

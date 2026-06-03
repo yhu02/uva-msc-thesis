@@ -130,8 +130,8 @@ list: [`chaosprobe/docs/reference/cli.md`](chaosprobe/docs/reference/cli.md#run)
 ```bash
 # Full multi-fault matrix (recommended for results):
 uv run chaosprobe run -n online-boutique \
-    -e scenarios/online-boutique/placement-experiment.yaml \
-    -e scenarios/online-boutique/placement-experiment-cpuhog.yaml \
+    -e scenarios/online-boutique/pod-delete.yaml \
+    -e scenarios/online-boutique/cpu-hog.yaml \
     -i 5
 # A subset of strategies (e.g. 4 strategies × 2 iterations):
 uv run chaosprobe run -n online-boutique \

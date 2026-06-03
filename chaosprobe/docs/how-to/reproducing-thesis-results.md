@@ -21,7 +21,7 @@ Heterogeneous workers were standardised at 4 GiB in PR #25; running on a cluster
 
 ## Workload
 
-[Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) deployed via `chaosprobe/scenarios/online-boutique/placement-experiment.yaml`. 11 services (10 polyglot microservices + Redis cart). Single replica per service — `pod-delete` at 100% therefore guarantees full unavailability.
+[Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) deployed via `chaosprobe/scenarios/online-boutique/pod-delete.yaml`. 11 services (10 polyglot microservices + Redis cart). Single replica per service — `pod-delete` at 100% therefore guarantees full unavailability.
 
 Load: steady-state Locust profile, 50 users at 10 req/s. The built-in locustfile drives the catalog and cart paths.
 
@@ -31,8 +31,8 @@ Each strategy is exercised against two faults in two separate runs:
 
 | Fault | Scenario file | Notes |
 |---|---|---|
-| Churn — `pod-delete` | `placement-experiment.yaml` | CHAOS_INTERVAL=15s, FORCE=true, PODS_AFFECTED_PERC=100, target=`productcatalogservice`, duration=120s |
-| Contention — `pod-cpu-hog` | `placement-experiment-cpuhog.yaml` | 1 core, 100% load, duration=120s, same target |
+| Churn — `pod-delete` | `pod-delete.yaml` | CHAOS_INTERVAL=15s, FORCE=true, PODS_AFFECTED_PERC=100, target=`productcatalogservice`, duration=120s |
+| Contention — `pod-cpu-hog` | `cpu-hog.yaml` | 1 core, 100% load, duration=120s, same target |
 
 Baseline strategy uses a trivial `pod-cpu-hog` (1s @ 1% on 0 cores) to validate the probe + scoring pipeline — expected score 100%, zero recovery cycles.
 
@@ -62,14 +62,14 @@ uv run chaosprobe init -n online-boutique
 
 # Churn matrix — 5 iterations per strategy.
 uv run chaosprobe run -n online-boutique \
-  --experiment scenarios/online-boutique/placement-experiment.yaml \
+  --experiment scenarios/online-boutique/pod-delete.yaml \
   --iterations 5 \
   --seed 42 \
   --output-dir results/churn
 
 # Contention matrix — same shape, different experiment.
 uv run chaosprobe run -n online-boutique \
-  --experiment scenarios/online-boutique/placement-experiment-cpuhog.yaml \
+  --experiment scenarios/online-boutique/cpu-hog.yaml \
   --iterations 5 \
   --seed 42 \
   --output-dir results/contention
