@@ -26,27 +26,27 @@ Speaker notes for the thesis defense presentation.
 
 > Our research question is: *How do multi-dimensional metrics decompose chaos response across pod-placement strategies in Kubernetes?*
 >
-> The framing is deliberate. Earlier work asks which placement strategy is most resilient and collapses the answer into a single aggregate score. We instead ask what each metric dimension uniquely reveals -- and what we can claim with confidence at this scale. We test six hypotheses (H1–H6), grouped into three themes; I will walk each theme at a high level. Separately, three *legacy literature predictions* -- **L1** (colocate is the worst), **L2** (spread gives the best fault isolation), and **L3** (recovery time predicts resilience) -- are the contention-model expectations the results slides put to the test. I label these L-, distinct from the six H-hypotheses, to keep the two families clear.
+> The framing is deliberate. Earlier work asks which placement strategy is most resilient and collapses the answer into a single aggregate resilience score. We found that score is not reproducible at this scale, so we **build the thesis on the primary-source metrics instead** -- the kernel and network signals that *do* reproduce across runs. We state four metric findings, M1 through M4, plus two supporting hypotheses, S1 and S2. Separately, three *legacy literature predictions* -- **L1** (colocate is the worst), **L2** (spread gives the best fault isolation), and **L3** (recovery time predicts resilience) -- are the contention-model expectations the results put to the test. We label those L-, distinct from the M- and S- claims, to keep the families clear.
 >
-> **Theme 1 -- Framework (H1 and H2).** These two establish what can and cannot be claimed from the measurements.
+> **Primary results -- the reproducible metrics (M1 through M3).** These are the spine of the thesis. Each is a primary-source metric, measured directly, and verified to reproduce across the collected runs.
 >
-> **H1: Fault class gates the placement effect.** Whether placement matters at all is conditional on the fault. Under the contention fault -- a CPU hog -- every strategy fully recovers and scores 100 with zero variance; placement has no measurable effect. Under the churn fault -- pod-delete -- the strategies differentiate. The multi-fault matrix is therefore not optional: a single fault class would have answered the placement question with an accidental "yes" or "no."
+> **M1: Spreading flushes cross-node connection state.** This is the headline metric. During pod-delete, the spread and default strategies flush 36 to 39 percent of the node's conntrack entries; colocate stays essentially flat, about minus 1.6 percent. This holds in every one of the twelve runs where both were measured -- a large, reproducible fault-response signal, and the dependent variable the noisy score never gave us.
 >
-> **H2: The aggregate resilience score is too coarse to rank placements.** Across the thirteen runs we collected, a single strategy's resilience score ranges from 33 to 89 -- it is not reproducible run to run. Yet the underlying mechanism metrics, CPU throttling and conntrack churn, keep a *stable* ordering across those same runs. The binary-probe score throws away the signal; the per-mechanism metrics retain it. This is the core methodological claim -- and it is why the next two hypotheses work at the mechanism layer, not the score layer.
+> **M2: Co-location lowers CPU contention rather than raising it.** The densest placement, colocate, throttles *least* -- a median ratio of 1.54 -- below the scheduler's own default at 1.90 and spread at 1.94, with the lowest CPU usage and CPU pressure to match. This holds in eleven of thirteen runs. It is the opposite of what Bubble-Up and the Mars 2011 contention model predict, where denser packing should mean more contention.
 >
-> **Theme 2 -- Mechanism (H3 and H4). These are the reproducible results.** Both are verified to hold across the collected runs, not asserted from a single draw.
+> **M3: At the metric level, "spread is safer" is refuted.** Both reproducible metrics -- conntrack churn and CPU throttling -- favour co-location under a churn fault. So the literature's spread-isolation prescription is not merely unmeasurable on the application score; it is actively contradicted by the primary-source metrics. This is a positive, reproducible refutation, not an absence of evidence.
 >
-> **H3: Churn flushes the cross-node connection state that co-location preserves.** During pod-delete, the spread strategy flushes 28 to 52 percent of the node's conntrack entries; colocate stays essentially flat, between minus 15 and plus 3 percent. This holds in every one of the twelve runs where both were measured. Spreading services across nodes maximises exactly the cross-node flows that pod churn tears down.
+> **Methodology (M4).**
 >
-> **H4: CPU throttling under churn inverts the contention-model prediction.** The densest placement, colocate, throttles *least* -- a median ratio of 1.54 -- below the scheduler's own default at 1.90 and spread at 1.94. This ordering holds in eleven of thirteen runs. It is the opposite of what Bubble-Up and the Mars 2011 contention model predict, where denser packing should mean more throttling. Churn-based faults do not obey the contention model.
+> **M4: The application resilience score is decoupled from the reproducible metrics.** Where conntrack and throttling reproduce -- eleven or twelve runs out of thirteen -- the binary-probe resilience score does not: a single strategy spans 33 to 89 across runs. The score is a lossy, high-variance instrument; the node-level metrics are the reliable measurement. Recognising that, and dropping to the metric layer, is the methodological contribution.
 >
-> **Theme 3 -- Tail and recovery (H5 and H6).**
+> **Supporting hypotheses (S1 and S2).**
 >
-> **H5: The fault signal lives in the tail, not the mean.** On the route that depends on the killed service, during-chaos latency has a mean of 231 milliseconds but a p95 of 619 and a maximum of 3,334 -- the tail is fourteen times the mean. Routes that do not depend on the target stay flat at 70 to 110 milliseconds. Mean-based SLOs would miss the fault entirely; this is the *Tail at Scale* warning from Dean and Barroso made concrete.
+> **S1: Fault class gates the placement effect.** Under the contention fault -- a CPU hog -- every strategy fully recovers and scores 100 with zero variance; under the churn fault the strategies differentiate. Whether placement matters at all is conditional on the fault class, which is why the multi-fault matrix is not optional.
 >
-> **H6: Recovery time is application-bound, not placement-bound.** Recovery decomposes into deletion-to-scheduled plus scheduled-to-ready. The scheduled-to-ready term -- application startup -- is 84 to 96 percent of the total; placement only touches the small 4 to 16 percent scheduling term. Placement has almost no leverage over how fast a pod comes back, which is why recovery time does not track the placement story.
+> **S2: Recovery time is application-bound, not placement-bound.** Recovery decomposes into deletion-to-scheduled plus scheduled-to-ready; the application-startup term is 84 to 96 percent of the total, and placement only touches the small 4 to 16 percent scheduling term. Recovery cannot carry the placement story, which is also why L3 fails.
 >
-> All six hypotheses are testable from data ChaosProbe already collects, and H3 and H4 are reproducible across the full run set. The baseline run -- a trivial pod-cpu-hog under default scheduling -- sits outside the hypothesis set as a methodology control: a 100 percent score with zero variance validates the probes and scoring before any of these claims can be evaluated.
+> All six claims are testable from data ChaosProbe already collects, and M1 and M2 are reproducible across the full run set. The baseline run -- a trivial pod-cpu-hog under default scheduling -- sits outside the set as a methodology control: a 100 percent score with zero variance validates the probes before any of these claims are evaluated.
 
 ---
 
@@ -150,7 +150,7 @@ Speaker notes for the thesis defense presentation.
 
 ---
 
-## Slide 9 -- Results: Resilience Scores
+## Slide 9 -- Results: Why the Score Is Demoted (M4)
 
 > The methodology control holds first: **baseline achieved 100% with standard deviation zero** -- the probes and scoring work as designed. But the central finding on this slide is a negative one about the instrument itself: **the aggregate resilience score does not reproduce across runs.**
 >
@@ -174,15 +174,15 @@ Speaker notes for the thesis defense presentation.
 
 ---
 
-## Slide 11 -- Results: Resources & Throughput
+## Slide 11 -- Results: Primary Metrics — Conntrack & CPU (M1, M2)
 
-> This slide is the heart of the result: the two mechanism signals that **do** reproduce across runs, where the aggregate score did not.
+> This slide is the heart of the thesis: the two primary-source metrics that **do** reproduce across runs, where the aggregate score did not.
 >
-> The first is CPU throttling, and it inverts the contention model. The densest placement -- colocate -- throttles the *least*, with a median ratio of 1.54, below the scheduler's own default at 1.90 and spread at 1.94. This ordering holds in **eleven of the thirteen runs**. The contention literature, Bubble-Up and Mars 2011, predicts the opposite: denser packing should mean more resource competition and more throttling. Under a churn-based fault, that prediction fails -- co-located pods on a quiet node throttle less than spread pods whose shared infrastructure is busy reconverging.
+> **M1, connection-tracking churn, is the headline.** During the kill cycle, spread and default flush **36 to 39 percent** of the node's conntrack entries at the median; colocate stays essentially flat, about minus 1.6 percent. This holds in **all twelve runs** where both were measured -- a large, reproducible effect. It is the mechanism for everything else: pod-delete tears down and rebuilds the target's network identity every fifteen seconds, and spreading services across nodes maximises the number of cross-node flows that have to reconverge. Co-location keeps those paths node-local, so there is nothing to flush. This conntrack delta is the dependent variable we build on, in place of the score.
 >
-> The second signal is connection-tracking churn, and it is even more stable. During the kill cycle, spread flushes **28 to 52 percent** of the node's conntrack entries; colocate stays essentially flat, between minus 15 and plus 3 percent. This holds in **all twelve runs** where both were measured. The interpretation is the mechanism for everything else: pod-delete tears down and rebuilds the target's network identity every fifteen seconds, and spreading services across nodes maximises the number of cross-node flows that have to reconverge. Co-location keeps those paths node-local, so there is nothing to flush.
+> **M2 is CPU throttling, and it inverts the contention model.** The densest placement -- colocate -- throttles the *least*, with a median ratio of 1.54, below the scheduler's own default at 1.90 and spread at 1.94, with the lowest CPU usage and pressure to match. This ordering holds in **eleven of the thirteen runs**. The contention literature, Bubble-Up and Mars 2011, predicts the opposite: denser packing should mean more contention and more throttling. Under a churn-based fault, that prediction fails.
 >
-> So the score is noise, but the mechanism underneath it is not -- and the mechanism is unambiguously churn-driven, not contention-driven.
+> Both metrics favour co-location, and that is the synthesis -- **M3**: the literature's "spread is safer" prescription is refuted at the metric level, reproducibly, even though the application score is too noisy to settle it. The mechanism is unambiguously churn-driven, not contention-driven.
 
 ---
 

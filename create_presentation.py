@@ -341,51 +341,50 @@ add_text_box(slide, 0.8, 1.4, 11.7, 0.65,
 
 # Theme group labels (above each theme's card group)
 group_labels = [
-    ("Framework", ACCENT_BLUE, 0.35, 2.55),
-    ("Mechanism (reproducible)", ACCENT_RED, 4.55, 2.55),
-    ("Tail & recovery", ACCENT_ORANGE, 8.75, 2.55),
+    ("Primary results — metrics", ACCENT_RED, 0.35, 2.55),
+    ("Methodology", ACCENT_BLUE, 6.65, 2.55),
+    ("Context & support", ACCENT_ORANGE, 8.75, 2.55),
 ]
 for label, clr, x, y in group_labels:
     add_text_box(slide, x, y, 4, 0.25, label,
                  font_size=11, bold=True, color=clr)
 
-# Six hypothesis cards — single row, themed by group. Each is grounded in the
-# collected data and stated as falsifiable; mechanism claims (H3, H4) are
-# verified reproducible across the 13 collected runs, unlike the aggregate
-# resilience score (H2), which is not.
+# Six hypotheses — single row. The thesis is built on the primary-source
+# metrics (M1-M3), not the resilience score: those reproduce across the 13
+# collected runs. The score is demoted to the decoupling finding (M4).
 hypotheses = [
-    # Framework (H1-H2, blue)
-    ("H1", "Fault class gates placement effect",
-     "Contention (cpu-hog) yields identical resilience across "
-     "all strategies (100, σ0); churn (pod-delete) differentiates "
-     "them. Whether placement matters is conditional on fault class.",
-     ACCENT_BLUE),
-    ("H2", "Aggregate score is too coarse",
-     "The same strategy's resilience score ranges 33-89 across "
-     "13 runs (non-reproducible), while throttling and conntrack "
-     "orderings stay stable. Mechanism metrics carry the signal.",
-     ACCENT_BLUE),
-    # Mechanism — reproducible (H3-H4, red)
-    ("H3", "Churn flushes cross-node conn-state",
-     "Spread flushes 28-52% of conntrack entries during churn; "
-     "colocate stays flat (−15% to +3%). Reproducible in all 12 "
-     "runs measured. Spreading maximises the flows churn disrupts.",
+    # Primary results — reproducible metric outcomes (M1-M3, red)
+    ("M1", "Spreading flushes conn-state",
+     "Primary metric. Under churn, spread/default flush 36-39% of "
+     "node conntrack entries; colocate stays flat (−1.6%). 12/12 "
+     "runs. The reproducible fault-response signal.",
      ACCENT_RED),
-    ("H4", "Throttling inverts contention model",
-     "Densest packing (colocate, median 1.54) throttles less than "
-     "default (1.90) and spread (1.94) under churn — holds in 11/13 "
-     "runs. Inverts Bubble-Up's dense=more-contention prediction.",
+    ("M2", "Co-location lowers CPU contention",
+     "Colocate throttles LEAST (median 1.54 vs default 1.90, spread "
+     "1.94) and has the lowest CPU usage/pressure. 11/13 runs. "
+     "Contention does not scale with density under churn.",
      ACCENT_RED),
-    # Tail & recovery (H5-H6, orange/purple)
-    ("H5", "Fault signal is in the tail",
-     "Targeted route during chaos: mean 231 ms but p95 619 / "
-     "max 3334 ms; unaffected routes stay flat at 70-110 ms. "
-     "Mean-based SLOs miss the fault (Dean & Barroso, CACM 2013).",
+    ("M3", "'Spread is safer' is refuted",
+     "Both reproducible metrics favour co-location under churn. The "
+     "literature's spread-isolation prescription is refuted at the "
+     "metric level — not merely unmeasurable on the score.",
+     ACCENT_RED),
+    # Methodology (M4, blue)
+    ("M4", "Score decoupled from metrics",
+     "Where conntrack & CPU reproduce (≥11/13), the resilience "
+     "score does NOT (33-89 across runs). The binary-probe score is "
+     "a lossy instrument; the metrics are the reliable outcome.",
+     ACCENT_BLUE),
+    # Context & support (S1-S2, orange/purple)
+    ("S1", "Fault class gates the effect",
+     "Contention (cpu-hog) yields identical resilience across all "
+     "strategies (100, σ0); churn differentiates them. Whether "
+     "placement matters is conditional on fault class.",
      ACCENT_ORANGE),
-    ("H6", "Recovery is application-bound",
-     "scheduled→ready is 84-96% of recovery time; placement "
-     "only touches the 4-16% deletion→scheduled term. Placement "
-     "has little leverage over how fast a pod recovers.",
+    ("S2", "Recovery is application-bound",
+     "scheduled→ready (app startup) is 84-96% of recovery; placement "
+     "touches only the 4-16% scheduling term. Recovery is "
+     "application-bound, not placement-bound.",
      ACCENT_PURPLE),
 ]
 
@@ -399,7 +398,7 @@ for i, (label, title, desc, clr) in enumerate(hypotheses):
     # Card border box
     add_rounded_box(slide, x, y, card_w, card_h, VERY_DARK,
                     border_color=clr, border_width=Pt(2))
-    # Coloured header strip with H-number
+    # Coloured header strip with the M/S label
     add_rounded_box(slide, x, y, card_w, 0.35, clr, label,
                     13, WHITE, True)
     # Title
@@ -863,7 +862,7 @@ add_bullet_frame(slide, 6.8, 6.6, 6.0, 0.8, [
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Results — Resilience Scores")
+slide_title(slide, "Results — Why the Score Is Demoted (M4)")
 
 charts_dir = _find_latest_charts_dir()
 
@@ -891,7 +890,7 @@ add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
 # Hypothesis check
 add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
                 border_color=ACCENT_ORANGE, border_width=Pt(2))
-add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "What the aggregate score can adjudicate",
+add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "M4 — the score is decoupled from the reproducible metrics",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 0.7, 6.55, 4.0, 0.6,
     "L1 (colocate = worst): N/A",
@@ -938,7 +937,7 @@ add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "Latency Degradation (Pre-Chaos vs Duri
 # Analysis — bottom
 add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=ACCENT_RED)
-add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery is application-bound (H6)",
+add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery is application-bound (S2)",
              font_size=14, bold=True, color=ACCENT_RED)
 add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
     "• Recovery = deletion→scheduled + scheduled→ready;\n  the app-startup term is 84–96% of the total",
@@ -948,7 +947,7 @@ add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
 
 add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=ACCENT_ORANGE)
-add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "The fault signal is in the tail (H5)",
+add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "The fault signal is in the tail",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
     "• Targeted route during chaos: mean 231 ms but\n  p95 619 ms and max 3334 ms — tail is 14× the mean",
@@ -962,7 +961,7 @@ add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Results — Resources & Throughput")
+slide_title(slide, "Results — Primary Metrics: Conntrack & CPU (M1, M2)")
 
 # Resource utilization chart — left
 img_path = os.path.join(charts_dir, "resource_utilization.png") if charts_dir else None
@@ -987,7 +986,7 @@ add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "I/O Throughput (Redis ops/s, Disk byte
 # Analysis — bottom
 add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=CLR_METRICS)
-add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Throttling inverts the model (H4)",
+add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "M2 — co-location lowers CPU contention",
              font_size=14, bold=True, color=CLR_METRICS)
 add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
     "• Densest placement (colocate) throttles LEAST —\n  median 1.54 vs default 1.90, spread 1.94",
@@ -997,12 +996,12 @@ add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
 
 add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=CLR_OUTPUT)
-add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "Churn flushes conn-state (H3)",
+add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "M1 — spreading flushes conn-state",
              font_size=14, bold=True, color=CLR_OUTPUT)
 add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
-    "• Spread flushes 28–52% of node conntrack entries\n  during churn; colocate stays flat (−15% to +3%)",
-    "• Reproducible in all 12 runs measured",
-    "• Spreading maximises the cross-node flows pod churn\n  tears down — the mechanism behind the score noise",
+    "• Spread/default flush 36–39% of node conntrack\n  entries during churn; colocate stays flat (−1.6%)",
+    "• Reproducible in all 12 runs measured — the primary,\n  large-effect fault-response metric",
+    "• Spreading maximises the cross-node flows pod churn\n  tears down — both metrics favour co-location (M3)",
 ], font_size=11, color=LIGHT_GRAY)
 
 
@@ -1061,7 +1060,7 @@ add_text_box(slide, 0.5, 5.6, 12, 0.3, "Key Insights",
 
 add_rounded_box(slide, 0.5, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_RED)
-add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Score is the wrong instrument",
+add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "M4 — score is the wrong instrument",
              font_size=13, bold=True, color=ACCENT_RED)
 add_text_box(slide, 0.7, 6.3, 3.5, 0.8,
     "The aggregate resilience score is not "
@@ -1073,7 +1072,7 @@ add_text_box(slide, 0.7, 6.3, 3.5, 0.8,
 
 add_rounded_box(slide, 4.7, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_BLUE)
-add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Mechanism layer reproduces",
+add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "M1/M2 — metrics reproduce",
              font_size=13, bold=True, color=ACCENT_BLUE)
 add_text_box(slide, 4.9, 6.3, 3.5, 0.8,
     "Where the score is noise, the kernel/network "
@@ -1085,7 +1084,7 @@ add_text_box(slide, 4.9, 6.3, 3.5, 0.8,
 
 add_rounded_box(slide, 8.9, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_GREEN)
-add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "Churn-driven, not contention",
+add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "M3 — churn-driven, not contention",
              font_size=13, bold=True, color=ACCENT_GREEN)
 add_text_box(slide, 9.1, 6.3, 3.5, 0.8,
     "Pod-delete tears down cross-node conntrack "
