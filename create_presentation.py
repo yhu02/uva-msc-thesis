@@ -339,83 +339,63 @@ add_text_box(slide, 0.8, 1.4, 11.7, 0.65,
     "How do multi-dimensional metrics decompose chaos response across pod-placement strategies in Kubernetes?",
     font_size=16, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
 
-# Theme group labels (above each row's first 3 columns)
+# Theme group labels (above each theme's card group)
 group_labels = [
-    ("Instrument design", ACCENT_BLUE, 0.2, 2.25),
-    ("Baseline & tail", ACCENT_ORANGE, 7.85, 2.25),
-    ("Mechanism", ACCENT_RED, 0.2, 4.6),
-    ("Recovery dynamics", ACCENT_PURPLE, 7.85, 4.6),
+    ("Framework", ACCENT_BLUE, 0.35, 2.55),
+    ("Mechanism (reproducible)", ACCENT_RED, 4.55, 2.55),
+    ("Tail & recovery", ACCENT_ORANGE, 8.75, 2.55),
 ]
 for label, clr, x, y in group_labels:
-    add_text_box(slide, x, y, 5, 0.25, label,
+    add_text_box(slide, x, y, 4, 0.25, label,
                  font_size=11, bold=True, color=clr)
 
-# Ten hypothesis cards — 2 rows × 5 columns, themed by group
+# Six hypothesis cards — single row, themed by group. Each is grounded in the
+# collected data and stated as falsifiable; mechanism claims (H3, H4) are
+# verified reproducible across the 13 collected runs, unlike the aggregate
+# resilience score (H2), which is not.
 hypotheses = [
-    # Row 1: Instrument design (H1-H3, blue), Baseline & tail (H4-H5, orange)
-    ("H1", "Metrics carry disjoint info",
-     "No single metric captures full chaos response. "
-     "Best-fit and spread tie on aggregate (66.3) but "
-     "diverge on recovery (1452 vs 1617 ms) and "
-     "latency (100 vs 150 ms during chaos).",
+    # Framework (H1-H2, blue)
+    ("H1", "Fault class gates placement effect",
+     "Contention (cpu-hog) yields identical resilience across "
+     "all strategies (100, σ0); churn (pod-delete) differentiates "
+     "them. Whether placement matters is conditional on fault class.",
      ACCENT_BLUE),
-    ("H2", "Phase decomposition is necessary",
-     "Pre-chaos baselines vary by placement (spread 231 ms "
-     "vs colocate 78 ms on /). During-chaos absolutes are "
-     "uninterpretable without phase-aware normalisation.",
+    ("H2", "Aggregate score is too coarse",
+     "The same strategy's resilience score ranges 33-89 across "
+     "13 runs (non-reproducible), while throttling and conntrack "
+     "orderings stay stable. Mechanism metrics carry the signal.",
      ACCENT_BLUE),
-    ("H3", "Per-pod granularity reveals heterogeneity",
-     "Cross-pod stddev within a single service is non-zero "
-     "and placement-dependent. Aggregate cluster metrics miss it; "
-     "per-pod LatencyProber sampling exposes it.",
-     ACCENT_BLUE),
-    ("H4", "Baseline predicts resilience",
-     "Strategies with lower pre-chaos latency variance score "
-     "higher under chaos. The resting-state fingerprint predicts "
-     "the failure response before any fault is injected.",
+    # Mechanism — reproducible (H3-H4, red)
+    ("H3", "Churn flushes cross-node conn-state",
+     "Spread flushes 28-52% of conntrack entries during churn; "
+     "colocate stays flat (−15% to +3%). Reproducible in all 12 "
+     "runs measured. Spreading maximises the flows churn disrupts.",
+     ACCENT_RED),
+    ("H4", "Throttling inverts contention model",
+     "Densest packing (colocate, median 1.54) throttles less than "
+     "default (1.90) and spread (1.94) under churn — holds in 11/13 "
+     "runs. Inverts Bubble-Up's dense=more-contention prediction.",
+     ACCENT_RED),
+    # Tail & recovery (H5-H6, orange/purple)
+    ("H5", "Fault signal is in the tail",
+     "Targeted route during chaos: mean 231 ms but p95 619 / "
+     "max 3334 ms; unaffected routes stay flat at 70-110 ms. "
+     "Mean-based SLOs miss the fault (Dean & Barroso, CACM 2013).",
      ACCENT_ORANGE),
-    ("H5", "Mean masks tail",
-     "p95 latency ranking across strategies differs from mean "
-     "ranking. Tail percentiles concentrate placement effects "
-     "(Dean & Barroso, CACM 2013).",
-     ACCENT_ORANGE),
-    # Row 2: Mechanism (H6-H8, red), Recovery dynamics (H9-H10, purple)
-    ("H6", "Cross-pod variance → leakage",
-     "Pre-chaos cross-node stddev predicts whether a strategy "
-     "lands in the containment cluster (3-17% conntrack drop) "
-     "or the leakage cluster (30-49% drop).",
-     ACCENT_RED),
-    ("H7", "CPU throttling refutes contention model",
-     "Under pod-delete, colocate throttles less (0.89) than "
-     "spread (1.52) — opposite of Bubble-Up's contention "
-     "prediction. Mars 2011 doesn't fit churn-based faults.",
-     ACCENT_RED),
-    ("H8", "SLO + conntrack signals leakage",
-     "Conntrack flushing during chaos correlates with leakage: "
-     "spread 49%, dep-aware 3%. The K8s Network Programming "
-     "Latency SLO measures the churn mechanism directly.",
-     ACCENT_RED),
-    ("H9", "Scheduling latency dominates recovery",
-     "Recovery time = (deletion→scheduled) + (scheduled→ready). "
-     "Placement affects only the first term; the second is "
-     "application-bound and ~constant across strategies.",
-     ACCENT_PURPLE),
-    ("H10", "Post-chaos asymmetry as fingerprint",
-     "Post-chaos metrics overshoot, undershoot, or stabilise per "
-     "strategy. Redis throughput varies 50-450% post-chaos; the "
-     "asymmetry pattern is itself a placement fingerprint.",
+    ("H6", "Recovery is application-bound",
+     "scheduled→ready is 84-96% of recovery time; placement "
+     "only touches the 4-16% deletion→scheduled term. Placement "
+     "has little leverage over how fast a pod recovers.",
      ACCENT_PURPLE),
 ]
 
-# Layout: 5 columns × 2 rows. Cards 2.55" wide × 2.05" tall.
-card_w, card_h = 2.55, 2.05
-col_x = [0.2 + i * (card_w + 0.05) for i in range(5)]
-row_y = [2.55, 4.9]
+# Layout: single row of 6 cards, 2.05" wide × 3.7" tall.
+card_w, card_h = 2.05, 3.7
+col_x = [0.35 + i * (card_w + 0.05) for i in range(6)]
+row_y = [2.9]
 
 for i, (label, title, desc, clr) in enumerate(hypotheses):
-    col = i % 5
-    row = i // 5
-    x, y = col_x[col], row_y[row]
+    x, y = col_x[i], row_y[0]
     # Card border box
     add_rounded_box(slide, x, y, card_w, card_h, VERY_DARK,
                     border_color=clr, border_width=Pt(2))
@@ -624,14 +604,14 @@ add_text_box(slide, 0.7, 4.3, 5.6, 0.6,
 # Cluster topology — right
 add_rounded_box(slide, 6.8, 1.5, 5.8, 2.2, VERY_DARK,
                 border_color=CLR_INFRA, border_width=Pt(2))
-add_text_box(slide, 7.0, 1.5, 5.4, 0.3, "Cluster Topology (Proxmox / KVM)",
+add_text_box(slide, 7.0, 1.5, 5.4, 0.3, "Cluster Topology (Vagrant / libvirt)",
              font_size=14, bold=True, color=CLR_INFRA)
 
 # Node boxes
 add_rounded_box(slide, 7.0, 1.9, 1.7, 0.7, RGBColor(0x22, 0x33, 0x55),
                 border_color=ACCENT_BLUE)
 add_text_box(slide, 7.1, 1.9, 1.5, 0.2, "cp1", font_size=10, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 7.1, 2.15, 1.5, 0.4, "2 vCPU\n2 GiB", font_size=9, color=LIGHT_GRAY)
+add_text_box(slide, 7.1, 2.15, 1.5, 0.4, "2 vCPU\n12 GiB", font_size=9, color=LIGHT_GRAY)
 
 worker_specs = [("w1", "4 GiB", 8.8), ("w2", "4 GiB", 9.7),
                 ("w3", "4 GiB", 10.6), ("w4", "4 GiB", 11.5)]
@@ -644,7 +624,7 @@ for name, ram, x in worker_specs:
                  font_size=8, color=LIGHT_GRAY)
 
 add_text_box(slide, 7.0, 2.7, 5.4, 0.3,
-    "K8s v1.28.6 • Calico CNI • containerd 1.7.11 • Total: 10 vCPU, 18 GiB",
+    "K8s v1.28.6 • Calico CNI • containerd 1.7.11 • Total: 10 vCPU, 28 GiB",
     font_size=9, color=MID_GRAY)
 
 # Experiment configurations — bottom
@@ -747,8 +727,8 @@ infra_components = [
     ("Locust",
      "Load generation.\nConfigurable user count, spawn rate.\nHTTP traffic to entry-point service",
      CLR_CLI, 9.9, 3.0),
-    ("Proxmox\n(KVM/QEMU)",
-     "Virtualization host.\n5 VMs: 1 control plane +\n4 worker nodes",
+    ("Vagrant\n(libvirt/KVM)",
+     "VM provisioning.\n5 VMs: 1 control plane +\n4 worker nodes",
      CLR_INFRA, 9.9, 4.2),
 ]
 for name, desc, clr, x, y in infra_components:
@@ -901,30 +881,30 @@ add_rounded_box(slide, 8.5, 1.4, 4.3, 4.5, VERY_DARK,
 add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Key Observations",
              font_size=16, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
-    "• Baseline: 100.0% (stddev 0) —\n  methodology control holds",
-    "• CONTAINMENT cluster (83.0, stddev 0):\n  colocate, random, dep-aware, adversarial.\n  Only the 2 strict probes (directly\n  targeted) fail; everything else passes",
-    "• PARTIAL LEAKAGE (66.3, stddev 29):\n  spread, best-fit — moderate/loose/cmd\n  probes fail in ~1/3 of iterations",
-    "• FULL LEAKAGE (49.7, stddev 29):\n  default — collateral damage routine",
-    "• Bifurcation, not monotonic density;\n  contradicts both H1 and H2",
+    "• Baseline: 100% (stddev 0) —\n  methodology control holds",
+    "• The score does NOT reproduce across\n  the 13 collected runs:",
+    "    colocate 49.7–83  (mean 69.5)\n    spread   33–88.7  (mean 70.5)\n    default  33–83    (mean 58.9)",
+    "• Within-strategy stddev (11–17) dwarfs\n  the colocate-vs-spread gap (~1 point)",
+    "• So the aggregate score cannot rank\n  placements — the signal is elsewhere",
 ], font_size=10, color=LIGHT_GRAY)
 
 # Hypothesis check
 add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
                 border_color=ACCENT_ORANGE, border_width=Pt(2))
-add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "Hypothesis Validation",
+add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "What the aggregate score can adjudicate",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 0.7, 6.55, 4.0, 0.6,
-    "H1 (colocate = worst): REFUTED",
-    font_size=12, bold=True, color=ACCENT_RED)
+    "L1 (colocate = worst): N/A",
+    font_size=12, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 4.8, 6.55, 4.0, 0.6,
-    "H2 (spread = best): REFUTED",
-    font_size=12, bold=True, color=ACCENT_RED)
+    "L2 (spread = best): N/A",
+    font_size=12, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 8.9, 6.55, 4.0, 0.6,
-    "H3 (recovery → score): REFUTED",
-    font_size=12, bold=True, color=ACCENT_RED)
+    "L3 (recovery → score): N/A",
+    font_size=12, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 0.7, 6.95, 11.9, 0.3,
-    "Random has the fastest recovery (1120ms) and is tied for the best score; "
-    "spread has the slowest recovery (1617ms) and sits in the leakage cluster.",
+    "The aggregate score is not reproducible run-to-run, so it cannot adjudicate L1–L3. "
+    "They are resolved instead at the mechanism layer (next slides), where the signal IS stable.",
     font_size=10, color=LIGHT_GRAY)
 
 
@@ -958,22 +938,22 @@ add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "Latency Degradation (Pre-Chaos vs Duri
 # Analysis — bottom
 add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=ACCENT_RED)
-add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery Time Analysis",
+add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery is application-bound (H6)",
              font_size=14, bold=True, color=ACCENT_RED)
 add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
-    "• Colocate: longest recovery — scheduler contention\n  on the saturated node delays rescheduling",
-    "• Spread: fastest recovery — dedicated node resources\n  allow immediate rescheduling",
-    "• Baseline: 0 recovery cycles (no pods deleted) — control",
+    "• Recovery = deletion→scheduled + scheduled→ready;\n  the app-startup term is 84–96% of the total",
+    "• Placement only touches the 4–16% scheduling term,\n  so it has little leverage over recovery speed",
+    "• Recovery-time rank is noise run-to-run — it does\n  not track the placement story (refutes L3)",
 ], font_size=11, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=ACCENT_ORANGE)
-add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "Latency Analysis",
+add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "The fault signal is in the tail (H5)",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
-    "• Colocate: highest degradation — shared CPU, memory,\n  and network stack amplify latency during fault",
-    "• Spread: minimal increase — fault isolation contains\n  impact to the targeted service's node",
-    "• Adversarial: high — resource-heavy hotspot node\n  amplifies cross-service contention",
+    "• Targeted route during chaos: mean 231 ms but\n  p95 619 ms and max 3334 ms — tail is 14× the mean",
+    "• Routes not depending on the target stay flat at\n  70–110 ms — impact is route-specific, not node-wide",
+    "• Mean-based SLOs would miss the fault entirely\n  (Dean & Barroso, Tail at Scale)",
 ], font_size=11, color=LIGHT_GRAY)
 
 
@@ -1007,22 +987,22 @@ add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "I/O Throughput (Redis ops/s, Disk byte
 # Analysis — bottom
 add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=CLR_METRICS)
-add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Resource Analysis",
+add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Throttling inverts the model (H4)",
              font_size=14, bold=True, color=CLR_METRICS)
 add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
-    "• Colocate: highest CPU throttling — all services\n  compete for shared cores on a single node",
-    "• Spread: most stable resource usage — dedicated\n  per-node capacity minimizes contention",
-    "• Memory pressure correlates with placement density",
+    "• Densest placement (colocate) throttles LEAST —\n  median 1.54 vs default 1.90, spread 1.94",
+    "• Holds in 11 of 13 runs — reproducible, unlike score",
+    "• Opposite of Bubble-Up's dense=more-contention; the\n  contention model does not fit a churn fault",
 ], font_size=11, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=CLR_OUTPUT)
-add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "Throughput Analysis",
+add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "Churn flushes conn-state (H3)",
              font_size=14, bold=True, color=CLR_OUTPUT)
 add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
-    "• Disk I/O: colocate shows degraded throughput due\n  to shared disk bandwidth across all services",
-    "• Redis: throughput varies with network locality —\n  co-located cart+redis may benefit from low latency",
-    "• Spread: consistent throughput — isolated I/O paths",
+    "• Spread flushes 28–52% of node conntrack entries\n  during churn; colocate stays flat (−15% to +3%)",
+    "• Reproducible in all 12 runs measured",
+    "• Spreading maximises the cross-node flows pod churn\n  tears down — the mechanism behind the score noise",
 ], font_size=11, color=LIGHT_GRAY)
 
 
@@ -1046,20 +1026,20 @@ add_text_box(slide, 7.2, 1.4, 5.5, 0.3, "Hypothesis Evaluation",
              font_size=16, bold=True, color=ACCENT_BLUE)
 
 hyp_results = [
-    ("H1", "Colocate = worst resilience",
-     "Refuted: colocate tied for top non-baseline\n"
-     "score (83.0, stddev 0) with random, adversarial,\n"
-     "dep-aware — the containment cluster.",
-     ACCENT_RED, "Refuted"),
-    ("H2", "Spread = best fault isolation",
-     "Refuted: spread sits in the leakage cluster\n"
-     "(66.3, stddev 29), not the containment cluster.\n"
-     "Default (49.7) is worst, not colocate.",
-     ACCENT_RED, "Refuted"),
-    ("H3", "Recovery time predicts score",
-     "Refuted: random has fastest recovery (1120ms)\n"
-     "+ top score; spread slowest (1617ms) + leakage.\n"
-     "Recovery and score uncorrelated.",
+    ("L1", "Colocate = worst resilience",
+     "Score can't adjudicate (colocate 49.7–83\n"
+     "across runs). Mechanism: colocate throttles\n"
+     "LEAST and flushes no conn-state — not worst.",
+     ACCENT_ORANGE, "Mech."),
+    ("L2", "Spread = best fault isolation",
+     "Score can't adjudicate (spread 33–88.7).\n"
+     "Mechanism: spread flushes 28–52% of conntrack\n"
+     "under churn — it amplifies, not isolates.",
+     ACCENT_ORANGE, "Mech."),
+    ("L3", "Recovery time predicts score",
+     "Refuted structurally: recovery is 84–96%\n"
+     "app-startup (placement-invariant); the score\n"
+     "is non-reproducible. No stable relationship.",
      ACCENT_RED, "Refuted"),
 ]
 
@@ -1081,26 +1061,26 @@ add_text_box(slide, 0.5, 5.6, 12, 0.3, "Key Insights",
 
 add_rounded_box(slide, 0.5, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_RED)
-add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Bimodal, not monotonic",
+add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "Score is the wrong instrument",
              font_size=13, bold=True, color=ACCENT_RED)
 add_text_box(slide, 0.7, 6.3, 3.5, 0.8,
-    "Strategies cluster into containment (83) "
-    "and leakage (50–66) — not a density "
-    "gradient. The literature's monotonic "
-    "spread-better/colocate-worse model does "
-    "not fit the data.",
+    "The aggregate resilience score is not "
+    "reproducible: the same strategy spans "
+    "33–89 across 13 runs. It cannot rank "
+    "placements — the binary-probe scoring "
+    "discards the signal.",
     font_size=10, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 4.7, 6.0, 3.9, 1.2, VERY_DARK,
                 border_color=ACCENT_BLUE)
-add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Containment is the predictor",
+add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "Mechanism layer reproduces",
              font_size=13, bold=True, color=ACCENT_BLUE)
 add_text_box(slide, 4.9, 6.3, 3.5, 0.8,
-    "What separates the two clusters is whether "
-    "the chaos target's network path stays "
-    "inside the placement domain. When it does, "
-    "only the directly-targeted probes fail. "
-    "When it doesn't, collateral damage leaks.",
+    "Where the score is noise, the kernel/network "
+    "metrics are stable: conntrack flush (spread ≫ "
+    "colocate, 12/12 runs) and CPU throttling "
+    "(colocate < default, 11/13). These carry the "
+    "placement signal the score loses.",
     font_size=10, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 8.9, 6.0, 3.9, 1.2, VERY_DARK,
@@ -1108,11 +1088,11 @@ add_rounded_box(slide, 8.9, 6.0, 3.9, 1.2, VERY_DARK,
 add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "Churn-driven, not contention",
              font_size=13, bold=True, color=ACCENT_GREEN)
 add_text_box(slide, 9.1, 6.3, 3.5, 0.8,
-    "Pod-delete creates kube-proxy / conntrack "
-    "/ CoreDNS reconvergence — the K8s SLO "
-    "directly tracks this. Cross-node hops "
+    "Pod-delete tears down cross-node conntrack "
+    "state (measured directly). Cross-node hops "
     "exposed to the kill cycle become failure "
-    "surfaces; same-domain paths do not.",
+    "surfaces; co-located, same-node paths stay "
+    "kernel-local and are spared.",
     font_size=10, color=LIGHT_GRAY)
 
 
@@ -1132,12 +1112,12 @@ threats = [
          "100% pod-delete guarantees unavailability, but production systems typically run "
          "multiple replicas. Results represent worst-case single-replica scenarios."),
         ("Virtualized environment",
-         "KVM/QEMU introduces virtualization overhead. Bare-metal clusters may show "
-         "different performance characteristics, especially for I/O metrics."),
+         "Vagrant/libvirt (KVM/QEMU) introduces virtualization overhead. Bare-metal "
+         "clusters may show different performance characteristics, especially for I/O metrics."),
     ]),
     ("External Validity", ACCENT_ORANGE, [
         ("Cluster scale",
-         "5-node cluster (1 control plane + 4 uniform 4-GiB workers, 10 vCPU, 18 GiB). "
+         "5-node cluster (1 control plane @ 12 GiB + 4 uniform 4-GiB workers, 10 vCPU, 28 GiB). "
          "Larger clusters may show different placement effects."),
         ("Fault types",
          "Only pod-delete and pod-cpu-hog tested. Network partitions, disk faults, "
@@ -1197,14 +1177,14 @@ add_rounded_box(slide, 6.8, 1.5, 5.8, 3.2, VERY_DARK,
 add_text_box(slide, 7.0, 1.5, 5.4, 0.35, "Key Findings",
              font_size=18, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 7.0, 1.95, 5.4, 2.6, [
-    "• All three literature-derived hypotheses\n"
-    "  REFUTED — colocate 83 > spread 52",
-    "• Mechanism: pod-delete is churn-based,\n"
-    "  not contention-based — locality wins",
-    "• Recovery time does not predict score —\n"
-    "  what matters is in-flight cross-node hops",
-    "• Methodology control held: baseline = 100,\n"
-    "  stddev 0 — refutations are real, not noise",
+    "• Aggregate resilience score is NOT\n"
+    "  reproducible (strategy spans 33–89/13 runs)",
+    "• But the mechanism layer IS: conntrack flush\n"
+    "  (spread≫colocate, 12/12) + throttling (11/13)",
+    "• Mechanism: pod-delete is churn-based, not\n"
+    "  contention — co-location keeps paths local",
+    "• Recovery is 84–96% app-startup — placement-\n"
+    "  invariant, so it can't predict the outcome",
 ], font_size=12, color=LIGHT_GRAY)
 
 # Future work
