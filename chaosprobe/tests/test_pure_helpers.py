@@ -361,6 +361,45 @@ class TestNormalizeStrategy:
         result = _normalize_strategy("baseline", sdata, iterations_count=1)
         assert result["avgMeanRecovery_ms"] == 2200.0
 
+    def test_all_error_strategy_null_score_moments_coerced_to_numeric(self):
+        # An all-ERROR strategy reports null score moments (PR #188 keeps null
+        # distinct from a fabricated 0.0 in the stats). The chart view must not
+        # leak that None to matplotlib / the hypothesis ranker, so it coerces to
+        # numeric for rendering only.  Single-iteration shape so min/max/stddev
+        # come straight from the (null) aggregated fields rather than the
+        # iteration-score fallback — exercising every coercion branch.
+        sdata = _strategy(
+            iterations=[{"resilienceScore": 0, "verdict": "ERROR"}],
+            exp={
+                "meanResilienceScore": None,
+                "stddevResilienceScore": None,
+                "minResilienceScore": None,
+                "maxResilienceScore": None,
+                "totalExperiments": 1,
+            },
+            agg={
+                "meanResilienceScore": None,
+                "stddevResilienceScore": None,
+                "minResilienceScore": None,
+                "maxResilienceScore": None,
+                "allIterationsError": True,
+            },
+        )
+        result = _normalize_strategy("colocate", sdata, iterations_count=1)
+        assert result["avgResilienceScore"] == 0.0
+        assert result["stddevResilienceScore"] == 0.0
+        assert result["minResilienceScore"] == 0.0
+        assert result["maxResilienceScore"] == 0.0
+        # Every score moment must be numeric, not None, so downstream
+        # min()/max()/arithmetic in the chart + hypothesis layers can't crash.
+        for key in (
+            "avgResilienceScore",
+            "stddevResilienceScore",
+            "minResilienceScore",
+            "maxResilienceScore",
+        ):
+            assert isinstance(result[key], (int, float))
+
 
 class TestCollectIterationData:
     def test_skips_strategies_with_no_iterations(self):

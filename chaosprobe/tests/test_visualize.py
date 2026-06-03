@@ -178,6 +178,52 @@ class TestGenerateFromSummary:
         generated = generate_from_summary(str(summary_file), str(tmp_path / "charts"))
         assert generated == []
 
+    def test_generate_with_all_error_strategy_does_not_crash(self, tmp_path):
+        # Regression: an all-ERROR strategy reports null score moments (PR #188).
+        # Before the chart-view coercion, that None reached matplotlib
+        # (chart_resilience_scores -> ax.bar) and the hypothesis ranker
+        # (min/max key), crashing report generation after a full multi-hour run.
+        def _agg(mean, sd, lo, hi):
+            return {
+                "meanResilienceScore": mean,
+                "meanResilienceScore_healthyOnly": mean,
+                "stddevResilienceScore": sd,
+                "minResilienceScore": lo,
+                "maxResilienceScore": hi,
+                "taintedIterations": 0,
+                "allIterationsTainted": False,
+                "totalExperiments": 3,
+            }
+
+        def _strat(agg, *, error=False):
+            verdict = "ERROR" if error else "PASS"
+            score = 0 if error else (agg["meanResilienceScore"] or 0)
+            return {
+                "status": "completed",
+                "experiment": agg,
+                "aggregated": agg,
+                "iterations": [{"resilienceScore": score, "verdict": verdict}] * 3,
+                "metrics": {},
+            }
+
+        null_agg = _agg(None, None, None, None)
+        null_agg["allIterationsError"] = True
+        summary = {
+            "iterations": 3,
+            "strategies": {
+                "baseline": _strat(_agg(100.0, 0.0, 100, 100)),
+                "spread": _strat(_agg(80.0, 5.0, 75, 85)),
+                "colocate": _strat(null_agg, error=True),
+            },
+        }
+        summary_file = tmp_path / "summary.json"
+        summary_file.write_text(json.dumps(summary))
+
+        # Must not raise, and must still produce the report + at least one chart.
+        generated = generate_from_summary(str(summary_file), str(tmp_path / "charts"))
+        assert any(p.endswith(".html") for p in generated)
+        assert any(p.endswith(".png") for p in generated)
+
 
 class TestLatencyCharts:
     @pytest.fixture

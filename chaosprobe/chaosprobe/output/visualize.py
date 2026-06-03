@@ -131,6 +131,23 @@ def _normalize_strategy(
     else:
         avg_score = exp.get("meanResilienceScore", exp.get("resilienceScore", 0))
 
+    # An all-ERROR strategy reports null score moments — meanResilienceScore /
+    # stddev / min / max are None (no valid measurement; see aggregate_iterations
+    # and PR #188, which deliberately keeps null distinct from a fabricated 0.0).
+    # The raw summary stats stay null, but the chart layer plots numeric bars and
+    # the hypothesis evaluator ranks with min()/max(), neither of which tolerates
+    # None. Coerce the no-data case to 0.0 for *rendering only* — this restores
+    # the pre-#188 chart behavior without re-introducing a 0.0 into stats /
+    # recommend / doctor, which read the (still-null) summary fields directly.
+    if avg_score is None:
+        avg_score = 0.0
+    if stddev is None:
+        stddev = 0.0
+    if min_s is None:
+        min_s = avg_score
+    if max_s is None:
+        max_s = avg_score
+
     return {
         "avgResilienceScore": avg_score,
         "stddevResilienceScore": stddev,
