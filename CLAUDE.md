@@ -116,9 +116,10 @@ Long (per iteration ≈ 60 s settle + 120 s chaos + 60 s post, × strategy ×
 iterations — hours for the full matrix). Background + poll; don't block.
 
 > **Default for "do an experiment run":** when the user asks for an experiment
-> run without specifying flags, use `-i 3 --strategies baseline,default,spread,colocate`
-> (3 iterations across those 4 strategies). Only deviate when they ask for a
-> different iteration count, strategy set, or the full matrix.
+> run without specifying flags, use `-i 3` and **all 8 strategies** — drop `-s`
+> so `run` uses its full default set
+> (`baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware`).
+> Only deviate when they ask for a different iteration count or strategy subset.
 
 `run` defaults to all 8 strategies
 (`baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware`);
@@ -158,8 +159,11 @@ When the user asks to run experiments continuously (and fix bugs as they
 surface), repeat this cycle until they say stop. Don't pause for permission
 between iterations; surface results and keep going.
 
-1. **Launch** a run in the background (step 8) on the current `main`. Re-run the
-   ⛔ safety gate **every** time, not just the first.
+1. **Launch** a run in the background (step 8) on the current `main`, covering
+   **all 8 strategies** — drop `-s` so `run` uses its full default set
+   (`baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware`);
+   do **not** fall back to the 4-strategy subset here. Re-run the ⛔ safety gate
+   **every** time, not just the first.
 2. **Watch.** Tail the run log for errors/anomalies *while it runs* — bugs often
    surface mid-run (a swallowed-exception warning, a crash), not only at the end.
 3. **Gate + analyze** each completed run's `summary.json`: `doctor -s …
