@@ -507,23 +507,32 @@ class LatencyProber:
                     error=" ".join(parts[1:])[:200],
                 )
             if len(parts) >= 3:
-                status_code = int(parts[0])
-                start_ns = int(parts[1])
-                end_ns = int(parts[2])
-                if start_ns > 0 and end_ns > start_ns:
-                    latency_ms = (end_ns - start_ns) / 1_000_000
-                    ok = 200 <= status_code < 400
-                    return LatencySample(
-                        source="probe-pod",
-                        target=target,
-                        route=route,
-                        protocol="http",
-                        latency_ms=round(latency_ms, 2),
-                        status="ok" if ok else "error",
-                        timestamp=now,
-                        error=None if ok else f"HTTP {status_code}",
-                        status_code=status_code,
-                    )
+                try:
+                    status_code = int(parts[0])
+                    start_ns = int(parts[1])
+                    end_ns = int(parts[2])
+                    if start_ns > 0 and end_ns > start_ns:
+                        latency_ms = (end_ns - start_ns) / 1_000_000
+                        ok = 200 <= status_code < 400
+                        return LatencySample(
+                            source="probe-pod",
+                            target=target,
+                            route=route,
+                            protocol="http",
+                            latency_ms=round(latency_ms, 2),
+                            status="ok" if ok else "error",
+                            timestamp=now,
+                            error=None if ok else f"HTTP {status_code}",
+                            status_code=status_code,
+                        )
+                except (ValueError, OverflowError):
+                    # The in-pod probe printed something other than the
+                    # expected "<status> <start> <end>" — typically a Python
+                    # traceback when the request was interrupted mid-flight
+                    # (e.g. chaos killed the pod).  Fall through to an honest
+                    # "Unexpected output" sample that preserves the real text,
+                    # rather than the misleading "invalid literal for int()".
+                    pass
 
             return LatencySample(
                 source="probe-pod",

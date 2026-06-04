@@ -111,6 +111,47 @@ class TestMeasureHttpWget:
         assert sample.error.startswith("wget: unexpected output:")
 
 
+class TestMeasureHttpFromPod:
+    """The python3 probe parses ``<status> <start_ns> <end_ns>`` from stdout."""
+
+    @staticmethod
+    def _measure(stream_output):
+        with (
+            patch("chaosprobe.metrics.latency.ensure_k8s_config"),
+            patch("chaosprobe.metrics.latency.client.CoreV1Api"),
+            patch("chaosprobe.metrics.latency.stream", return_value=stream_output),
+        ):
+            prober = LatencyProber("default")
+            return prober._measure_http_from_pod(
+                "frontend-abc",
+                "http://frontend.default.svc.cluster.local/",
+                "GET",
+                "/",
+            )
+
+    def test_valid_output_is_ok(self):
+        sample = self._measure("200 1700000000000000000 1700000000123000000")
+        assert sample.status == "ok"
+        assert sample.latency_ms == 123.0
+        assert sample.status_code == 200
+
+    def test_err_line_is_error(self):
+        sample = self._measure("ERR Connection refused")
+        assert sample.status == "error"
+        assert sample.error == "Connection refused"
+
+    def test_traceback_output_is_honest_unexpected_output(self):
+        # When the in-pod probe is interrupted mid-request it can dump a Python
+        # traceback to stdout. The int() parse must not surface a misleading
+        # "invalid literal for int()" error — it falls through to an honest
+        # Unexpected-output sample that preserves the real text.
+        sample = self._measure("Traceback (most recent call last): RuntimeError")
+        assert sample.status == "error"
+        assert sample.error.startswith("Unexpected output:")
+        assert "invalid literal" not in (sample.error or "")
+        assert sample.exec_failed is False
+
+
 class TestLatencyResult:
     def test_summary_with_samples(self):
         result = LatencyResult(
