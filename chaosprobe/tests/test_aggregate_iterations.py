@@ -169,3 +169,41 @@ class TestAggregateIterationsAllError:
         # The single valid iteration drives the mean; the ERROR is excluded.
         assert agg["meanResilienceScore"] == 70.0
         assert agg["errors"] == 1
+
+
+class TestAggregateIterationsPassRate:
+    """passRate / overallVerdict exclude ERROR iterations from the denominator,
+    so a transient infra ERROR cannot mislabel an otherwise-passing strategy as
+    FAIL (REVIEW.md W1)."""
+
+    def test_error_iteration_excluded_from_passrate(self):
+        # Two valid PASS + one ERROR: every *valid* iteration passed.
+        agg = aggregate_iterations(
+            [
+                _iter(score=80.0, verdict="PASS"),
+                _iter(score=90.0, verdict="PASS"),
+                _iter(score=0.0, verdict="ERROR"),
+            ]
+        )
+        assert agg["passRate"] == 1.0
+        assert agg["overallVerdict"] == "PASS"
+        assert agg["passed"] == 2
+        assert agg["errors"] == 1
+
+    def test_real_failure_still_lowers_passrate(self):
+        # A genuine FAIL (not an ERROR) is still counted against the strategy.
+        agg = aggregate_iterations(
+            [
+                _iter(score=80.0, verdict="PASS"),
+                _iter(score=10.0, verdict="FAIL"),
+            ]
+        )
+        assert agg["passRate"] == 0.5
+        assert agg["overallVerdict"] == "FAIL"
+
+    def test_all_error_passrate_zero(self):
+        agg = aggregate_iterations(
+            [_iter(score=0.0, verdict="ERROR"), _iter(score=0.0, verdict="ERROR")]
+        )
+        assert agg["passRate"] == 0.0
+        assert agg["overallVerdict"] == "FAIL"
