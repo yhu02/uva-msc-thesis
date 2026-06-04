@@ -1,9 +1,18 @@
 """Tests for the inter-service latency measurement module."""
 
+import shutil
+import subprocess
+import sys
 import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from chaosprobe.metrics.latency import (
+    _HTTP_PROBE_PY,
+    _HTTP_PROBE_WGET_SH,
     ContinuousLatencyProber,
     LatencyProber,
     LatencyResult,
@@ -150,6 +159,105 @@ class TestMeasureHttpFromPod:
         assert sample.error.startswith("Unexpected output:")
         assert "invalid literal" not in (sample.error or "")
         assert sample.exec_failed is False
+
+
+class TestStatusCodeBucketingThroughParser:
+    """A real 4xx/5xx line from the in-pod probe must reach its true bucket.
+
+    The parser was always capable of this; the regression was that the probe
+    scripts never emitted a non-2xx code. These guard the parser half so the
+    end-to-end script tests below have a fixed contract to meet.
+    """
+
+    def test_4xx_line_buckets_as_4xx(self):
+        sample = TestMeasureHttpFromPod._measure("404 1700000000000000000 1700000000050000000")
+        assert sample.status == "error"
+        assert sample.status_code == 404
+        assert _bucket_for_sample(sample) == "4xx"
+
+    def test_5xx_line_buckets_as_5xx(self):
+        sample = TestMeasureHttpFromPod._measure("503 1700000000000000000 1700000000050000000")
+        assert sample.status == "error"
+        assert sample.status_code == 503
+        assert _bucket_for_sample(sample) == "5xx"
+
+    def test_wget_5xx_line_buckets_as_5xx(self):
+        sample = TestMeasureHttpWget._measure("503 1700000000 1700000000")
+        assert sample.status == "error"
+        assert sample.status_code == 503
+        assert _bucket_for_sample(sample) == "5xx"
+
+
+@contextmanager
+def _local_server(status_code):
+    """Run a one-route HTTP server returning *status_code*; yield its URL."""
+
+    class _Handler(BaseHTTPRequestHandler):
+        # status_code is closed over, so no state needs to live on the server.
+        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+            self.send_response(status_code)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"body")
+
+        def log_message(self, *_args):  # silence test-server logging
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}/"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+class TestInPodProbeScriptsEndToEnd:
+    """Execute the actual probe *script strings* against a real HTTP server.
+
+    This is the end-to-end proof that the fix works: the regression lived in
+    the in-pod scripts (urllib raising ``HTTPError`` before the status was
+    printed; the wget fallback hard-coding ``200``), which no amount of parser
+    testing exercises. Running the real strings as subprocesses confirms a
+    4xx/5xx response now yields its true status code on stdout.
+    """
+
+    @pytest.mark.parametrize("code", [200, 404, 500, 503])
+    def test_python_probe_emits_real_status_code(self, code):
+        with _local_server(code) as url:
+            proc = subprocess.run(
+                [sys.executable, "-c", _HTTP_PROBE_PY, url, "5"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        parts = proc.stdout.split()
+        assert parts, f"no stdout; stderr={proc.stderr!r}"
+        assert parts[0] == str(code)
+        # start_ns / end_ns are present and ordered.
+        assert len(parts) == 3
+        assert int(parts[2]) >= int(parts[1]) > 0
+
+    @pytest.mark.skipif(
+        shutil.which("wget") is None or shutil.which("sh") is None,
+        reason="wget/sh not available in this environment",
+    )
+    @pytest.mark.parametrize("code", [200, 404, 503])
+    def test_wget_probe_emits_real_status_code(self, code):
+        with _local_server(code) as url:
+            proc = subprocess.run(
+                ["sh", "-c", _HTTP_PROBE_WGET_SH, "sh", url, "5"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        parts = proc.stdout.split()
+        assert parts, f"no stdout; stderr={proc.stderr!r}"
+        # GNU wget exposes the real code via -S; a fetch that completes must
+        # never be reported as the old hard-coded 200 when it was an error.
+        assert parts[0] == str(code), f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
 
 
 class TestLatencyResult:
