@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from chaosprobe.metrics.base import (
+    _is_chaos_infra_pod,
     _pod_has_python3,
     exec_in_pod,
     find_all_probe_pods,
@@ -14,13 +15,15 @@ from chaosprobe.metrics.base import (
 )
 
 
-def _ready_pod(name):
+def _ready_pod(name, labels=None, node="worker1"):
     cond = MagicMock()
     cond.type = "Ready"
     cond.status = "True"
     pod = MagicMock()
     pod.status.conditions = [cond]
     pod.metadata.name = name
+    pod.metadata.labels = {} if labels is None else labels
+    pod.spec.node_name = node
     return pod
 
 
@@ -89,3 +92,55 @@ class TestPodHelperApiErrors:
     def test_pod_has_python3_returns_false_on_exec_error(self):
         with patch("kubernetes.stream.stream", side_effect=RuntimeError("boom")):
             assert _pod_has_python3(MagicMock(), "ns", "pod-a") is False
+
+
+class TestChaosInfraPodExclusion:
+    """LitmusChaos / Argo-workflow pods join the namespace mid-experiment and
+    go Ready, but must never be chosen as probe *sources* — they vanish and
+    yield Handshake-404 exec errors that pollute the error rate."""
+
+    def test_is_chaos_infra_pod_litmus_label(self):
+        pod = _ready_pod("pod-cpu-hog-helper-1", {"app.kubernetes.io/part-of": "litmus"})
+        assert _is_chaos_infra_pod(pod) is True
+
+    def test_is_chaos_infra_pod_argo_workflow_label(self):
+        pod = _ready_pod("chaos-wf-xyz", {"workflows.argoproj.io/workflow": "chaos-wf"})
+        assert _is_chaos_infra_pod(pod) is True
+
+    def test_is_chaos_infra_pod_app_pod_not_excluded(self):
+        assert _is_chaos_infra_pod(_ready_pod("frontend-abc", {"app": "frontend"})) is False
+
+    def test_is_chaos_infra_pod_handles_missing_labels(self):
+        pod = _ready_pod("frontend-abc")
+        pod.metadata.labels = None
+        assert _is_chaos_infra_pod(pod) is False
+
+    @staticmethod
+    def _api_with_mixed_pods():
+        app = _ready_pod("frontend-abc", {"app": "frontend"})
+        # Sorts before the app pod, so without exclusion it would be picked first.
+        litmus = _ready_pod("a-pod-cpu-hog-helper", {"app.kubernetes.io/part-of": "litmus"})
+        argo = _ready_pod("b-chaos-wf-xyz", {"workflows.argoproj.io/workflow": "chaos-wf"})
+        core_api = MagicMock()
+        core_api.list_namespaced_pod.return_value = MagicMock(items=[app, litmus, argo])
+        return core_api
+
+    def test_find_all_probe_pods_excludes_chaos_pods(self):
+        with patch("chaosprobe.metrics.base.pod_has_shell", return_value=True):
+            assert find_all_probe_pods(self._api_with_mixed_pods(), "default") == ["frontend-abc"]
+
+    def test_find_all_probe_pods_with_node_excludes_chaos_pods(self):
+        with patch("chaosprobe.metrics.base.pod_has_shell", return_value=True):
+            assert find_all_probe_pods_with_node(self._api_with_mixed_pods(), "default") == [
+                ("frontend-abc", "worker1")
+            ]
+
+    def test_find_probe_pod_skips_chaos_pods(self):
+        with patch("chaosprobe.metrics.base.pod_has_shell", return_value=True):
+            assert find_probe_pod(self._api_with_mixed_pods(), "default") == "frontend-abc"
+
+    def test_find_probe_pods_per_node_excludes_chaos_pods(self):
+        with patch("chaosprobe.metrics.base.pod_has_shell", return_value=True):
+            assert find_probe_pods_per_node(self._api_with_mixed_pods(), "default") == [
+                ("frontend-abc", "worker1")
+            ]
