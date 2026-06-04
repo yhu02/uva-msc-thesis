@@ -7,23 +7,74 @@ environments, infrastructures, experiments, and resilience probes.
 import json as _json
 import logging
 import os
+import secrets
 import subprocess
 import tempfile
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Optional
 
 from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 
 logger = logging.getLogger(__name__)
 
+# The managed ChaosCenter admin password is resolved at runtime, never
+# committed.  Override with this env var, or let ChaosProbe generate one and
+# persist it so the value is stable across runs for a given instance.
+CHAOSCENTER_PASSWORD_ENV = "CHAOSPROBE_CHAOSCENTER_PASSWORD"
+CHAOSCENTER_PASSWORD_FILE = Path.home() / ".chaosprobe" / "chaoscenter-admin-password"
+
+
+def _resolve_managed_password() -> str:
+    """Resolve the managed ChaosCenter admin password without committing it.
+
+    Resolution order: the ``CHAOSPROBE_CHAOSCENTER_PASSWORD`` env var, then a
+    previously-persisted ``~/.chaosprobe`` file, then a freshly generated secret
+    that is persisted to that file with ``0600`` perms.  The password must be
+    stable across runs — a provisioned ChaosCenter keeps whatever it was rotated
+    to — so it is cached on disk rather than baked into source, where a fixed
+    default would be a master key for every deployment the tool ever manages.
+    """
+    env = os.environ.get(CHAOSCENTER_PASSWORD_ENV)
+    if env:
+        return env
+    try:
+        if CHAOSCENTER_PASSWORD_FILE.exists():
+            existing = CHAOSCENTER_PASSWORD_FILE.read_text().strip()
+            if existing:
+                return existing
+    except OSError:
+        logger.debug("could not read managed ChaosCenter password file", exc_info=True)
+    pwd = secrets.token_urlsafe(18)
+    try:
+        CHAOSCENTER_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CHAOSCENTER_PASSWORD_FILE.write_text(pwd)
+        CHAOSCENTER_PASSWORD_FILE.chmod(0o600)
+    except OSError:
+        logger.debug("could not persist managed ChaosCenter password", exc_info=True)
+    return pwd
+
 
 class _ChaosCenterAPIMixin(_LitmusSetupBase):
     """ChaosCenter API methods mixed into LitmusSetup."""
 
     CHAOSCENTER_AUTH_PORT = 9003
-    CHAOSCENTER_MANAGED_PASS = "ChaosProbe1!"
+
+    @property
+    def CHAOSCENTER_MANAGED_PASS(self) -> str:
+        """Admin password ChaosProbe rotates the factory default to.
+
+        Resolved once per instance via :func:`_resolve_managed_password` (env
+        var → persisted file → generated secret); never a source-committed
+        default.
+        """
+        cached: Optional[str] = getattr(self, "_managed_pass", None)
+        if cached is None:
+            cached = _resolve_managed_password()
+            self._managed_pass = cached
+        return cached
 
     # ------------------------------------------------------------------
     # HTTP / GraphQL transport
