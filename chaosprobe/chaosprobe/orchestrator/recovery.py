@@ -139,6 +139,11 @@ def _attempt_control_plane_ssh_remediation() -> None:
         "sudo systemctl start kubelet"
     )
 
+    # StrictHostKeyChecking is disabled because this targets the ephemeral local
+    # Vagrant/libvirt control-plane VM, whose SSH host key is regenerated on
+    # every `vagrant destroy && up`; `accept-new` would then reject the
+    # recreated host. Acceptable only for these disposable local clusters — do
+    # not reuse this pattern against a shared or non-local host.
     ssh_cmd = [
         "ssh",
         "-o",

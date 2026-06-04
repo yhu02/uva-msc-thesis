@@ -506,6 +506,10 @@ end
         try:
             # Use ssh + sudo cat instead of scp, because admin.conf is
             # owned by root and the SSH user may not have read access.
+            # StrictHostKeyChecking is disabled because this targets the
+            # ephemeral local Vagrant/libvirt VMs, whose host keys are
+            # regenerated on every recreate; acceptable only for these
+            # disposable local clusters, not a shared/non-local host.
             ssh_cmd = [
                 "ssh",
                 "-o",

@@ -1,5 +1,6 @@
 """Tests for the Rust cmdProbe builder pipeline."""
 
+import hashlib
 import socket
 import subprocess
 import textwrap
@@ -8,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chaosprobe.probes.builder import (
+    CRANE_SHA256,
     CRANE_VERSION,
     MUSL_TARGET,
     ProbeBuilderError,
@@ -16,6 +18,7 @@ from chaosprobe.probes.builder import (
     _port_accepts,
     _require_tool,
     _run_cmd,
+    _verify_crane_tarball,
     ensure_crane,
     patch_probe_images,
 )
@@ -482,6 +485,7 @@ class TestEnsureCrane:
             ensure_crane()
 
     @patch.dict("chaosprobe.probes.builder.os.environ", {"PATH": "/usr/bin"}, clear=True)
+    @patch("chaosprobe.probes.builder._verify_crane_tarball")
     @patch("chaosprobe.probes.builder.Path.chmod")
     @patch("chaosprobe.probes.builder.Path.mkdir")
     @patch("chaosprobe.probes.builder.subprocess.run")
@@ -489,12 +493,13 @@ class TestEnsureCrane:
     @patch("chaosprobe.probes.builder.platform.system", return_value="Linux")
     @patch("chaosprobe.probes.builder._check_crane", side_effect=[False, True])
     def test_installs_when_missing(
-        self, mock_check, mock_sys, mock_mach, mock_run, mock_mkdir, mock_chmod
+        self, mock_check, mock_sys, mock_mach, mock_run, mock_mkdir, mock_chmod, mock_verify
     ):
         ensure_crane()
         cmds = [c.args[0] for c in mock_run.call_args_list]
         assert cmds[0][0] == "curl" and any(CRANE_VERSION in a for a in cmds[0])
         assert cmds[1][0] == "tar" and "crane" in cmds[1]
+        assert mock_verify.call_count == 1  # checksum verified between download and extract
         assert mock_check.call_count == 2  # checked before and after install
 
     @patch("chaosprobe.probes.builder.Path.mkdir")
@@ -512,6 +517,7 @@ class TestEnsureCrane:
             ensure_crane()
 
     @patch.dict("chaosprobe.probes.builder.os.environ", {"PATH": "/usr/bin"}, clear=True)
+    @patch("chaosprobe.probes.builder._verify_crane_tarball")
     @patch("chaosprobe.probes.builder.Path.chmod")
     @patch("chaosprobe.probes.builder.Path.mkdir")
     @patch("chaosprobe.probes.builder.subprocess.run")
@@ -519,7 +525,7 @@ class TestEnsureCrane:
     @patch("chaosprobe.probes.builder.platform.system", return_value="Darwin")
     @patch("chaosprobe.probes.builder._check_crane", side_effect=[False, False])
     def test_raises_if_absent_after_install(
-        self, mock_check, mock_sys, mock_mach, mock_run, mock_mkdir, mock_chmod
+        self, mock_check, mock_sys, mock_mach, mock_run, mock_mkdir, mock_chmod, mock_verify
     ):
         with pytest.raises(ProbeBuilderError, match="still fails"):
             ensure_crane()
@@ -856,3 +862,41 @@ class TestLoaderDiscovery:
 
         scenario = load_scenario(str(tmp_path))
         assert "probes" not in scenario
+
+
+class TestCraneChecksum:
+    """The downloaded crane tarball is verified against a pinned SHA-256 before
+    extraction, failing closed on an unknown filename or mismatch (REVIEW.md I3)."""
+
+    def test_all_pinned_hashes_are_valid_sha256(self):
+        # Four platform tarballs, each a 64-char lowercase hex digest.
+        assert set(CRANE_SHA256) == {
+            "go-containerregistry_Linux_x86_64.tar.gz",
+            "go-containerregistry_Linux_arm64.tar.gz",
+            "go-containerregistry_Darwin_x86_64.tar.gz",
+            "go-containerregistry_Darwin_arm64.tar.gz",
+        }
+        for digest in CRANE_SHA256.values():
+            assert len(digest) == 64
+            int(digest, 16)  # raises if not hex
+
+    def test_matching_checksum_passes(self, tmp_path, monkeypatch):
+        fname = "go-containerregistry_Linux_x86_64.tar.gz"
+        tarball = tmp_path / fname
+        tarball.write_bytes(b"crane-bytes")
+        monkeypatch.setitem(CRANE_SHA256, fname, hashlib.sha256(b"crane-bytes").hexdigest())
+        _verify_crane_tarball(tarball, fname)  # no raise
+
+    def test_unknown_filename_rejected(self, tmp_path):
+        tarball = tmp_path / "unexpected.tar.gz"
+        tarball.write_bytes(b"x")
+        with pytest.raises(ProbeBuilderError, match="No pinned SHA-256"):
+            _verify_crane_tarball(tarball, "unexpected.tar.gz")
+
+    def test_checksum_mismatch_rejected(self, tmp_path, monkeypatch):
+        fname = "go-containerregistry_Linux_x86_64.tar.gz"
+        tarball = tmp_path / fname
+        tarball.write_bytes(b"tampered")
+        monkeypatch.setitem(CRANE_SHA256, fname, "0" * 64)
+        with pytest.raises(ProbeBuilderError, match="checksum mismatch"):
+            _verify_crane_tarball(tarball, fname)

@@ -621,6 +621,9 @@ class _VagrantMixin(_LitmusSetupBase):
                     inventory["all"]["hosts"][host["name"]]["ansible_ssh_private_key_file"] = host[
                         "ansible_ssh_private_key_file"
                     ]
+                # StrictHostKeyChecking is disabled because these are ephemeral
+                # local Vagrant/libvirt VMs whose host keys change on every
+                # recreate; acceptable only for disposable local clusters.
                 inventory["all"]["hosts"][host["name"]][
                     "ansible_ssh_common_args"
                 ] = "-o StrictHostKeyChecking=no"

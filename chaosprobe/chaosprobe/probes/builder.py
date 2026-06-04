@@ -28,6 +28,25 @@ from chaosprobe.probes.templates import (
 # registry. Auto-installed (like helm) if missing — see ensure_crane.
 CRANE_VERSION = "v0.20.2"
 
+# SHA-256 of each release tarball for CRANE_VERSION (from the release's
+# checksums.txt). The download is verified against these before extraction so a
+# tampered or redirected release asset cannot run unverified code on the build
+# host. Update this map together with CRANE_VERSION when bumping crane.
+CRANE_SHA256 = {
+    "go-containerregistry_Linux_x86_64.tar.gz": (
+        "c14340087103ba9dadf61d45acd20675490fd0ccbd56ac7901fc1b502137f44b"
+    ),
+    "go-containerregistry_Linux_arm64.tar.gz": (
+        "aff0db48825124c9331ea310057214bd4e92c01aa2e414d539e9659841d9422a"
+    ),
+    "go-containerregistry_Darwin_x86_64.tar.gz": (
+        "ae2677fc68b05ee3a63fe7b1d599aa4a554610b9f9da499a0c39669f446d29ed"
+    ),
+    "go-containerregistry_Darwin_arm64.tar.gz": (
+        "b47a8291d1069656bcfb8346dc9494f03e734d7a4058961fa53f0dfc9cb41abb"
+    ),
+}
+
 # Default image prefix for local (build-only) images. Probe images destined
 # for the cluster are pushed to the in-cluster registry, whose address the
 # caller resolves and passes in; ChaosProbe does not use any external registry.
@@ -77,6 +96,27 @@ def _check_crane() -> bool:
         return False
 
 
+def _verify_crane_tarball(tarball: Path, filename: str) -> None:
+    """Verify a downloaded crane tarball against its pinned SHA-256.
+
+    Fails closed: an unknown filename (no pinned hash) or a checksum mismatch
+    raises, so a tampered or redirected release asset is never extracted or
+    executed on the build host.
+    """
+    expected = CRANE_SHA256.get(filename)
+    if expected is None:
+        raise ProbeBuilderError(
+            f"No pinned SHA-256 for {filename} (crane {CRANE_VERSION}); "
+            "refusing to install an unverified binary."
+        )
+    actual = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ProbeBuilderError(
+            f"crane tarball checksum mismatch for {filename}: "
+            f"expected {expected}, got {actual}. Refusing to install a tampered binary."
+        )
+
+
 def ensure_crane() -> None:
     """Ensure `crane` is installed, downloading the release binary if missing.
 
@@ -113,6 +153,7 @@ def ensure_crane() -> None:
             subprocess.run(
                 ["curl", "-fsSL", "-o", str(tarball), url], check=True, capture_output=True
             )
+            _verify_crane_tarball(tarball, filename)
             subprocess.run(
                 ["tar", "-xzf", str(tarball), "-C", str(install_dir), "crane"],
                 check=True,
