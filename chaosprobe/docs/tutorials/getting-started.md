@@ -13,7 +13,7 @@ run a real placement-strategy experiment.
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/)
 
 That's all you need for Part 1. Part 2 additionally needs `kubectl` and a

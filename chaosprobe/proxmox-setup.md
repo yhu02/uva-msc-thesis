@@ -43,7 +43,7 @@ Ensure SSH is running on each VM.
 sudo apt install git python3-venv openssh-client
 ```
 
-Also required: `kubectl`, `helm`, [uv](https://docs.astral.sh/uv/), Python 3.9+.
+Also required: `kubectl`, `helm`, [uv](https://docs.astral.sh/uv/), Python 3.10+.
 
 ## Step 1: Setup SSH access
 
