@@ -79,6 +79,28 @@ class PlacementStrategy(str, Enum):
         return order.get(self, 99)
 
 
+# Methodology-control "strategies" that are not placement mutations:
+# ``baseline`` injects no real fault, ``default`` uses the cluster's own
+# scheduler. They precede the placement strategies in a default run.
+CONTROL_STRATEGIES = ("baseline", "default")
+
+# The full ordered set of strategies ``chaosprobe run`` exercises by default —
+# the single source of truth. ``run``'s ``--strategies`` default derives from
+# this, and tests pin it to ``PlacementStrategy`` (so a new enum member can't
+# silently drop out of the default run) and to the reproduction doc. Members are
+# referenced by ``.value`` so a rename tracks automatically; the order is fixed
+# deliberately (it drives run/report ordering) and is intentionally *not* the
+# enum's own order, which differs (random/adversarial are swapped).
+DEFAULT_RUN_STRATEGIES = CONTROL_STRATEGIES + (
+    PlacementStrategy.COLOCATE.value,
+    PlacementStrategy.SPREAD.value,
+    PlacementStrategy.ADVERSARIAL.value,
+    PlacementStrategy.RANDOM.value,
+    PlacementStrategy.BEST_FIT.value,
+    PlacementStrategy.DEPENDENCY_AWARE.value,
+)
+
+
 @dataclass
 class NodeInfo:
     """Information about a schedulable Kubernetes node."""

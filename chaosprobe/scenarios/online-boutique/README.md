@@ -285,7 +285,7 @@ Placement experiments control pod scheduling to study how co-location affects mu
 ### Automated (recommended)
 
 ```bash
-# Run all strategies (baseline, default, colocate, spread, random, adversarial, best-fit, dependency-aware)
+# Run all strategies (baseline, default, colocate, spread, adversarial, random, best-fit, dependency-aware)
 chaosprobe run -n online-boutique
 
 # Run specific strategies only
