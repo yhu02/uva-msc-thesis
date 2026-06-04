@@ -56,6 +56,61 @@ class TestLatencySample:
         assert sample.error == "Connection refused"
 
 
+class TestMeasureHttpWget:
+    """The wget fallback parses ``<status> <start_ns> <end_ns>`` lines."""
+
+    @staticmethod
+    def _measure(stream_output):
+        with (
+            patch("chaosprobe.metrics.latency.ensure_k8s_config"),
+            patch("chaosprobe.metrics.latency.client.CoreV1Api"),
+            patch("chaosprobe.metrics.latency.stream", return_value=stream_output),
+        ):
+            prober = LatencyProber("default")
+            return prober._measure_http_wget(
+                "frontend-abc",
+                "http://frontend.default.svc.cluster.local/",
+                "/",
+                "2026-03-24T12:00:00+00:00",
+            )
+
+    def test_coarse_clock_equal_timestamps_is_ok(self):
+        # busybox `date` without %N emits epoch *seconds*; a sub-second fetch
+        # gives start == end. A 200 here must score ok, not a false error.
+        sample = self._measure("200 1700000000 1700000000")
+        assert sample.status == "ok"
+        assert sample.error is None
+        assert sample.latency_ms == 0.0
+        assert sample.status_code == 200
+
+    def test_nanosecond_timestamps_compute_latency(self):
+        sample = self._measure("200 1700000000000000000 1700000000123000000")
+        assert sample.status == "ok"
+        assert sample.latency_ms == 123.0
+
+    def test_non_2xx_status_is_error(self):
+        sample = self._measure("500 1700000000 1700000000")
+        assert sample.status == "error"
+        assert sample.error == "HTTP 500"
+
+    def test_wget_failure_is_error(self):
+        sample = self._measure("ERR wget_rc=1")
+        assert sample.status == "error"
+        assert sample.error == "wget_rc=1"
+
+    def test_unparseable_output_is_error(self):
+        sample = self._measure("garbage output")
+        assert sample.status == "error"
+        assert sample.error.startswith("wget: unexpected output:")
+
+    def test_non_numeric_timestamps_fall_through_to_error(self):
+        # Three fields but non-numeric timestamps: the int() parse raises and
+        # the sample is reported as an unexpected-output error, not crashed.
+        sample = self._measure("200 abc def")
+        assert sample.status == "error"
+        assert sample.error.startswith("wget: unexpected output:")
+
+
 class TestLatencyResult:
     def test_summary_with_samples(self):
         result = LatencyResult(
