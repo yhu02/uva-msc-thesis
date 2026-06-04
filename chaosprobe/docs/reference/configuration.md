@@ -36,7 +36,7 @@ or pod env), not by the CLI. See [Add a Rust probe](../how-to/add-a-rust-probe.m
 ## Prerequisites
 
 - `kubectl`
-- Python 3.9+
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/)
 - For building Rust `cmdProbe`s: `docker` (build) and `rustc`/`cargo` (compile).
 

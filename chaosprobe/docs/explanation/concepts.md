@@ -60,9 +60,10 @@ the experimental controls.
 
 ## Resilience scoring
 
-Each iteration yields a `resilienceScore` combining recovery and probe-verdict
-signals, plus a recovery split (deletion→scheduled, scheduled→ready). The exact
-formula and weighting are in [`../../TECHNICAL.md`](../../TECHNICAL.md) (§6).
+Each iteration yields a `resilienceScore` from probe-verdict success rates,
+plus a separately-reported recovery split (deletion→scheduled, scheduled→ready)
+that is *not* part of the score. The exact formula and weighting are in
+[`../../TECHNICAL.md`](../../TECHNICAL.md) (§6).
 
 ## The statistics, and why {#statistics}
 

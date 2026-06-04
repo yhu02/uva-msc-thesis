@@ -573,7 +573,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 | `-t, --timeout` | 300 | Timeout per experiment (seconds) |
 | `--seed` | 42 | Random strategy seed |
 | `--seeds 42,137,271` | — | Multi-seed: expand `random` into one entry per seed (e.g. `random:42`, `random:137`). Each runs the full iteration count. Downstream tooling sees them as separate strategies. Overrides `--seed`. |
-| `--settle-time` | 30 | Wait after placement before experiment |
+| `--settle-time` | 60 | Length of the pre/post-chaos prober sample window (seconds); no fixed sleep |
 | `--load-profile` | `steady` | Locust profile: steady/ramp/spike |
 | `--locustfile` | built-in | Custom locustfile path |
 | `--target-url` | auto port-forward | URL for Locust load generation |
