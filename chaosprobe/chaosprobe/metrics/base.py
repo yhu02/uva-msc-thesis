@@ -87,6 +87,26 @@ def _pod_has_python3(core_api: Any, namespace: str, pod_name: str) -> bool:
         return False
 
 
+def _is_chaos_infra_pod(pod: Any) -> bool:
+    """True if *pod* is a LitmusChaos / Argo-workflow infrastructure pod.
+
+    LitmusChaos experiment, runner, and helper pods (``pod-delete-*``,
+    ``pod-cpu-hog-helper-*``, …) plus the Argo workflow pods that wrap them
+    join the target namespace mid-experiment and go ``Ready``.  They must
+    never be chosen as probe *sources*: they are ephemeral and vanish when
+    the experiment ends, so exec-ing into them yields ``Handshake status
+    404`` websocket errors that pollute the error rate with artifacts.
+
+    Identified by the same labels the cleanup path keys on (see
+    ``orchestrator/run_phases.py``): ``app.kubernetes.io/part-of=litmus`` and
+    the presence of ``workflows.argoproj.io/workflow``.
+    """
+    labels = (pod.metadata.labels if pod.metadata else None) or {}
+    return labels.get("app.kubernetes.io/part-of") == "litmus" or (
+        "workflows.argoproj.io/workflow" in labels
+    )
+
+
 def find_probe_pod(
     core_api: Any,
     namespace: str,
@@ -127,6 +147,8 @@ def find_probe_pod(
             continue
         name = pod.metadata.name
         if _exclude and name.startswith(_exclude):
+            continue
+        if _is_chaos_infra_pod(pod):
             continue
         ready_pods.append(name)
 
@@ -193,6 +215,8 @@ def find_probe_pods_per_node(
         name = pod.metadata.name
         if _exclude and name.startswith(_exclude):
             continue
+        if _is_chaos_infra_pod(pod):
+            continue
         node = pod.spec.node_name if pod.spec else None
         if not node:
             continue
@@ -244,6 +268,8 @@ def find_all_probe_pods_with_node(
         name = pod.metadata.name
         if _exclude and name.startswith(_exclude):
             continue
+        if _is_chaos_infra_pod(pod):
+            continue
         node = pod.spec.node_name if pod.spec else None
         if not node:
             continue
@@ -293,6 +319,8 @@ def find_all_probe_pods(
             continue
         name = pod.metadata.name
         if _exclude and name.startswith(_exclude):
+            continue
+        if _is_chaos_infra_pod(pod):
             continue
         ready_pods.append(name)
 
