@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from chaosprobe.config.topology import parse_topology_from_directory
-from chaosprobe.metrics.anomaly_labels import generate_anomaly_labels
+from chaosprobe.metrics.anomaly_labels import _as_int, generate_anomaly_labels
 
 # Discover routes once from the actual deploy manifests
 _DEPLOY_DIR = str(Path(__file__).parent.parent / "scenarios" / "online-boutique" / "deploy")
@@ -180,3 +180,66 @@ class TestGenerateAnomalyLabels:
         scenario = {"experiments": [], "namespace": "default"}
         labels = generate_anomaly_labels(scenario)
         assert labels == []
+
+
+class TestAsInt:
+    """``_as_int`` tolerates the empty / non-integer / float-like env values
+    that real chaos manifests produce, instead of raising ValueError and
+    aborting output generation (REVIEW.md I1)."""
+
+    def test_plain_int(self):
+        assert _as_int("120") == 120
+
+    def test_float_like_truncates(self):
+        assert _as_int("1.5") == 1
+
+    def test_empty_string_uses_default(self):
+        assert _as_int("") == 0
+        assert _as_int("   ") == 0
+
+    def test_non_numeric_uses_default(self):
+        assert _as_int("not-a-number") == 0
+
+    def test_none_uses_custom_default(self):
+        assert _as_int(None, default=-1) == -1
+
+
+class TestGenerateAnomalyLabelsTolerantParsing:
+    def test_empty_and_nonint_env_values_do_not_crash(self):
+        # An empty duration and a templated/non-numeric percent must not abort
+        # label generation — they fall back to 0.
+        scenario = _make_scenario(
+            "pod-cpu-hog",
+            "productcatalogservice",
+            env_vars=[
+                {"name": "TOTAL_CHAOS_DURATION", "value": ""},
+                {"name": "CHAOS_INTERVAL", "value": "10"},
+                {"name": "PODS_AFFECTED_PERC", "value": "{{ .percent }}"},
+                {"name": "CPU_CORES", "value": "2"},
+                {"name": "CPU_LOAD", "value": "1.0"},
+            ],
+        )
+        labels = generate_anomaly_labels(scenario)
+        assert len(labels) == 1
+        params = labels[0]["parameters"]
+        assert params["duration_s"] == 0
+        assert params["podsAffectedPercent"] == 0
+        assert params["cpuCores"] == 2
+        assert params["cpuLoad"] == 1
+
+    def test_network_latency_and_io_stress_params_parse(self):
+        lat = generate_anomaly_labels(
+            _make_scenario(
+                "pod-network-latency",
+                env_vars=[{"name": "NETWORK_LATENCY", "value": "200"}],
+            )
+        )[0]
+        assert lat["parameters"]["networkLatency_ms"] == 200
+
+        io = generate_anomaly_labels(
+            _make_scenario(
+                "pod-io-stress",
+                env_vars=[{"name": "NUMBER_OF_WORKERS", "value": "4"}],
+            )
+        )[0]
+        assert io["parameters"]["ioWorkers"] == 4
