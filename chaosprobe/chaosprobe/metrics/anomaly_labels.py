@@ -10,6 +10,23 @@ each label says "anomaly type X happened at time T affecting service S."
 
 from typing import Any, Dict, List, Optional, Tuple
 
+
+def _as_int(value: object, default: int = 0) -> int:
+    """Best-effort int coercion for chaos-experiment env values.
+
+    Chaos env values arrive as strings from the experiment manifest and may be
+    empty, blank, float-like (``"1.5"``), or templated.  ``int("")`` /
+    ``int("1.5")`` raise ``ValueError``; since these labels are built
+    unconditionally during output generation, an unparseable value must fall
+    back to ``default`` rather than abort the whole iteration (which the broad
+    iteration-level handler would then mislabel as a spurious ERROR).
+    """
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
 # Mapping of LitmusChaos experiment names to anomaly categories
 EXPERIMENT_TO_ANOMALY = {
     "pod-delete": {"category": "availability", "resource": "pod", "severity": "critical"},
@@ -146,28 +163,30 @@ def generate_anomaly_labels(
                 "startTime": experiment_start,
                 "endTime": experiment_end,
                 "parameters": {
-                    "duration_s": int(env_vars.get("TOTAL_CHAOS_DURATION", "0")),
-                    "interval_s": int(env_vars.get("CHAOS_INTERVAL", "0")),
-                    "podsAffectedPercent": int(env_vars.get("PODS_AFFECTED_PERC", "0")),
+                    "duration_s": _as_int(env_vars.get("TOTAL_CHAOS_DURATION", "0")),
+                    "interval_s": _as_int(env_vars.get("CHAOS_INTERVAL", "0")),
+                    "podsAffectedPercent": _as_int(env_vars.get("PODS_AFFECTED_PERC", "0")),
                 },
             }
 
             # Add fault-specific parameters
             if exp_name == "pod-cpu-hog":
-                label["parameters"]["cpuCores"] = int(env_vars.get("CPU_CORES", "0"))
-                label["parameters"]["cpuLoad"] = int(env_vars.get("CPU_LOAD", "0"))
+                label["parameters"]["cpuCores"] = _as_int(env_vars.get("CPU_CORES", "0"))
+                label["parameters"]["cpuLoad"] = _as_int(env_vars.get("CPU_LOAD", "0"))
             elif exp_name == "pod-memory-hog":
-                label["parameters"]["memoryConsumption_mb"] = int(
+                label["parameters"]["memoryConsumption_mb"] = _as_int(
                     env_vars.get("MEMORY_CONSUMPTION", "0")
                 )
             elif exp_name == "pod-network-loss":
-                label["parameters"]["packetLossPercent"] = int(
+                label["parameters"]["packetLossPercent"] = _as_int(
                     env_vars.get("NETWORK_PACKET_LOSS_PERCENTAGE", "0")
                 )
             elif exp_name == "pod-network-latency":
-                label["parameters"]["networkLatency_ms"] = int(env_vars.get("NETWORK_LATENCY", "0"))
+                label["parameters"]["networkLatency_ms"] = _as_int(
+                    env_vars.get("NETWORK_LATENCY", "0")
+                )
             elif exp_name == "pod-io-stress":
-                label["parameters"]["ioWorkers"] = int(env_vars.get("NUMBER_OF_WORKERS", "0"))
+                label["parameters"]["ioWorkers"] = _as_int(env_vars.get("NUMBER_OF_WORKERS", "0"))
 
             labels.append(label)
 
