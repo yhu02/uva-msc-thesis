@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from chaosprobe.provisioner import chaoscenter_api
 from chaosprobe.provisioner.chaoscenter import _scheme_and_host
 from chaosprobe.provisioner.setup import LitmusSetup
 
@@ -25,6 +26,10 @@ def _make_setup(**overrides) -> LitmusSetup:
         setup.rbac_api = MagicMock()
         setup.apiext_api = MagicMock()
         setup.custom_api = MagicMock()
+        # Pre-seed the managed-password cache so the CHAOSCENTER_MANAGED_PASS
+        # property resolves deterministically and never touches the real
+        # ~/.chaosprobe during tests (resolution itself is tested separately).
+        setup._managed_pass = "test-managed-password"
         for k, v in overrides.items():
             setattr(setup, k, v)
         return setup
@@ -652,14 +657,14 @@ class TestChaoscenterLogin:
 
         def fake_auth(url, user, pwd):
             calls.append(pwd)
-            if pwd == LitmusSetup.CHAOSCENTER_MANAGED_PASS:
+            if pwd == setup.CHAOSCENTER_MANAGED_PASS:
                 return {"accessToken": "tok2", "projectID": "p2"}
             raise RuntimeError("bad")
 
         with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
             token, pid = setup._chaoscenter_login("http://localhost:9003")
         assert token == "tok2"
-        assert LitmusSetup.CHAOSCENTER_MANAGED_PASS in calls
+        assert setup.CHAOSCENTER_MANAGED_PASS in calls
 
     def test_login_auto_rotates_default_password(self):
         setup = _make_setup()
@@ -668,7 +673,7 @@ class TestChaoscenterLogin:
         def fake_auth(url, user, pwd):
             auth_calls.append(pwd)
             # Both managed and default work, but managed is tried first
-            if pwd == LitmusSetup.CHAOSCENTER_MANAGED_PASS:
+            if pwd == setup.CHAOSCENTER_MANAGED_PASS:
                 raise RuntimeError("bad")
             return {"accessToken": "tok", "projectID": "p1"}
 
@@ -1538,3 +1543,63 @@ class TestSchemeAndHost:
 
     def test_no_scheme_returns_bare_host(self):
         assert _scheme_and_host("") == ""
+
+
+class TestResolveManagedPassword:
+    """The managed ChaosCenter admin password is resolved at runtime — env var,
+    then persisted file, then generated-and-persisted secret — never a
+    source-committed default (REVIEW.md W2)."""
+
+    def test_env_var_takes_precedence(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "from-env")
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", tmp_path / "pw")
+        assert chaoscenter_api._resolve_managed_password() == "from-env"
+        # The env var wins without ever touching the file.
+        assert not (tmp_path / "pw").exists()
+
+    def test_reads_persisted_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "pw"
+        pw_file.write_text("persisted-secret\n")
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        assert chaoscenter_api._resolve_managed_password() == "persisted-secret"
+
+    def test_generates_and_persists_when_absent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "sub" / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        pwd = chaoscenter_api._resolve_managed_password()
+        assert pwd  # a non-empty generated secret
+        assert pw_file.read_text() == pwd  # persisted for stability across runs
+        assert oct(pw_file.stat().st_mode)[-3:] == "600"  # locked down
+        # A later run reads the same value back rather than regenerating.
+        assert chaoscenter_api._resolve_managed_password() == pwd
+
+    def test_io_errors_are_tolerated(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        a_dir = tmp_path / "iam_a_dir"
+        a_dir.mkdir()
+        # Pointing the password "file" at a directory makes both the read
+        # (read_text) and the write (write_text) raise OSError; resolution must
+        # still return a usable generated secret rather than crash.
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", a_dir)
+        assert chaoscenter_api._resolve_managed_password()
+
+    def test_no_committed_credential_in_source(self):
+        from pathlib import Path as _Path
+
+        src = _Path(chaoscenter_api.__file__).read_text()
+        assert "ChaosProbe1!" not in src
+
+    def test_property_resolves_once_and_caches(self, monkeypatch):
+        calls = []
+
+        def fake_resolve():
+            calls.append(1)
+            return "resolved-pw"
+
+        monkeypatch.setattr(chaoscenter_api, "_resolve_managed_password", fake_resolve)
+        setup = LitmusSetup.__new__(LitmusSetup)
+        assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
+        assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
+        assert len(calls) == 1  # resolved once, then served from the instance cache
