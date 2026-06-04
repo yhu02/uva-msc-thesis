@@ -796,6 +796,17 @@ def _build_comparison_table_impl(
             recovery = metrics.get("recovery", {}).get("summary", {}) if metrics else {}
             row["avgRecovery_ms"] = recovery.get("meanRecovery_ms")
             row["maxRecovery_ms"] = recovery.get("maxRecovery_ms")
+        # All-ERROR strategies keep status "completed" but leave
+        # meanResilienceScore/stddev as None (aggregate_iterations' all-ERROR
+        # guard emits null, not a fabricated 0.0).  The printed and written
+        # comparison row formats these with ``:.1f`` downstream, so coerce None
+        # to 0.0 here to avoid a TypeError that aborts the run's final summary.
+        # The underlying summary fields stay null so stats/recommend/doctor
+        # still see "no data" (mirrors output/visualize.py's coercion).
+        if row["resilienceScore"] is None:
+            row["resilienceScore"] = 0.0
+        if row["stddevScore"] is None:
+            row["stddevScore"] = 0.0
         table.append(row)
     return table
 
@@ -915,9 +926,17 @@ def aggregate_iterations(
             "maxResilienceScore": None,
         }
 
+    # passRate and overallVerdict are computed over *valid* (non-ERROR)
+    # iterations only — consistent with the score statistics above, which
+    # already exclude ERROR iterations.  Counting ERROR iterations in the
+    # denominator would let a single transient infra failure (K8s API blip,
+    # ChaosCenter unreachable, all-Unknown probes) drag passRate below 1.0 and
+    # mislabel an otherwise-passing strategy FAIL in the comparison table —
+    # exactly the infra-noise contamination the ERROR exclusion exists to stop.
+    n_valid = len(valid_iters)
     agg: Dict[str, Any] = {
-        "overallVerdict": "PASS" if pass_count == len(verdicts) else "FAIL",
-        "passRate": round(pass_count / len(verdicts), 2),
+        "overallVerdict": "PASS" if n_valid and pass_count == n_valid else "FAIL",
+        "passRate": round(pass_count / n_valid, 2) if n_valid else 0.0,
         **score_stats,
         "totalExperiments": len(iteration_results),
         "passed": pass_count,
