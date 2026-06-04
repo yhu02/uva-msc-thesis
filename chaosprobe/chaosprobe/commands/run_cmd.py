@@ -41,7 +41,7 @@ from chaosprobe.orchestrator.run_phases import (
 )
 from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
 from chaosprobe.placement.mutator import PlacementMutator
-from chaosprobe.placement.strategy import PlacementStrategy
+from chaosprobe.placement.strategy import DEFAULT_RUN_STRATEGIES, PlacementStrategy
 from chaosprobe.probes.builder import (
     RustProbeBuilder,
     extract_cmdprobe_images,
@@ -905,7 +905,7 @@ def _init_overall_results(
 @click.option(
     "--strategies",
     "-s",
-    default="baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware",
+    default=",".join(DEFAULT_RUN_STRATEGIES),
     help="Comma-separated strategies to test (default: all)",
 )
 @click.option("--timeout", "-t", default=300, type=int, help="Timeout per experiment in seconds")
@@ -1067,8 +1067,8 @@ def run(
 ):
     """Run placement experiments automatically.
 
-    Iterates through placement strategies (baseline, default, colocate,
-    spread, adversarial, random, best-fit, dependency-aware), applies
+    Iterates through the default set of strategies (the two methodology
+    controls plus the six placement strategies; see --strategies), applies
     each placement, runs the shared experiment, collects results
     (including pod recovery metrics), and saves everything to a
     timestamped results directory.
