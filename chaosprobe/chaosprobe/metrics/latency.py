@@ -618,7 +618,13 @@ class LatencyProber:
                     status_code = int(parts[0])
                     start_ns = int(parts[1])
                     end_ns = int(parts[2])
-                    if start_ns > 0 and end_ns > start_ns:
+                    # ``>=`` not ``>``: on pods whose busybox ``date`` lacks
+                    # ``%N`` support the shell emits plain epoch *seconds*, so a
+                    # request that completes within the same second yields
+                    # ``start_ns == end_ns``.  That is a sub-resolution latency
+                    # (floored to 0 ms), not a failure — a successful fetch must
+                    # still be scored ``ok`` rather than misread as an error.
+                    if start_ns > 0 and end_ns >= start_ns:
                         latency_ms = (end_ns - start_ns) / 1_000_000
                         ok = 200 <= status_code < 400
                         return LatencySample(
