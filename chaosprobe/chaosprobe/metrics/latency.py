@@ -109,6 +109,64 @@ def _bucket_for_sample(sample: "LatencySample") -> str:
     return "error"
 
 
+# In-pod HTTP probe (preferred): precise nanosecond timing + one HTTP request.
+# Outputs a single line "<status_code> <start_ns> <end_ns>" on any HTTP
+# response — success *or* error — or "ERR <msg>" when the request never
+# reached the application layer (connection refused, timeout, DNS failure).
+#
+# urllib raises ``HTTPError`` for 4xx/5xx responses *before* ``print(r.status)``
+# runs, so a dedicated ``except HTTPError`` branch is required to surface the
+# real status code; without it every 4xx/5xx collapsed into the generic ``ERR``
+# path and was mis-bucketed as a transport ``error`` rather than its true tier.
+# The whole body is wrapped so output always lands on stdout (otherwise an
+# exception goes to stderr and the empty stdout reads as "Unexpected output").
+# URL and timeout are passed via sys.argv to avoid shell/code injection from
+# URLs containing quotes or other special characters.
+_HTTP_PROBE_PY = (
+    "import time,sys\n"
+    "import urllib.request as u, urllib.error as ue\n"
+    "s=int(time.time()*1e9)\n"
+    "try:\n"
+    " r=u.urlopen(sys.argv[1],timeout=int(sys.argv[2]));"
+    "_=r.read();"
+    "e=int(time.time()*1e9);"
+    "print(r.status,s,e)\n"
+    "except ue.HTTPError as he:\n"
+    " e=int(time.time()*1e9);"
+    "print(he.code,s,e)\n"
+    "except Exception as ex:\n"
+    " print('ERR',str(ex)[:200])"
+)
+
+
+# In-pod HTTP probe (fallback for pods without python3): wget + shell ``date``.
+# Outputs the same "<status_code> <start_ns> <end_ns>" / "ERR <msg>" contract.
+#
+# The status code is read from wget's ``-S`` server-response headers (which it
+# prints to stderr even under ``-q``) rather than being hard-coded — that's the
+# only way the fallback can report a real 4xx/5xx instead of pretending every
+# completed fetch was a 200. busybox's wget rejects ``-S``; that attempt fails
+# fast with no parsed code, so we retry the plain form to keep a verdict on
+# Alpine-style images. GNU date gives ns precision; busybox date only seconds
+# (the ``*N*|*%*`` case rewrites the literal ``%N`` to ``000000000``).
+# URL and timeout are passed as positional args ($1, $2) to avoid injection.
+_HTTP_PROBE_WGET_SH = (
+    "S=$(date +%s%N 2>/dev/null); "
+    'case "$S" in *N*|*%*) S=$(date +%s)000000000;; esac; '
+    'OUT=$(wget -S -q -O /dev/null --timeout="$2" "$1" 2>&1); RC=$?; '
+    "CODE=$(printf '%s\\n' \"$OUT\" | "
+    "grep -oE 'HTTP/[0-9.]+ [0-9][0-9][0-9]' | tail -n1 | "
+    "grep -oE '[0-9][0-9][0-9]$'); "
+    'if [ -z "$CODE" ] && [ "$RC" -ne 0 ]; then '
+    'wget -q -O /dev/null --timeout="$2" "$1" 2>/dev/null; RC=$?; fi; '
+    "E=$(date +%s%N 2>/dev/null); "
+    'case "$E" in *N*|*%*) E=$(date +%s)000000000;; esac; '
+    'if [ -n "$CODE" ]; then echo "$CODE $S $E"; '
+    'elif [ "$RC" -eq 0 ]; then echo "200 $S $E"; '
+    'else echo "ERR wget_rc=$RC"; fi'
+)
+
+
 @dataclass
 class LatencyResult:
     """Aggregated latency results for a service pair."""
@@ -440,26 +498,7 @@ class LatencyProber:
         if self._use_wget:
             return self._measure_http_wget(pod_name, url, route, now)
 
-        # Python one-liner: precise timing + HTTP request in one shot.
-        # Outputs: "<status_code> <start_ns> <end_ns>" or "ERR <msg>"
-        # Wrapped in try/except so errors always print to stdout
-        # (without this, exceptions go to stderr and stdout is empty,
-        # causing "Unexpected output: " errors).
-        # URL is passed via sys.argv to avoid shell/code injection from
-        # URLs containing quotes or other special characters.
-        py_script = (
-            "import time,sys\n"
-            "try:\n"
-            " import urllib.request as u;"
-            "s=int(time.time()*1e9);"
-            "r=u.urlopen(sys.argv[1],timeout=int(sys.argv[2]));"
-            "_=r.read();"
-            "e=int(time.time()*1e9);"
-            "print(r.status,s,e)\n"
-            "except Exception as ex:\n"
-            " print('ERR',str(ex)[:200])"
-        )
-        cmd = ["python3", "-c", py_script, url, str(self.timeout_seconds)]
+        cmd = ["python3", "-c", _HTTP_PROBE_PY, url, str(self.timeout_seconds)]
 
         try:
             resp = stream(
@@ -581,21 +620,7 @@ class LatencyProber:
         zero data.
         """
         target = _service_from_url(url)
-        # Shell one-liner: timestamp -> wget -> timestamp -> print
-        # Handles both GNU date (%s%N = nanoseconds) and busybox (%N -> literal).
-        # URL and timeout are passed as positional arguments ($1, $2) to
-        # avoid shell injection from URLs containing quotes.
-        shell_script = (
-            "S=$(date +%s%N 2>/dev/null); "
-            'case "$S" in *N*|*%*) S=$(date +%s)000000000;; esac; '
-            'wget -q -O /dev/null --timeout="$2" '
-            '"$1" 2>/dev/null; RC=$?; '
-            "E=$(date +%s%N 2>/dev/null); "
-            'case "$E" in *N*|*%*) E=$(date +%s)000000000;; esac; '
-            'if [ "$RC" -eq 0 ]; then echo "200 $S $E"; '
-            'else echo "ERR wget_rc=$RC"; fi'
-        )
-        cmd = ["sh", "-c", shell_script, "sh", url, str(self.timeout_seconds)]
+        cmd = ["sh", "-c", _HTTP_PROBE_WGET_SH, "sh", url, str(self.timeout_seconds)]
 
         try:
             resp = stream(
