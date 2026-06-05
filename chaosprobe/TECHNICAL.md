@@ -944,17 +944,17 @@ confidence = 0.50 (base)
 
 ### Cluster Topology
 
-5-node Proxmox/KVM cluster with heterogeneous worker memory:
+5-node Vagrant/libvirt (KVM/QEMU) cluster with uniform worker memory:
 
 | Node | Role | vCPU | RAM | Notes |
 |------|------|------|-----|-------|
-| cp1 | Control plane | 2 | 2 GiB | Infrastructure only (Prometheus, Neo4j, ChaosCenter, metrics-server) |
-| w1 | Worker | 2 | 2 GiB | Application workloads |
-| w2 | Worker | 2 | 2 GiB | Application workloads |
+| cp1 | Control plane | 2 | 12 GiB | Infrastructure only (Prometheus, Neo4j, ChaosCenter, metrics-server) |
+| w1 | Worker | 2 | 4 GiB | Application workloads |
+| w2 | Worker | 2 | 4 GiB | Application workloads |
 | w3 | Worker | 2 | 4 GiB | Application workloads |
 | w4 | Worker | 2 | 4 GiB | Application workloads |
 
-**Total**: 10 vCPU, 14 GiB -- K8s v1.28.6 -- Calico CNI -- containerd 1.7.11
+**Total**: 10 vCPU, 28 GiB -- K8s v1.28.6 -- Calico CNI -- containerd 1.7.11
 
 ### Hypothesis
 
@@ -969,7 +969,7 @@ Microservice resilience under chaos varies with pod placement strategy due to di
 ### Experiment: pod-delete on productcatalogservice
 
 - **TOTAL_CHAOS_DURATION**: 120s
-- **CHAOS_INTERVAL**: 5s (24 deletions per run)
+- **CHAOS_INTERVAL**: 15s (~8 deletions per run)
 - **FORCE**: true (immediate termination)
 - **PODS_AFFECTED_PERC**: 100%
 
@@ -1873,8 +1873,8 @@ Returns the full JSON document (~5-20KB) with all sections.
 
 **2. AI identifies the fault:**
 > "RecoveryCycle[0].deletionTime = 2026-04-17T08:07:42Z. Fault type: pod-delete targeting
-> productcatalogservice on worker3. TOTAL_CHAOS_DURATION=120s, CHAOS_INTERVAL=5s.
-> Expected ~24 cycles, observed 24 cycles. ✓"
+> productcatalogservice on worker3. TOTAL_CHAOS_DURATION=120s, CHAOS_INTERVAL=15s.
+> Expected ~8 cycles, observed 8 cycles. ✓"
 
 **3. AI assesses impact using signal hierarchy:**
 > "Load generator: 2,418 requests, 19.9% error rate, avg response 2,341ms, P99 30,001ms.
@@ -1934,7 +1934,7 @@ Recovery causality:
 
 Cascade evidence:
   ChaosRun --HAS_CASCADE_EVENT--> CascadeEvent
-    → "frontend→productcatalog route: 47 errors during 24 cycles"
+    → "frontend→productcatalog route: 47 errors during 8 cycles"
     → "frontend→cart route: 0 errors" (independent of target)
     → AI concludes: "cascade is service-specific, not node-wide"
 ```
