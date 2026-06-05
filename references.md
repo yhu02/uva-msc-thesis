@@ -12,7 +12,7 @@ References below are organized by which claim they support.
 
 ---
 
-## 1. Pod placement affects resilience (H1 / H2 source material)
+## 1. Pod placement affects resilience (L1 / L2 source material)
 
 These references inform the *pre-experiment* hypotheses. They are the
 literature-derived intuition the thesis tests and ultimately refutes for the
@@ -39,7 +39,7 @@ fit, not for resilience or fault isolation." Cite for the `best-fit` strategy.
 - [ACM Digital Library](https://dl.acm.org/doi/abs/10.1145/3190508.3190549)
 
 **Relevance:** Topology spread constraints; the canonical "spread-is-best"
-reference. Source for H2's predicted ordering. The thesis refutes the
+reference. Source for L2's predicted ordering. The thesis refutes the
 applicability of this prescription to churn-based faults.
 
 ### Ousterhout et al. (2013) — Sparrow
@@ -172,6 +172,18 @@ dependency-graph-aware mindset. Useful related-work citation.
 **Relevance:** The principles-of-chaos-engineering foundational reference.
 Cited on slide 2.
 
+### Netflix (2011) — Chaos Monkey / Simian Army
+> Netflix Technology Blog. *The Netflix Simian Army.* July 2011. Open-sourced
+> as `Netflix/SimianArmy` (and later `Netflix/chaosmonkey`).
+
+- [Netflix Tech Blog post](https://netflixtechblog.com/the-netflix-simian-army-16e57fbab116)
+- [GitHub: Netflix/chaosmonkey](https://github.com/Netflix/chaosmonkey)
+
+**Relevance:** The original production chaos tool — random instance termination
+to force resilience. Cited on slide 4 as the historical precedent for
+fault-injection-by-killing; ChaosProbe generalises the "kill" fault (pod-delete)
+across controlled placement strategies rather than terminating at random.
+
 ### Yang et al. (2024) — MicroRes
 > T. Yang, C. Lee, J. Shen, Y. Su, C. Feng, Y. Yang, M. R. Lyu.
 > *MicroRes: Versatile Resilience Profiling in Microservices via Degradation
@@ -199,7 +211,7 @@ the thesis in the 2025 chaos-engineering landscape.
 
 ---
 
-## 3. Tail latency / recovery-time intuition (H3 source)
+## 3. Tail latency / recovery-time intuition (L3 source)
 
 ### Dean & Barroso (2013) — The Tail at Scale
 > J. Dean, L. A. Barroso. *The Tail at Scale.* Communications of the ACM,
@@ -210,7 +222,7 @@ the thesis in the 2025 chaos-engineering landscape.
 - [ACM Digital Library](https://dl.acm.org/doi/10.1145/2408776.2408794)
 
 **Relevance:** The "shared resources → latency variability → service-quality
-damage" intuition. H3 distills this into the falsifiable claim that recovery
+damage" intuition. L3 distills this into the falsifiable claim that recovery
 time predicts resilience score. The data refutes the simplest reading
 (faster recovery → higher score), strengthening the case that what matters
 is in-flight cross-node disruption rather than tail-of-recovery latency.

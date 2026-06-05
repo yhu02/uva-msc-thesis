@@ -360,8 +360,8 @@ hypotheses = [
      "runs. The reproducible fault-response signal.",
      ACCENT_RED),
     ("M2", "Co-location lowers CPU contention",
-     "Colocate throttles LEAST (median 1.54 vs default 1.90, spread "
-     "1.94) and has the lowest CPU usage/pressure. 11/13 runs. "
+     "Colocate throttles less than default/spread (during-chaos rate "
+     "1.54 vs 1.90, 1.94), with lower CPU usage/pressure. 11/13 runs. "
      "Contention does not scale with density under churn.",
      ACCENT_RED),
     ("M3", "'Spread is safer' is refuted",
@@ -376,15 +376,16 @@ hypotheses = [
      "a lossy instrument; the metrics are the reliable outcome.",
      ACCENT_BLUE),
     # Context & support (S1-S2, orange/purple)
-    ("S1", "Fault class gates the effect",
-     "Contention (cpu-hog) yields identical resilience across all "
-     "strategies (100, σ0); churn differentiates them. Whether "
-     "placement matters is conditional on fault class.",
+    ("S1", "Mechanism signal is churn-specific",
+     "cpu-hog (n=2) does not reproduce: one run scored ~100 across "
+     "strategies, one saw many iterations fail (33-67, σ≈58). The "
+     "score is noisy under both faults; the reproducible M1/M2 signal "
+     "is churn-specific.",
      ACCENT_ORANGE),
-    ("S2", "Recovery is application-bound",
-     "scheduled→ready (app startup) is 84-96% of recovery; placement "
-     "touches only the 4-16% scheduling term. Recovery is "
-     "application-bound, not placement-bound.",
+    ("S2", "Recovery split is unstable",
+     "The d2s/s2r split is run-dependent: app-startup dominates in "
+     "some runs (84-96%), the scheduling term in others (up to ~78%). "
+     "Recovery decomposition is not a stable placement signal.",
      ACCENT_PURPLE),
 ]
 
@@ -500,13 +501,13 @@ strat_data = [
      "Scheduler-set", "Placement null hypothesis",
      "Burns et al., ACM Queue 2016"),
     ("Colocate",
-     "All pods pinned to a single node\nvia podAffinity\nMaximal co-location",
+     "All pods pinned to a single node\nvia nodeSelector (hostname)\nMaximal co-location",
      CLR_CHAOS,
      [(0.4, 0.2), (0.65, 0.35), (0.4, 0.5), (0.65, 0.65)],
      "Maximum", "Expected: worst resilience",
      "Mars 2011; Delimitrou 2014"),
     ("Spread",
-     "Even distribution across workers\nvia topologySpreadConstraints\nMinimal per-node contention",
+     "Even distribution across workers\nvia per-node nodeSelector\nMinimal per-node contention",
      CLR_METRICS,
      [(0.2, 0.4), (0.6, 0.4), (1.0, 0.4), (1.4, 0.4)],
      "Minimum", "Expected: best isolation",
@@ -582,7 +583,7 @@ add_text_box(slide, 0.7, 1.5, 5.6, 0.3, "Target Application — Google Online Bo
 # Service dependency graph (compact)
 add_rounded_box(slide, 2.8, 2.0, 1.8, 0.4, CLR_CLI,
                 "frontend", 10, WHITE, True)
-tier2 = [("productcatalog", 0.7), ("currency", 2.2), ("cart", 3.7)]
+tier2 = [("productcatalog", 0.7), ("currency", 2.2), ("cart", 3.7), ("recommend", 5.2)]
 for name, x in tier2:
     add_rounded_box(slide, x, 2.6, 1.2, 0.35, CLR_ORCH, name, 8, WHITE, True)
     add_arrow(slide, 3.7, 2.4, x + 0.6, 2.6, LIGHT_GRAY, Pt(1))
@@ -594,6 +595,9 @@ bottom = [("email", 0.7), ("payment", 2.2), ("shipping", 3.7)]
 for name, x in bottom:
     add_rounded_box(slide, x, 3.8, 1.2, 0.35, CLR_ORCH, name, 8, WHITE, True)
     add_arrow(slide, 2.3, 3.55, x + 0.6, 3.8, LIGHT_GRAY, Pt(1))
+# adservice — called directly by frontend (not via checkout)
+add_rounded_box(slide, 5.2, 3.8, 1.2, 0.35, CLR_ORCH, "ad", 8, WHITE, True)
+add_arrow(slide, 3.7, 2.4, 5.8, 3.8, LIGHT_GRAY, Pt(1))
 
 add_text_box(slide, 0.7, 4.3, 5.6, 0.6,
     "11 services (10 polyglot microservices + Redis)\n"
@@ -699,12 +703,12 @@ cp_components = [
      CLR_OUTPUT, 3.4, 4.2),
 ]
 for name, desc, clr, x, y in cp_components:
-    add_rounded_box(slide, x, y, 2.8, 1.0, VERY_DARK,
+    add_rounded_box(slide, x, y, 2.8, 1.12, VERY_DARK,
                     border_color=clr)
     add_text_box(slide, x + 0.1, y + 0.05, 2.6, 0.4, name,
                  font_size=11, bold=True, color=clr)
-    add_text_box(slide, x + 0.1, y + 0.45, 2.6, 0.5, desc,
-                 font_size=10, color=LIGHT_GRAY)
+    add_text_box(slide, x + 0.1, y + 0.45, 2.6, 0.62, desc,
+                 font_size=9, color=LIGHT_GRAY)
 
 # External infrastructure — right
 add_text_box(slide, 6.8, 1.4, 6.0, 0.3, "Infrastructure (existing tools)",
@@ -731,12 +735,12 @@ infra_components = [
      CLR_INFRA, 9.9, 4.2),
 ]
 for name, desc, clr, x, y in infra_components:
-    add_rounded_box(slide, x, y, 2.8, 1.0, VERY_DARK,
+    add_rounded_box(slide, x, y, 2.8, 1.12, VERY_DARK,
                     border_color=clr)
     add_text_box(slide, x + 0.1, y + 0.05, 2.6, 0.4, name,
                  font_size=11, bold=True, color=clr)
-    add_text_box(slide, x + 0.1, y + 0.45, 2.6, 0.5, desc,
-                 font_size=10, color=LIGHT_GRAY)
+    add_text_box(slide, x + 0.1, y + 0.45, 2.6, 0.62, desc,
+                 font_size=9, color=LIGHT_GRAY)
 
 # Flow arrows
 add_arrow(slide, 6.2, 2.3, 6.8, 2.3, ACCENT_BLUE, Pt(2))
@@ -866,13 +870,14 @@ slide_title(slide, "Results — Why the Score Is Demoted (M4)")
 
 charts_dir = _find_latest_charts_dir()
 
-# Large resilience chart
-img_path = os.path.join(charts_dir, "resilience_scores.png") if charts_dir else None
+# Score distribution across runs — the M4 chart (overlapping boxes = no ranking)
+img_path = os.path.join(charts_dir, "score_distribution.png") if charts_dir else None
 add_image_or_placeholder(slide, 0.5, 1.4, 7.5, 4.5, img_path,
-                         "[Resilience Scores by Strategy]\n\n"
-                         "Bar chart showing resilience score (0–100%)\n"
-                         "per placement strategy.\n\n"
-                         "Generated by: chaosprobe visualize")
+                         "[Resilience Score Distribution Across Runs]\n\n"
+                         "Box plot of resilience score (0–100%) per\n"
+                         "strategy across all churn runs — the boxes\n"
+                         "overlap, so the score cannot rank placements.\n\n"
+                         "Generated by: scripts/distribution_charts.py")
 
 # Key observations — right
 add_rounded_box(slide, 8.5, 1.4, 4.3, 4.5, VERY_DARK,
@@ -881,7 +886,7 @@ add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Key Observations",
              font_size=16, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
     "• Baseline: 100% (stddev 0) —\n  methodology control holds",
-    "• The score does NOT reproduce across\n  the 13 collected runs:",
+    "• The score does NOT reproduce across the 13\n  churn runs (≥3 iters, post-fix, baseline=100):",
     "    colocate 49.7–83  (mean 69.5)\n    spread   33–88.7  (mean 70.5)\n    default  33–83    (mean 58.9)",
     "• Within-strategy stddev (11–17) dwarfs\n  the colocate-vs-spread gap (~1 point)",
     "• So the aggregate score cannot rank\n  placements — the signal is elsewhere",
@@ -937,12 +942,12 @@ add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "Latency Degradation (Pre-Chaos vs Duri
 # Analysis — bottom
 add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
                 border_color=ACCENT_RED)
-add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery is application-bound (S2)",
+add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery split is unstable (S2)",
              font_size=14, bold=True, color=ACCENT_RED)
 add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
-    "• Recovery = deletion→scheduled + scheduled→ready;\n  the app-startup term is 84–96% of the total",
-    "• Placement only touches the 4–16% scheduling term,\n  so it has little leverage over recovery speed",
-    "• Recovery-time rank is noise run-to-run — it does\n  not track the placement story (refutes L3)",
+    "• Recovery = deletion→scheduled + scheduled→ready;\n  their split is run-dependent",
+    "• app-startup dominates in some runs (84–96%),\n  the scheduling term in others (up to ~78%)",
+    "• Either way recovery rank is noise run-to-run — it\n  does not track the placement story (refutes L3)",
 ], font_size=11, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
@@ -963,14 +968,15 @@ slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
 slide_title(slide, "Results — Primary Metrics: Conntrack & CPU (M1, M2)")
 
-# Resource utilization chart — left
-img_path = os.path.join(charts_dir, "resource_utilization.png") if charts_dir else None
+# Mechanism distribution — left: the actual M1 (conntrack) + M2 (throttle) signal
+img_path = os.path.join(charts_dir, "mechanism_distribution.png") if charts_dir else None
 add_image_or_placeholder(slide, 0.3, 1.4, 6.2, 3.5, img_path,
-                         "[Resource Utilization (CPU/Memory)]\n\n"
-                         "Per-strategy CPU and memory utilization\n"
-                         "across experiment phases.\n\n"
-                         "Generated by: chaosprobe visualize")
-add_text_box(slide, 0.3, 4.95, 6.2, 0.3, "Resource Utilization (CPU & Memory)",
+                         "[Conntrack flush & CPU throttle distributions]\n\n"
+                         "Box plots per strategy across churn runs:\n"
+                         "conntrack flush % (M1) and during-chaos\n"
+                         "throttle rate (M2) — tight, reproducible.\n\n"
+                         "Generated by: scripts/distribution_charts.py")
+add_text_box(slide, 0.3, 4.95, 6.2, 0.3, "Conntrack Churn & CPU Throttling (M1, M2)",
              font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
 
 # Throughput chart — right
@@ -989,8 +995,8 @@ add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
 add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "M2 — co-location lowers CPU contention",
              font_size=14, bold=True, color=CLR_METRICS)
 add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
-    "• Densest placement (colocate) throttles LEAST —\n  median 1.54 vs default 1.90, spread 1.94",
-    "• Holds in 11 of 13 runs — reproducible, unlike score",
+    "• Densest placement (colocate) throttles less than\n  default/spread — during-chaos rate 1.54 vs 1.90, 1.94",
+    "• colocate < default in 11 of 13 runs — reproducible",
     "• Opposite of Bubble-Up's dense=more-contention; the\n  contention model does not fit a churn fault",
 ], font_size=11, color=LIGHT_GRAY)
 
@@ -1036,9 +1042,9 @@ hyp_results = [
      "under churn — it amplifies, not isolates.",
      ACCENT_ORANGE, "Mech."),
     ("L3", "Recovery time predicts score",
-     "Refuted structurally: recovery is 84–96%\n"
-     "app-startup (placement-invariant); the score\n"
-     "is non-reproducible. No stable relationship.",
+     "Refuted structurally: the d2s/s2r split is\n"
+     "unstable run-to-run and the score is\n"
+     "non-reproducible. No stable relationship.",
      ACCENT_RED, "Refuted"),
 ]
 
@@ -1182,8 +1188,8 @@ add_bullet_frame(slide, 7.0, 1.95, 5.4, 2.6, [
     "  (spread≫colocate, 12/12) + throttling (11/13)",
     "• Mechanism: pod-delete is churn-based, not\n"
     "  contention — co-location keeps paths local",
-    "• Recovery is 84–96% app-startup — placement-\n"
-    "  invariant, so it can't predict the outcome",
+    "• Recovery's d2s/s2r split is unstable run-to-run,\n"
+    "  so it can't predict the outcome",
 ], font_size=12, color=LIGHT_GRAY)
 
 # Future work
@@ -1233,7 +1239,7 @@ add_text_box(slide, 1.5, 3.7, 10.3, 0.8, "Questions?",
 summary_items = [
     ("6", "Placement\nStrategies", CLR_ORCH),
     ("4", "Metric\nDimensions", CLR_METRICS),
-    ("3/3", "Hypotheses\nRefuted", ACCENT_RED),
+    ("3/3", "Refuted at\nmechanism layer", ACCENT_RED),
     ("1", "Unified\nMechanism", ACCENT_BLUE),
 ]
 for i, (val, label, clr) in enumerate(summary_items):
