@@ -356,12 +356,18 @@ def chart_latency_degradation(
         return None
 
     n_strats = len(valid_strategies)
+    # Wrap the per-strategy panels into a grid (max 4 columns) so the figure keeps
+    # a slide-friendly aspect ratio instead of one ultra-wide row that gets
+    # squished — a single row of 8 panels is ~40 inches wide and illegible.
+    ncols = min(4, n_strats)
+    nrows = (n_strats + ncols - 1) // ncols
     fig, axes = plt.subplots(
-        1, n_strats, figsize=(max(6, 5 * n_strats), 6), squeeze=False, sharey=True
+        nrows, ncols, figsize=(4.2 * ncols, 4.5 * nrows), squeeze=False, sharey=True
     )
+    axes_flat = [ax for row in axes for ax in row]
 
     for idx, (strat, (pre, during)) in enumerate(sorted(valid_strategies.items())):
-        ax = axes[0][idx]
+        ax = axes_flat[idx]
         pre_vals = [pre.get(r, {}).get("mean_ms") or 0 for r in routes]
         during_vals = [during.get(r, {}).get("mean_ms") or 0 for r in routes]
 
@@ -394,11 +400,16 @@ def chart_latency_degradation(
         ax.legend(fontsize=8)
         ax.grid(axis="y", alpha=0.3)
 
-        if idx == 0:
+        if idx % ncols == 0:
             ax.set_ylabel("Mean Latency (ms)")
 
+    # Hide unused panels in the final row of the grid.
+    for ax in axes_flat[n_strats:]:
+        ax.axis("off")
+
     fig.suptitle("Latency Degradation: Pre-Chaos vs During Chaos", fontsize=13)
-    plt.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.subplots_adjust(hspace=0.75)
     filepath = str(output_path / "latency_degradation.png")
     fig.savefig(filepath, dpi=150)
     plt.close(fig)
@@ -694,15 +705,24 @@ def chart_resource_utilization(
 
     ax_cpu.set_ylabel("CPU Utilization (%)")
     ax_cpu.set_title("Node Resource Utilization During Experiment (used nodes only)")
-    ax_cpu.legend(fontsize=7, ncol=2)
     ax_cpu.grid(alpha=0.3)
     ax_cpu.set_ylim(0, 105)
 
     ax_mem.set_ylabel("Memory Utilization (%)")
     ax_mem.set_xlabel("Elapsed Time (s)")
-    ax_mem.legend()
     ax_mem.grid(alpha=0.3)
     ax_mem.set_ylim(0, 105)
+
+    # One compact legend instead of two 16-entry ones: a colour per strategy plus
+    # two line-style proxies (solid = mean, dashed = peak node).
+    legend_handles = [
+        plt.Line2D([], [], color=colors[i], linewidth=1.5, label=strat)
+        for i, strat in enumerate(strategy_names)
+    ] + [
+        plt.Line2D([], [], color="gray", linewidth=1.5, label="mean"),
+        plt.Line2D([], [], color="gray", linewidth=1.0, linestyle="--", label="peak node"),
+    ]
+    ax_cpu.legend(handles=legend_handles, fontsize=7, ncol=5, loc="upper right")
 
     plt.tight_layout()
     filepath = str(output_path / "resource_utilization.png")
