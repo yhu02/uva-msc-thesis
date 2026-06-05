@@ -50,5 +50,8 @@ Background and rationale — the *why*.
 
 - [Concepts](explanation/concepts.md) — the AI feedback loop, placement
   strategies, resilience scoring, and the system architecture.
+- [Hypotheses & findings](explanation/hypotheses.md) — the falsifiable research
+  hypotheses (H1–H3), their status, and the committed script that reproduces
+  each number.
 - [`../TECHNICAL.md`](../TECHNICAL.md) — data flow, experiment design, resilience
   scoring methodology, and the statistics behind `stats` / `power` / `recommend`.
