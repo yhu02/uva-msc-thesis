@@ -569,7 +569,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 | `-o, --output-dir` | `results` | Base results directory (timestamped subdir created) |
 | `-s, --strategies` | `baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware` | Comma-separated strategies |
 | `-i, --iterations` | 1 | Iterations per strategy |
-| `-e, --experiment` | `scenarios/online-boutique/pod-delete.yaml` | Experiment YAML file |
+| `-e, --experiment` | `scenarios/online-boutique/pod-delete.yaml`, `scenarios/online-boutique/cpu-hog.yaml` | Experiment YAML file(s); repeat for a multi-fault matrix |
 | `-t, --timeout` | 300 | Timeout per experiment (seconds) |
 | `--seed` | 42 | Random strategy seed |
 | `--seeds 42,137,271` | — | Multi-seed: expand `random` into one entry per seed (e.g. `random:42`, `random:137`). Each runs the full iteration count. Downstream tooling sees them as separate strategies. Overrides `--seed`. |
