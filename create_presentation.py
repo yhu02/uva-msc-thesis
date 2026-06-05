@@ -566,6 +566,13 @@ for i, (name, desc, clr, dots, contention, note, cite) in enumerate(strat_data):
     add_text_box(slide, bx + 0.08, by + 2.02, cw - 0.16, 0.32,
                  cite, font_size=7, color=ACCENT_BLUE)
 
+add_text_box(slide, 0.25, 6.95, 12.85, 0.5,
+             "Analytic weight: the reproducible findings (M1 conntrack flush, M2 CPU throttling) rest on the colocate "
+             "vs. spread/default locality contrast. Random, adversarial, best-fit & dependency-aware are a generality "
+             "check — designed for the contention hypothesis, present in only half the run set, they widen the placements "
+             "the noisy score still can't rank (M4) and await the cpu-hog contention matrix.",
+             font_size=8, color=MID_GRAY)
+
 
 # ══════════════════════════════════════════════════════════════════════
 # SLIDE 6 — EXPERIMENTAL SETUP
@@ -1119,6 +1126,10 @@ threats = [
         ("Virtualized environment",
          "Vagrant/libvirt (KVM/QEMU) introduces virtualization overhead. Bare-metal "
          "clusters may show different performance characteristics, especially for I/O metrics."),
+        ("Uneven strategy coverage",
+         "Reproducible findings rest on 3 configs (colocate, spread, default). The 4 contention "
+         "strategies (random, adversarial, best-fit, dependency-aware) appear in half the runs and no "
+         "reproducible finding — a generality check, not validated signals, pending more cpu-hog runs."),
     ]),
     ("External Validity", ACCENT_ORANGE, [
         ("Cluster scale",

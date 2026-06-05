@@ -81,6 +81,8 @@ Speaker notes for the thesis defense presentation.
 > **Best-fit** uses bin-packing to concentrate pods into the fewest nodes, similar to Borg-style resource scoring.
 >
 > **Dependency-aware** co-locates communicating services via BFS partitioning of the service dependency graph.
+>
+> **A word on analytic weight.** Not all eight configurations carry equal weight in the results. The reproducible findings -- M1 and M2 -- rest on the contrast between three configurations: colocate, which keeps the target's network path node-local, versus spread and default, which expose it across nodes. The remaining four -- random, adversarial, best-fit, and dependency-aware -- were designed around a *resource-contention* hypothesis, and they serve here as a **generality check**: they widen the set of placements the noisy resilience score still fails to rank, which strengthens M4, and they are the placements where the contention model should finally bite under the cpu-hog matrix -- the priority for future work. They are not yet independently validated as reproducible signals -- half the run set predates their addition -- so the churn story is told on the three-configuration locality contrast, with the other four held in reserve for the contention matrix.
 
 ---
 
@@ -213,6 +215,8 @@ Speaker notes for the thesis defense presentation.
 > Our results are based on a single application -- Google Online Boutique. It is a representative benchmark, but other topologies may yield different results.
 >
 > We run a single replica per service, which means 100% pod-delete guarantees full unavailability. Production systems typically run multiple replicas, so our results represent worst-case single-replica scenarios.
+>
+> The reproducible mechanism findings rest on three configurations -- colocate, spread, and default. The four resource-contention strategies -- random, adversarial, best-fit, and dependency-aware -- appear in only half the run set and in none of the reproducible findings, so they function as a generality check rather than independently validated signals; confirming or refuting their intended contention-driven separation needs more cpu-hog runs.
 >
 > The cluster uses Vagrant with the libvirt (KVM/QEMU) provider, which introduces virtualization overhead. Bare-metal clusters may show different performance, especially for I/O metrics.
 >

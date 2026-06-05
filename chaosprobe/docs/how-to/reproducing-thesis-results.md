@@ -1,6 +1,6 @@
 # Reproducing the thesis results
 
-This document lists the exact configuration used to produce the numbers reported in the MSc thesis defence. Following these steps on a comparable cluster should reproduce the headline strategy ordering, recovery distributions, and contention-vs-churn attribution.
+This document lists the exact configuration used to produce the numbers reported in the MSc thesis defence. Following these steps on a comparable cluster should reproduce the two mechanism-metric findings (conntrack flush, CPU throttling) and the contention-vs-churn attribution. The aggregate resilience score is **not** expected to reproduce a stable strategy ordering — its non-reproducibility is itself a headline finding (M4), so a reproducing run is judged on the mechanism metrics below, not on a strategy leaderboard.
 
 ## Cluster
 
@@ -100,9 +100,9 @@ If `metrics.prometheus.metricAvailability` shows `false` for PSI / Felix / etcd_
 
 ## Bar for "reproduced"
 
-The thesis's two headline claims are testable against a reproducing run:
+The thesis rests on two *mechanism* metrics that reproduce across runs (M1, M2); the aggregate resilience score does **not** (M4). A reproducing run is judged on the mechanism metrics, computed over the `{colocate, default, spread}` comparison set that is present in every run — not on a strategy leaderboard:
 
-- **H7 (CPU throttling refutes contention model):** under `pod-delete`, the `colocate` strategy should produce *less* throttling (`metrics.prometheus.phases.during-chaos.cpu_throttling.mean`) than `spread`. PSI (`cpu_pressure_some`) should agree where cgroup-v2 is present.
-- **Strategy ordering under churn:** the per-strategy `meanResilienceScore` ordering should be consistent with the thesis numbers; the `chaosprobe stats` pairwise table should show Holm-Bonferroni-adjusted `p_holm < 0.05` for the colocate↔spread, colocate↔adversarial, and dependency-aware↔colocate pairs.
+- **M1 (conntrack flush separates spread from colocate):** under `pod-delete`, `spread` and `default` should flush a large fraction of `conntrack_entries_per_node` during the kill cycle (pre-chaos mean → during-chaos mean ≈ 36–39%), while `colocate` stays roughly flat (≈ −1.6%). Reproduced means `spread` flush > `colocate` flush. `scripts/mechanism_metrics.py` recomputes this directly from each `summary.json`.
+- **M2 / H7 (CPU throttling refutes the contention model):** under `pod-delete`, `colocate` should produce *less* throttling (`metrics.prometheus.phases.during-chaos.cpu_throttling.mean`) than `default` and `spread`. PSI (`cpu_pressure_some`) should agree where cgroup-v2 is present.
 
-A reproducing run that diverges substantially on these — e.g. `colocate` *worse* than `spread` on `cpu_throttling`, or none of the pairs significant — is evidence that the cluster or workload differs in a material way, and the threats-to-validity section of the thesis (slide 13) is the place to look first.
+The aggregate `meanResilienceScore` is **not** expected to yield a stable strategy ordering: across the collected runs (≥3 iterations per strategy) no pairwise difference survives the `chaosprobe stats` Holm-Bonferroni correction, so an *absence* of significant pairs is the expected result (M4), not a sign of divergence. What signals a materially different cluster or workload is divergence on the mechanism metrics — e.g. `colocate` *worse* than `default`/`spread` on `cpu_throttling`, or `colocate` flushing more conntrack than `spread`. The threats-to-validity section of the thesis (slide 13) is the place to look first.
