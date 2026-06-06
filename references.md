@@ -252,10 +252,16 @@ claims is responsible for the refutations. From the spec:
 > is reflected in load balancing mechanism, measured as 99th percentile over
 > last 5 minutes aggregated across all programmers."
 
-The `network_programming_duration_seconds` Prometheus metric directly measures
-the kill-cycle reconvergence delay. Cite on slide 12 to anchor the
-"the kernel's TCP stack, conntrack table, kube-proxy iptables rules, and
-CoreDNS cache all have to reconverge" claim.
+The `network_programming_duration_seconds` Prometheus metric is the SLO's own
+measure of the kill-cycle reconvergence delay. ChaosProbe's prober queries it
+(`kubeproxy_network_programming_p99`), but the run outputs' `metricAvailability`
+map records it as **uncollected on the experiment cluster** (kube-proxy's
+metrics endpoint was not scraped) — so this SLO anchors the mechanism
+*conceptually* while the empirical reconvergence signal comes from the proxies
+that were captured (`conntrack_entries_per_node`, `coredns_request_duration_p99`,
+TCP retransmits). Cite on slide 12 to anchor the "the kernel's TCP stack,
+conntrack table, kube-proxy iptables rules, and CoreDNS cache all have to
+reconverge" claim.
 
 ### kubernetes/kubernetes Issue #82378
 > *Investigate issues with Network Programming Latency SLO.* Maintainer-tracked
@@ -426,18 +432,14 @@ modeling rather than empirical measurement. The **churn-vs-contention
 mechanism explanation appears to be a genuinely novel contribution** to the
 peer-reviewed literature. This is worth stating explicitly on slide 4.
 
-**Unverified references mentioned in code docstrings:**
+**Removed unverifiable docstring citations:**
 
-The `_compute_dependency_aware` docstring in
-[chaosprobe/placement/strategy.py:500](chaosprobe/chaosprobe/placement/strategy.py#L500)
-also lists "μServe" and "Orca" as related microservice-placement work, but
-neither was unambiguously locatable via web search. "Orca" matches the
-OSDI 2022 transformer-serving paper (Yu et al.), which is unrelated to
-microservice placement. "μServe" did not surface a clear academic source.
-Before finalising the thesis report, either confirm these citations against
-their original source (if known to the author) or remove them from the
-docstring to avoid being asked at the defense about a reference you can't
-support.
+The `_compute_dependency_aware` docstring previously listed "μServe" and "Orca"
+as related microservice-placement work, but neither was unambiguously locatable
+("Orca" matches the unrelated OSDI 2022 transformer-serving paper by Yu et al.;
+"μServe" surfaced no clear academic source), so both were removed from the code
+docstrings. The retained dependency-aware citations — DeathStarBench, Sinan, and
+METIS — are all verifiable above.
 
 **Database coverage notes for the thesis report:**
 - Searches went through general web search, arXiv, Semantic Scholar, and

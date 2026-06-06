@@ -8,7 +8,7 @@ Provides six strategies for pod placement:
 - best-fit:         Bin-packing: pack deployments into fewest nodes
                     (cf. Borg best-fit scoring; Verma et al., EuroSys 2015)
 - dependency-aware: Co-locate communicating services based on the service
-                    dependency graph (cf. DeathStarBench, Sinan, μServe)
+                    dependency graph (cf. DeathStarBench, Sinan)
 """
 
 import random
@@ -532,7 +532,7 @@ def _compute_dependency_aware(
     Co-locates services that communicate (direct ``DEPENDS_ON`` edges) while
     still spreading the workload across nodes.  The approach is a light
     version of balanced k-way graph partitioning (cf. METIS / microservice
-    placement work such as μServe, DeathStarBench, Sinan, Orca):
+    placement work such as DeathStarBench, Sinan):
 
     1. Build an undirected adjacency from the dependency edges.
     2. Pick a root (the node with fewest incoming edges — the entry-point).
