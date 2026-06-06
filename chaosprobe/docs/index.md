@@ -53,5 +53,8 @@ Background and rationale — the *why*.
 - [Hypotheses & findings](explanation/hypotheses.md) — the falsifiable research
   hypotheses (H1–H3), their status, and the committed script that reproduces
   each number.
+- [Scope of claims](explanation/scope-of-claims.md) — what the evidence does and
+  does not support, and what generalizes vs. what does not. Read before quoting
+  any result.
 - [`../TECHNICAL.md`](../TECHNICAL.md) — data flow, experiment design, resilience
   scoring methodology, and the statistics behind `stats` / `power` / `recommend`.
