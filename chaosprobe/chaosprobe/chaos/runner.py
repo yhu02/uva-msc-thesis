@@ -34,6 +34,19 @@ _TERMINAL_PHASES = frozenset(
 # How many times to re-trigger an experiment after TARGET_SELECTION_ERROR
 _MAX_TARGET_RETRIES = 2
 
+# Node-scoped faults select a node via ``TARGET_NODES`` rather than a pod via
+# ``appinfo.applabel``.  ChaosProbe lets a scenario leave ``TARGET_NODES``
+# unset/"auto" and names the *service whose host node to fault* via
+# ``appinfo.applabel`` instead, so the same scenario follows the placement
+# strategy: the node hogged is whichever node the strategy put that service on.
+#
+# Restricted to faults that both (a) read the plural ``TARGET_NODES`` env and
+# (b) auto-install via ``LitmusSetup.EXPERIMENT_URLS``.  node-drain / node-taint
+# are deliberately excluded: they read the *singular* ``TARGET_NODE``, so this
+# injection would be silently ignored; node-io-stress is not in the install
+# catalog.  Add them here only alongside the matching env name + catalog entry.
+_NODE_FAULTS = frozenset({"node-cpu-hog", "node-memory-hog"})
+
 
 def _parse_execution_data(execution_data: Any) -> Dict[str, Any]:
     """Parse ChaosCenter executionData into both verdicts and raw probe statuses.
@@ -205,6 +218,7 @@ class ChaosRunner:
             filepath = exp_entry.get("file", "unknown")
             original_name = engine_spec.get("metadata", {}).get("name", "unnamed")
             print(f"  [{idx}/{total}] ChaosEngine: {original_name} (from {filepath})")
+            self._resolve_node_targets(engine_spec)
             self._run_single_experiment(engine_spec)
 
         return self._executed_experiments
@@ -212,6 +226,69 @@ class ChaosRunner:
     def get_executed_experiments(self) -> List[Dict[str, Any]]:
         """Return metadata for all executed experiments."""
         return self._executed_experiments
+
+    # ------------------------------------------------------------------
+    # Internal -- node-fault target resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_target_node(self, applabel: str) -> str:
+        """Return the node hosting a pod matching ``applabel`` in this namespace.
+
+        Used to point a node-scoped fault at whichever node the active placement
+        strategy put the target service on. Prefers a Running pod; falls back to
+        any scheduled pod. Raises if nothing resolves so a node fault never runs
+        against an empty/wrong target (which would either error or hit every node).
+        """
+        from kubernetes import client
+
+        from chaosprobe.k8s import ensure_k8s_config
+
+        ensure_k8s_config()
+        pods = client.CoreV1Api().list_namespaced_pod(
+            self.namespace, label_selector=applabel
+        )
+        running = [
+            p for p in pods.items
+            if p.spec and p.spec.node_name and p.status and p.status.phase == "Running"
+        ]
+        for pod in running or pods.items:
+            node = pod.spec.node_name if pod.spec else None
+            if node:
+                return node
+        raise RuntimeError(
+            f"node-fault target resolution failed: no scheduled pod matched "
+            f"{applabel!r} in namespace {self.namespace!r}"
+        )
+
+    def _resolve_node_targets(self, engine_spec: Dict[str, Any]) -> None:
+        """Fill ``TARGET_NODES`` for node-scoped faults from ``appinfo.applabel``.
+
+        Mutates *engine_spec* in place. A scenario that leaves ``TARGET_NODES``
+        unset or ``"auto"`` gets it resolved to the node currently hosting the
+        service named by ``appinfo.applabel``; an explicit non-auto value is
+        respected. No-op for pod-scoped faults.
+        """
+        spec = engine_spec.get("spec", {})
+        applabel = (spec.get("appinfo") or {}).get("applabel", "")
+        for exp in spec.get("experiments", []):
+            if exp.get("name") not in _NODE_FAULTS:
+                continue
+            env = exp.setdefault("spec", {}).setdefault("components", {}).setdefault("env", [])
+            entry = next((e for e in env if e.get("name") == "TARGET_NODES"), None)
+            current = str((entry or {}).get("value", "")).strip().lower()
+            if entry and current and current != "auto":
+                continue  # explicit operator override — respect it
+            if not applabel:
+                raise RuntimeError(
+                    f"node fault {exp.get('name')!r} needs appinfo.applabel to resolve "
+                    "TARGET_NODES (or an explicit TARGET_NODES value)"
+                )
+            node = self._resolve_target_node(applabel)
+            if entry is None:
+                env.append({"name": "TARGET_NODES", "value": node})
+            else:
+                entry["value"] = node
+            print(f"    node-fault: TARGET_NODES -> {node!r} (host of {applabel})")
 
     # ------------------------------------------------------------------
     # Internal -- single experiment lifecycle
