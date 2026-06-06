@@ -120,6 +120,7 @@ Every number quoted as a *finding* must be traceable to an archived, clean-prove
 | **Randomness** | Base seed, per-iteration seed, strategy order per block | `--seed` (recorded in `summary.json`); seed set documented under Strategies above |
 | **Scenario integrity** | SHA-256 of every scenario YAML + workload manifest backing the run | `summary.json → scenarioHashes[].{file, sha256}` (recorded automatically by `run`; `doctor` flags its absence, so `doctor --strict` fails any run that lacks it) |
 | **Code integrity** | Git commit hash for ChaosProbe + workload manifests, dirty/clean flag | `summary.json → overall_results.runMetadata.git.{commit, shortCommit, dirty}` |
+| **Batch / day identifier** | Which runs were launched together, to separate run-to-run cluster drift from strategy effects | `summary.json → batchId` (set with `run --batch-id`, defaults to the UTC date; emitted by `export` as the `batch_id` column for mixed-run analysis) |
 | **Reviewer packaging** | One archive with raw runs, one with processed tables/figures, one manifest mapping every thesis figure/table → input files + script | build per thesis (see checklist below) |
 
 **Provenance discipline (from the strategy review):**

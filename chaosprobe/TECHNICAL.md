@@ -586,6 +586,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 | `--collect-logs/--no-collect-logs` | on | Container logs from target deployment |
 | `--prometheus-url` | auto-discovered | Prometheus URL(s); repeat for multiple |
 | `--baseline-duration` | 0 | Seconds of steady-state collection before chaos |
+| `--batch-id` | current UTC date | Batch/session label (`summary.json → batchId`); separates run-to-run drift from strategy effects in mixed-run analysis. `export` emits it as the `batch_id` column. |
 | `--neo4j-uri` | `bolt://localhost:7687` | Neo4j URI (env: `NEO4J_URI`) |
 | `--neo4j-user` | `neo4j` | Neo4j username (env: `NEO4J_USER`) |
 | `--neo4j-password` | `chaosprobe` | Neo4j password (env: `NEO4J_PASSWORD`) |
@@ -917,6 +918,8 @@ The pairwise table emitted by `pairwise_comparisons` carries `cliffs_delta` + `e
 `overall_results.runMetadata` (best-effort) captures `chaosprobeVersion`, `pythonVersion`, `platform`, `hostname`, `git.{commit, shortCommit, dirty}`, `kubernetes.{serverVersion, containerRuntimeOnFirstNode, firstNodeOS}`, `cniHint`, and `kubeProxy.{mode, conntrack}` (read from the `kube-proxy` ConfigMap; `mode` is `None` when unset/default). Defends "reproducible on a comparable cluster" claims with the actual environment fingerprint — `kubeProxy` in particular scopes the conntrack-flush / kube-proxy-sync mechanism claims to the proxier (iptables/ipvs/nftables) and conntrack sizing they were measured under.
 
 `overall_results.scenarioHashes` is a sorted `[{file, sha256}]` list — the SHA-256 of every manifest + experiment YAML backing the run (deduped across the multi-fault matrix), with `file` relative to the scenario root. Recorded automatically by `run`; lets a reviewer confirm a quoted result came from the exact scenario files on disk rather than a since-edited copy. `doctor` flags its absence, so `doctor --strict` fails any run missing it.
+
+`overall_results.batchId` is the run's batch/session label (`--batch-id`, defaulting to the current UTC date). It groups runs launched together so mixed-run analysis can separate run-to-run cluster drift from strategy effects; `export` surfaces it as the leading `batch_id` column on every per-iteration row.
 
 ---
 

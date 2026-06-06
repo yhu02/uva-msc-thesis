@@ -1,5 +1,6 @@
 {
   "schemaVersion": "2.0.0",
+  "batchId": "2026-05-30",
   "runMetadata": {
     "chaosprobeVersion": "0.1.0",
     "git": {

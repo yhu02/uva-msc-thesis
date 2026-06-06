@@ -26,7 +26,8 @@ class TestResolvePath:
 class TestIterationRow:
     def test_row_pulls_resilience_score(self):
         it = {"resilienceScore": 75}
-        row = _iteration_row("colocate", 1, it)
+        row = _iteration_row("colocate", 1, it, "2026-06-06")
+        assert row["batch_id"] == "2026-06-06"
         assert row["strategy"] == "colocate"
         assert row["iteration"] == 1
         assert row["resilience_score"] == 75
@@ -43,7 +44,7 @@ class TestIterationRow:
                 }
             }
         }
-        row = _iteration_row("c", 1, it)
+        row = _iteration_row("c", 1, it, "b1")
         assert row["mean_recovery_ms"] == 1200
         assert row["mean_deletion_to_scheduled_ms"] == 300
         assert row["mean_scheduled_to_ready_ms"] == 900
@@ -59,7 +60,7 @@ class TestIterationRow:
                 }
             },
         }
-        row = _iteration_row("c", 1, it)
+        row = _iteration_row("c", 1, it, "b1")
         assert row["total_oom_kills"] == 2
         assert row["total_restarts"] == 5
         assert row["rps"] == 10.5
@@ -67,7 +68,7 @@ class TestIterationRow:
         assert row["p95_response_time_ms"] == 250
 
     def test_missing_fields_render_as_empty(self):
-        row = _iteration_row("c", 1, {})
+        row = _iteration_row("c", 1, {}, "b1")
         # Every non-strategy/iteration field is "" when source is absent.
         for col in ("resilience_score", "mean_recovery_ms", "rps"):
             assert row[col] == ""
@@ -147,7 +148,7 @@ class TestExportCommand:
         assert result.exit_code == 0
         assert f"Wrote 2 row(s) to {out_path}" in result.output
         contents = out_path.read_text()
-        assert contents.startswith("strategy,iteration,resilience_score")
+        assert contents.startswith("batch_id,strategy,iteration,resilience_score")
 
     def test_non_dict_iterations_skipped(self, tmp_path):
         path = self._make_summary(
@@ -179,6 +180,30 @@ class TestExportCommand:
         assert result.exit_code == 0
         rows = list(csv.DictReader(StringIO(result.output)))
         assert [r["iteration"] for r in rows] == ["1", "2", "3", "4", "5"]
+
+    def test_batch_id_column_from_summary(self, tmp_path):
+        path = tmp_path / "summary.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "batchId": "2026-06-06",
+                    "strategies": {"colocate": {"iterations": [{"resilienceScore": 80}]}},
+                }
+            )
+        )
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path)])
+        assert result.exit_code == 0
+        rows = list(csv.DictReader(StringIO(result.output)))
+        assert rows[0]["batch_id"] == "2026-06-06"
+
+    def test_batch_id_empty_when_absent(self, tmp_path):
+        path = self._make_summary(tmp_path, {"colocate": {"iterations": [{"resilienceScore": 80}]}})
+        runner = CliRunner()
+        result = runner.invoke(export, ["-s", str(path)])
+        assert result.exit_code == 0
+        rows = list(csv.DictReader(StringIO(result.output)))
+        assert rows[0]["batch_id"] == ""
 
 
 class TestJSONLFormat:
@@ -252,7 +277,7 @@ class TestJSONLFormat:
         result = runner.invoke(export, ["-s", str(path)])
         assert result.exit_code == 0
         # CSV starts with the header.
-        assert result.output.startswith("strategy,iteration,resilience_score")
+        assert result.output.startswith("batch_id,strategy,iteration,resilience_score")
 
     def test_invalid_format_rejected(self, tmp_path):
         path = self._make_summary(tmp_path, {"colocate": {"iterations": [{"resilienceScore": 80}]}})

@@ -54,9 +54,14 @@ def _resolve_path(d: Dict[str, Any], path: str) -> Any:
     return cur
 
 
-def _iteration_row(strategy: str, idx: int, it: Dict[str, Any]) -> Dict[str, Any]:
-    """Build one CSV row from an iteration dict."""
-    row: Dict[str, Any] = {"strategy": strategy, "iteration": idx}
+def _iteration_row(strategy: str, idx: int, it: Dict[str, Any], batch_id: str) -> Dict[str, Any]:
+    """Build one CSV row from an iteration dict.
+
+    ``batch_id`` is the run's batch label (leading column) so rows pooled
+    from several runs can be grouped by batch — separating run-to-run
+    cluster drift from strategy effects.
+    """
+    row: Dict[str, Any] = {"batch_id": batch_id, "strategy": strategy, "iteration": idx}
     for path, col in _ITERATION_FIELDS:
         val = _resolve_path(it, path)
         # Verdict and pre_chaos_healthy are bool/str — leave as is.  Other
@@ -69,7 +74,7 @@ def _iteration_row(strategy: str, idx: int, it: Dict[str, Any]) -> Dict[str, Any
 def _format_csv(rows: List[Dict[str, Any]]) -> str:
     if not rows:
         return ""
-    fieldnames = ["strategy", "iteration"] + [col for _, col in _ITERATION_FIELDS]
+    fieldnames = ["batch_id", "strategy", "iteration"] + [col for _, col in _ITERATION_FIELDS]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames)
     writer.writeheader()
@@ -137,6 +142,7 @@ def export(summary: Path, strategy: Optional[str], fmt: str, output: Optional[Pa
     """
     raw = json.loads(summary.read_text())
     strategies = raw.get("strategies") or {}
+    batch_id = raw.get("batchId") or ""
 
     if strategy and strategy not in strategies:
         click.echo(
@@ -153,7 +159,7 @@ def export(summary: Path, strategy: Optional[str], fmt: str, output: Optional[Pa
         iters = sdata.get("iterations") or []
         for idx, it in enumerate(iters, 1):
             if isinstance(it, dict):
-                rows.append(_iteration_row(name, idx, it))
+                rows.append(_iteration_row(name, idx, it, batch_id))
 
     if not rows:
         click.echo("Error: no iterations found to export.", err=True)

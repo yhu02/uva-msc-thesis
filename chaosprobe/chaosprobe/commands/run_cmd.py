@@ -878,11 +878,24 @@ def _collect_scenario_hashes(
     return [{"file": key, "sha256": merged[key]} for key in sorted(merged)]
 
 
+def _resolve_batch_id(batch_id: Optional[str]) -> str:
+    """Batch label for grouping runs, defaulting to the current UTC date.
+
+    A run launched without ``--batch-id`` is still day-stamped so mixed-run
+    analysis can separate run-to-run cluster drift from strategy effects
+    without the operator having to remember the flag.
+    """
+    if batch_id and batch_id.strip():
+        return batch_id.strip()
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
 def _init_overall_results(
     fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]],
     namespace: str,
     iterations: int,
     core_api: Any,
+    batch_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the run's top-level results dict.
 
@@ -897,6 +910,7 @@ def _init_overall_results(
     return {
         "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "batchId": _resolve_batch_id(batch_id),
         "runMetadata": gather_run_metadata(core_api=core_api),
         "scenarioHashes": _collect_scenario_hashes(fault_scenarios),
         "namespace": namespace,
@@ -1057,6 +1071,16 @@ def _init_overall_results(
         " (default: 0 = use settle time)"
     ),
 )
+@click.option(
+    "--batch-id",
+    default=None,
+    help=(
+        "Label grouping this run with others from the same batch/session "
+        "(default: the current UTC date, YYYY-MM-DD). Recorded as "
+        "summary.json -> batchId and emitted by `export` so mixed-run "
+        "analysis can separate run-to-run cluster drift from strategy effects."
+    ),
+)
 @neo4j_uri_option
 @neo4j_user_option
 @neo4j_password_option
@@ -1082,6 +1106,7 @@ def run(
     measure_prometheus: bool,
     prometheus_url: Tuple[str, ...],
     baseline_duration: int,
+    batch_id: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
@@ -1220,7 +1245,7 @@ def run(
     click.echo("")
 
     overall_results: Dict[str, Any] = _init_overall_results(
-        fault_scenarios, namespace, iterations, core_api
+        fault_scenarios, namespace, iterations, core_api, batch_id
     )
     _multi_fault = len(fault_scenarios) > 1
 
