@@ -48,6 +48,7 @@ def _summary_payload():
             "cniHint": "calico",
             "kubeProxy": {"mode": "iptables", "conntrack": {"min": 131072}},
         },
+        "scenarioHashes": [{"file": "pod-delete.yaml", "sha256": "deadbeef"}],
         "strategies": {
             # Non-overlapping CIs (84–88 vs. 58–62) so the cross-strategy
             # "every CI overlaps" check doesn't fire.

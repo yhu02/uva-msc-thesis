@@ -296,6 +296,30 @@ def _check_run_metadata(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
     return issues
 
 
+def _check_scenario_hashes(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Check that the run recorded SHA-256 hashes of its scenario YAMLs.
+
+    Without ``scenarioHashes`` a reviewer can't confirm a quoted result came
+    from the scenario files on disk rather than a since-edited copy — silent
+    scenario drift is one of the evidence-chain gaps the thesis advisory
+    flags. Produced automatically by ``run`` (PR #208); a summary that lacks
+    it was made by an older chaosprobe or assembled by hand. Surfaced as a
+    warn so ``doctor --strict`` (the gate every quoted run must clear) fails
+    on it.
+    """
+    issues: List[Tuple[str, str]] = []
+    hashes = raw.get("scenarioHashes")
+    if not isinstance(hashes, list) or not hashes:
+        issues.append(
+            (
+                "warn",
+                "scenario SHA-256 hashes not recorded — scenarioHashes is absent or empty, "
+                "so silent scenario drift between this result and its YAMLs can't be ruled out",
+            )
+        )
+    return issues
+
+
 @click.command("doctor")
 @click.option(
     "--summary",
@@ -352,6 +376,10 @@ def doctor(summary: Path, strict: bool, as_json: bool):
     metadata = _check_run_metadata(raw)
     if metadata:
         report["__run_metadata__"] = _tally(metadata)
+
+    scenario_hashes = _check_scenario_hashes(raw)
+    if scenario_hashes:
+        report["__scenario_hashes__"] = _tally(scenario_hashes)
 
     schema = _check_schema_version(raw)
     if schema:

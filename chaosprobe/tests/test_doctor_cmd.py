@@ -8,6 +8,7 @@ from click.testing import CliRunner
 from chaosprobe.commands.doctor_cmd import (
     _check_cross_strategy,
     _check_run_metadata,
+    _check_scenario_hashes,
     _check_schema_version,
     _check_strategy,
     doctor,
@@ -40,6 +41,7 @@ def _write_summary(
             "cniHint": "calico",
             "kubeProxy": {"mode": "iptables", "conntrack": {"min": 131072}},
         }
+        payload["scenarioHashes"] = [{"file": "pod-delete.yaml", "sha256": "deadbeef"}]
     path.write_text(json.dumps(payload))
     return path
 
@@ -526,6 +528,24 @@ class TestCheckRunMetadata:
         }
         issues = _check_run_metadata(raw)
         assert any("CNI hint not recorded" in msg for _, msg in issues)
+
+
+class TestCheckScenarioHashes:
+    def test_present_hashes_no_issues(self):
+        raw = {"scenarioHashes": [{"file": "pod-delete.yaml", "sha256": "abc"}]}
+        assert _check_scenario_hashes(raw) == []
+
+    def test_absent_hashes_warned(self):
+        issues = _check_scenario_hashes({"strategies": {}})
+        assert any("scenario SHA-256 hashes not recorded" in msg for _, msg in issues)
+
+    def test_empty_list_warned(self):
+        issues = _check_scenario_hashes({"scenarioHashes": []})
+        assert any("scenario SHA-256 hashes not recorded" in msg for _, msg in issues)
+
+    def test_non_list_warned(self):
+        issues = _check_scenario_hashes({"scenarioHashes": "deadbeef"})
+        assert any("scenario SHA-256 hashes not recorded" in msg for _, msg in issues)
 
 
 class TestDoctorRunMetadataIntegration:

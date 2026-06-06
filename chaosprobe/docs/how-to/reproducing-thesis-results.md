@@ -118,7 +118,7 @@ Every number quoted as a *finding* must be traceable to an archived, clean-prove
 | **Environment** | Kubernetes version, CNI, kube-proxy mode + conntrack settings, container runtime, node counts and mem/CPU, ChaosProbe version, Python version, host OS | `summary.json → overall_results.runMetadata` (`chaosprobeVersion`, `pythonVersion`, `platform`, `kubernetes.*`, `cniHint`, `kubeProxy.{mode, conntrack}`) |
 | **Cluster config** | Scheduler settings, topology labels, taints, resource limits/requests, any nodeSelectors/affinity | `scenarios/online-boutique/deploy/*.yaml` + this doc's Cluster table |
 | **Randomness** | Base seed, per-iteration seed, strategy order per block | `--seed` (recorded in `summary.json`); seed set documented under Strategies above |
-| **Scenario integrity** | Hashes of all scenario YAMLs and workload manifests | `summary.json → scenario.manifests[].content` (full content embedded) |
+| **Scenario integrity** | SHA-256 of every scenario YAML + workload manifest backing the run | `summary.json → scenarioHashes[].{file, sha256}` (recorded automatically by `run`; `doctor` flags its absence, so `doctor --strict` fails any run that lacks it) |
 | **Code integrity** | Git commit hash for ChaosProbe + workload manifests, dirty/clean flag | `summary.json → overall_results.runMetadata.git.{commit, shortCommit, dirty}` |
 | **Reviewer packaging** | One archive with raw runs, one with processed tables/figures, one manifest mapping every thesis figure/table → input files + script | build per thesis (see checklist below) |
 

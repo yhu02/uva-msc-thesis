@@ -21,7 +21,7 @@ from chaosprobe.commands.shared import (
     neo4j_uri_option,
     neo4j_user_option,
 )
-from chaosprobe.config.loader import load_scenario
+from chaosprobe.config.loader import hash_scenario_files, load_scenario
 from chaosprobe.config.topology import parse_topology_from_scenario
 from chaosprobe.config.validator import validate_scenario
 from chaosprobe.k8s import ensure_k8s_config
@@ -861,6 +861,23 @@ def _connect_graph_store(
         ) from e
 
 
+def _collect_scenario_hashes(
+    fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]],
+) -> List[Dict[str, str]]:
+    """SHA-256 every YAML backing the run, deduped across the fault matrix.
+
+    Multi-fault runs share the same deploy manifests across their per-`-e`
+    scenarios, so hashes are merged into one ``{file, sha256}`` list keyed by
+    file path. Persisted so a reviewer can confirm a quoted result came from
+    the exact scenario YAMLs on disk, not a since-edited copy.
+    """
+    merged: Dict[str, str] = {}
+    for _label, scenario, _types in fault_scenarios:
+        for entry in hash_scenario_files(scenario):
+            merged[entry["file"]] = entry["sha256"]
+    return [{"file": key, "sha256": merged[key]} for key in sorted(merged)]
+
+
 def _init_overall_results(
     fault_scenarios: List[Tuple[str, Dict[str, Any], List[str]]],
     namespace: str,
@@ -881,6 +898,7 @@ def _init_overall_results(
         "runId": f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "runMetadata": gather_run_metadata(core_api=core_api),
+        "scenarioHashes": _collect_scenario_hashes(fault_scenarios),
         "namespace": namespace,
         "iterations": iterations,
         "faults": {label: {"strategies": {}} for label, _, _ in fault_scenarios},
