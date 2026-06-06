@@ -217,6 +217,10 @@ hypothesis pending a clean, replicated rerun.
 
 ## Scope & threats
 
+> The claim boundary — what generalizes, what does not, and the keep/weaken/remove
+> discipline — is stated explicitly on the [Scope of claims](scope-of-claims.md)
+> page.
+
 - **Fault class & contention:** churn (`pod-delete`) is established across the
   full run set. Contention was probed two ways: resource *hog* faults
   (`pod-cpu-hog`, `node-cpu-hog`, `node-memory-hog`) are absorbed by cgroup
