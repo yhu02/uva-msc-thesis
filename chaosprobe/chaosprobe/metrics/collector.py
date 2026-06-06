@@ -14,6 +14,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.endpointslices import summarize_endpoint_slices
 from chaosprobe.metrics.utilization import compute_per_pod_utilization
 
 
@@ -32,6 +33,7 @@ class MetricsCollector:
         ensure_k8s_config()
 
         self.core_api = client.CoreV1Api()
+        self.discovery_api = client.DiscoveryV1Api()
 
     def collect(
         self,
@@ -44,6 +46,7 @@ class MetricsCollector:
         disk_data: Optional[Dict[str, Any]] = None,
         resource_data: Optional[Dict[str, Any]] = None,
         prometheus_data: Optional[Dict[str, Any]] = None,
+        endpoint_slices_pre: Optional[Dict[str, Any]] = None,
         collect_logs: bool = False,
     ) -> Dict[str, Any]:
         """Collect all available metrics for a deployment during an experiment.
@@ -65,6 +68,12 @@ class MetricsCollector:
                            from ContinuousResourceProber. If None, omitted.
             prometheus_data: Pre-collected Prometheus metrics from
                              ContinuousPrometheusProber. If None, omitted.
+            endpoint_slices_pre: Pre-chaos EndpointSlice snapshot captured by
+                                 the caller before the kill cycle. Paired with
+                                 a fresh post-chaos snapshot under
+                                 ``endpointSlices`` so the net endpoint change
+                                 around the fault window is visible. If None,
+                                 only the post-chaos snapshot is recorded.
             collect_logs: If True, collect container logs from target pods.
 
         Returns:
@@ -146,6 +155,13 @@ class MetricsCollector:
             if utilization.get("pods"):
                 result["utilization"] = utilization
 
+        endpoint_slices_post = self.snapshot_endpoint_slices()
+        if endpoint_slices_pre is not None or endpoint_slices_post is not None:
+            result["endpointSlices"] = {
+                "preChaos": endpoint_slices_pre,
+                "postChaos": endpoint_slices_post,
+            }
+
         if collect_logs:
             duration = until_time - since_time
             result["containerLogs"] = self._collect_container_logs(
@@ -154,6 +170,24 @@ class MetricsCollector:
             )
 
         return result
+
+    def snapshot_endpoint_slices(self) -> Optional[Dict[str, Any]]:
+        """Snapshot per-service EndpointSlice endpoint counts for the namespace.
+
+        Returns ``{"capturedAt": ISO8601, "services": {name: {ready,
+        terminating, notReady, total}}}`` or ``None`` if the discovery API
+        call fails (e.g. RBAC gap, older cluster). Called once before chaos
+        (by the caller, passed back as ``endpoint_slices_pre``) and once
+        after — the pair captures the net endpoint change across the kill
+        cycle that underlies the churn/reconvergence story.
+        """
+        try:
+            sliced = self.discovery_api.list_namespaced_endpoint_slice(self.namespace)
+        except ApiException:
+            return None
+        summary = summarize_endpoint_slices(list(sliced.items))
+        summary["capturedAt"] = datetime.now(timezone.utc).isoformat()
+        return summary
 
     def _collect_pod_status(self, deployment_name: str) -> Dict[str, Any]:
         """Collect current pod status and restart counts.
