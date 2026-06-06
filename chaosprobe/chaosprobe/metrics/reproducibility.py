@@ -165,6 +165,44 @@ def _cni_hint(core_api: Optional[Any]) -> Optional[str]:
     return None
 
 
+def _kube_proxy_info(core_api: Optional[Any]) -> Dict[str, Any]:
+    """Best-effort kube-proxy mode + conntrack settings.
+
+    The mechanism-layer claims (conntrack flush, kube-proxy sync) are
+    environment-contingent: an iptables proxier reconverges differently
+    from ipvs or nftables, and the conntrack table sizing/timeouts shape
+    how much flow state the kill cycle disturbs.  The kubeadm-managed
+    ``kube-proxy`` ConfigMap in ``kube-system`` carries both in its
+    ``config.conf`` document, so we read it from the API rather than
+    needing node access.  Returns ``{mode, conntrack}`` with either field
+    ``None`` when the ConfigMap is absent, unreadable, or doesn't pin it
+    (an empty ``mode`` means the cluster default, which is itself not a
+    pinned fact — surfaced as ``None`` so ``doctor`` can flag it).
+    """
+    info: Dict[str, Any] = {"mode": None, "conntrack": None}
+    if core_api is None:
+        return info
+    try:
+        import yaml  # local import — runtime-only
+
+        cm = core_api.read_namespaced_config_map("kube-proxy", "kube-system")
+        config_conf = (getattr(cm, "data", None) or {}).get("config.conf")
+        if not config_conf:
+            return info
+        parsed = yaml.safe_load(config_conf)
+        if not isinstance(parsed, dict):
+            return info
+        mode = parsed.get("mode")
+        if isinstance(mode, str) and mode:
+            info["mode"] = mode
+        conntrack = parsed.get("conntrack")
+        if isinstance(conntrack, dict):
+            info["conntrack"] = conntrack
+    except Exception:
+        logger.debug("failed to read kube-proxy config", exc_info=True)
+    return info
+
+
 def gather_run_metadata(
     core_api: Optional[Any] = None,
     repo_dir: Optional[str] = None,
@@ -175,7 +213,7 @@ def gather_run_metadata(
     minimal report still records what *was* known.
 
     Returns ``{chaosprobeVersion, pythonVersion, hostname, capturedAt,
-    git: {...}, kubernetes: {...}, cniHint}``.
+    git: {...}, kubernetes: {...}, cniHint, kubeProxy: {...}}``.
     """
     return {
         "chaosprobeVersion": CHAOSPROBE_VERSION,
@@ -186,4 +224,5 @@ def gather_run_metadata(
         "git": _git_describe(repo_dir),
         "kubernetes": _kubernetes_server_info(core_api),
         "cniHint": _cni_hint(core_api),
+        "kubeProxy": _kube_proxy_info(core_api),
     }

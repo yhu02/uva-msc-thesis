@@ -38,6 +38,7 @@ def _write_summary(
                 "containerRuntimeOnFirstNode": "containerd",
             },
             "cniHint": "calico",
+            "kubeProxy": {"mode": "iptables", "conntrack": {"min": 131072}},
         }
     path.write_text(json.dumps(payload))
     return path
@@ -451,9 +452,35 @@ class TestCheckRunMetadata:
                     "containerRuntimeOnFirstNode": "containerd",
                 },
                 "cniHint": "calico",
+                "kubeProxy": {"mode": "iptables", "conntrack": {"min": 131072}},
             }
         }
         assert _check_run_metadata(raw) == []
+
+    def test_missing_kube_proxy_mode_warned(self):
+        raw = {
+            "runMetadata": {
+                "git": {"commit": "abc", "dirty": False},
+                "kubernetes": {"serverVersion": "v1.28"},
+                "cniHint": "calico",
+                "kubeProxy": {"mode": None, "conntrack": None},
+            }
+        }
+        issues = _check_run_metadata(raw)
+        assert any("kube-proxy mode not recorded" in msg for _, msg in issues)
+
+    def test_absent_kube_proxy_block_warned(self):
+        # An older summary without the kubeProxy block at all still trips
+        # the mode check (md.get returns {} → mode is None).
+        raw = {
+            "runMetadata": {
+                "git": {"commit": "abc", "dirty": False},
+                "kubernetes": {"serverVersion": "v1.28"},
+                "cniHint": "calico",
+            }
+        }
+        issues = _check_run_metadata(raw)
+        assert any("kube-proxy mode not recorded" in msg for _, msg in issues)
 
     def test_dirty_working_tree_warned(self):
         raw = {

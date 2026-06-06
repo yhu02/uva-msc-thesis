@@ -46,6 +46,7 @@ def _summary_payload():
                 "containerRuntimeOnFirstNode": "containerd",
             },
             "cniHint": "calico",
+            "kubeProxy": {"mode": "iptables", "conntrack": {"min": 131072}},
         },
         "strategies": {
             # Non-overlapping CIs (84–88 vs. 58–62) so the cross-strategy

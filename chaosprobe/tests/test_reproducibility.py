@@ -6,6 +6,7 @@ from chaosprobe.metrics.reproducibility import (
     _affects_reproducibility,
     _cni_hint,
     _git_describe,
+    _kube_proxy_info,
     _kubernetes_server_info,
     _porcelain_paths,
     gather_run_metadata,
@@ -194,6 +195,58 @@ class TestCNIHint:
         assert _cni_hint(core) is None
 
 
+class TestKubeProxyInfo:
+    _CONFIG_CONF = (
+        "mode: ipvs\n"
+        "conntrack:\n"
+        "  maxPerCore: 32768\n"
+        "  min: 131072\n"
+        "  tcpEstablishedTimeout: 24h0m0s\n"
+    )
+
+    def test_none_core_api_returns_none_fields(self):
+        out = _kube_proxy_info(None)
+        assert out == {"mode": None, "conntrack": None}
+
+    def test_parses_mode_and_conntrack(self):
+        core = MagicMock()
+        core.read_namespaced_config_map.return_value = MagicMock(
+            data={"config.conf": self._CONFIG_CONF}
+        )
+        out = _kube_proxy_info(core)
+        assert out["mode"] == "ipvs"
+        assert out["conntrack"]["maxPerCore"] == 32768
+        assert out["conntrack"]["tcpEstablishedTimeout"] == "24h0m0s"
+
+    def test_empty_mode_reported_as_none(self):
+        # An empty `mode` is the cluster default — not a pinned fact, so
+        # doctor should still flag it as unrecorded.
+        core = MagicMock()
+        core.read_namespaced_config_map.return_value = MagicMock(
+            data={"config.conf": 'mode: ""\nconntrack:\n  min: 1\n'}
+        )
+        out = _kube_proxy_info(core)
+        assert out["mode"] is None
+        assert out["conntrack"] == {"min": 1}
+
+    def test_missing_config_conf_key_returns_none(self):
+        core = MagicMock()
+        core.read_namespaced_config_map.return_value = MagicMock(data={"other": "x"})
+        assert _kube_proxy_info(core) == {"mode": None, "conntrack": None}
+
+    def test_non_mapping_document_returns_none(self):
+        core = MagicMock()
+        core.read_namespaced_config_map.return_value = MagicMock(
+            data={"config.conf": "- just\n- a\n- list\n"}
+        )
+        assert _kube_proxy_info(core) == {"mode": None, "conntrack": None}
+
+    def test_read_failure_returns_none(self):
+        core = MagicMock()
+        core.read_namespaced_config_map.side_effect = Exception("not found")
+        assert _kube_proxy_info(core) == {"mode": None, "conntrack": None}
+
+
 class TestGatherRunMetadata:
     def test_assembles_all_fields(self, tmp_path):
         # Stub out every external call so this stays fast and
@@ -209,6 +262,7 @@ class TestGatherRunMetadata:
         assert md["git"]["commit"] == "cafe"
         assert md["kubernetes"]["serverVersion"] is None  # no core_api
         assert md["cniHint"] is None  # no core_api
+        assert md["kubeProxy"] == {"mode": None, "conntrack": None}  # no core_api
 
     def test_with_core_api_populates_kubernetes_and_cni(self, tmp_path):
         core = MagicMock()
@@ -221,6 +275,10 @@ class TestGatherRunMetadata:
         node.status.node_info.container_runtime_version = "containerd://1.7.11"
         node.status.node_info.os_image = "Ubuntu 22.04"
         core.list_node.return_value = MagicMock(items=[node])
+        # kube-proxy ConfigMap
+        core.read_namespaced_config_map.return_value = MagicMock(
+            data={"config.conf": "mode: iptables\nconntrack:\n  min: 131072\n"}
+        )
 
         with patch(
             "chaosprobe.metrics.reproducibility._git_describe",
@@ -229,3 +287,5 @@ class TestGatherRunMetadata:
             md = gather_run_metadata(core_api=core, repo_dir=str(tmp_path))
         assert md["cniHint"] == "calico"
         assert md["kubernetes"]["containerRuntimeOnFirstNode"] == "containerd://1.7.11"
+        assert md["kubeProxy"]["mode"] == "iptables"
+        assert md["kubeProxy"]["conntrack"] == {"min": 131072}

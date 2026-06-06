@@ -242,7 +242,7 @@ def _check_run_metadata(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
     chaosprobe version (before PR #44) or by a manually-assembled file.
     Either way, the reproducibility claim is weakened.  Specific gaps
     inside the block are surfaced too: dirty git, missing K8s server
-    version, missing CNI hint.
+    version, missing CNI hint, missing kube-proxy mode.
     """
     issues: List[Tuple[str, str]] = []
     md = raw.get("runMetadata")
@@ -282,6 +282,16 @@ def _check_run_metadata(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
     if md.get("cniHint") is None:
         issues.append(
             ("warn", "CNI hint not recorded — Felix / Calico-specific metrics unverifiable")
+        )
+    kube_proxy = md.get("kubeProxy") or {}
+    if kube_proxy.get("mode") is None:
+        issues.append(
+            (
+                "warn",
+                "kube-proxy mode not recorded — iptables / ipvs / nftables-specific "
+                "reconvergence claims (conntrack flush, sync latency) are environment-contingent "
+                "and unverifiable without it",
+            )
         )
     return issues
 

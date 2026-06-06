@@ -115,7 +115,7 @@ Every number quoted as a *finding* must be traceable to an archived, clean-prove
 |---|---|---|
 | **Raw data** | All `summary.json` files, per-iteration exports, Locust CSVs (incl. `stats_failures.csv`), Litmus `ChaosResult` CRDs, Kubernetes events, pre/post cluster snapshots, and any generated stats CSVs | `results/<timestamp>/` + `chaosprobe export` |
 | **Scripts** | Every analysis script behind a quoted number, plus one top-level reproduce entry point | `scripts/{score_variance,mechanism_metrics,h3_mechanism_outcome,distribution_charts}.py` |
-| **Environment** | Kubernetes version, CNI, container runtime, node counts and mem/CPU, ChaosProbe version, Python version, host OS | `summary.json → overall_results.runMetadata` (`chaosprobeVersion`, `pythonVersion`, `platform`, `kubernetes.*`, `cniHint`) |
+| **Environment** | Kubernetes version, CNI, kube-proxy mode + conntrack settings, container runtime, node counts and mem/CPU, ChaosProbe version, Python version, host OS | `summary.json → overall_results.runMetadata` (`chaosprobeVersion`, `pythonVersion`, `platform`, `kubernetes.*`, `cniHint`, `kubeProxy.{mode, conntrack}`) |
 | **Cluster config** | Scheduler settings, topology labels, taints, resource limits/requests, any nodeSelectors/affinity | `scenarios/online-boutique/deploy/*.yaml` + this doc's Cluster table |
 | **Randomness** | Base seed, per-iteration seed, strategy order per block | `--seed` (recorded in `summary.json`); seed set documented under Strategies above |
 | **Scenario integrity** | Hashes of all scenario YAMLs and workload manifests | `summary.json → scenario.manifests[].content` (full content embedded) |

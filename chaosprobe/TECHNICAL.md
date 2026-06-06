@@ -697,7 +697,7 @@ Per-strategy checks: tainted iterations (with reason breakdown), all-iterations-
 
 Cross-strategy checks: every pair of CIs overlaps (analysis inconclusive), every strategy hit OOMKills (cluster undersized), every strategy tainted (cluster unstable), Locust offered RPS varies > 20% (load drift).
 
-Run-level checks: `runMetadata` absent (older chaosprobe; reproducibility provenance incomplete), git commit unrecorded, dirty working tree (recorded commit doesn't represent the running code), Kubernetes server version unrecorded, CNI hint unrecorded, `schemaVersion` missing or mismatched (current is `2.0.0`).
+Run-level checks: `runMetadata` absent (older chaosprobe; reproducibility provenance incomplete), git commit unrecorded, dirty working tree (recorded commit doesn't represent the running code), Kubernetes server version unrecorded, CNI hint unrecorded, kube-proxy mode unrecorded (iptables/ipvs/nftables-specific reconvergence claims unverifiable), `schemaVersion` missing or mismatched (current is `2.0.0`).
 
 `--strict` makes warn-level findings exit non-zero. Without `--strict`, only error-level findings exit non-zero. `--json` emits structured findings under `{strategiesChecked, errorCount, warnCount, findings}`; cross-strategy findings appear under `__cross_strategy__`, run-metadata findings under `__run_metadata__`, schema-version findings under `__schema_version__`.
 
@@ -914,7 +914,7 @@ The pairwise table emitted by `pairwise_comparisons` carries `cliffs_delta` + `e
 - `strategiesCIOverlap` (resilience), `strategiesRecoveryCIOverlap`, `strategiesDeletionToScheduledCIOverlap`, `strategiesScheduledToReadyCIOverlap` — each interpreted as `significant` / `directional` / `indistinguishable`.
 - `probeSuccessRatesOverlap` — per-probe Wilson-CI overlap, drilling into which probes actually moved.
 
-`overall_results.runMetadata` (best-effort) captures `chaosprobeVersion`, `pythonVersion`, `platform`, `hostname`, `git.{commit, shortCommit, dirty}`, `kubernetes.{serverVersion, containerRuntimeOnFirstNode, firstNodeOS}`, `cniHint`. Defends "reproducible on a comparable cluster" claims with the actual environment fingerprint.
+`overall_results.runMetadata` (best-effort) captures `chaosprobeVersion`, `pythonVersion`, `platform`, `hostname`, `git.{commit, shortCommit, dirty}`, `kubernetes.{serverVersion, containerRuntimeOnFirstNode, firstNodeOS}`, `cniHint`, and `kubeProxy.{mode, conntrack}` (read from the `kube-proxy` ConfigMap; `mode` is `None` when unset/default). Defends "reproducible on a comparable cluster" claims with the actual environment fingerprint — `kubeProxy` in particular scopes the conntrack-flush / kube-proxy-sync mechanism claims to the proxier (iptables/ipvs/nftables) and conntrack sizing they were measured under.
 
 ---
 
