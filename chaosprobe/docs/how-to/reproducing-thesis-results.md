@@ -121,7 +121,8 @@ generality check and the demoted `pod-cpu-hog` pilot — kept out of the core
 matrix above:
 
 ```bash
-# Generality check: full 8-strategy default set (drop -s).
+# Generality check: full default set
+# (baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware) — drop -s.
 uv run chaosprobe run -n online-boutique \
   --experiment scenarios/online-boutique/pod-delete.yaml \
   --iterations 8 --seed 42 --batch-id appendix-generality \
@@ -178,13 +179,14 @@ Every number quoted as a *finding* must be traceable to an archived, clean-prove
 | Requirement | What to archive or record | Where it already lives |
 |---|---|---|
 | **Raw data** | All `summary.json` files, per-iteration exports, Locust CSVs (incl. `stats_failures.csv`), Litmus `ChaosResult` CRDs, Kubernetes events, pre/post cluster snapshots, and any generated stats CSVs | `results/<timestamp>/` + `chaosprobe export` |
-| **Scripts** | Every analysis script behind a quoted number, plus one top-level reproduce entry point | `scripts/{score_variance,mechanism_metrics,h3_mechanism_outcome,distribution_charts}.py` |
+| **Scripts** | Every analysis script behind a quoted number, plus the bundling entry point | `scripts/{score_variance,mechanism_metrics,h3_mechanism_outcome,distribution_charts,archive_run}.py` |
 | **Environment** | Kubernetes version, CNI, kube-proxy mode + conntrack settings, container runtime, node counts and mem/CPU, ChaosProbe version, Python version, host OS | `summary.json → overall_results.runMetadata` (`chaosprobeVersion`, `pythonVersion`, `platform`, `kubernetes.*`, `cniHint`, `kubeProxy.{mode, conntrack}`) |
 | **Cluster config** | Scheduler settings, topology labels, taints, resource limits/requests, any nodeSelectors/affinity | `scenarios/online-boutique/deploy/*.yaml` + this doc's Cluster table |
 | **Randomness** | Base seed, per-iteration seed, strategy order per block | `--seed` (recorded in `summary.json`); seed set documented under Strategies above |
 | **Scenario integrity** | SHA-256 of every scenario YAML + workload manifest backing the run | `summary.json → scenarioHashes[].{file, sha256}` (recorded automatically by `run`; `doctor` flags its absence, so `doctor --strict` fails any run that lacks it) |
 | **Code integrity** | Git commit hash for ChaosProbe + workload manifests, dirty/clean flag | `summary.json → overall_results.runMetadata.git.{commit, shortCommit, dirty}` |
 | **Batch / day identifier** | Which runs were launched together, to separate run-to-run cluster drift from strategy effects | `summary.json → batchId` (set with `run --batch-id`, defaults to the UTC date; emitted by `export` as the `batch_id` column for mixed-run analysis) |
+| **Immutable bundle + artifact manifest** | One gzipped tarball per run plus a single `artifact-manifest.json` (run id, batch, commit + dirty flag, K8s/CNI/kube-proxy fingerprint, scenario hashes, and a SHA-256 of every file in the bundle) | `python scripts/archive_run.py --results-dir results/<run>/<ts> -o dist [--strict]` — `--strict` refuses to bless a run with provenance gaps (dirty tree, missing scenario hashes/metadata) |
 | **Reviewer packaging** | One archive with raw runs, one with processed tables/figures, one manifest mapping every thesis figure/table → input files + script | build per thesis (see checklist below) |
 
 **Provenance discipline (from the strategy review):**
