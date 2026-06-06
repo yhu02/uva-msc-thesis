@@ -11,7 +11,15 @@
       "serverVersion": "v1.28.6",
       "containerRuntimeOnFirstNode": "containerd://1.7.13"
     },
-    "cniHint": "calico"
+    "cniHint": "calico",
+    "kubeProxy": {
+      "mode": "iptables",
+      "conntrack": {
+        "maxPerCore": 32768,
+        "min": 131072,
+        "tcpEstablishedTimeout": "24h0m0s"
+      }
+    }
   },
   "scenarioName": "online-boutique-pod-delete-example",
   "strategies": {
