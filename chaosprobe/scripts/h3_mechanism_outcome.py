@@ -60,8 +60,12 @@ from typing import Optional
 #   *->productcatalogservice  — east-west calls into the target
 # CONTROL: independent of the target; share run-level effects but not the fault.
 DEPENDENT_MATCH = ("/product", "productcatalogservice")
-CONTROL_ROUTES = ("/_healthz", "/cart", "cartservice->redis-cart",
-                  "checkoutservice->paymentservice")
+CONTROL_ROUTES = (
+    "/_healthz",
+    "/cart",
+    "cartservice->redis-cart",
+    "checkoutservice->paymentservice",
+)
 HOMEPAGE = "/"  # depends on catalog, but reported separately (mixed fan-out)
 
 
@@ -77,10 +81,14 @@ def _prom(strategy: dict, metric: str, phase: str) -> Optional[float]:
 
 def _route_tail(strategy: dict, classifier, stat: str) -> Optional[float]:
     """Worst (max) `stat` over during-chaos routes matching `classifier`."""
-    routes = (((strategy.get("metrics") or {}).get("latency") or {})
-              .get("phases") or {}).get("during-chaos", {}).get("routes") or {}
-    vals = [r.get(stat) for name, r in routes.items()
-            if classifier(name) and isinstance(r.get(stat), (int, float))]
+    routes = (((strategy.get("metrics") or {}).get("latency") or {}).get("phases") or {}).get(
+        "during-chaos", {}
+    ).get("routes") or {}
+    vals = [
+        r.get(stat)
+        for name, r in routes.items()
+        if classifier(name) and isinstance(r.get(stat), (int, float))
+    ]
     return max(vals) if vals else None
 
 
@@ -110,23 +118,34 @@ def collect(results_dir: str) -> list[dict]:
                 dns_dur = _prom(s, "coredns_request_duration_p99", "during-chaos")
                 tcp_pre = _prom(s, "tcp_retransmit_rate_per_node", "pre-chaos")
                 tcp_dur = _prom(s, "tcp_retransmit_rate_per_node", "during-chaos")
-                rows.append({
-                    "run": run, "strategy": sname,
-                    "conntrack_flush_pct": (
-                        (ct_pre - ct_dur) / ct_pre * 100
-                        if ct_pre and ct_dur is not None and ct_pre > 0 else None),
-                    "coredns_p99_during": dns_dur,
-                    "coredns_p99_delta": (dns_dur - dns_pre)
-                    if dns_dur is not None and dns_pre is not None else None,
-                    "tcp_retx_during": tcp_dur,
-                    "tcp_retx_delta": (tcp_dur - tcp_pre)
-                    if tcp_dur is not None and tcp_pre is not None else None,
-                    "dep_p95": _route_tail(s, _dep, "p95_ms"),
-                    "dep_max": _route_tail(s, _dep, "max_ms"),
-                    "ctrl_p95": _route_tail(s, _ctrl, "p95_ms"),
-                    "ctrl_max": _route_tail(s, _ctrl, "max_ms"),
-                    "home_p95": _route_tail(s, lambda n: n == HOMEPAGE, "p95_ms"),
-                })
+                rows.append(
+                    {
+                        "run": run,
+                        "strategy": sname,
+                        "conntrack_flush_pct": (
+                            (ct_pre - ct_dur) / ct_pre * 100
+                            if ct_pre and ct_dur is not None and ct_pre > 0
+                            else None
+                        ),
+                        "coredns_p99_during": dns_dur,
+                        "coredns_p99_delta": (
+                            (dns_dur - dns_pre)
+                            if dns_dur is not None and dns_pre is not None
+                            else None
+                        ),
+                        "tcp_retx_during": tcp_dur,
+                        "tcp_retx_delta": (
+                            (tcp_dur - tcp_pre)
+                            if tcp_dur is not None and tcp_pre is not None
+                            else None
+                        ),
+                        "dep_p95": _route_tail(s, _dep, "p95_ms"),
+                        "dep_max": _route_tail(s, _dep, "max_ms"),
+                        "ctrl_p95": _route_tail(s, _ctrl, "p95_ms"),
+                        "ctrl_max": _route_tail(s, _ctrl, "max_ms"),
+                        "home_p95": _route_tail(s, lambda n: n == HOMEPAGE, "p95_ms"),
+                    }
+                )
     return rows
 
 
@@ -164,7 +183,7 @@ def spearman(xs: list[float], ys: list[float]) -> tuple[float, float, int]:
     rho = _pearson(_rank([p[0] for p in pairs]), _rank([p[1] for p in pairs]))
     if math.isnan(rho) or abs(rho) >= 1.0:
         return rho, 0.0 if abs(rho) >= 1.0 else float("nan"), n
-    t = rho * math.sqrt((n - 2) / (1 - rho ** 2))
+    t = rho * math.sqrt((n - 2) / (1 - rho**2))
     # two-sided p via Student-t survival (Abramowitz-Stegun continued fraction)
     df = n - 2
     x = df / (df + t * t)
@@ -225,19 +244,27 @@ def report(rows: list[dict]) -> None:
             rho_d, p_d, n_d = spearman(xs, [r[outcome] for r in rows])
             rho_c, p_c, _ = spearman(xs, [r["ctrl_" + label] for r in rows])
             # H3 supported: significant on dependent, and clearly weaker on control
-            supported = (not math.isnan(rho_d) and p_d < 0.05
-                         and abs(rho_d) - abs(rho_c) > 0.15)
-            verdict = "H3 supported" if supported else (
-                "confound? (both)" if (not math.isnan(p_c) and p_c < 0.05
-                                       and abs(rho_c) > 0.15) else "no link")
-            print(f"  {name:<24} {rho_d:>9.2f}{_star(p_d)} {p_d:>7.3f}   "
-                  f"{rho_c:>9.2f}{_star(p_c)} {p_c:>7.3f}   {verdict}")
+            supported = not math.isnan(rho_d) and p_d < 0.05 and abs(rho_d) - abs(rho_c) > 0.15
+            verdict = (
+                "H3 supported"
+                if supported
+                else (
+                    "confound? (both)"
+                    if (not math.isnan(p_c) and p_c < 0.05 and abs(rho_c) > 0.15)
+                    else "no link"
+                )
+            )
+            print(
+                f"  {name:<24} {rho_d:>9.2f}{_star(p_d)} {p_d:>7.3f}   "
+                f"{rho_c:>9.2f}{_star(p_c)} {p_c:>7.3f}   {verdict}"
+            )
         print()
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--results-dir", default="results")
     ap.add_argument("--csv", help="optional: write the paired per-cell data here")
     args = ap.parse_args()

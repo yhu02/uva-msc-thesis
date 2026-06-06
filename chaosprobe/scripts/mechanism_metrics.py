@@ -60,9 +60,9 @@ def _is_churn(fault_name: str) -> bool:
 
 def collect(results_dir: str) -> dict:
     """Walk every summary.json and gather per-run, per-strategy mechanism metrics."""
-    flush: dict[str, list[float]] = {}        # strategy -> [flush% per run]
-    throttle: dict[str, list[float]] = {}     # strategy -> [during-chaos rate per run]
-    m1_runs: list[tuple[str, float, float]] = []   # (run, spread_flush, colocate_flush)
+    flush: dict[str, list[float]] = {}  # strategy -> [flush% per run]
+    throttle: dict[str, list[float]] = {}  # strategy -> [during-chaos rate per run]
+    m1_runs: list[tuple[str, float, float]] = []  # (run, spread_flush, colocate_flush)
     m2_runs: list[tuple[str, dict[str, float]]] = []  # (run, {strategy: throttle})
 
     for path in sorted(glob.glob(os.path.join(results_dir, "*", "summary.json"))):
@@ -125,8 +125,12 @@ def report(data: dict) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--results-dir", default="results", help="directory of <run>/summary.json outputs")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--results-dir", default="results", help="directory of <run>/summary.json outputs"
+    )
     args = parser.parse_args()
     report(collect(args.results_dir))
 

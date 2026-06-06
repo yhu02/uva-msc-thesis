@@ -117,17 +117,22 @@ def _n_for_power(d: float) -> float:
 def report(cells: dict[tuple[str, str], list[float]], n_iter: int) -> None:
     r = decompose(cells)
     t = r["total"]
-    print(f"\nH1: resilience-score variance partition  "
-          f"(n={r['n_obs']} iterations, churn only)\n")
+    print(
+        f"\nH1: resilience-score variance partition  " f"(n={r['n_obs']} iterations, churn only)\n"
+    )
     print(f"  {'source':<22}{'sigma^2':>9}{'% total':>9}{'sd':>7}")
-    for name, key in (("between-strategy (signal)", "sig2_strat"),
-                      ("run-to-run (noise)", "sig2_run"),
-                      ("iteration (noise)", "sig2_iter")):
+    for name, key in (
+        ("between-strategy (signal)", "sig2_strat"),
+        ("run-to-run (noise)", "sig2_run"),
+        ("iteration (noise)", "sig2_iter"),
+    ):
         v = r[key]
         print(f"  {name:<22}{v:>9.1f}{100 * v / t:>8.1f}%{math.sqrt(v):>7.1f}")
     print(f"\n  ICC_strategy (signal fraction) = {r['icc']:.3f}")
-    print(f"  strategy means: "
-          + ", ".join(f"{k} {v:.1f}" for k, v in sorted(r["strat_means"].items())))
+    print(
+        "  strategy means: "
+        + ", ".join(f"{k} {v:.1f}" for k, v in sorted(r["strat_means"].items()))
+    )
 
     sd_within = math.sqrt(r["sig2_run"] + r["sig2_iter"])
     print(f"\n=== Power on the score (within-strategy sd = {sd_within:.1f}) ===")
@@ -135,25 +140,36 @@ def report(cells: dict[tuple[str, str], list[float]], n_iter: int) -> None:
     if all(f in sm for f in FOCAL):
         gap = abs(sm[FOCAL[0]] - sm[FOCAL[1]])
         d = gap / sd_within
-        print(f"  focal {FOCAL[0]} ({sm[FOCAL[0]]:.1f}) vs {FOCAL[1]} ({sm[FOCAL[1]]:.1f}): "
-              f"gap={gap:.1f}  d={d:.3f}  ->  n={_n_for_power(d):.0f} iterations/strategy "
-              f"for 80% power")
+        print(
+            f"  focal {FOCAL[0]} ({sm[FOCAL[0]]:.1f}) vs {FOCAL[1]} ({sm[FOCAL[1]]:.1f}): "
+            f"gap={gap:.1f}  d={d:.3f}  ->  n={_n_for_power(d):.0f} iterations/strategy "
+            f"for 80% power"
+        )
     lo = min(sm, key=sm.get)
     hi = max(sm, key=sm.get)
     dmax = (sm[hi] - sm[lo]) / sd_within
-    print(f"  widest gap {hi} ({sm[hi]:.1f}) vs {lo} ({sm[lo]:.1f}): "
-          f"d={dmax:.2f}  ->  n={_n_for_power(dmax):.0f}/strategy")
+    print(
+        f"  widest gap {hi} ({sm[hi]:.1f}) vs {lo} ({sm[lo]:.1f}): "
+        f"d={dmax:.2f}  ->  n={_n_for_power(dmax):.0f}/strategy"
+    )
     mde = _Z * math.sqrt(2 / n_iter)
-    print(f"  at n={n_iter} iterations/run, min detectable effect = "
-          f"{mde:.2f} sd = {mde * sd_within:.0f} score points\n")
+    print(
+        f"  at n={n_iter} iterations/run, min detectable effect = "
+        f"{mde:.2f} sd = {mde * sd_within:.0f} score points\n"
+    )
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--results-dir", default="results")
-    ap.add_argument("--n-iter", type=int, default=3,
-                    help="iterations/run to evaluate the minimum detectable effect at")
+    ap.add_argument(
+        "--n-iter",
+        type=int,
+        default=3,
+        help="iterations/run to evaluate the minimum detectable effect at",
+    )
     args = ap.parse_args()
     report(collect(args.results_dir), args.n_iter)
 

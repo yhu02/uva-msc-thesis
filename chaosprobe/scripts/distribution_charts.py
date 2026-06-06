@@ -37,13 +37,24 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 # Deck strategy order / palette (baseline first as the control).
 STRATEGY_ORDER = [
-    "baseline", "default", "colocate", "spread",
-    "random", "adversarial", "best-fit", "dependency-aware",
+    "baseline",
+    "default",
+    "colocate",
+    "spread",
+    "random",
+    "adversarial",
+    "best-fit",
+    "dependency-aware",
 ]
 PALETTE = {
-    "baseline": "#9aa0a6", "default": "#4FC3F7", "colocate": "#EF5350",
-    "spread": "#66BB6A", "random": "#FFA726", "adversarial": "#AB47BC",
-    "best-fit": "#26C6DA", "dependency-aware": "#9CCC65",
+    "baseline": "#9aa0a6",
+    "default": "#4FC3F7",
+    "colocate": "#EF5350",
+    "spread": "#66BB6A",
+    "random": "#FFA726",
+    "adversarial": "#AB47BC",
+    "best-fit": "#26C6DA",
+    "dependency-aware": "#9CCC65",
 }
 
 
@@ -92,9 +103,18 @@ def _ordered(data: dict[str, list[float]]) -> list[str]:
 def _box(ax, data: dict[str, list[float]], ylabel: str, title: str) -> None:
     strats = _ordered(data)
     series = [data[s] for s in strats]
-    bp = ax.boxplot(series, patch_artist=True, widths=0.6, showmeans=True,
-                    meanprops={"marker": "D", "markerfacecolor": "white",
-                               "markeredgecolor": "black", "markersize": 5})
+    bp = ax.boxplot(
+        series,
+        patch_artist=True,
+        widths=0.6,
+        showmeans=True,
+        meanprops={
+            "marker": "D",
+            "markerfacecolor": "white",
+            "markeredgecolor": "black",
+            "markersize": 5,
+        },
+    )
     for patch, s in zip(bp["boxes"], strats):
         patch.set_facecolor(PALETTE.get(s, "#888888"))
         patch.set_alpha(0.75)
@@ -118,8 +138,12 @@ def render(data: dict, out_dir: str) -> list[str]:
 
     # --- M4: score distribution ---
     fig, ax = plt.subplots(figsize=(10, 6))
-    _box(ax, data["scores"], "Resilience Score (%)",
-         "Resilience Score Distribution Across Runs — the score does not reproduce (M4)")
+    _box(
+        ax,
+        data["scores"],
+        "Resilience Score (%)",
+        "Resilience Score Distribution Across Runs — the score does not reproduce (M4)",
+    )
     ax.set_ylim(0, 105)
     fig.tight_layout()
     p = os.path.join(out_dir, "score_distribution.png")
@@ -129,13 +153,20 @@ def render(data: dict, out_dir: str) -> list[str]:
 
     # --- M1 / M2: mechanism distributions ---
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 6))
-    _box(ax1, data["flush"], "Conntrack entries flushed (%)",
-         "M1 — conntrack churn (spread/default flush, colocate flat)")
+    _box(
+        ax1,
+        data["flush"],
+        "Conntrack entries flushed (%)",
+        "M1 — conntrack churn (spread/default flush, colocate flat)",
+    )
     ax1.axhline(0, color="gray", linewidth=0.8, linestyle="--")
-    _box(ax2, data["throttle"], "During-chaos throttle rate",
-         "M2 — CPU throttling (colocate below default/spread)")
-    fig.suptitle("Mechanism metrics reproduce across runs, where the score does not",
-                 fontsize=13)
+    _box(
+        ax2,
+        data["throttle"],
+        "During-chaos throttle rate",
+        "M2 — CPU throttling (colocate below default/spread)",
+    )
+    fig.suptitle("Mechanism metrics reproduce across runs, where the score does not", fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     p = os.path.join(out_dir, "mechanism_distribution.png")
     fig.savefig(p, dpi=150)
@@ -146,16 +177,22 @@ def render(data: dict, out_dir: str) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--results-dir", default="results")
-    parser.add_argument("--out-dir", default="results/_thesis_charts",
-                        help="where to write the PNGs (default results/_thesis_charts)")
+    parser.add_argument(
+        "--out-dir",
+        default="results/_thesis_charts",
+        help="where to write the PNGs (default results/_thesis_charts)",
+    )
     args = parser.parse_args()
     data = collect(args.results_dir)
     for s in STRATEGY_ORDER:
         n = len(data["scores"].get(s, []))
-        print(f"  {s:<16} score n={n}  flush n={len(data['flush'].get(s, []))}  "
-              f"throttle n={len(data['throttle'].get(s, []))}")
+        print(
+            f"  {s:<16} score n={n}  flush n={len(data['flush'].get(s, []))}  "
+            f"throttle n={len(data['throttle'].get(s, []))}"
+        )
     for p in render(data, args.out_dir):
         print("wrote", p)
 

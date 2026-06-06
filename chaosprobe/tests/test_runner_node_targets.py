@@ -24,9 +24,7 @@ def _engine(exp_name, env=None, applabel="app=productcatalogservice"):
     return {
         "spec": {
             "appinfo": {"applabel": applabel} if applabel is not None else {},
-            "experiments": [
-                {"name": exp_name, "spec": {"components": {"env": list(env or [])}}}
-            ],
+            "experiments": [{"name": exp_name, "spec": {"components": {"env": list(env or [])}}}],
         }
     }
 
@@ -61,7 +59,8 @@ class TestResolveNodeTargets:
     def test_explicit_value_is_respected(self, monkeypatch):
         runner = _runner()
         monkeypatch.setattr(
-            runner, "_resolve_target_node",
+            runner,
+            "_resolve_target_node",
             lambda al: pytest.fail("must not resolve when an explicit node is set"),
         )
         engine = _engine("node-cpu-hog", env=[{"name": "TARGET_NODES", "value": "worker1"}])

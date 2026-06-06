@@ -244,17 +244,16 @@ class ChaosRunner:
         from chaosprobe.k8s import ensure_k8s_config
 
         ensure_k8s_config()
-        pods = client.CoreV1Api().list_namespaced_pod(
-            self.namespace, label_selector=applabel
-        )
+        pods = client.CoreV1Api().list_namespaced_pod(self.namespace, label_selector=applabel)
         running = [
-            p for p in pods.items
+            p
+            for p in pods.items
             if p.spec and p.spec.node_name and p.status and p.status.phase == "Running"
         ]
         for pod in running or pods.items:
             node = pod.spec.node_name if pod.spec else None
             if node:
-                return node
+                return str(node)
         raise RuntimeError(
             f"node-fault target resolution failed: no scheduled pod matched "
             f"{applabel!r} in namespace {self.namespace!r}"
