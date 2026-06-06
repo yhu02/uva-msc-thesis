@@ -11,16 +11,24 @@ baseline and `cpu-hog` excluded unless noted.
 
 ## Research question
 
-> Under churn-based fault injection (`pod-delete`) on a **single-replica**
-> microservice deployment, does pod-placement strategy produce a **reproducible,
-> user-visible** effect on resilience — and at which measurement layer
-> (aggregate availability score, kernel/network mechanism, or service-level
-> outcome) is that effect, if any, detectable?
+> **Under which chaos fault classes does pod placement measurably affect
+> mechanism-level behaviour and user-visible outcomes in a Kubernetes
+> microservice application, and when do aggregate resilience scores obscure
+> those effects?**
 
-The question is deliberately layered: placement could move (a) the aggregate
-score, (b) a kernel/network mechanism, and/or (c) the user-facing outcome, and
-these need not agree. The contribution is establishing *which layer* the effect
-lives in — and that it does **not** propagate between them under this fault class.
+This is framed as a **fault-class-by-measurement-layer** study, not a placement
+ranking and not a refutation of the placement literature. Placement could move
+(a) the aggregate availability score, (b) a kernel/network mechanism, and/or
+(c) the user-facing outcome, and these layers need not agree — so the
+contribution is establishing *at which layer* a placement effect appears under a
+given fault class, and whether it propagates to the user.
+
+The bulk of the evidence below instantiates that question for one fault class:
+churn-based injection (`pod-delete`) on a **single-replica** deployment. There
+the answer is sharp and layered — placement moves the mechanism layer but not
+the user layer (H1–H3). A separate, **preliminary** load-contention pilot (H4)
+probes a second regime where a user-visible effect is more likely; it is
+reported as a pilot, not a settled result.
 
 ## H1 — The aggregate resilience score cannot rank placements
 
@@ -113,11 +121,18 @@ what the user experiences (8.0 % vs 8.9 % error).
 uv run python scripts/h3_mechanism_outcome.py --csv /tmp/h3_pairs.csv
 ```
 
-## H4 — Under load contention, locality wins (L1/L2 inverted)
+## H4 (preliminary pilot) — Under load contention, locality appears to win
 
-**Statement.** When the cluster is driven into *genuine* resource contention by
-**load** (not an artificial hog), co-located/dense placements outperform spread:
-co-location gives the lowest inter-service tail latency, spread the highest.
+> **Status: preliminary pilot, not a settled finding.** H4 rests on a single
+> 3-iteration run launched from a dirty tree (see the provenance caveat below),
+> so it is reported as a pilot that motivates a clean rerun — not as evidence on
+> par with the reproducible H1–H3 results. Treat the direction as indicative and
+> the magnitudes as not-yet-quotable.
+
+**Statement (pilot hypothesis).** When the cluster is driven into *genuine*
+resource contention by **load** (not an artificial hog), co-located/dense
+placements may outperform spread: co-location would give the lowest
+inter-service tail latency, spread the highest.
 
 **Operationalization.** All 8 strategies × 3 iterations under a 200-user Locust
 spike (`--load-profile spike`), with a near-no-op `cpu-hog` as a placeholder so
@@ -129,8 +144,11 @@ binary score is read only as corroboration (it is noisy — H1).
 (both scored 100 with the app fully up). Contention only bites when the app is
 actually resource-bound — i.e. under load.
 
-**Result — supported.** colocate is the best real strategy, spread the worst
-(`results/20260606-092037`, during-chaos):
+**Result — preliminary (single 3-iteration pilot; dirty provenance).** In this
+one run, colocate showed the lowest during-chaos tail latency and spread the
+highest (`results/20260606-092037`, during-chaos). This is *not* a claim that
+co-location is the best strategy in general — it is a single pilot point that
+warrants a clean, replicated rerun before any ranking is asserted:
 
 | strategy | mean score | /product p95 | homepage max | /cart p95 |
 |---|---|---|---|---|
@@ -143,47 +161,59 @@ actually resource-bound — i.e. under load.
 | dependency-aware | 78 | 3022 | 3730 | 2285 |
 | **spread** | 80 | **3183** | **4060** | **1989** |
 
-colocate vs spread: /product p95 966 vs 3183 ms (3.3×), homepage max 1492 vs
-4060 ms (2.7×), /cart p95 556 vs 1989 ms (3.6×). **L1 ("colocate worst") and L2
-("spread isolates best") are inverted**: co-location keeps inter-service calls
-node-local so latency stays low under load, while spread routes every call across
-the network — the bottleneck under load — and cgroup requests absorb the
-CPU-contention cost co-location would otherwise pay.
+colocate vs spread in this run: /product p95 966 vs 3183 ms (3.3×), homepage max
+1492 vs 4060 ms (2.7×), /cart p95 556 vs 1989 ms (3.6×). The proposed mechanism
+is that co-location keeps inter-service calls node-local so latency stays low
+under load, while spread routes every call across the network — the bottleneck
+under load — and cgroup requests absorb the CPU-contention cost co-location would
+otherwise pay. In this single pilot the L1/L2 ordering ("colocate worst", "spread
+isolates best") *appears inverted*; whether that inversion is reproducible is
+exactly what the clean rerun must establish.
 
-**Provenance caveat (preliminary).** This run launched from a dirty tree
-(untracked `node-memory-hog.yaml`, unused), so `doctor --strict` flags it;
-measurements are valid but the headline numbers should be re-confirmed from a
-clean commit before final quotation. Single run, 3 iterations.
+**Provenance caveat (why this is a pilot, not a result).** This run launched from
+a dirty tree (untracked `node-memory-hog.yaml`, unused), so `doctor --strict`
+flags it. The per-iteration measurements are internally valid, but with a single
+run at *n* = 3 and dirty provenance the magnitudes must not be quoted as
+findings; they should be re-confirmed from a clean commit with adequate
+replication (the review suggests 6–8 clean repetitions per cell) before any
+inversion is asserted.
 
 ## Synthesis
 
 Under single-replica churn, placement leaves a large, reproducible footprint at
 the **kernel layer (H2) that never reaches the user (H3)**, while the aggregate
 **score is too noisy to see anything at all (H1)**. The operator takeaway is
-sharp and counter-intuitive: *for churn faults on single-replica services, where
-you put the pods is not a resilience lever — survivability is governed by
-availability dynamics (the killed pod is simply gone), not topology.*
+sharp and counter-intuitive, and is **bounded to this regime**: *for churn faults
+on single-replica services in this setup, where you put the pods is not a
+user-visible resilience lever — survivability is governed by availability
+dynamics (the killed pod is simply gone), not topology.*
 
-Under **load** contention the picture sharpens (H4): there the user-visible
-outcome *is* latency, and co-location's network-path locality wins decisively —
-colocate has the lowest tail latency, spread the highest, inverting L1/L2. The
-through-line across both regimes is **locality**: co-location lowers
-inter-service latency under churn and under load alike; under single-replica
-churn that benefit is swamped by the availability collapse (H3), but under load
-it is the dominant effect. Net: on this Kubernetes setup, **spreading is never
-the safer choice** — cgroup isolation absorbs the contention cost the literature
-assumes co-location pays, leaving locality to dominate.
+A **preliminary** load-contention pilot (H4) suggests the picture may differ when
+the user-visible outcome *is* latency rather than availability: there
+co-location's network-path locality appeared to lower tail latency in a single
+run. That points at **locality** as a candidate through-line across regimes —
+co-location keeps inter-service calls node-local — but H4 is a pilot, so this
+stays a hypothesis to confirm with a clean, replicated rerun, not a conclusion.
+
+We deliberately **do not** claim a universally best strategy, that "spreading is
+never the safer choice", or that the placement literature is refuted. Kubernetes
+provides topology spread, anti-affinity, and PodDisruptionBudgets precisely for
+availability-sensitive (multi-replica) workloads — a regime this single-replica
+design structurally excludes (see Scope & threats). The defensible claim is the
+narrow one: *some placement intuitions from contention-focused literature did not
+transfer to the single-replica churn regime tested here.*
 
 ### Relationship to the literature predictions
 
 *colocate is worst* (L1), *spread isolates best* (L2), *recovery time predicts
-resilience* (L3). Under **churn** these are **inapplicable** — placement does not
-move the outcome (`pod-delete` is a churn fault, not a contention one), and
-recovery's two-phase split is unstable run-to-run, so L3 fails on its own terms.
-Under **load contention** — the regime the literature is actually about — L1 and
-L2 are not merely unsupported but **inverted** (H4): co-location is the *best*
-real strategy and spread the *worst*. Across every regime tested, spreading is
-never the safer choice.
+resilience* (L3). Under **churn** these are best described as **inapplicable in
+this regime** rather than refuted: placement does not move the user-visible
+outcome (`pod-delete` is a churn fault, not a contention one), and recovery's
+two-phase split is unstable run-to-run, so L3 has no stable relationship to find
+on either side. Under **load contention** — the regime the contention literature
+is actually about — the H4 pilot *hints* that the L1/L2 ordering may invert, but
+that is a preliminary signal from one dirty-provenance run and is held as a
+hypothesis pending a clean, replicated rerun.
 
 ## Scope & threats
 
@@ -191,8 +221,9 @@ never the safer choice.
   full run set. Contention was probed two ways: resource *hog* faults
   (`pod-cpu-hog`, `node-cpu-hog`, `node-memory-hog`) are absorbed by cgroup
   limits/requests and do not degrade the app; genuine *load* contention (H4)
-  does degrade it and inverts L1/L2 — but that rests on a single 3-iteration run
-  with dirty provenance and needs a clean re-run to be final.
+  does degrade it and *appears* to reorder the strategies in a single
+  3-iteration pilot with dirty provenance — but that is a pilot, not a finding,
+  and needs a clean, replicated re-run before any reordering is claimed.
 - **Single replica:** 100 % `pod-delete` guarantees full outage, so the
   outcome is dominated by availability, not topology. The production-relevant
   question — multi-replica anti-affinity (do replicas share a failure domain?) —
@@ -203,6 +234,42 @@ never the safer choice.
   disclosed.
 - **Cluster:** virtualized 5-node / 10-vCPU cluster — absolute metric values are
   not portable; only the *direction* of the H2 effect is.
+
+### Threats to validity (and how they are defended)
+
+| Threat | Why it matters | Defence |
+|---|---|---|
+| **Single-replica design** | 100 % `pod-delete` guarantees the only instance disappears, which can swamp topology effects. | Scope the claim to *single-replica churn* and layered measurement; multi-replica anti-affinity is named as future work, not claimed. |
+| **Small virtualized cluster** | Four 4 GiB KVM/QEMU workers may not generalize. | Claim bounded external validity; report *direction* and *mechanism*, not absolute latency values. |
+| **Version sensitivity** | kube-proxy / conntrack behaviour evolves across releases. | Archive exact Kubernetes, CNI, runtime, ChaosProbe, and commit metadata (`runMetadata`); present as a measurement study of a specific environment. |
+| **Placement mismatch** | The scheduler may not realize the intended placement. | Report `placementMatchRates`; flag or exclude mismatched iterations. |
+| **Run-to-run drift** | Iteration noise can dominate (H1). | Block runs, randomize strategy order, capture pre/post snapshots, model run as a random/blocking effect. |
+| **Dirty provenance** | Untracked files / missing metadata undermine credibility (H4). | Never quote results from runs failing `doctor --strict`; rerun H4 cleanly or hold it as a pilot. |
+| **Metric-availability gaps** | Missing PromQL queries can manufacture fake zeros. | Use `metricAvailability` to distinguish "not collected" from "collected zero". |
+| **Overclaiming causality** | Run-level slowness can confound correlations. | Use dependent vs control routes and within-run correlation; reserve causal language for the manipulated variable (placement). |
+
+### Defensible abstract
+
+> Kubernetes offers multiple placement mechanisms and rich observability, yet it
+> remains unclear when pod placement materially affects resilience under chaos
+> and when aggregate resilience scores obscure that effect. This thesis presents
+> **ChaosProbe**, a Kubernetes chaos-evaluation framework that varies
+> pod-placement strategies, injects LitmusChaos faults into the Online Boutique
+> microservice benchmark, collects Prometheus, Kubernetes, Locust, and
+> application-level metrics, and stores structured experiment data for analysis.
+> Using ChaosProbe, we conduct a layered measurement study across aggregate
+> scores, mechanism-level signals, and user-visible outcomes. The central finding
+> is fault-class-specific: under single-replica `pod-delete` churn, placement
+> reproducibly changes kernel/network reconvergence signatures, but these
+> differences do not yield a stable user-visible advantage and are poorly
+> captured by aggregate resilience scores. A preliminary load-contention pilot
+> suggests latency-dominated faults may expose stronger user-visible placement
+> effects, motivating a clean follow-up. These results show that placement under
+> chaos should not be evaluated with a single score alone: resilience conclusions
+> depend on both the fault class and the measurement layer. The thesis
+> contributes a reproducible experimental framework, a bounded empirical study,
+> and practical guidance for evaluating placement-sensitive resilience claims in
+> Kubernetes.
 
 ## Label provenance
 

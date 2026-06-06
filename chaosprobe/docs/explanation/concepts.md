@@ -11,8 +11,15 @@ ChaosProbe runs [LitmusChaos](https://litmuschaos.io/) experiments against
 Kubernetes deployments and collects structured experiment data — recovery
 times, latency, resource usage, probe verdicts — into a Neo4j graph, then turns
 that data into statistically-grounded comparisons of **pod placement
-strategies** under chaos. It exists to answer a research question: *does how you
-place pods across nodes change how resiliently the system survives faults?*
+strategies** under chaos. It exists to answer a research question: *under which
+chaos fault classes does pod placement measurably affect mechanism-level
+behaviour and user-visible outcomes — and when do aggregate resilience scores
+obscure those effects?* This is deliberately a **fault-class-by-measurement-layer
+study**, not a hunt for a single "best" strategy: a placement effect can appear
+at one layer (e.g. a kernel/network mechanism) without reaching another (the
+user-visible outcome), and an aggregate score can hide both. See
+[hypotheses & findings](hypotheses.md) for the falsifiable hypotheses (H1–H4)
+and their bounded claims.
 
 ## The AI feedback loop
 

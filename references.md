@@ -4,19 +4,25 @@ Annotated bibliography supporting the thesis defense. Each entry notes (a) the
 full citation, (b) where to find it, and (c) how it relates to specific thesis
 claims.
 
-The thesis defends three literature-derived hypotheses, all three of which the
-experimental data refutes. The refutations point at a single mechanism:
-pod-delete is a *churn-based* fault, not a *contention-based* one, so the
-placement-vs-resilience intuition encoded in the literature does not transfer.
-References below are organized by which claim they support.
+The thesis tests three literature-derived hypotheses (L1–L3). Under the
+single-replica `pod-delete` **churn** regime studied here, the experimental data
+finds all three **inapplicable in this regime** — they do not transfer to this
+fault class, rather than being universally refuted (the contention literature
+remains valid for the contention/multi-replica regimes it was written about).
+The reason points at a single mechanism: pod-delete is a *churn-based* fault, not
+a *contention-based* one, so the placement-vs-resilience intuition encoded in the
+contention literature does not transfer to it. References below are organized by
+which claim they support.
 
 ---
 
 ## 1. Pod placement affects resilience (L1 / L2 source material)
 
 These references inform the *pre-experiment* hypotheses. They are the
-literature-derived intuition the thesis tests and ultimately refutes for the
-pod-delete fault class.
+literature-derived intuition the thesis tests and finds **inapplicable** to the
+single-replica pod-delete fault class — it does not transfer to this regime, and
+this is not a claim that the intuition is wrong in the contention/multi-replica
+settings it was written for.
 
 ### Verma et al. (2015) — Borg
 > A. Verma, L. Pedrosa, M. Korupolu, D. Oppenheimer, E. Tune, J. Wilkes.
@@ -39,8 +45,9 @@ fit, not for resilience or fault isolation." Cite for the `best-fit` strategy.
 - [ACM Digital Library](https://dl.acm.org/doi/abs/10.1145/3190508.3190549)
 
 **Relevance:** Topology spread constraints; the canonical "spread-is-best"
-reference. Source for L2's predicted ordering. The thesis refutes the
-applicability of this prescription to churn-based faults.
+reference. Source for L2's predicted ordering. The thesis finds this prescription
+**does not transfer** to single-replica churn faults — it remains valid for the
+multi-replica availability regime Kubernetes designed topology spread for.
 
 ### Ousterhout et al. (2013) — Sparrow
 > K. Ousterhout, P. Wendell, M. Zaharia, I. Stoica.
@@ -61,9 +68,10 @@ strategy and its seeded-reproducibility property.
 - [PDF (Virginia)](https://www.cs.virginia.edu/~skadron/Papers/mars_micro2011.pdf)
 
 **Relevance:** The foundational contention-aware co-scheduling paper. Source
-for the prediction that co-location should hurt resilience. **The thesis
-directly refutes the applicability of this work to churn-based faults** — its
-findings hold under contention but not under pod-delete churn.
+for the prediction that co-location should hurt resilience. **The thesis finds
+this work's contention model does not apply to single-replica churn faults** —
+its findings hold under genuine contention but not under pod-delete churn in this
+setup.
 
 ### Delimitrou & Kozyrakis (2014) — Quasar
 > C. Delimitrou, C. Kozyrakis.
@@ -76,7 +84,8 @@ findings hold under contention but not under pod-delete churn.
 **Relevance:** Interference-aware placement with the same contention model as
 Bubble-Up. The slides currently cite "Delimitrou 2014" — this is Quasar
 specifically. Together with Mars et al. (2011), the contention-model
-literature that the thesis refutes for pod-delete.
+literature the thesis finds **inapplicable** to single-replica pod-delete (it
+does not transfer to this churn fault class).
 
 ### Gan et al. (2019) — DeathStarBench
 > Y. Gan et al. *An Open-Source Benchmark Suite for Microservices and Their
@@ -223,8 +232,9 @@ the thesis in the 2025 chaos-engineering landscape.
 
 **Relevance:** The "shared resources → latency variability → service-quality
 damage" intuition. L3 distills this into the falsifiable claim that recovery
-time predicts resilience score. The data refutes the simplest reading
-(faster recovery → higher score), strengthening the case that what matters
+time predicts resilience score. The data does **not support** this simplest
+reading (faster recovery → higher score) in this regime — recovery's two-phase
+split is itself unstable run-to-run — strengthening the case that what matters
 is in-flight cross-node disruption rather than tail-of-recovery latency.
 
 ---
@@ -245,7 +255,8 @@ documented behavior tracked by the Kubernetes project itself.
 
 **Relevance — MOST IMPORTANT CITATION FOR THE NOVEL CLAIM.** This is the
 *official Kubernetes SLO* defining exactly the disruption window the thesis
-claims is responsible for the refutations. From the spec:
+claims is responsible for the contention intuitions not transferring to churn.
+From the spec:
 
 > "Latency of programming in-cluster load balancing mechanism (e.g. iptables),
 > measured from when service spec or list of its Ready pods change to when it

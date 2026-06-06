@@ -63,9 +63,10 @@ DEFAULT_QUERIES: Dict[str, str] = {
     # is a cleaner contention signal than `cpu_throttling` (which only
     # fires when the cgroup CFS quota is hit) — PSI fires under any kind
     # of contention pressure.  Used together with cpu_throttling to test
-    # H7 ("CPU throttling refutes the contention model"): if both PSI and
-    # throttling agree under pod-delete, the contention story is doubly
-    # refuted.
+    # H7 ("CPU throttling runs counter to the contention model under churn"):
+    # if both PSI and throttling agree under pod-delete, the contention story
+    # does not transfer to this churn fault — a bounded, mechanism-layer
+    # observation, not a universal refutation.
     #
     # `some` variant counts time when at least one task in the cgroup is
     # waiting; `full` (not collected here) counts time when *every* task

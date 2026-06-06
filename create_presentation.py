@@ -364,10 +364,10 @@ hypotheses = [
      "1.54 vs 1.90, 1.94), with lower CPU usage/pressure. 11/13 runs. "
      "Contention does not scale with density under churn.",
      ACCENT_RED),
-    ("M3", "'Spread is safer' is refuted",
+    ("M3", "'Spread is safer' doesn't transfer to churn",
      "Both reproducible metrics favour co-location under churn. The "
-     "literature's spread-isolation prescription is refuted at the "
-     "metric level — not merely unmeasurable on the score.",
+     "literature's spread-isolation prescription is inapplicable at the "
+     "mechanism layer — and does NOT reach the user (decoupling).",
      ACCENT_RED),
     # Methodology (M4, blue)
     ("M4", "Score decoupled from metrics",
@@ -954,7 +954,7 @@ add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery split is unstable (S2)",
 add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
     "• Recovery = deletion→scheduled + scheduled→ready;\n  their split is run-dependent",
     "• app-startup dominates in some runs (84–96%),\n  the scheduling term in others (up to ~78%)",
-    "• Either way recovery rank is noise run-to-run — it\n  does not track the placement story (refutes L3)",
+    "• Either way recovery rank is noise run-to-run — it\n  does not track the placement story (L3 inapplicable)",
 ], font_size=11, color=LIGHT_GRAY)
 
 add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
@@ -1049,10 +1049,10 @@ hyp_results = [
      "under churn — it amplifies, not isolates.",
      ACCENT_ORANGE, "Mech."),
     ("L3", "Recovery time predicts score",
-     "Refuted structurally: the d2s/s2r split is\n"
-     "unstable run-to-run and the score is\n"
+     "Inapplicable on its own terms: the d2s/s2r split\n"
+     "is unstable run-to-run and the score is\n"
      "non-reproducible. No stable relationship.",
-     ACCENT_RED, "Refuted"),
+     ACCENT_RED, "Inapplic."),
 ]
 
 for i, (label, title, explanation, clr, verdict) in enumerate(hyp_results):
@@ -1250,7 +1250,7 @@ add_text_box(slide, 1.5, 3.7, 10.3, 0.8, "Questions?",
 summary_items = [
     ("6", "Placement\nStrategies", CLR_ORCH),
     ("4", "Metric\nDimensions", CLR_METRICS),
-    ("3/3", "Refuted at\nmechanism layer", ACCENT_RED),
+    ("3/3", "Inapplicable\nunder churn", ACCENT_RED),
     ("1", "Unified\nMechanism", ACCENT_BLUE),
 ]
 for i, (val, label, clr) in enumerate(summary_items):

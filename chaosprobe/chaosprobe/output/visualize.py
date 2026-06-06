@@ -359,7 +359,7 @@ def _build_hypothesis_evaluation(
         h3_color = "#F39C12"
         h3_detail = f"Baseline scored {baseline_score:.1f}% — close to expected 100%."
     else:
-        h3_status = "refuted"
+        h3_status = "not supported"
         h3_color = "#E74C3C"
         h3_detail = f"Baseline scored {baseline_score:.1f}% — expected 100%, methodology issue."
 
@@ -418,7 +418,7 @@ def _build_hypothesis_evaluation(
                 f"{worst_score:.1f}) within noise margin ±{margin:.0f}.{colocate_cpu}"
             )
         else:
-            h1_status = "refuted"
+            h1_status = "not supported"
             h1_color = "#E74C3C"
             h1_detail = (
                 f"Colocate scored {colocate_score:.1f}, but {worst_name} scored "
@@ -450,7 +450,7 @@ def _build_hypothesis_evaluation(
                 f"{best_score:.1f}) within noise margin ±{h2_margin:.0f}."
             )
         else:
-            h2_status = "refuted"
+            h2_status = "not supported"
             h2_color = "#E74C3C"
             # Build a ranking snippet for context
             ranked = sorted(
