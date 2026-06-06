@@ -2,7 +2,11 @@
 
 import pytest
 
-from chaosprobe.config.loader import load_scenario
+from chaosprobe.config.loader import (
+    _sha256_file,
+    hash_scenario_files,
+    load_scenario,
+)
 from chaosprobe.config.validator import (
     ValidationError,
     _validate_cluster_config,
@@ -119,6 +123,66 @@ spec:
         """Test loading from an empty directory raises ValueError."""
         with pytest.raises(ValueError, match="No YAML files found"):
             load_scenario(str(tmp_path))
+
+
+class TestScenarioHashing:
+    """Tests for SHA-256 scenario-provenance hashing."""
+
+    def test_sha256_file_matches_known_digest(self, tmp_path):
+        import hashlib
+
+        f = tmp_path / "x.yaml"
+        f.write_bytes(b"kind: ChaosEngine\n")
+        assert _sha256_file(str(f)) == hashlib.sha256(b"kind: ChaosEngine\n").hexdigest()
+
+    def test_sha256_file_unreadable_returns_none(self, tmp_path):
+        assert _sha256_file(str(tmp_path / "missing.yaml")) is None
+
+    def test_hashes_manifests_and_experiments_relative_to_root(self, tmp_path):
+        deploy = tmp_path / "deploy"
+        deploy.mkdir()
+        manifest = deploy / "app.yaml"
+        manifest.write_bytes(b"kind: Deployment\n")
+        experiment = tmp_path / "pod-delete.yaml"
+        experiment.write_bytes(b"kind: ChaosEngine\n")
+        scenario = {
+            "path": str(tmp_path),
+            "manifests": [{"file": str(manifest)}],
+            "experiments": [{"file": str(experiment)}],
+        }
+        result = hash_scenario_files(scenario)
+        files = [e["file"] for e in result]
+        # Sorted, relative to the scenario root.
+        assert files == ["deploy/app.yaml", "pod-delete.yaml"]
+        assert all(len(e["sha256"]) == 64 for e in result)
+
+    def test_unreadable_file_skipped(self, tmp_path):
+        good = tmp_path / "good.yaml"
+        good.write_bytes(b"kind: ChaosEngine\n")
+        scenario = {
+            "path": str(tmp_path),
+            "manifests": [{"file": str(tmp_path / "gone.yaml")}],
+            "experiments": [{"file": str(good)}],
+        }
+        result = hash_scenario_files(scenario)
+        assert [e["file"] for e in result] == ["good.yaml"]
+
+    def test_file_outside_root_kept_absolute(self, tmp_path):
+        outside = tmp_path / "outside.yaml"
+        outside.write_bytes(b"kind: ChaosEngine\n")
+        root = tmp_path / "scenario"
+        root.mkdir()
+        scenario = {
+            "path": str(root),
+            "manifests": [],
+            "experiments": [{"file": str(outside)}],
+        }
+        result = hash_scenario_files(scenario)
+        assert result[0]["file"] == str(outside.resolve())
+
+    def test_entry_without_file_key_ignored(self, tmp_path):
+        scenario = {"path": str(tmp_path), "experiments": [{"spec": {}}]}
+        assert hash_scenario_files(scenario) == []
 
 
 class TestConfigValidator:

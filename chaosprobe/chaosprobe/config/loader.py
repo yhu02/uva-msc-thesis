@@ -7,6 +7,7 @@ A scenario is a directory containing:
 Files are auto-classified by their ``kind`` field.
 """
 
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,6 +18,48 @@ CHAOS_KINDS = {"ChaosEngine"}
 
 # Filename for cluster configuration
 CLUSTER_CONFIG_FILE = "cluster.yaml"
+
+
+def _sha256_file(path: str) -> Optional[str]:
+    """SHA-256 hex digest of a file, or ``None`` if it can't be read."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def hash_scenario_files(scenario: Dict[str, Any]) -> List[Dict[str, str]]:
+    """SHA-256 every manifest + experiment file backing a *scenario*.
+
+    Returns a list of ``{file, sha256}`` sorted by ``file``, where ``file``
+    is the path relative to the scenario root when possible (stable across
+    machines) and the absolute path otherwise. Files that can't be read are
+    skipped — their absence is what trips ``doctor``'s scenario-provenance
+    gate, rather than crashing the run. Recording these lets a reviewer
+    detect silent scenario drift between a quoted result and the YAML that
+    produced it.
+    """
+    root = Path(scenario.get("path") or ".").resolve()
+    entries: Dict[str, str] = {}
+    for group in ("manifests", "experiments"):
+        for item in scenario.get(group) or []:
+            file_path = item.get("file")
+            if not file_path:
+                continue
+            digest = _sha256_file(file_path)
+            if digest is None:
+                continue
+            resolved = Path(file_path).resolve()
+            try:
+                key = str(resolved.relative_to(root))
+            except ValueError:
+                key = str(resolved)
+            entries[key] = digest
+    return [{"file": key, "sha256": entries[key]} for key in sorted(entries)]
 
 
 def load_scenario(scenario_path: str) -> Dict[str, Any]:
