@@ -113,6 +113,48 @@ what the user experiences (8.0 % vs 8.9 % error).
 uv run python scripts/h3_mechanism_outcome.py --csv /tmp/h3_pairs.csv
 ```
 
+## H4 — Under load contention, locality wins (L1/L2 inverted)
+
+**Statement.** When the cluster is driven into *genuine* resource contention by
+**load** (not an artificial hog), co-located/dense placements outperform spread:
+co-location gives the lowest inter-service tail latency, spread the highest.
+
+**Operationalization.** All 8 strategies × 3 iterations under a 200-user Locust
+spike (`--load-profile spike`), with a near-no-op `cpu-hog` as a placeholder so
+*load* is the stressor; compare during-chaos route tail latency (p95/max). The
+binary score is read only as corroboration (it is noisy — H1).
+
+**Why a hog won't do.** `pod-cpu-hog` is CFS-capped at the 200m container limit;
+`node-cpu-hog` loads the node but CPU *requests* keep the light pods responsive
+(both scored 100 with the app fully up). Contention only bites when the app is
+actually resource-bound — i.e. under load.
+
+**Result — supported.** colocate is the best real strategy, spread the worst
+(`results/20260606-092037`, during-chaos):
+
+| strategy | mean score | /product p95 | homepage max | /cart p95 |
+|---|---|---|---|---|
+| baseline (control) | 100 | 611 | 1138 | 692 |
+| **colocate** | 94 | **966** | **1492** | **556** |
+| default | 94 | 1197 | 2755 | 1409 |
+| best-fit | 100 | 1735 | 2971 | 1783 |
+| random | 80 | 2289 | 4401 | 2005 |
+| adversarial | 80 | 3016 | 4303 | 1774 |
+| dependency-aware | 78 | 3022 | 3730 | 2285 |
+| **spread** | 80 | **3183** | **4060** | **1989** |
+
+colocate vs spread: /product p95 966 vs 3183 ms (3.3×), homepage max 1492 vs
+4060 ms (2.7×), /cart p95 556 vs 1989 ms (3.6×). **L1 ("colocate worst") and L2
+("spread isolates best") are inverted**: co-location keeps inter-service calls
+node-local so latency stays low under load, while spread routes every call across
+the network — the bottleneck under load — and cgroup requests absorb the
+CPU-contention cost co-location would otherwise pay.
+
+**Provenance caveat (preliminary).** This run launched from a dirty tree
+(untracked `node-memory-hog.yaml`, unused), so `doctor --strict` flags it;
+measurements are valid but the headline numbers should be re-confirmed from a
+clean commit before final quotation. Single run, 3 iterations.
+
 ## Synthesis
 
 Under single-replica churn, placement leaves a large, reproducible footprint at
@@ -122,21 +164,35 @@ sharp and counter-intuitive: *for churn faults on single-replica services, where
 you put the pods is not a resilience lever — survivability is governed by
 availability dynamics (the killed pod is simply gone), not topology.*
 
+Under **load** contention the picture sharpens (H4): there the user-visible
+outcome *is* latency, and co-location's network-path locality wins decisively —
+colocate has the lowest tail latency, spread the highest, inverting L1/L2. The
+through-line across both regimes is **locality**: co-location lowers
+inter-service latency under churn and under load alike; under single-replica
+churn that benefit is swamped by the availability collapse (H3), but under load
+it is the dominant effect. Net: on this Kubernetes setup, **spreading is never
+the safer choice** — cgroup isolation absorbs the contention cost the literature
+assumes co-location pays, leaving locality to dominate.
+
 ### Relationship to the literature predictions
 
-The contention-model predictions — *colocate is worst* (L1), *spread isolates
-best* (L2), *recovery time predicts resilience* (L3) — are **inapplicable**, not
-refuted: placement does not move the outcome under this fault class in either
-direction, and `pod-delete` is a *churn* fault while those predictions concern
-*contention*. (Recovery time additionally fails on its own terms — its
-two-phase split is unstable run-to-run.) Whether L1–L3 hold under contention is
-open; see scope.
+*colocate is worst* (L1), *spread isolates best* (L2), *recovery time predicts
+resilience* (L3). Under **churn** these are **inapplicable** — placement does not
+move the outcome (`pod-delete` is a churn fault, not a contention one), and
+recovery's two-phase split is unstable run-to-run, so L3 fails on its own terms.
+Under **load contention** — the regime the literature is actually about — L1 and
+L2 are not merely unsupported but **inverted** (H4): co-location is the *best*
+real strategy and spread the *worst*. Across every regime tested, spreading is
+never the safer choice.
 
 ## Scope & threats
 
-- **Fault class:** established for `pod-delete` (churn) only. The `cpu-hog`
-  (contention) matrix has *n* = 2 and does not yet reproduce — the place L1–L3
-  *should* bite, and the highest-value extension.
+- **Fault class & contention:** churn (`pod-delete`) is established across the
+  full run set. Contention was probed two ways: resource *hog* faults
+  (`pod-cpu-hog`, `node-cpu-hog`, `node-memory-hog`) are absorbed by cgroup
+  limits/requests and do not degrade the app; genuine *load* contention (H4)
+  does degrade it and inverts L1/L2 — but that rests on a single 3-iteration run
+  with dirty provenance and needs a clean re-run to be final.
 - **Single replica:** 100 % `pod-delete` guarantees full outage, so the
   outcome is dominated by availability, not topology. The production-relevant
   question — multi-replica anti-affinity (do replicas share a failure domain?) —

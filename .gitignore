@@ -3,7 +3,6 @@
 dist/
 build/
 *.egg
-**/results*
 
 # Rust probe build artifacts (cargo target dirs)
 **/probes/*/target/
@@ -45,4 +44,3 @@ coverage.xml
 *.json
 !scenarios/**/*.json
 !chaosprobe/examples/**/*.json
-**/chaosprobe/results/**
