@@ -127,6 +127,7 @@ files = [
     "chaosprobe/metrics/base.py",
     "chaosprobe/metrics/cascade.py",
     "chaosprobe/metrics/collector.py",
+    "chaosprobe/metrics/endpointslices.py",
     "chaosprobe/metrics/latency.py",
     "chaosprobe/metrics/prometheus.py",
     "chaosprobe/metrics/recovery.py",

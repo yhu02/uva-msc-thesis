@@ -826,6 +826,11 @@ def _run_single_iteration(
             click.echo(f"    Collecting pre-chaos baseline ({pre_chaos_window}s)...")
             time.sleep(pre_chaos_window)
 
+        # Snapshot the target services' EndpointSlices while the cluster is
+        # still healthy, just before the kill cycle, so the post-chaos
+        # snapshot in collect() can be diffed against a clean baseline.
+        endpoint_slices_pre = ctx.metrics_collector.snapshot_endpoint_slices()
+
         # Run experiment
         experiment_start = time.time()
         for p in probers.values():
@@ -880,6 +885,7 @@ def _run_single_iteration(
         disk_data=prober_results.get("disk"),
         resource_data=prober_results.get("resource"),
         prometheus_data=prober_results.get("prometheus"),
+        endpoint_slices_pre=endpoint_slices_pre,
         collect_logs=ctx.collect_logs,
     )
 
