@@ -27,24 +27,48 @@ Load: steady-state Locust profile, 50 users at 10 req/s. The built-in locustfile
 
 ## Fault matrix
 
-Each strategy is exercised against two faults in two separate runs:
+The **core thesis matrix** is two fault classes, run separately — one churn, one
+contention:
 
-| Fault | Scenario file | Notes |
-|---|---|---|
-| Churn — `pod-delete` | `pod-delete.yaml` | CHAOS_INTERVAL=15s, FORCE=true, PODS_AFFECTED_PERC=100, target=`productcatalogservice`, duration=120s |
-| Contention — `pod-cpu-hog` | `cpu-hog.yaml` | 1 core, 100% load, duration=120s, same target |
+| Fault | Class | Scenario file | Notes |
+|---|---|---|---|
+| `pod-delete` | Churn | `pod-delete.yaml` | CHAOS_INTERVAL=15s, FORCE=true, PODS_AFFECTED_PERC=100, target=`productcatalogservice`, duration=120s |
+| `node-memory-hog` | Contention | `node-memory-hog.yaml` | MEMORY_CONSUMPTION_PERCENTAGE=75, 1 worker, duration=120s, `TARGET_NODES=auto` (follows the strategy's placement of `productcatalogservice`) |
 
-Baseline strategy uses a trivial `pod-cpu-hog` (1s @ 1% on 0 cores) to validate the probe + scoring pipeline — expected score 100%, zero recovery cycles.
+`node-memory-hog` replaces `pod-cpu-hog` as the contention experiment on the
+advice of the thesis review (the *best new core experiment*). Node-scoped memory
+pressure acts at the layer where placement actually matters — kubelet eviction
+and OOM bypass the per-pod CPU request guarantee — so a denser placement should
+bite harder. **`pod-cpu-hog` is demoted to an appendix/pilot** (see below): CPU
+limits are hard-enforced by CFS throttling, so the fault collapses into
+container-local self-throttling and does not degrade the app (smoke test:
+`colocate` and `default` both scored 100 despite ~3× throttling). It is kept only
+as a falsifiable pilot showing *why* node-level contention is the cleaner test,
+not as a headline result.
+
+Baseline strategy uses a trivial `pod-cpu-hog` (1s @ 1% on 0 cores) to validate
+the probe + scoring pipeline — expected score 100%, zero recovery cycles.
 
 ## Strategies
 
-All eight strategies are evaluated in one run:
+The **core comparison set** is the three strategies that appear in every run and
+carry the reproducible mechanism findings:
 
 ```
-baseline,default,colocate,spread,adversarial,random,best-fit,dependency-aware
+default,colocate,spread
 ```
 
-`random` uses `--seed 42` for reproducibility; for the seed-variance analysis the run is repeated with seeds 42, 137, 271, 314, 1729 (five seeds × five iterations each = 25 random samples).
+This is deliberately narrow: statistical power matters more than breadth (the
+`stats` underpowered-warning fires below 8 valid iterations per group, and the
+aggregate score is too noisy to rank a wide matrix — see H1). `default` is the
+scheduler-default control; `colocate` and `spread` are the maximal/minimal
+contention placements that bracket the literature's "spread is safer" claim.
+
+The other five strategies (`baseline` control plus `adversarial`, `random`,
+`best-fit`, `dependency-aware`) are an **appendix-level generality check**, run
+only when cluster time allows; they appear in none of the reproducible core
+findings. When included, `random` uses `--seed 42`; for the seed-variance
+appendix the run is repeated with seeds 42, 137, 271, 314, 1729.
 
 ## Invocations
 
@@ -60,23 +84,62 @@ export KUBECONFIG=~/.kube/config-chaosprobe
 # Install infrastructure once.
 uv run chaosprobe init -n online-boutique
 
-# Churn matrix — 5 iterations per strategy.
+# Core churn run — 3 strategies, >=8 valid iterations each.
 uv run chaosprobe run -n online-boutique \
+  --strategies default,colocate,spread \
   --experiment scenarios/online-boutique/pod-delete.yaml \
-  --iterations 5 \
+  --iterations 8 \
   --seed 42 \
+  --batch-id thesis-churn \
   --output-dir results/churn
 
-# Contention matrix — same shape, different experiment.
+# Core contention run — same 3 strategies, node-memory-hog.
 uv run chaosprobe run -n online-boutique \
-  --experiment scenarios/online-boutique/cpu-hog.yaml \
-  --iterations 5 \
+  --strategies default,colocate,spread \
+  --experiment scenarios/online-boutique/node-memory-hog.yaml \
+  --iterations 8 \
   --seed 42 \
+  --batch-id thesis-contention \
   --output-dir results/contention
+
+# Gate data quality BEFORE quoting anything (fails on tainted/low-n/provenance gaps).
+uv run chaosprobe doctor -s results/churn/<timestamp>/summary.json --strict
+uv run chaosprobe doctor -s results/contention/<timestamp>/summary.json --strict
 
 # Statistics from each summary.json.
 uv run chaosprobe stats -s results/churn/<timestamp>/summary.json --json -o results/churn/stats.json
 uv run chaosprobe stats -s results/contention/<timestamp>/summary.json --json -o results/contention/stats.json
+```
+
+> **Iteration bar.** Quote a number as a *finding* only from **≥ 8 valid (non-tainted,
+> non-error) iterations per strategy per fault** — 10 is the target. `doctor`
+> reports the tainted/errored count; if valid iterations drop below 8 after
+> exclusions, re-run rather than quoting an underpowered cell.
+
+**Appendix runs (optional, only if cluster time allows):** the 5-strategy
+generality check and the demoted `pod-cpu-hog` pilot — kept out of the core
+matrix above:
+
+```bash
+# Generality check: full 8-strategy default set (drop -s).
+uv run chaosprobe run -n online-boutique \
+  --experiment scenarios/online-boutique/pod-delete.yaml \
+  --iterations 8 --seed 42 --batch-id appendix-generality \
+  --output-dir results/appendix-generality
+
+# Demoted pilot: pod-cpu-hog (CFS-throttling confound — appendix only, never a headline).
+uv run chaosprobe run -n online-boutique \
+  --strategies default,colocate,spread \
+  --experiment scenarios/online-boutique/cpu-hog.yaml \
+  --iterations 8 --seed 42 --batch-id appendix-podcpuhog \
+  --output-dir results/appendix-podcpuhog
+
+# Ambitious extension (time permitting): destination-scoped network latency/loss.
+uv run chaosprobe run -n online-boutique \
+  --strategies default,colocate,spread \
+  --experiment scenarios/online-boutique/contention-network-loss/experiment.yaml \
+  --iterations 8 --seed 42 --batch-id ext-network-loss \
+  --output-dir results/ext-network-loss
 ```
 
 The Locust target URL auto-detects via port-forward; supply `--target-url` if forwarding is unavailable.
@@ -104,8 +167,9 @@ The thesis rests on two *mechanism* metrics that reproduce across runs (M1, M2);
 
 - **M1 (conntrack flush separates spread from colocate):** under `pod-delete`, `spread` and `default` should flush a large fraction of `conntrack_entries_per_node` during the kill cycle (pre-chaos mean → during-chaos mean ≈ 36–39%), while `colocate` stays roughly flat (≈ −1.6%). Reproduced means `spread` flush > `colocate` flush. `scripts/mechanism_metrics.py` recomputes this directly from each `summary.json`.
 - **M2 / H7 (CPU throttling runs counter to the contention model under churn):** under `pod-delete`, `colocate` should produce *less* throttling (`metrics.prometheus.phases.during-chaos.cpu_throttling.mean`) than `default` and `spread`. PSI (`cpu_pressure_some`) should agree where cgroup-v2 is present. This is a bounded, mechanism-layer observation — not a universal refutation of the contention model.
+- **Contention positive control (`node-memory-hog`):** this is the regime where placement *should* bite. Under node-memory-hog, `colocate` (all pods on the hogged node) is expected to show more OOM-kills / evictions (`metrics.podStatus.totalOOMKills`, node `MemoryPressure` conditions) and worse route tails (`metrics.latency.summary.p95/p99`, error rate) than `spread` (only the 1–3 pods on the hogged node evict). A *user-visible* placement separation here — in contrast to its absence under churn (H3) — is the fault-class-specific result the contention experiment is designed to test. If the separation is absent or reversed at non-negligible effect size, the contention-placement hypothesis is **not** supported for this workload (report it as such; do not force it).
 
-The aggregate `meanResilienceScore` is **not** expected to yield a stable strategy ordering: across the collected runs (≥3 iterations per strategy) no pairwise difference survives the `chaosprobe stats` Holm-Bonferroni correction, so an *absence* of significant pairs is the expected result (M4), not a sign of divergence. What signals a materially different cluster or workload is divergence on the mechanism metrics — e.g. `colocate` *worse* than `default`/`spread` on `cpu_throttling`, or `colocate` flushing more conntrack than `spread`. The threats-to-validity section of the thesis (slide 13) is the place to look first.
+The aggregate `meanResilienceScore` is **not** expected to yield a stable strategy ordering: across the collected runs (≥ 8 valid iterations per strategy) no pairwise difference survives the `chaosprobe stats` Holm-Bonferroni correction, so an *absence* of significant pairs is the expected result (M4), not a sign of divergence. What signals a materially different cluster or workload is divergence on the mechanism metrics — e.g. `colocate` *worse* than `default`/`spread` on `cpu_throttling`, or `colocate` flushing more conntrack than `spread`. The threats-to-validity section of the thesis (slide 13) is the place to look first.
 
 ## Reproducibility manifest
 
