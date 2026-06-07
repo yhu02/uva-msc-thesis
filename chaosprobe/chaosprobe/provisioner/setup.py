@@ -15,10 +15,54 @@ from kubernetes.client.rest import ApiException
 
 from chaosprobe.provisioner.chaoscenter import _ChaosCenterMixin
 from chaosprobe.provisioner.chaoscenter_api import _ChaosCenterAPIMixin
-from chaosprobe.provisioner.components import _ComponentsMixin
+from chaosprobe.provisioner.components import REGISTRY_NODEPORT, _ComponentsMixin
 from chaosprobe.provisioner.vagrant import _VagrantMixin
 
 logger = logging.getLogger(__name__)
+
+
+def _registry_trust_group_vars(registry_address: str) -> str:
+    """Return ``group_vars`` YAML that trusts the in-cluster registry as insecure.
+
+    Kubespray's containerd role *replaces* (does not merge) ``containerd_registries_mirrors``,
+    so the ``docker.io`` default is restated alongside the insecure in-cluster
+    registry entry. The role consumes this to write ``certs.d/hosts.toml`` and set
+    ``config_path`` on every node, so the kubelet can pull probe images over HTTP.
+    """
+    import yaml
+
+    data = {
+        "containerd_registries_mirrors": [
+            {
+                "prefix": "docker.io",
+                "mirrors": [
+                    {
+                        "host": "https://registry-1.docker.io",
+                        "capabilities": ["pull", "resolve"],
+                        "skip_verify": False,
+                    }
+                ],
+            },
+            {
+                "prefix": registry_address,
+                "mirrors": [
+                    {
+                        "host": f"http://{registry_address}",
+                        "capabilities": ["pull", "resolve"],
+                        "skip_verify": True,
+                    }
+                ],
+            },
+        ]
+    }
+    header = (
+        "# Managed by chaosprobe — do not edit by hand.\n"
+        "# Trusts the in-cluster probe-image registry as insecure so each node's\n"
+        "# containerd can pull probe images over plain HTTP.\n"
+    )
+    # yaml.dump is untyped (returns Any); pin the boundary to str.
+    body: str = yaml.dump(data, default_flow_style=False, sort_keys=False)
+    return header + body
 
 
 class KubesprayPythonError(RuntimeError):
@@ -512,6 +556,22 @@ end
         hosts_file = output_dir / "hosts.yaml"
         with open(hosts_file, "w") as f:
             yaml.dump(inventory, f, default_flow_style=False)
+
+        # Trust the in-cluster probe-image registry on every node's containerd.
+        # The registry runs on the control plane (NodePort), so its address is
+        # <control-plane-ip>:<REGISTRY_NODEPORT>. Without this, node-side image
+        # pulls fail the HTTPS-vs-HTTP handshake (ImagePullBackOff).
+        control_plane_ip = next(
+            (h["ip"] for h in hosts if "control_plane" in h.get("roles", ["worker"])),
+            None,
+        )
+        if control_plane_ip:
+            all_vars_dir = output_dir / "group_vars" / "all"
+            all_vars_dir.mkdir(parents=True, exist_ok=True)
+            registry_address = f"{control_plane_ip}:{REGISTRY_NODEPORT}"
+            (all_vars_dir / "chaosprobe-registry.yml").write_text(
+                _registry_trust_group_vars(registry_address)
+            )
 
         print(f"Generated inventory at: {output_dir}")
         return output_dir
