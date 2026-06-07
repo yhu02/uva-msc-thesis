@@ -31,6 +31,7 @@ import os
 from typing import Optional
 
 import matplotlib
+from fault_taxonomy import is_churn
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -64,10 +65,6 @@ def _phase_mean(strat: dict, metric: str, phase: str) -> Optional[float]:
     return entry.get("mean") if isinstance(entry, dict) else None
 
 
-def _is_churn(fault_name: str) -> bool:
-    return "cpuhog" not in fault_name and fault_name != "pod-cpu-hog"
-
-
 def collect(results_dir: str) -> dict:
     """Per-strategy lists of score, conntrack flush %, and throttle rate."""
     scores: dict[str, list[float]] = {}
@@ -77,7 +74,7 @@ def collect(results_dir: str) -> dict:
         with open(path) as fh:
             summary = json.load(fh)
         for fault_name, fault in summary.get("faults", {}).items():
-            if not _is_churn(fault_name):
+            if not is_churn(fault_name):
                 continue
             for name, strat in fault.get("strategies", {}).items():
                 exp = strat.get("experiment") or strat.get("aggregated") or {}
