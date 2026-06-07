@@ -21,6 +21,10 @@ from chaosprobe.provisioner.vagrant import _VagrantMixin
 logger = logging.getLogger(__name__)
 
 
+class KubesprayPythonError(RuntimeError):
+    """Raised when Kubespray cannot be bootstrapped with local Python."""
+
+
 class UnknownExperimentType(ValueError):
     """Raised when a requested chaos experiment type is not in the catalog.
 
@@ -52,6 +56,9 @@ class LitmusSetup(_VagrantMixin, _ComponentsMixin, _ChaosCenterAPIMixin, _ChaosC
     KUBESPRAY_REPO = "https://github.com/kubernetes-sigs/kubespray.git"
     KUBESPRAY_VERSION = "v2.24.0"
     KUBESPRAY_DIR = Path.home() / ".chaosprobe" / "kubespray"
+    KUBESPRAY_PYTHON_CANDIDATES = ("python3.11", "python3.10", "python3")
+    KUBESPRAY_PYTHON_MIN = (3, 10)
+    KUBESPRAY_PYTHON_MAX = (3, 11)
     VAGRANT_DIR = Path.home() / ".chaosprobe" / "vagrant"
 
     # ChaosCenter (dashboard) constants
@@ -290,14 +297,70 @@ end
     def _check_python_venv(self) -> bool:
         """Check if python venv module is available."""
         try:
+            python = self._select_kubespray_python()
             subprocess.run(
-                ["python3", "-m", "venv", "--help"],
+                [python, "-m", "venv", "--help"],
                 check=True,
                 capture_output=True,
             )
             return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except (KubesprayPythonError, subprocess.CalledProcessError, FileNotFoundError):
             return False
+
+    def _python_version(self, python: str) -> tuple[int, int]:
+        """Return the major/minor version for a Python executable."""
+        result = subprocess.run(
+            [
+                python,
+                "-c",
+                "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        major, minor = result.stdout.strip().split(".", 1)
+        return int(major), int(minor)
+
+    def _is_kubespray_python_version(self, version: tuple[int, int]) -> bool:
+        """Return whether a Python major/minor is supported by Kubespray v2.24."""
+        return self.KUBESPRAY_PYTHON_MIN <= version <= self.KUBESPRAY_PYTHON_MAX
+
+    def _select_kubespray_python(self) -> str:
+        """Find a Python interpreter compatible with Kubespray's pinned deps."""
+        env_python = os.environ.get("CHAOSPROBE_KUBESPRAY_PYTHON")
+        candidates = (env_python,) if env_python else self.KUBESPRAY_PYTHON_CANDIDATES
+
+        for candidate in candidates:
+            try:
+                version = self._python_version(candidate)
+            except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+                continue
+            if self._is_kubespray_python_version(version):
+                return candidate
+
+        supported = (
+            f"{self.KUBESPRAY_PYTHON_MIN[0]}.{self.KUBESPRAY_PYTHON_MIN[1]}"
+            f"-{self.KUBESPRAY_PYTHON_MAX[0]}.{self.KUBESPRAY_PYTHON_MAX[1]}"
+        )
+        raise KubesprayPythonError(
+            "Kubespray v2.24 dependencies require Python "
+            f"{supported}. Install python3.11 and python3.11-venv, or set "
+            "CHAOSPROBE_KUBESPRAY_PYTHON to a compatible Python executable."
+        )
+
+    def _venv_python_version(self, venv_dir: Path) -> Optional[tuple[int, int]]:
+        """Read the major/minor Python version from a venv's pyvenv.cfg."""
+        pyvenv_cfg = venv_dir / "pyvenv.cfg"
+        if not pyvenv_cfg.exists():
+            return None
+
+        for line in pyvenv_cfg.read_text().splitlines():
+            if line.startswith("version = "):
+                version = line.split("=", 1)[1].strip().split(".")
+                if len(version) >= 2:
+                    return int(version[0]), int(version[1])
+        return None
 
     def _ensure_kubespray(self) -> Path:
         """Ensure kubespray is cloned and dependencies are installed.
@@ -324,17 +387,37 @@ end
                 check=True,
             )
 
-        # Create/update venv with kubespray requirements
+        kubespray_python = self._select_kubespray_python()
+
+        # Create/update venv with kubespray requirements.  A previous run may
+        # have created the directory before pip finished installing Ansible, so
+        # key off the required executable instead of the directory alone.
         venv_dir = kubespray_dir / "venv"
+        ansible_playbook = venv_dir / "bin" / "ansible-playbook"
+        venv_version = self._venv_python_version(venv_dir)
+        if venv_version and not self._is_kubespray_python_version(venv_version):
+            print(
+                "Recreating Kubespray virtual environment with a compatible "
+                "Python interpreter..."
+            )
+            shutil.rmtree(venv_dir)
+
         if not venv_dir.exists():
             print("Creating Python virtual environment for Kubespray...")
             subprocess.run(
-                ["python3", "-m", "venv", str(venv_dir)],
+                [kubespray_python, "-m", "venv", str(venv_dir)],
                 check=True,
             )
 
+        if not ansible_playbook.is_file():
             print("Installing Kubespray dependencies...")
             pip_path = venv_dir / "bin" / "pip"
+            if not pip_path.is_file():
+                print("Repairing Python virtual environment for Kubespray...")
+                subprocess.run(
+                    [kubespray_python, "-m", "venv", str(venv_dir)],
+                    check=True,
+                )
             subprocess.run(
                 [str(pip_path), "install", "-U", "pip"],
                 check=True,

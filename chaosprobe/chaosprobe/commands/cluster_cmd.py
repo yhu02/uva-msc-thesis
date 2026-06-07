@@ -11,6 +11,12 @@ import yaml
 
 from chaosprobe.provisioner.setup import LitmusSetup
 
+KUBESPRAY_PYTHON_ERROR = (
+    "Error: Kubespray v2.24 requires Python 3.10 or 3.11 with venv support. "
+    "Install python3.11 and python3.11-venv, or set CHAOSPROBE_KUBESPRAY_PYTHON "
+    "to a compatible Python executable."
+)
+
 
 @click.group()
 def cluster():
@@ -52,10 +58,7 @@ def cluster_create(
         sys.exit(1)
 
     if not prereqs["python_venv"]:
-        click.echo(
-            "Error: python3-venv is required. Install with: apt install python3-venv",
-            err=True,
-        )
+        click.echo(KUBESPRAY_PYTHON_ERROR, err=True)
         sys.exit(1)
 
     if inventory:
@@ -444,10 +447,7 @@ def vagrant_deploy(name: str, vagrant_dir: Optional[str]):
         sys.exit(1)
 
     if not prereqs["python_venv"]:
-        click.echo(
-            "Error: python3-venv is required. Install with: apt install python3-venv",
-            err=True,
-        )
+        click.echo(KUBESPRAY_PYTHON_ERROR, err=True)
         sys.exit(1)
 
     if vagrant_dir:
