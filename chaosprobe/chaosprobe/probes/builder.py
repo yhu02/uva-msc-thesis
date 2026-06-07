@@ -647,6 +647,24 @@ def extract_cmdprobe_images(experiments: List[Dict[str, Any]]) -> List[str]:
     return seen
 
 
+def _imagepull_failure(pod: Any) -> Optional[Tuple[str, str]]:
+    """Return ``(image, reason)`` for the first container stuck pulling an image.
+
+    Scans a pod's init and main container statuses for a container waiting on
+    ``ImagePullBackOff`` — the stable state the kubelet settles into once an
+    image genuinely cannot be pulled (e.g. an untrusted registry). Returns
+    ``None`` while the pod is still progressing. ``pod`` is the opaque (untyped)
+    kubernetes V1Pod returned by ``read_namespaced_pod_status``.
+    """
+    status = pod.status
+    statuses = list(status.init_container_statuses or []) + list(status.container_statuses or [])
+    for cs in statuses:
+        waiting = getattr(cs.state, "waiting", None) if cs.state else None
+        if waiting is not None and waiting.reason == "ImagePullBackOff":
+            return cs.image, waiting.reason
+    return None
+
+
 def prepull_probe_images(
     namespace: str,
     images: List[str],
@@ -664,8 +682,12 @@ def prepull_probe_images(
     eliminates per-tick registry round-trips — the dominant source
     of cmdProbe Unknown verdicts under chaos.
 
-    The pre-pull is best-effort: a pod that fails to schedule or
-    times out is logged and skipped; remaining nodes continue.
+    Slow or transient pulls are best-effort: a pod that fails to schedule
+    or times out is logged and skipped; remaining nodes continue. An
+    *unpullable* image is not — if any pod reports ``ImagePullBackOff``
+    (the image genuinely cannot be pulled, e.g. an untrusted registry),
+    this raises ``click.ClickException`` to abort the run fast rather than
+    wait out the timeout and proceed on missing images.
 
     Args:
         namespace: Namespace to create the pre-pull pods in (must have
@@ -679,6 +701,9 @@ def prepull_probe_images(
 
     Returns:
         Number of (node, image) pulls successfully completed.
+
+    Raises:
+        click.ClickException: if a probe image is unpullable (ImagePullBackOff).
     """
     if not images or not worker_nodes:
         return 0
@@ -749,41 +774,58 @@ def prepull_probe_images(
 
     pending = set(pod_names)
     succeeded: set = set()
-    start = _time.time()
-    while pending and (_time.time() - start) < timeout:
-        for name in list(pending):
-            try:
-                pod = core_api.read_namespaced_pod_status(name, namespace)
-            except _ApiException:
-                continue
-            phase = (pod.status.phase or "").lower()
-            if phase == "succeeded":
-                succeeded.add(name)
-                pending.discard(name)
-            elif phase == "failed":
-                pending.discard(name)
-                _click.echo(
-                    f"  WARNING: pre-pull pod {name} failed; some images may not be cached",
-                    err=True,
-                )
+    try:
+        start = _time.time()
+        while pending and (_time.time() - start) < timeout:
+            for name in list(pending):
+                try:
+                    pod = core_api.read_namespaced_pod_status(name, namespace)
+                except _ApiException:
+                    # Transient read error — re-poll this pod next iteration.
+                    continue
+                # Fail fast on an unpullable image: it will never self-heal, and
+                # proceeding runs the whole matrix on missing probe images.
+                stuck = _imagepull_failure(pod)
+                if stuck is not None:
+                    image, reason = stuck
+                    raise _click.ClickException(
+                        f"Probe image cannot be pulled: {image} ({reason}).\n"
+                        f"  A worker node's containerd does not trust the in-cluster "
+                        f"registry, so probe images fail to pull — aborting before a "
+                        f"doomed run.\n"
+                        f"  Fix the node trust and retry: re-run `chaosprobe cluster "
+                        f"vagrant deploy` (it configures the trust), or apply the manual "
+                        f"per-node step in chaosprobe/manifests/README.md (section 2)."
+                    )
+                phase = (pod.status.phase or "").lower()
+                if phase == "succeeded":
+                    succeeded.add(name)
+                    pending.discard(name)
+                elif phase == "failed":
+                    pending.discard(name)
+                    _click.echo(
+                        f"  WARNING: pre-pull pod {name} failed; some images may not be cached",
+                        err=True,
+                    )
+            if pending:
+                _time.sleep(2)
+
         if pending:
-            _time.sleep(2)
-
-    if pending:
-        _click.echo(
-            f"  WARNING: pre-pull timed out for {len(pending)} pod(s); "
-            f"those nodes will pull on first probe tick",
-            err=True,
-        )
-
-    # Cleanup all created pods (succeeded + still-pending)
-    for name in pod_names:
-        try:
-            core_api.delete_namespaced_pod(
-                name, namespace, body=_k8s_client.V1DeleteOptions(grace_period_seconds=0)
+            _click.echo(
+                f"  WARNING: pre-pull timed out for {len(pending)} pod(s); "
+                f"those nodes will pull on first probe tick",
+                err=True,
             )
-        except _ApiException:
-            # Best-effort cleanup — the pod may already be gone or terminating.
-            pass
+    finally:
+        # Cleanup all created pods (succeeded + still-pending), even if we
+        # aborted on an unpullable image.
+        for name in pod_names:
+            try:
+                core_api.delete_namespaced_pod(
+                    name, namespace, body=_k8s_client.V1DeleteOptions(grace_period_seconds=0)
+                )
+            except _ApiException:
+                # Best-effort cleanup — the pod may already be gone or terminating.
+                pass
 
     return len(succeeded) * len(images)
