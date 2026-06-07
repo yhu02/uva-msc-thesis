@@ -134,9 +134,9 @@ def _normalize_strategy(
     # An all-ERROR strategy reports null score moments — meanResilienceScore /
     # stddev / min / max are None (no valid measurement; see aggregate_iterations
     # and PR #188, which deliberately keeps null distinct from a fabricated 0.0).
-    # The raw summary stats stay null, but the chart layer plots numeric bars and
-    # the hypothesis evaluator ranks with min()/max(), neither of which tolerates
-    # None. Coerce the no-data case to 0.0 for *rendering only* — this restores
+    # The raw summary stats stay null, but the chart layer plots numeric bars
+    # with min()/max(), which can't tolerate None. Coerce the no-data case to
+    # 0.0 for *rendering only* — this restores
     # the pre-#188 chart behavior without re-introducing a 0.0 into stats /
     # recommend / doctor, which read the (still-null) summary fields directly.
     if avg_score is None:
@@ -340,155 +340,6 @@ def generate_from_dict(
         generated.append(html_path)
 
     return generated
-
-
-def _build_hypothesis_evaluation(
-    strategies: Dict[str, Any],
-    resource_data: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> str:
-    """Build HTML section evaluating H1, H2, H3 against actual data."""
-    # H3: Baseline == 100?
-    baseline = strategies.get("baseline", {})
-    baseline_score = baseline.get("avgResilienceScore", 0)
-    if baseline_score == 100.0:
-        h3_status = "supported"
-        h3_color = "#2ECC71"
-        h3_detail = f"Baseline scored {baseline_score:.0f}% — methodology validated."
-    elif baseline_score >= 90:
-        h3_status = "partially supported"
-        h3_color = "#F39C12"
-        h3_detail = f"Baseline scored {baseline_score:.1f}% — close to expected 100%."
-    else:
-        h3_status = "not supported"
-        h3_color = "#E74C3C"
-        h3_detail = f"Baseline scored {baseline_score:.1f}% — expected 100%, methodology issue."
-
-    # H1: Colocate has worst resilience?
-    colocate = strategies.get("colocate", {})
-    colocate_score = colocate.get("avgResilienceScore", 0)
-    non_baseline = {k: v for k, v in strategies.items() if k != "baseline"}
-    if non_baseline:
-        worst_name = min(non_baseline, key=lambda k: non_baseline[k].get("avgResilienceScore", 0))
-        worst_score = non_baseline[worst_name].get("avgResilienceScore", 0)
-        best_name = max(non_baseline, key=lambda k: non_baseline[k].get("avgResilienceScore", 0))
-        best_score = non_baseline[best_name].get("avgResilienceScore", 0)
-
-        # Use standard deviation to define a meaningful "close" threshold
-        # instead of a fixed ±5 margin.  If the overlap between two
-        # strategies' error bars is large, the difference is noise.
-        colocate_sd = colocate.get("stddevResilienceScore", 0)
-        worst_sd = non_baseline[worst_name].get("stddevResilienceScore", 0)
-        # Overlap margin: mean of both stddevs (at least 5 to handle zero-variance)
-        margin = max(5.0, (colocate_sd + worst_sd) / 2)
-
-        # Check CPU contention (peak node — avoids dilution across idle workers)
-        colocate_cpu = ""
-        if resource_data and "colocate" in resource_data:
-            during_phase = resource_data["colocate"].get("phases", {}).get("during-chaos", {})
-            cpu = during_phase.get("usedNode", {}).get("peakNodeCpu_percent")
-            if cpu is None:
-                cpu = during_phase.get("usedNode", {}).get("meanCpu_percent")
-            if cpu is not None:
-                other_cpus = []
-                for s, rd in resource_data.items():
-                    if s not in ("colocate", "baseline"):
-                        od = rd.get("phases", {}).get("during-chaos", {})
-                        oc = od.get("usedNode", {}).get("peakNodeCpu_percent")
-                        if oc is None:
-                            oc = od.get("usedNode", {}).get("meanCpu_percent")
-                        if oc is not None:
-                            other_cpus.append(oc)
-                avg_other = sum(other_cpus) / len(other_cpus) if other_cpus else 0
-                colocate_cpu = (
-                    f" Colocate peak-node CPU during chaos: {cpu:.1f}% vs "
-                    f"other strategies avg peak: {avg_other:.1f}%."
-                )
-
-        if worst_name == "colocate":
-            h1_status = "supported"
-            h1_color = "#2ECC71"
-            h1_detail = (
-                f"Colocate scored {colocate_score:.1f} — worst among all strategies.{colocate_cpu}"
-            )
-        elif colocate_score <= worst_score + margin:
-            h1_status = "partially supported"
-            h1_color = "#F39C12"
-            h1_detail = (
-                f"Colocate scored {colocate_score:.1f}, near worst ({worst_name}: "
-                f"{worst_score:.1f}) within noise margin ±{margin:.0f}.{colocate_cpu}"
-            )
-        else:
-            h1_status = "not supported"
-            h1_color = "#E74C3C"
-            h1_detail = (
-                f"Colocate scored {colocate_score:.1f}, but {worst_name} scored "
-                f"{worst_score:.1f} (worst). Probe timing may dominate over resource "
-                f"contention effects.{colocate_cpu}"
-            )
-    else:
-        h1_status = "inconclusive"
-        h1_color = "#95A5A6"
-        h1_detail = "Insufficient strategies to evaluate."
-
-    # H2: Spread has best resilience?
-    spread = strategies.get("spread", {})
-    spread_score = spread.get("avgResilienceScore", 0)
-    if non_baseline:
-        spread_sd = spread.get("stddevResilienceScore", 0)
-        best_sd = non_baseline[best_name].get("stddevResilienceScore", 0)
-        h2_margin = max(5.0, (spread_sd + best_sd) / 2)
-
-        if best_name == "spread":
-            h2_status = "supported"
-            h2_color = "#2ECC71"
-            h2_detail = f"Spread scored {spread_score:.1f} — best among all strategies."
-        elif spread_score >= best_score - h2_margin:
-            h2_status = "partially supported"
-            h2_color = "#F39C12"
-            h2_detail = (
-                f"Spread scored {spread_score:.1f}, near best ({best_name}: "
-                f"{best_score:.1f}) within noise margin ±{h2_margin:.0f}."
-            )
-        else:
-            h2_status = "not supported"
-            h2_color = "#E74C3C"
-            # Build a ranking snippet for context
-            ranked = sorted(
-                non_baseline.items(),
-                key=lambda kv: kv[1].get("avgResilienceScore", 0),
-                reverse=True,
-            )
-            top3 = ", ".join(f"{n} ({v.get('avgResilienceScore', 0):.0f})" for n, v in ranked[:3])
-            h2_detail = (
-                f"Spread scored {spread_score:.1f}, but {best_name} scored "
-                f"{best_score:.1f} (best). Ranking: {top3}. "
-                f"Heterogeneous node resources or chaos-target alignment "
-                f"may explain why distribution did not improve resilience."
-            )
-    else:
-        h2_status = "inconclusive"
-        h2_color = "#95A5A6"
-        h2_detail = "Insufficient strategies to evaluate."
-
-    return f"""
-    <h2>Hypothesis Evaluation</h2>
-    <div class="dimension">
-        <div class="hypothesis h1" style="border-left-color: {h1_color};">
-            <span class="label" style="color:{h1_color}">H1</span>
-            <span><strong style="color:{h1_color}">{h1_status.upper()}</strong>
-              &mdash; {h1_detail}</span>
-        </div>
-        <div class="hypothesis h2" style="border-left-color: {h2_color};">
-            <span class="label" style="color:{h2_color}">H2</span>
-            <span><strong style="color:{h2_color}">{h2_status.upper()}</strong>
-              &mdash; {h2_detail}</span>
-        </div>
-        <div class="hypothesis h3" style="border-left-color: {h3_color};">
-            <span class="label" style="color:{h3_color}">H3</span>
-            <span><strong style="color:{h3_color}">{h3_status.upper()}</strong>
-              &mdash; {h3_detail}</span>
-        </div>
-    </div>"""
 
 
 def _build_iteration_table(
@@ -989,9 +840,6 @@ def _generate_html_summary(
             for f in chart_sections.get(section, [])
         )
 
-    # --- Hypothesis evaluation section ---
-    hypothesis_section = _build_hypothesis_evaluation(strategies, resource_data)
-
     # --- Per-iteration score breakdown ---
     iteration_section = _build_iteration_table(raw_strategies or {}, iterations)
 
@@ -1012,13 +860,6 @@ def _generate_html_summary(
         h3 {{ color: #555; }}
         .rq {{ background: #e8f4fd; border-left: 4px solid #0096D6; padding: 15px 20px;
                margin: 20px 0; border-radius: 4px; font-style: italic; font-size: 1.1em; }}
-        .hypothesis {{ display: flex; gap: 15px; margin: 10px 0; padding: 12px 16px;
-                       background: white; border-radius: 6px; border-left: 4px solid #ccc;
-                       box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-        .hypothesis.h1 {{ border-left-color: #E74C3C; }}
-        .hypothesis.h2 {{ border-left-color: #2ECC71; }}
-        .hypothesis.h3 {{ border-left-color: #7F8C8D; }}
-        .hypothesis .label {{ font-weight: bold; min-width: 30px; }}
         table {{ border-collapse: collapse; width: 100%; margin: 15px 0; background: white;
                  box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 6px; overflow: hidden; }}
         th, td {{ border: 1px solid #e0e0e0; padding: 10px 14px; text-align: left; }}
@@ -1056,22 +897,6 @@ def _generate_html_summary(
         under fault injection in Kubernetes?
     </div>
 
-    <div class="hypothesis h1">
-        <span class="label" style="color:#E74C3C">H1</span>
-        <span>Maximum contention (colocate) degrades resilience — colocating all pods on a
-        single node maximizes resource contention and produces the worst resilience scores.</span>
-    </div>
-    <div class="hypothesis h2">
-        <span class="label" style="color:#2ECC71">H2</span>
-        <span>Spreading improves fault isolation — distributing pods across nodes minimizes
-        per-node contention and yields the best resilience scores.</span>
-    </div>
-    <div class="hypothesis h3">
-        <span class="label" style="color:#7F8C8D">H3</span>
-        <span>Baseline validates methodology — a trivial fault with default scheduling should
-        produce 100% resilience, confirming measurement validity.</span>
-    </div>
-
     <!-- ═══ Overview ═══ -->
     <h2>Strategy Comparison Overview</h2>
     <div class="dimension">
@@ -1097,9 +922,6 @@ def _generate_html_summary(
         </p>
         <div class="section-charts">{_img_tags_for("overview")}</div>
     </div>
-
-    <!-- ═══ Hypothesis Evaluation ═══ -->
-    {hypothesis_section}
 
     <!-- ═══ Per-Iteration Breakdown ═══ -->
     {iteration_section}
@@ -1307,37 +1129,6 @@ def _generate_html_summary(
             </div>
             <p>Higher cross-node stddev indicates uneven I/O performance across nodes,
             which correlates with placement-induced resource contention.</p>
-        </details>
-
-        <details>
-            <summary>A.7 — Hypothesis Evaluation</summary>
-            <p>Three hypotheses are evaluated programmatically against the collected data:</p>
-
-            <p><strong>Noise margin</strong> (used to determine if score differences are meaningful):</p>
-            <div class="formula">
-                noise_margin = max(5.0, (&sigma;<sub>strategy1</sub> + &sigma;<sub>strategy2</sub>) / 2)
-            </div>
-            <p>Where &sigma; is the standard deviation of resilience scores across iterations.
-            A minimum of 5 points prevents false signals from low-variance runs.</p>
-
-            <p><strong>H1</strong> &mdash; <em>Colocate has lowest resilience</em>:</p>
-            <ul>
-                <li>Supported: colocate score is the lowest and the gap exceeds the noise margin</li>
-                <li>Also checks CPU contention: compares colocate&rsquo;s during-chaos CPU utilization
-                    against the mean of other strategies as corroborating evidence</li>
-            </ul>
-
-            <p><strong>H2</strong> &mdash; <em>Spread has highest resilience</em>:</p>
-            <ul>
-                <li>Supported: spread score is the highest and the gap exceeds the noise margin</li>
-            </ul>
-
-            <p><strong>H3</strong> &mdash; <em>Baseline achieves 100%</em>:</p>
-            <ul>
-                <li>Supported: baseline resilience score is exactly 100</li>
-                <li>The baseline strategy applies no placement constraints and runs no chaos,
-                    serving as a control to validate the experimental setup</li>
-            </ul>
         </details>
     </div>
 

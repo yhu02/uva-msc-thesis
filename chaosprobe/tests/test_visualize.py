@@ -181,8 +181,8 @@ class TestGenerateFromSummary:
     def test_generate_with_all_error_strategy_does_not_crash(self, tmp_path):
         # Regression: an all-ERROR strategy reports null score moments (PR #188).
         # Before the chart-view coercion, that None reached matplotlib
-        # (chart_resilience_scores -> ax.bar) and the hypothesis ranker
-        # (min/max key), crashing report generation after a full multi-hour run.
+        # (chart_resilience_scores -> ax.bar), crashing report generation after
+        # a full multi-hour run.
         def _agg(mean, sd, lo, hi):
             return {
                 "meanResilienceScore": mean,
