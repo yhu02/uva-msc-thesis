@@ -1,7 +1,9 @@
 """CLI command: chaosprobe run — automated full experiment matrix."""
 
+import fcntl
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -921,6 +923,46 @@ def _init_overall_results(
     }
 
 
+# Holds the open lock file object for the process lifetime so the advisory
+# flock stays held until this process exits. The OS releases it automatically
+# on any exit (clean, crash, kill -9), so no stale-lock cleanup is needed.
+_run_lock_file: Optional[Any] = None
+
+
+def _acquire_run_lock() -> None:
+    """Serialize ``chaosprobe run`` via an advisory lock on ``~/.chaosprobe/run.lock``.
+
+    Two concurrent runs mutate the same cluster (placement constraints, rollout
+    restarts, prepull pods) and corrupt each other. This takes a non-blocking
+    ``flock``; if another run already holds it, report the holder and exit 1.
+    """
+    global _run_lock_file
+    lock_dir = Path.home() / ".chaosprobe"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / "run.lock"
+    fd = open(lock_path, "a+")
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fd.seek(0)
+        holder = fd.read().strip() or "unknown"
+        fd.close()
+        click.echo(
+            f"Error: another `chaosprobe run` is already active ({holder}).\n"
+            f"  Concurrent runs mutate the same cluster (placement, rollouts,\n"
+            f"  prepull) and corrupt each other. Wait for it to finish or stop\n"
+            f"  it, then retry.\n"
+            f"  Lock: {lock_path}",
+            err=True,
+        )
+        sys.exit(1)
+    fd.seek(0)
+    fd.truncate()
+    fd.write(f"PID {os.getpid()} started {datetime.now(timezone.utc).isoformat()}\n")
+    fd.flush()
+    _run_lock_file = fd  # keep alive → lock held until process exit
+
+
 @click.command()
 @click.option(
     "--namespace",
@@ -1135,6 +1177,10 @@ def run(
                 err=True,
             )
             sys.exit(1)
+
+    # Serialize against any other active run before touching the cluster — two
+    # concurrent runs corrupt each other's placement/rollout/prepull state.
+    _acquire_run_lock()
 
     # Expand `random` into per-seed variants (when --seeds is set), then order
     # strategies by contention severity so lingering node pressure from heavy
