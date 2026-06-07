@@ -255,7 +255,11 @@ Or run specific strategies:
 chaosprobe run -n online-boutique -s colocate,spread
 ```
 
-### Step 3: AI fix-and-verify loop
+### Step 3: AI fix-and-verify loop (exploratory tooling — not a thesis finding)
+
+> This optional loop is exploratory scaffolding, not part of the thesis's evaluated
+> contribution. The thesis results do not depend on it; it is a convenience for
+> iterating on a deployment, not a validated anomaly-classification/remediation system.
 
 Feed the experiment data to an AI agent. The data stored in Neo4j includes:
 - Full YAML content of all manifests and experiments
