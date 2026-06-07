@@ -1,15 +1,18 @@
 # Online Boutique Chaos Experiments
 
-Chaos experiments for [Google's Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) (microservices-demo), a 12-service e-commerce application. Experiments are organized by the distributed systems performance bottleneck taxonomy:
+Chaos experiments for [Google's Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) (microservices-demo), a 12-service e-commerce application. The contention/saturation experiments are organized by the distributed systems performance bottleneck taxonomy; `pod-delete` sits outside it as a separate **churn / availability** fault:
 
 ```
-Performance
+Performance bottleneck taxonomy (contention / saturation faults)
 ├── Execution
-│   ├── Saturation (Stack Height / QoS)    → CPU hog, Memory hog
-│   └── Contention (Critical Path)         → Pod delete on orchestrator
+│   └── Saturation (Stack Height / QoS)    → CPU hog, Memory hog
 └── I/O
     ├── Contention (Critical Sections)     → Redis latency (in-cluster storage)
     └── Saturation (Bandwidth)             → Network loss, Disk I/O stress
+
+Churn / availability (a distinct fault class — not contention)
+└── pod-delete → forced pod kill; the thesis placement study uses
+                 pod-delete.yaml on productcatalogservice (single replica)
 ```
 
 ## Architecture
@@ -76,13 +79,15 @@ Tests OOMKill behavior and graceful degradation when a Python service exceeds me
 chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-memory/experiment.yaml
 ```
 
-### 4. Scheduling Contention — Critical Path
+### 4. Pod Churn — Forced Pod Delete (Reconvergence)
 
-**Directory:** `contention-scheduling/`
+**Directory:** `contention-scheduling/` (historical name; `pod-delete` is a churn fault, not a contention one)
 **Target:** checkoutservice (orchestrator calling 5+ services)
 **Experiment:** `pod-delete` — force-kill 100% of pods every 15s for 60s
 
-Tests how pod deletion on the critical checkout path affects recovery time, inter-service latency across the 5+ downstream dependencies, and resource contention on the hosting node. With 1 replica and force-delete, the entire checkout flow breaks until rescheduling completes.
+`pod-delete` is a **churn / availability** fault: it forces the target pod to disappear and measures how quickly the service reconverges — endpoint reprogramming, rescheduling, recovery time — rather than steady-state resource pressure. With 1 replica and force-delete, the entire checkout flow is unavailable until rescheduling completes.
+
+> **Thesis placement study.** The placement experiments below do **not** use this demo file. They share [`pod-delete.yaml`](pod-delete.yaml) — `pod-delete` churn on **productcatalogservice** (a central dependency for the homepage and product pages), the churn fault class analysed in the thesis. See [`docs/explanation/hypotheses.md`](../../docs/explanation/hypotheses.md).
 
 ```bash
 chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-scheduling/experiment.yaml
