@@ -580,6 +580,7 @@ def _apply_placement(
 def _compute_pre_chaos_taint_reasons(
     app_ready: bool,
     prober_results: Dict[str, Any],
+    load_active: bool = False,
 ) -> List[str]:
     """Assess whether an iteration started from a degraded pre-chaos baseline.
 
@@ -636,18 +637,28 @@ def _compute_pre_chaos_taint_reasons(
         # pre-chaos `/` max=1160ms (outlier) but mean=252ms and scored 75
         # cleanly — high p95 alone falsely flagged it as tainted.  Requiring
         # mean > threshold/2 filters outlier-driven false positives.
-        SLOW_BASELINE_P95_MS = 1500.0
+        # Skipped under an active load profile: this reason detects a baseline
+        # slowed by *leftover damage* from a previous iteration, but a load run
+        # slows the pre-chaos baseline *by design* (the load is on during
+        # baseline collection).  It would then fire on most load iterations and,
+        # worse, unevenly — tainting the slower placement (spread) more than the
+        # faster one (colocate) and biasing the comparison.  Load runs are judged
+        # by the during-load route-tail metric, not the score, so the elevated
+        # baseline is expected, not damage.  app_ready_timeout and
+        # pre_chaos_errors_high (real failures, not mere slowness) still apply.
         slow_routes = []
-        for route_name, route_data in pre_chaos.get("routes", {}).items():
-            p95 = route_data.get("p95_ms")
-            mean = route_data.get("mean_ms")
-            if (
-                p95 is not None
-                and mean is not None
-                and p95 > SLOW_BASELINE_P95_MS
-                and mean > SLOW_BASELINE_P95_MS / 2
-            ):
-                slow_routes.append((route_name, p95, mean))
+        if not load_active:
+            SLOW_BASELINE_P95_MS = 1500.0
+            for route_name, route_data in pre_chaos.get("routes", {}).items():
+                p95 = route_data.get("p95_ms")
+                mean = route_data.get("mean_ms")
+                if (
+                    p95 is not None
+                    and mean is not None
+                    and p95 > SLOW_BASELINE_P95_MS
+                    and mean > SLOW_BASELINE_P95_MS / 2
+                ):
+                    slow_routes.append((route_name, p95, mean))
         if slow_routes:
             reasons.append("pre_chaos_latency_degraded")
             slow_summary = ", ".join(f"{r}=p95:{p:.0f}/mean:{m:.0f}ms" for r, p, m in slow_routes)
@@ -935,7 +946,9 @@ def _run_single_iteration(
     # Assess pre-chaos baseline health: an app-ready timeout or a degraded
     # latency baseline taints the iteration (see
     # _compute_pre_chaos_taint_reasons).
-    pre_chaos_taint_reasons = _compute_pre_chaos_taint_reasons(app_ready, prober_results)
+    pre_chaos_taint_reasons = _compute_pre_chaos_taint_reasons(
+        app_ready, prober_results, load_active=bool(ctx.load_profile)
+    )
 
     # Extract per-probe verdicts for diagnostic analysis.
     # LitmusChaos probe status is a dict of phase→verdict strings like

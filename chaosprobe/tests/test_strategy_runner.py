@@ -903,6 +903,33 @@ class TestPreChaosTaintReasons:
             "pre_chaos_errors_high",
         ]
 
+    def test_slow_baseline_not_tainted_under_load(self):
+        # Under an active load profile the elevated pre-chaos baseline is the
+        # intentional load, not leftover damage, so the latency reason must NOT
+        # fire — otherwise it taints the slower placements more and biases the
+        # comparison.  Same fixture taints without load (guards against inversion).
+        results = _pre_chaos(
+            {"/cart": {"sampleCount": 15, "errorCount": 0, "p95_ms": 2000.0, "mean_ms": 900.0}},
+            sample_count=15,
+        )
+        assert _compute_pre_chaos_taint_reasons(True, results, load_active=True) == []
+        assert _compute_pre_chaos_taint_reasons(True, results, load_active=False) == [
+            "pre_chaos_latency_degraded"
+        ]
+
+    def test_errors_still_taint_under_load(self):
+        # Only the latency reason is load-aware; real errors are still a failure.
+        results = _pre_chaos({"/": {"sampleCount": 8, "errorCount": 2}})
+        assert _compute_pre_chaos_taint_reasons(True, results, load_active=True) == [
+            "pre_chaos_errors_high"
+        ]
+
+    def test_app_ready_timeout_still_taints_under_load(self):
+        # A failed readiness gate is a real failure, not mere load slowness.
+        assert _compute_pre_chaos_taint_reasons(False, {}, load_active=True) == [
+            "app_ready_timeout"
+        ]
+
 
 def _neo4j_ctx(store):
     return SimpleNamespace(
