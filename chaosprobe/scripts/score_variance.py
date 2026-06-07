@@ -51,13 +51,11 @@ import os
 import statistics as st
 from collections import defaultdict
 
+from fault_taxonomy import is_churn
+
 # z for a two-sided alpha=0.05 test and 80% power
 _Z = 1.959964 + 0.841621
 FOCAL = ("colocate", "spread")
-
-
-def _is_churn(fault_name: str) -> bool:
-    return "cpuhog" not in fault_name and fault_name != "pod-cpu-hog"
 
 
 def collect(results_dir: str) -> dict[tuple[str, str], list[float]]:
@@ -68,7 +66,7 @@ def collect(results_dir: str) -> dict[tuple[str, str], list[float]]:
         with open(path) as fh:
             summary = json.load(fh)
         for fault_name, fault in (summary.get("faults") or {}).items():
-            if not _is_churn(fault_name):
+            if not is_churn(fault_name):
                 continue
             for sname, s in ((fault or {}).get("strategies") or {}).items():
                 if sname == "baseline":

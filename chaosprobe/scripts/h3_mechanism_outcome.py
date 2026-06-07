@@ -53,6 +53,8 @@ import math
 import os
 from typing import Optional
 
+from fault_taxonomy import is_churn
+
 # --- route classification -------------------------------------------------
 # DEPENDENT: the request path touches productcatalogservice (the chaos target).
 #   /product/<id>  — product page render
@@ -67,10 +69,6 @@ CONTROL_ROUTES = (
     "checkoutservice->paymentservice",
 )
 HOMEPAGE = "/"  # depends on catalog, but reported separately (mixed fan-out)
-
-
-def _is_churn(fault_name: str) -> bool:
-    return "cpuhog" not in fault_name and fault_name != "pod-cpu-hog"
 
 
 def _prom(strategy: dict, metric: str, phase: str) -> Optional[float]:
@@ -107,7 +105,7 @@ def collect(results_dir: str) -> list[dict]:
         with open(path) as fh:
             summary = json.load(fh)
         for fault_name, fault in (summary.get("faults") or {}).items():
-            if not _is_churn(fault_name):
+            if not is_churn(fault_name):
                 continue
             for sname, s in ((fault or {}).get("strategies") or {}).items():
                 if sname == "baseline":

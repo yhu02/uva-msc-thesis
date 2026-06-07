@@ -44,6 +44,8 @@ import os
 import statistics as st
 from typing import Optional
 
+from fault_taxonomy import is_churn
+
 COMPARISON_SET = ("colocate", "default", "spread")
 
 
@@ -52,10 +54,6 @@ def _phase_mean(strategy: dict, metric: str, phase: str) -> Optional[float]:
     phases = ((strategy.get("metrics") or {}).get("prometheus") or {}).get("phases") or {}
     entry = ((phases.get(phase) or {}).get("metrics") or {}).get(metric)
     return entry.get("mean") if isinstance(entry, dict) else None
-
-
-def _is_churn(fault_name: str) -> bool:
-    return "cpuhog" not in fault_name and fault_name != "pod-cpu-hog"
 
 
 def collect(results_dir: str) -> dict:
@@ -70,7 +68,7 @@ def collect(results_dir: str) -> dict:
         with open(path) as fh:
             summary = json.load(fh)
         for fault_name, fault in summary.get("faults", {}).items():
-            if not _is_churn(fault_name):
+            if not is_churn(fault_name):
                 continue
             run_flush: dict[str, float] = {}
             run_throttle: dict[str, float] = {}
