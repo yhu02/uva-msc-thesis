@@ -364,8 +364,8 @@ class TestNormalizeStrategy:
     def test_all_error_strategy_null_score_moments_coerced_to_numeric(self):
         # An all-ERROR strategy reports null score moments (PR #188 keeps null
         # distinct from a fabricated 0.0 in the stats). The chart view must not
-        # leak that None to matplotlib / the hypothesis ranker, so it coerces to
-        # numeric for rendering only.  Single-iteration shape so min/max/stddev
+        # leak that None to matplotlib, so it coerces to numeric for rendering
+        # only.  Single-iteration shape so min/max/stddev
         # come straight from the (null) aggregated fields rather than the
         # iteration-score fallback — exercising every coercion branch.
         sdata = _strategy(
@@ -391,7 +391,7 @@ class TestNormalizeStrategy:
         assert result["minResilienceScore"] == 0.0
         assert result["maxResilienceScore"] == 0.0
         # Every score moment must be numeric, not None, so downstream
-        # min()/max()/arithmetic in the chart + hypothesis layers can't crash.
+        # min()/max()/arithmetic in the chart layer can't crash.
         for key in (
             "avgResilienceScore",
             "stddevResilienceScore",
