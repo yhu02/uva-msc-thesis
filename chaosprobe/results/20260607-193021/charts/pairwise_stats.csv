@@ -1,0 +1,7 @@
+strategy_a,strategy_b,mean_a,mean_b,u_statistic,z,p_raw,p_holm,significant_05
+baseline,default,93.75,85.25,4.5,0.949,0.3428,1.0,False
+baseline,spread,93.75,95.5,7.0,0.167,0.8676,1.0,False
+baseline,colocate,93.75,95.75,7.5,0.0,1.0,1.0,False
+default,spread,85.25,95.5,4.0,1.069,0.2849,1.0,False
+default,colocate,85.25,95.75,3.5,1.239,0.2155,1.0,False
+spread,colocate,95.5,95.75,7.0,0.167,0.8676,1.0,False
