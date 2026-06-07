@@ -1,61 +1,69 @@
-# Placement Experiment — node-memory-hog (DEMOTED: does not bite on this cluster)
+# Placement Experiment — LOAD contention (a Locust spike is the stressor)
 #
-# STATUS: kept for the record, but this fault does NOT produce placement-sensitive
-# contention here — it is superseded by load-contention.yaml. The original idea was
-# that node memory exhaustion would evict app pods (colocate → mass eviction; spread
-# → isolated), testing contention at the node-pressure / eviction layer.
+# This is the CONTENTION half of the fault-class x measurement-layer study. It
+# exists because synthetic *hog* faults do NOT create placement-sensitive
+# contention on this cluster:
+#   - pod-cpu-hog is CFS-capped at the container's CPU limit, so CPU *requests*
+#     keep the light app pods responsive (smoke test: colocate + default both
+#     scored 100 despite 3x throttling).
+#   - node-memory-hog cannot induce node pressure either: per the litmus-go
+#     source MEMORY_CONSUMPTION_PERCENTAGE is a % of node *capacity* clamped to
+#     allocatable (NOT free memory), and on an already-utilized node the stress
+#     helper is the kubelet's first eviction victim, so it self-relieves before
+#     the app is touched (verified by a 100% probe: zero MemoryPressure / OOM /
+#     eviction; cf. litmus issue #3397).
 #
-# WHAT WE FOUND (verified against the litmus-go source + an empirical 100% probe):
-#   - MEMORY_CONSUMPTION_PERCENTAGE is a % of node *capacity*, clamped to 100% of
-#     allocatable (NOT of free memory, as an earlier version of this comment said).
-#   - On an already-utilized node the stress-ng helper is the single pod most over
-#     its memory *request*, so the kubelet/kernel evicts/OOM-kills the HELPER first
-#     and relieves the pressure before any app pod is touched — the fault
-#     self-relieves rather than reaching the node-NotReady state it needs.
-#   - Empirically, at 75% AND 100% the target worker stayed ~75% memory with ZERO
-#     MemoryPressure / OOM / app-pod eviction (the helper just ran to Completed).
-#   - Matches litmuschaos/litmus issue #3397 ("memory hog not working under load").
-#     No percentage or MEBIBYTES value reliably fixes this on these 4 GiB nodes.
+# Genuine contention needs cross-pod competition that cgroup requests do NOT
+# isolate — i.e. real LOAD. Under a sustained 200-user Locust spike the app pods
+# contend for the node's actual CPU / network / cache beyond their requests, and
+# the inter-service call path becomes the bottleneck:
+#   - colocate -> inter-service calls stay node-local  -> lower tail latency.
+#   - spread   -> every call crosses the network        -> higher tail latency.
+# This is the regime where the H4 pilot saw a placement effect REACH the user
+# layer, which the churn fault (pod-delete) does not.
 #
-# CONCLUSION: synthetic hogs are absorbed by cgroup requests/limits; genuine
-# placement-sensitive contention needs real LOAD. See load-contention.yaml (a
-# sustained Locust spike as the stressor) — the contention fault the thesis uses.
+# Design: the chaos fault below is a near-no-op pod-cpu-hog (CPU_LOAD=1) that
+# only opens the during-chaos measurement window; LOAD is the stressor. The
+# metric of interest is during-load route tail latency (p95/p99) compared across
+# placements, NOT the aggregate resilience score (H1 shows it is too noisy to
+# rank, and under sustained load it will be uniformly degraded / pre-chaos
+# tainted — that is expected here, not a data-quality failure).
 #
-# TARGET_NODES is "auto" → resolved by the runner to the node the active strategy
-# placed productcatalogservice on (appinfo.applabel below).
+# Usage:
+#   chaosprobe run -n online-boutique \
+#     -s baseline,default,colocate,spread \
+#     -e scenarios/online-boutique/load-contention.yaml \
+#     --load-profile spike -i 8
 #
-# Usage (retained only to reproduce the negative result):
-#   chaosprobe run -n online-boutique -e scenarios/online-boutique/node-memory-hog.yaml -i 3
+# Probe set is identical to pod-delete.yaml / cpu-hog.yaml for comparability.
 apiVersion: litmuschaos.io/v1alpha1
 kind: ChaosEngine
 metadata:
-  name: placement-node-memhog
+  name: placement-load-contention
 spec:
   engineState: active
   appinfo:
     appns: online-boutique
-    applabel: app=productcatalogservice
+    applabel: app=frontend
     appkind: deployment
   chaosServiceAccount: litmus-admin
   experiments:
-    - name: node-memory-hog
+    - name: pod-cpu-hog
       spec:
         components:
           env:
             - name: TOTAL_CHAOS_DURATION
               value: "120"
-            # % of node *capacity* clamped to allocatable (see header). On an
-            # already-utilized node this never crosses the eviction threshold —
-            # the stress helper self-evicts first. Left at 75 for the record; no
-            # value makes this fault bite on these nodes (verified by a 100% probe).
-            - name: MEMORY_CONSUMPTION_PERCENTAGE
-              value: "75"
-            - name: NUMBER_OF_WORKERS
+            - name: CPU_CORES
               value: "1"
-            # "auto" → resolved by the runner to the node hosting applabel above
-            # (per-strategy). Replace with a node name to pin it manually.
-            - name: TARGET_NODES
-              value: "auto"
+            - name: CPU_LOAD
+              value: "1"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
         probe:
           # ── Tier 1: Strict probes (3s timeout, 1 retry ≈ 6s) ──────
           - name: frontend-product-strict
