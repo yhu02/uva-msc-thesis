@@ -1,9 +1,8 @@
 # ChaosProbe
 
 A framework for running LitmusChaos experiments against Kubernetes deployments,
-collecting structured experiment data into Neo4j, and turning it into
-statistically-grounded comparisons of pod **placement strategies** under chaos —
-with an AI feedback loop for anomaly classification and remediation.
+collecting structured cross-layer experiment data into Neo4j, and turning it into
+statistically-grounded comparisons of pod **placement strategies** under chaos.
 
 ## Install
 

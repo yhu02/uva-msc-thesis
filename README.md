@@ -4,7 +4,7 @@ MSc thesis project — University of Amsterdam.
 
 ## ChaosProbe
 
-A framework for running LitmusChaos experiments against Kubernetes deployments, collecting structured experiment data into Neo4j for AI-driven anomaly classification and remediation. See [chaosprobe/README.md](chaosprobe/README.md) for the landing page, or the full [documentation map](chaosprobe/docs/index.md) (organized by [Diátaxis](https://diataxis.fr/): tutorial / how-to / reference / explanation).
+A framework for running LitmusChaos experiments against Kubernetes deployments, collecting structured cross-layer experiment data (Prometheus, Kubernetes, Locust, application probes) into Neo4j for statistical analysis of pod-placement strategies under chaos. See [chaosprobe/README.md](chaosprobe/README.md) for the landing page, or the full [documentation map](chaosprobe/docs/index.md) (organized by [Diátaxis](https://diataxis.fr/): tutorial / how-to / reference / explanation).
 
 ### Quick Start
 
