@@ -44,24 +44,29 @@ curl http://<registry-address>/v2/
 ## 2. Trust it on every node (containerd) — so the kubelet can pull over HTTP
 
 containerd verifies TLS by default, so each node needs the registry marked
-insecure. containerd must have `config_path = "/etc/containerd/certs.d"`
-(Kubespray sets this). Then on each node (`chaosprobe cluster vagrant ssh <node>`):
-```bash
-sudo mkdir -p /etc/containerd/certs.d/<registry-address>
-sudo tee /etc/containerd/certs.d/<registry-address>/hosts.toml >/dev/null <<EOF
-server = "http://<registry-address>"
-[host."http://<registry-address>"]
-  capabilities = ["pull", "resolve"]
-  skip_verify = true
-EOF
-sudo systemctl restart containerd
+insecure (it serves plain HTTP). For Vagrant clusters this is now **automatic**:
+`chaosprobe cluster vagrant init` writes the trust into the generated Kubespray
+inventory (`group_vars/all/chaosprobe-registry.yml`, a `containerd_registries_mirrors`
+entry for `<registry-address>` with `skip_verify: true`), and `chaosprobe cluster
+vagrant deploy` applies it — Kubespray's containerd role writes
+`/etc/containerd/certs.d/<registry-address>/hosts.toml`, sets
+`config_path = "/etc/containerd/certs.d"`, and restarts containerd. It survives
+node rebuilds, since every deploy re-applies it.
+
+**Manual fallback** — for a cluster deployed *before* this was automated, or a
+non-Vagrant cluster. Re-running `chaosprobe cluster vagrant deploy` (which
+regenerates+applies the trust) is preferred. To patch a running node by hand
+instead, note that `certs.d` is ignored unless `config_path` is set — which it is
+**not** on older clusters — so add the trust inline in
+`/etc/containerd/config.toml` under `[plugins."io.containerd.grpc.v1.cri".registry]`
+(`chaosprobe cluster vagrant ssh <node>`):
+```toml
+[plugins."io.containerd.grpc.v1.cri".registry.mirrors."<registry-address>"]
+  endpoint = ["http://<registry-address>"]
+[plugins."io.containerd.grpc.v1.cri".registry.configs."<registry-address>".tls]
+  insecure_skip_verify = true
 ```
-Reproducible alternative (Kubespray) — put this in inventory `group_vars` and
-re-run the containerd role so it survives rebuilds:
-```yaml
-containerd_insecure_registries:
-  "<registry-address>": "http://<registry-address>"
-```
+then `sudo systemctl restart containerd`. Repeat on every node.
 
 ## 3. Run
 
