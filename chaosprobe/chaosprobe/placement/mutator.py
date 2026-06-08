@@ -161,6 +161,30 @@ class PlacementMutator:
 
         return result
 
+    def scale_deployments(self, replicas: int) -> List[str]:
+        """Scale every application deployment to ``replicas`` (skips Litmus infra
+        and the load generator).
+
+        Used by ``run --replicas N`` to study placement under *multi-replica*
+        services — the regime where node-level faults differentiate placements
+        (a node failure loses all replicas of a co-located service but only one
+        replica of a spread one). The load generator is left untouched so the
+        offered load does not scale with the replica count.
+
+        Returns the names of the deployments that were scaled.
+        """
+        deps = self.apps_api.list_namespaced_deployment(self.namespace)
+        scaled: List[str] = []
+        for dep in deps.items:
+            name = dep.metadata.name
+            if name in LITMUS_INFRA_DEPLOYMENTS or name == "loadgenerator":
+                continue
+            self.apps_api.patch_namespaced_deployment(
+                name, self.namespace, {"spec": {"replicas": replicas}}
+            )
+            scaled.append(name)
+        return scaled
+
     def get_node_pod_usage(
         self,
         exclude_pods: Optional[set] = None,
