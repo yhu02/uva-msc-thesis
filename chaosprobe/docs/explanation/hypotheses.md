@@ -30,7 +30,11 @@ the user layer (H1–H3). A second fault class, load contention (H4, two *i* = 4
 batches), tests whether a different regime lets the effect reach the user: it
 does not. Placement reproducibly moves the inter-service mechanism there too, but
 the user-layer effect does not survive replication — so the layered decoupling
-holds across both fault classes.
+holds across both fault classes. A third fault class, **node failure** (H6),
+turns to the **availability** layer the first two never bite: there placement
+*does* matter, reproducibly and at the only layer that counts for a node drain —
+the blast radius — which is the opposing face of the same co-location metric H5
+uses for latency.
 
 ## H1 — The aggregate resilience score cannot rank placements
 
@@ -238,6 +242,64 @@ mere storage. Two secondary findings:
 
 ```
 uv run python scripts/cross_node_fraction.py -s results/20260608-070606/summary.json
+```
+
+## H6 — Co-location is a latency/availability trade-off: it shrinks east-west tail but enlarges node-failure blast radius
+
+**Statement.** The same co-location that lowers the east-west tail (H5) *raises* the
+blast radius and recovery time of a **node failure**. Under a node drain, the number
+of services taken offline — and how long they take to recover — is determined by how
+many of them the placement concentrated onto the drained node. Node failure is a third
+fault class (after churn, H2–H3, and load contention, H4), and the first where this
+study measures the **availability** axis directly.
+
+**Operationalization.** `node-drain` on the node hosting `productcatalogservice`
+(`TARGET_NODE: auto`, single replica), `colocate` vs `spread`, two `doctor`-clean
+batches (*i* = 1 `results/20260608-194746`; *i* = 3 `results/20260608-205147`). The
+**blast radius** is the number of services driven to **0 ready endpoints** at the
+outage *trough*, read from EndpointSlice snapshots sampled every 15 s through the drain
+(`scripts/blast_radius.py`) — *not* the resilience score, which is unusable here (a node
+drain leaves every LitmusChaos probe `Unknown`; H1 again). Recovery is the target
+deployment's deletion→ready time from the recovery watcher.
+
+**Result — supported and reproduced.** Observed blast radius equals the
+placement-predicted blast (services pinned to the drained node) in every iteration:
+
+| placement | services on drained node | **blast radius (observed)** | target recovery (mean) |
+|---|---|---|---|
+| **colocate** | 11 / 11 | **11 — the whole app offline** | **10.3 s** |
+| **spread** | 2 / 11 | **2 (18%)** | **2.6 s** |
+
+- **The trade-off is the finding.** `colocate` is the *best* placement for east-west
+  latency (H5: lowest tail, 33.9 ms) and simultaneously the *worst* for node failure
+  (a single drain = 100% outage). `spread` is the mirror. One graph property
+  (co-location), two opposing consequences — latency vs availability — now both
+  measured: H5 is the latency face, H6 the availability face.
+- **Recovery time scales with blast radius too.** `colocate` recovers ~**4× slower**
+  (10.3 s vs 2.6 s): when the node uncordons, its 11 evicted pods contend to reschedule
+  at once, where `spread` has only 2. Blast radius and recovery latency are both
+  consequences of concentration.
+
+**Caveats (do not overstate this).**
+
+- *Two-point contrast, not yet a gradient.* This is the two extremes (most- vs
+  least-concentrated). That blast radius scales **continuously** with concentration —
+  the availability analogue of H5's cross-node-fraction predictor — needs the
+  intermediate placements (`best-fit`, `dependency-aware`, `adversarial`, `random`),
+  each with a different per-node concentration, in the run.
+- *The prediction is near-definitional; the empirical content is that it holds.* "Drain
+  a node and you lose the pods on it" is arithmetic. What the experiment adds is that the
+  predicted blast **actually materializes** under real chaos (no partial survival from
+  the single-replica pin), is **reproducible**, and drives a measurable **recovery-time**
+  penalty — and that it is the *opposing* face of the very metric (H5) that makes
+  co-location look good.
+- *Single-replica, single cluster.* Multi-replica anti-affinity (which would let a
+  service survive its node's drain) is out of scope here — see Scope & threats; the
+  result is about *between-service* blast radius under deployment-level placement, the
+  regime ChaosProbe's nodeSelector mutator realises.
+
+```
+uv run python scripts/blast_radius.py -s results/20260608-205147/summary.json
 ```
 
 ## Synthesis
