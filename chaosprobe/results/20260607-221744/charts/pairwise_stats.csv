@@ -1,0 +1,7 @@
+strategy_a,strategy_b,mean_a,mean_b,u_statistic,z,p_raw,p_holm,significant_05
+baseline,default,100.0,100.0,8.0,0.0,1.0,1.0,False
+baseline,spread,100.0,100.0,8.0,0.0,1.0,1.0,False
+baseline,colocate,100.0,100.0,8.0,0.0,1.0,1.0,False
+default,spread,100.0,100.0,8.0,0.0,1.0,1.0,False
+default,colocate,100.0,100.0,8.0,0.0,1.0,1.0,False
+spread,colocate,100.0,100.0,8.0,0.0,1.0,1.0,False
