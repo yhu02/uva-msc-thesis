@@ -26,9 +26,11 @@ given fault class, and whether it propagates to the user.
 The bulk of the evidence below instantiates that question for one fault class:
 churn-based injection (`pod-delete`) on a **single-replica** deployment. There
 the answer is sharp and layered — placement moves the mechanism layer but not
-the user layer (H1–H3). A separate, **preliminary** load-contention pilot (H4)
-probes a second regime where a user-visible effect is more likely; it is
-reported as a pilot, not a settled result.
+the user layer (H1–H3). A second fault class, load contention (H4, two *i* = 4
+batches), tests whether a different regime lets the effect reach the user: it
+does not. Placement reproducibly moves the inter-service mechanism there too, but
+the user-layer effect does not survive replication — so the layered decoupling
+holds across both fault classes.
 
 ## H1 — The aggregate resilience score cannot rank placements
 
@@ -121,62 +123,65 @@ what the user experiences (8.0 % vs 8.9 % error).
 uv run python scripts/h3_mechanism_outcome.py --csv /tmp/h3_pairs.csv
 ```
 
-## H4 (preliminary pilot) — Under load contention, locality appears to win
+## H4 — Under load contention, placement moves the mechanism, not (reproducibly) the user
 
-> **Status: preliminary pilot, not a settled finding.** H4 rests on a single
-> 3-iteration run launched from a dirty tree (see the provenance caveat below),
-> so it is reported as a pilot that motivates a clean rerun — not as evidence on
-> par with the reproducible H1–H3 results. Treat the direction as indicative and
-> the magnitudes as not-yet-quotable.
+> **Status: the mechanism-layer effect replicates; the user-layer effect does
+> not.** The original dirty 3-iteration pilot was replaced by two *i* = 4 batches
+> (one with fully clean, `doctor`-gated provenance). The east-west inter-service
+> locality reproduces across both; the user-facing magnitude does **not**, so no
+> user-visible placement effect is claimed under load.
 
 **Statement (pilot hypothesis).** When the cluster is driven into *genuine*
 resource contention by **load** (not an artificial hog), co-located/dense
 placements may outperform spread: co-location would give the lowest
 inter-service tail latency, spread the highest.
 
-**Operationalization.** All 8 strategies × 3 iterations under a 200-user Locust
-spike (`--load-profile spike`), with a near-no-op `cpu-hog` as a placeholder so
-*load* is the stressor; compare during-chaos route tail latency (p95/max). The
-binary score is read only as corroboration (it is noisy — H1).
+**Operationalization.** `default`, `colocate`, `spread` (+ `baseline` control)
+× *i* = 4 under a sustained 200-user Locust spike (`--load-profile spike`), with a
+near-no-op `cpu-hog` placeholder so *load* is the stressor. The metric is
+during-load route tail latency (p95), read from the canonical `routeViewAggregate`
+via `scripts/contention_routes.py` — not the resilience score (H1: too noisy, and
+uniformly degraded under load). Two batches: `results/20260607-193021` (A) and
+`results/20260607-221744` (B, clean provenance, 0 taints).
 
 **Why a hog won't do.** `pod-cpu-hog` is CFS-capped at the 200m container limit;
 `node-cpu-hog` loads the node but CPU *requests* keep the light pods responsive
 (both scored 100 with the app fully up). Contention only bites when the app is
 actually resource-bound — i.e. under load.
 
-**Result — preliminary (single 3-iteration pilot; dirty provenance).** In this
-one run, colocate showed the lowest during-chaos tail latency and spread the
-highest (`results/20260606-092037`, during-chaos). This is *not* a claim that
-co-location is the best strategy in general — it is a single pilot point that
-warrants a clean, replicated rerun before any ranking is asserted:
+**Result — the mechanism reproduces, the user layer does not.**
 
-| strategy | mean score | /product p95 | homepage max | /cart p95 |
-|---|---|---|---|---|
-| baseline (control) | 100 | 611 | 1138 | 692 |
-| **colocate** | 94 | **966** | **1492** | **556** |
-| default | 94 | 1197 | 2755 | 1409 |
-| best-fit | 100 | 1735 | 2971 | 1783 |
-| random | 80 | 2289 | 4401 | 2005 |
-| adversarial | 80 | 3016 | 4303 | 1774 |
-| dependency-aware | 78 | 3022 | 3730 | 2285 |
-| **spread** | 80 | **3183** | **4060** | **1989** |
+*Reproducible — east-west inter-service tail.* Colocate's inter-service p95 sits
+consistently below spread's: the median spread/colocate ratio across the 11
+east-west routes is **1.39× (batch A)** and **1.36× (batch B)** — direction and
+magnitude agree. Co-location keeps inter-service calls node-local; spread routes
+every call across the network, the bottleneck under load.
 
-colocate vs spread in this run: /product p95 966 vs 3183 ms (3.3×), homepage max
-1492 vs 4060 ms (2.7×), /cart p95 556 vs 1989 ms (3.6×). The proposed mechanism
-is that co-location keeps inter-service calls node-local so latency stays low
-under load, while spread routes every call across the network — the bottleneck
-under load — and cgroup requests absorb the CPU-contention cost co-location would
-otherwise pay. In this single pilot the L1/L2 ordering ("colocate worst", "spread
-isolates best") *appears inverted*; whether that inversion is reproducible is
-exactly what the clean rerun must establish.
+*Not reproducible — user-facing routes.* The during-load p95 ratio (spread /
+colocate) on the user-facing routes swings sharply between the two batches:
 
-**Provenance caveat (why this is a pilot, not a result).** This run launched from
-a dirty tree (untracked `node-memory-hog.yaml`, unused), so `doctor --strict`
-flags it. The per-iteration measurements are internally valid, but with a single
-run at *n* = 3 and dirty provenance the magnitudes must not be quoted as
-findings; they should be re-confirmed from a clean commit with adequate
-replication (the review suggests 6–8 clean repetitions per cell) before any
-inversion is asserted.
+| route | batch A | batch B (clean) |
+|---|---|---|
+| `/` (homepage) | 2.36× | 1.05× |
+| `/product` | 2.42× | 1.40× |
+| `/cart` | 2.09× | 1.08× |
+| `/_healthz` (control) | 1.93× | 1.26× |
+| dependent vs control | dependent **>** control | dependent **≈** control |
+
+Batch A read as a strong, *dependency-specific* user-layer effect (dependent
+routes degrade more than the control); batch B — the clean-provenance batch —
+shows it largely collapsing, with **no** dependency specificity (dependent 1.23×
+≈ control 1.26×). The original dirty pilot's "co-location is ~3× better at the
+user layer" reading (`results/20260606-092037`) **did not survive replication**;
+the swing tracks host load at run time, not placement.
+
+**Conclusion.** Under load contention, placement **reproducibly moves a
+mechanism-layer signal (east-west inter-service tail, colocate ~1.3–1.4× faster)
+but does not reproducibly move the user-visible outcome.** This *matches* rather
+than contrasts with the churn result (H2/H3): in both fault classes placement
+perturbs a mechanism that does not reliably reach the user, and the aggregate
+score cannot rank (H1). The unified takeaway is a **layered decoupling that holds
+across both fault classes tested** — not a regime where load "reaches the user."
 
 ## Synthesis
 
@@ -188,12 +193,14 @@ on single-replica services in this setup, where you put the pods is not a
 user-visible resilience lever — survivability is governed by availability
 dynamics (the killed pod is simply gone), not topology.*
 
-A **preliminary** load-contention pilot (H4) suggests the picture may differ when
-the user-visible outcome *is* latency rather than availability: there
-co-location's network-path locality appeared to lower tail latency in a single
-run. That points at **locality** as a candidate through-line across regimes —
-co-location keeps inter-service calls node-local — but H4 is a pilot, so this
-stays a hypothesis to confirm with a clean, replicated rerun, not a conclusion.
+Load contention (H4) was expected to differ — there the user-visible outcome *is*
+latency, not availability. Across two *i* = 4 batches, co-location does
+reproducibly lower the **east-west inter-service** tail (~1.3–1.4× vs spread:
+**locality** is the through-line across regimes), but that mechanism effect does
+**not** reproducibly reach the **user-facing** routes — a strong user-layer
+reading in one batch collapsed in the clean replication. So load contention
+*reinforces* the decoupling rather than overturning it: placement moves the
+mechanism in both regimes; the user layer follows in neither.
 
 We deliberately **do not** claim a universally best strategy, that "spreading is
 never the safer choice", or that the placement literature is refuted. Kubernetes
@@ -211,9 +218,10 @@ this regime** rather than refuted: placement does not move the user-visible
 outcome (`pod-delete` is a churn fault, not a contention one), and recovery's
 two-phase split is unstable run-to-run, so L3 has no stable relationship to find
 on either side. Under **load contention** — the regime the contention literature
-is actually about — the H4 pilot *hints* that the L1/L2 ordering may invert, but
-that is a preliminary signal from one dirty-provenance run and is held as a
-hypothesis pending a clean, replicated rerun.
+is actually about — replication (H4, two batches) shows co-location *does* lower
+the inter-service tail (consistent with the locality intuition behind L1/L2 at
+the mechanism layer), but this does **not** translate into a reproducible
+user-visible ordering, so no L1/L2 inversion is asserted at the user layer.
 
 ## Scope & threats
 
