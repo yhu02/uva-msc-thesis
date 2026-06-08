@@ -10,7 +10,7 @@ import logging
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 
@@ -210,6 +210,61 @@ def _restart_unhealthy_infra(namespace: str) -> None:
                     click.echo(f"  WARNING: {dep_name} did not recover after restart", err=True)
     except Exception as e:
         click.echo(f"  WARNING: infra health check failed ({e})", err=True)
+
+
+_CONTROL_PLANE_ROLE_LABELS = (
+    "node-role.kubernetes.io/control-plane",
+    "node-role.kubernetes.io/master",
+)
+
+
+def _orphaned_cordoned_workers(nodes: List[Any]) -> List[str]:
+    """Names of *worker* nodes left cordoned (``spec.unschedulable``).
+
+    Control-plane nodes are excluded — they are never chaos targets and may be
+    intentionally cordoned. A worker is only ever cordoned by ChaosProbe via a
+    node-drain experiment, so a lingering cordon means litmus never ran its
+    uncordon revert (the drain was interrupted, retried, or timed out). Pure
+    selection logic, separated from the patch action for unit testing.
+    """
+    out: List[str] = []
+    for node in nodes:
+        spec = getattr(node, "spec", None)
+        if not (spec and getattr(spec, "unschedulable", False)):
+            continue
+        labels = getattr(getattr(node, "metadata", None), "labels", None) or {}
+        if any(lbl in labels for lbl in _CONTROL_PLANE_ROLE_LABELS):
+            continue
+        name = getattr(getattr(node, "metadata", None), "name", None)
+        if name:
+            out.append(name)
+    return out
+
+
+def _uncordon_orphaned_nodes() -> None:
+    """Uncordon any worker node a prior node-drain left cordoned.
+
+    Defensive cluster hygiene, run before each iteration's readiness gate: an
+    interrupted / retried / timed-out node-drain can leave its target node
+    cordoned, after which every pod pinned there is unschedulable and the
+    readiness gate fails — cascading into the rest of the run and requiring a
+    manual ``kubectl uncordon``. Uncordoning here makes node faults safe to run
+    repeatedly. Control-plane nodes are never touched.
+    """
+    from kubernetes import client as k8s_client_mod
+
+    try:
+        core_api = k8s_client_mod.CoreV1Api()
+        nodes = core_api.list_node().items
+    except Exception:
+        logger.debug("uncordon guard: list_node failed", exc_info=True)
+        return
+    for name in _orphaned_cordoned_workers(nodes):
+        try:
+            core_api.patch_node(name, {"spec": {"unschedulable": False}})
+            click.echo(f"    Uncordoned worker '{name}' left cordoned by a prior node-drain.")
+        except Exception:
+            logger.debug("uncordon guard: patch_node %s failed", name, exc_info=True)
 
 
 def _setup_prometheus_pf(measure_prometheus: bool) -> None:
