@@ -108,23 +108,30 @@ show it would indicate an instrumentation bug worth chasing.
 
 ---
 
-## Proposed new metric — cross-node call fraction (cheap, predictive, novel)
+## New metric — cross-node call fraction (implemented; partially validated)
 
-A graph-derived metric computable **before any chaos**, from the service dependency
-graph (`config/topology.py`) + the actual pod→node placement
-(`placement/mutator.observe_pod_placements`): the **fraction of inter-service call
-volume that crosses nodes** under each strategy. It is the natural *explanator* for
-the east-west tail effect H4 already measured (placement → cross-node fraction →
-east-west p95), and it makes the dependency graph load-bearing.
+A graph-derived metric computable **before any chaos**, from the actual per-iteration
+pod→node placement (`podPlacements`) + the inter-service edges encoded in
+`aggregated.routeViewAggregate`: the **fraction of inter-service edges that cross
+nodes** under each strategy. It is the natural *explanator* for the east-west tail
+effect H4 measured (placement → cross-node fraction → east-west p95), and it makes the
+dependency graph load-bearing.
 
-- **Compute:** for each `DEPENDS_ON` edge, is `src` co-located with `dst`? Aggregate
-  (optionally weighted by call volume) into a 0–1 fraction per strategy.
-- **Effort:** analysis-script only (like `scripts/contention_routes.py`); **zero
-  cluster cost** — it can be validated *today* against the two existing
-  load-contention runs (does the fraction rank-correlate with the measured east-west
-  p95?).
-- **Unlocks:** P2 (mechanistic predictor) and a standalone claim — "a placement's
-  east-west penalty is predictable from a graph metric without running chaos."
+- **Status: implemented** as `scripts/cross_node_fraction.py` (zero cluster cost).
+- **Partial validation on the existing load runs:** it cleanly separates `colocate`
+  (fraction **0.0** → east-west p95 ~34 ms) from the spreading strategies
+  (`default`/`spread`/`baseline`, fraction ~**0.72** → ~43–45 ms) — i.e. it correctly
+  predicts colocate's advantage. But those three tie near the graph's intrinsic
+  cross-node fraction, so this is a **colocate-vs-rest contrast, not a gradient**: the
+  current runs lack any strategy with an *intermediate* fraction.
+- **What it needs to become a *predictor* claim:** a run including the intermediate-
+  fraction strategies (`dependency-aware`, `best-fit`, `random`, `adversarial`), which
+  would populate the middle of the fraction axis and let the rank correlation mean
+  something. This is the cheapest motivation for an 8-strategy load run, and the
+  natural pairing with P2 (dependency-aware).
+- **Unlocks:** P2's mechanistic predictor and a standalone claim — "a placement's
+  east-west penalty is predictable from a graph metric without running chaos" — once
+  the gradient is filled in.
 
 ---
 

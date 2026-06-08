@@ -122,6 +122,22 @@ This reads `aggregated.routeViewAggregate` and compares the during-load route
 p95 across strategies (e.g. `colocate` vs `spread`) to surface the east-west
 inter-service locality effect.
 
+To check *why* a placement has that east-west penalty, compute its **cross-node
+call fraction** — the fraction of inter-service edges whose endpoints sit on
+different nodes, from the actual per-iteration `podPlacements` + the dependency
+edges in `routeViewAggregate`:
+
+```bash
+uv run python scripts/cross_node_fraction.py -s <run>/summary.json
+```
+
+It prints each strategy's cross-node fraction next to its east-west p95 and the
+rank correlation between them (the hypothesised placement → fraction → tail
+chain). Note: a *gradient* needs the intermediate-fraction strategies
+(`dependency-aware`, `best-fit`, `random`, `adversarial`) in the run — with only
+`colocate` forcing node-locality the spreading strategies tie, and the script
+says so.
+
 ## Next
 
 - Full flags for each command: [CLI reference](../reference/cli.md).
