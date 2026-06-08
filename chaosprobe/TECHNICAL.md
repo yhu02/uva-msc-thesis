@@ -881,7 +881,7 @@ Each strategy iteration in `strategies.<name>.iterations[]` additionally carries
 | `metrics.latency.summary.meanCrossNodeStddev_ms` | `LatencyProber` | Per-pod cross-node latency stddev — pod-vs-pod variance signal for leakage analysis (H6). |
 | `metrics.endpointSlices.{preChaos,postChaos}.services[svc]` | `MetricsCollector.snapshot_endpoint_slices` | Per-service EndpointSlice endpoint counts (`ready` / `terminating` / `notReady` / `total`) snapshotted just before the kill cycle and again after, via the discovery API. The first-party API-level signature of the churn/reconvergence story — a drop in `ready` (and transient `terminating`) endpoints corroborates the conntrack-flush / kube-proxy-sync mechanism metrics. `null` snapshot side when the discovery API is unavailable. |
 | `experimentDuration_s` | `_run_single_iteration` | Wall-clock of the chaos window (`experiment_end - experiment_start`). Lets analysis correlate iteration latency with strategy behaviour. |
-| `preChaosTaintReasons` | `_compute_pre_chaos_taint_reasons` | List of taint reasons that fired in pre-chaos baseline: `app_ready_timeout` (the functional readiness gate timed out — the iteration started degraded), `pre_chaos_errors_high`, `pre_chaos_latency_degraded`, `iteration_exception`. Replaces the previous bare `preChaosHealthy: bool`. |
+| `preChaosTaintReasons` | `_compute_pre_chaos_taint_reasons` | List of taint reasons that fired in pre-chaos baseline: `app_ready_timeout` (the functional readiness gate timed out — the iteration started degraded), `pre_chaos_errors_high`, `pre_chaos_latency_degraded`, `iteration_exception`. Replaces the previous bare `preChaosHealthy: bool`. `pre_chaos_latency_degraded` is **load-aware**: it is skipped when a `--load-profile` is active (`load_active=True`), because sustained load intentionally elevates the pre-chaos baseline and load runs are judged by the during-load route-tail metric, not the score. |
 | `retryCount` | `_run_iteration_with_unknown_retry` | Times the iteration was re-measured because **>50% of its probes came back `Unknown`** — an operator-level probe-evaluation failure (the ChaosResult CRD was never populated), not a resilience outcome. `0` when the first attempt yielded real verdicts; capped at `_UNKNOWN_RETRY_BUDGET` (2). Iterations that returned real `Pass`/`Fail` verdicts are **never** retried (that would bias scores). |
 | `tainted` / `taintReasons` | `_run_iteration_with_unknown_retry` | Set when the iteration is *still* majority-`Unknown` after the retry budget is exhausted (`taintReasons` ⊇ `unknown_probes_after_retries`). The iteration is also forced to `verdict: "ERROR"` so `aggregate_iterations` excludes it from score statistics rather than letting a meaningless `0.0` drag down the mean. |
 
@@ -1090,11 +1090,21 @@ chaosprobe/
       neo4j_reader.py        # Read operations (~883 lines)
     graph/
       analysis.py            # High-level graph analysis functions
+  scripts/
+    score_variance.py        # H1 score run-to-run variance
+    mechanism_metrics.py     # M1/M2 conntrack-flush + CPU-throttling mechanism metrics
+    h3_mechanism_outcome.py  # H3 mechanism-vs-user decoupling
+    distribution_charts.py   # distribution / appendix charts
+    contention_routes.py     # H4 during-load route-tail comparison (reads aggregated.routeViewAggregate)
+    fault_taxonomy.py        # fault_class / is_churn helper used by the mechanism scripts
+    archive_run.py           # run archiver + artifact manifest
   scenarios/
     online-boutique/
       deploy/                # 12 microservice manifests
       pod-delete.yaml        # churn fault (pod-delete on productcatalogservice)
-      cpu-hog.yaml           # contention fault (pod-cpu-hog on frontend)
+      cpu-hog.yaml           # demoted hog (pod-cpu-hog on frontend; CFS-capped)
+      load-contention.yaml   # contention experiment (200-user Locust spike; --load-profile spike)
+      node-memory-hog.yaml   # demoted hog (self-evicts; cannot induce node pressure on this cluster)
       contention-*/          # CPU, memory, IO, network, Redis, latency, throughput variants
     examples/
       nginx-pod-delete/      # Simple example scenario

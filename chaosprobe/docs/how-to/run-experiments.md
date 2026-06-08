@@ -52,6 +52,28 @@ For the `random` strategy each iteration uses a different seed
 (`base_seed + iter - 1`), so N iterations sample the seed-variance distribution
 rather than repeating one placement. Override the base with `--seed`.
 
+### Load profiles
+
+`--load-profile` selects the Locust load applied during each experiment:
+
+| Profile | Users | Spawn rate | Notes |
+|---|---|---|---|
+| `steady` (default) | 50 | 10/s | steady-state baseline load |
+| `ramp` | 100 | 5/s | gradually ramped load |
+| `spike` | 200 | 50/s | sustained spike — the stressor for the contention experiment |
+
+The contention experiment is run with `spike` against
+`scenarios/online-boutique/load-contention.yaml`: there the load itself is the
+stressor (the scenario's chaos fault is a near-no-op that only opens the
+during-chaos measurement window), and the metric is during-load route tail
+latency rather than the resilience score.
+
+```bash
+uv run chaosprobe run -n online-boutique \
+    -e scenarios/online-boutique/load-contention.yaml \
+    --load-profile spike -i 8
+```
+
 ### Multi-fault matrix
 
 Run every strategy once per fault class — holding placement, target, and probes

@@ -33,18 +33,20 @@ contention:
 | Fault | Class | Scenario file | Notes |
 |---|---|---|---|
 | `pod-delete` | Churn | `pod-delete.yaml` | CHAOS_INTERVAL=15s, FORCE=true, PODS_AFFECTED_PERC=100, target=`productcatalogservice`, duration=120s |
-| `node-memory-hog` | Contention | `node-memory-hog.yaml` | MEMORY_CONSUMPTION_PERCENTAGE=75, 1 worker, duration=120s, `TARGET_NODES=auto` (follows the strategy's placement of `productcatalogservice`) |
+| load contention | Contention | `load-contention.yaml` | sustained 200-user Locust spike (`--load-profile spike`) is the stressor, target=`frontend`, duration=120s; the chaos fault is a near-no-op `pod-cpu-hog` (CPU_LOAD=1) that only opens the during-chaos window. Metric: during-load route tail latency (p95), via `scripts/contention_routes.py` — **not** the resilience score |
 
-`node-memory-hog` replaces `pod-cpu-hog` as the contention experiment on the
-advice of the thesis review (the *best new core experiment*). Node-scoped memory
-pressure acts at the layer where placement actually matters — kubelet eviction
-and OOM bypass the per-pod CPU request guarantee — so a denser placement should
-bite harder. **`pod-cpu-hog` is demoted to an appendix/pilot** (see below): CPU
-limits are hard-enforced by CFS throttling, so the fault collapses into
-container-local self-throttling and does not degrade the app (smoke test:
-`colocate` and `default` both scored 100 despite ~3× throttling). It is kept only
-as a falsifiable pilot showing *why* node-level contention is the cleaner test,
-not as a headline result.
+The contention experiment is **load**, not a synthetic hog: hog faults do not
+create placement-sensitive contention on this cluster. `pod-cpu-hog` is
+CFS-capped at the container's CPU limit, so CPU *requests* keep the light app
+pods responsive (smoke test: `colocate` and `default` both scored 100 despite
+~3× throttling). `node-memory-hog` cannot induce node pressure either — the
+stress helper is the kubelet's first eviction victim and self-evicts before the
+app is touched (verified vs litmus-go source + issue #3397; see the scenario's
+header). Both hog faults are **negative results, retained but not used** as the
+contention experiment. Genuine contention needs real cross-pod competition that
+cgroup requests do not isolate — i.e. real *load*: under a sustained 200-user
+Locust spike the app pods contend for the node's actual CPU/network/cache beyond
+their requests and the inter-service call path becomes the bottleneck.
 
 Baseline strategy uses a trivial `pod-cpu-hog` (1s @ 1% on 0 cores) to validate
 the probe + scoring pipeline — expected score 100%, zero recovery cycles.
@@ -93,10 +95,12 @@ uv run chaosprobe run -n online-boutique \
   --batch-id thesis-churn \
   --output-dir results/churn
 
-# Core contention run — same 3 strategies, node-memory-hog.
+# Core contention run — same 3 strategies, load-contention under a 200-user spike.
+# Load is the stressor; the metric is during-load route tail latency (p95).
 uv run chaosprobe run -n online-boutique \
   --strategies default,colocate,spread \
-  --experiment scenarios/online-boutique/node-memory-hog.yaml \
+  --experiment scenarios/online-boutique/load-contention.yaml \
+  --load-profile spike \
   --iterations 8 \
   --seed 42 \
   --batch-id thesis-contention \
@@ -168,18 +172,18 @@ The thesis rests on two *mechanism* metrics that reproduce across runs (M1, M2);
 
 - **M1 (conntrack flush separates spread from colocate):** under `pod-delete`, `spread` and `default` should flush a large fraction of `conntrack_entries_per_node` during the kill cycle (pre-chaos mean → during-chaos mean ≈ 36–39%), while `colocate` stays roughly flat (≈ −1.6%). Reproduced means `spread` flush > `colocate` flush. `scripts/mechanism_metrics.py` recomputes this directly from each `summary.json`.
 - **M2 / H7 (CPU throttling runs counter to the contention model under churn):** under `pod-delete`, `colocate` should produce *less* throttling (`metrics.prometheus.phases.during-chaos.cpu_throttling.mean`) than `default` and `spread`. PSI (`cpu_pressure_some`) should agree where cgroup-v2 is present. This is a bounded, mechanism-layer observation — not a universal refutation of the contention model.
-- **Contention positive control (`node-memory-hog`):** this is the regime where placement *should* bite. Under node-memory-hog, `colocate` (all pods on the hogged node) is expected to show more OOM-kills / evictions (`metrics.podStatus.totalOOMKills`, node `MemoryPressure` conditions) and worse route tails (`metrics.latency.summary.p95/p99`, error rate) than `spread` (only the 1–3 pods on the hogged node evict). A *user-visible* placement separation here — in contrast to its absence under churn (H3) — is the fault-class-specific result the contention experiment is designed to test. If the separation is absent or reversed at non-negligible effect size, the contention-placement hypothesis is **not** supported for this workload (report it as such; do not force it).
+- **Contention experiment (`load-contention` under `--load-profile spike`):** this is the regime where placement moves the *mechanism*. Under a sustained 200-user load, `colocate` (inter-service calls stay node-local) is expected to show lower **east-west inter-service** tail latency than `spread` (every call crosses the network). This is computed from during-load route tails by `scripts/contention_routes.py` (which reads `aggregated.routeViewAggregate`), **not** from the resilience score (under sustained load the score is uniformly degraded / pre-chaos tainted — expected here, not a data-quality failure). Reproduced means colocate's inter-service p95 sits consistently below spread's (~1.3–1.4× across the east-west routes). The **user-visible** layer is **not** expected to separate reproducibly: per H4 (two *i* = 4 batches) the inter-service mechanism replicates but the user-facing magnitude does not, so do **not** quote a user-visible placement win here.
 
 The aggregate `meanResilienceScore` is **not** expected to yield a stable strategy ordering: across the collected runs (≥ 8 valid iterations per strategy) no pairwise difference survives the `chaosprobe stats` Holm-Bonferroni correction, so an *absence* of significant pairs is the expected result (M4), not a sign of divergence. What signals a materially different cluster or workload is divergence on the mechanism metrics — e.g. `colocate` *worse* than `default`/`spread` on `cpu_throttling`, or `colocate` flushing more conntrack than `spread`. The threats-to-validity section of the thesis (slide 13) is the place to look first.
 
 ## Reproducibility manifest
 
-Every number quoted as a *finding* must be traceable to an archived, clean-provenance run. Before quoting any run, gate it with `doctor --strict` and **never quote results from a run that fails it** (this is exactly why the H4 load-locality result is held as a pilot — its launching tree was dirty). Archive the following so a reviewer can reconstruct any figure or table:
+Every number quoted as a *finding* must be traceable to an archived, clean-provenance run. Before quoting any run, gate it with `doctor --strict` and **never quote results from a run that fails it** (this is exactly why the original dirty H4 pilot was replaced by two `doctor`-gated *i* = 4 batches). Archive the following so a reviewer can reconstruct any figure or table:
 
 | Requirement | What to archive or record | Where it already lives |
 |---|---|---|
 | **Raw data** | All `summary.json` files, per-iteration exports, Locust CSVs (incl. `stats_failures.csv`), Litmus `ChaosResult` CRDs, Kubernetes events, pre/post cluster snapshots, and any generated stats CSVs | `results/<timestamp>/` + `chaosprobe export` |
-| **Scripts** | Every analysis script behind a quoted number, plus the bundling entry point | `scripts/{score_variance,mechanism_metrics,h3_mechanism_outcome,distribution_charts,archive_run}.py` |
+| **Scripts** | Every analysis script behind a quoted number, plus the bundling entry point | `scripts/{score_variance,mechanism_metrics,h3_mechanism_outcome,distribution_charts,contention_routes,fault_taxonomy,archive_run}.py` |
 | **Environment** | Kubernetes version, CNI, kube-proxy mode + conntrack settings, container runtime, node counts and mem/CPU, ChaosProbe version, Python version, host OS | `summary.json → overall_results.runMetadata` (`chaosprobeVersion`, `pythonVersion`, `platform`, `kubernetes.*`, `cniHint`, `kubeProxy.{mode, conntrack}`) |
 | **Cluster config** | Scheduler settings, topology labels, taints, resource limits/requests, any nodeSelectors/affinity | `scenarios/online-boutique/deploy/*.yaml` + this doc's Cluster table |
 | **Randomness** | Base seed, per-iteration seed, strategy order per block | `--seed` (recorded in `summary.json`); seed set documented under Strategies above |
