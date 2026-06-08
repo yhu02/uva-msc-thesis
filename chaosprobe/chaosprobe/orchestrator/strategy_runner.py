@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -842,6 +843,28 @@ def _run_single_iteration(
         # snapshot in collect() can be diffed against a clean baseline.
         endpoint_slices_pre = ctx.metrics_collector.snapshot_endpoint_slices()
 
+        # Schedule a mid-chaos EndpointSlice snapshot. run_experiments() below
+        # blocks for the whole fault window, so a background timer fires at the
+        # drain midpoint to catch the transient outage trough — services whose
+        # endpoints drop to zero during a node drain but reschedule back before
+        # the post-chaos snapshot. The timer uses the metrics collector's own API
+        # client; the main thread is blocked in ChaosRunner's separate client, so
+        # the two never touch the same client concurrently.
+        endpoint_slices_during: Dict[str, Any] = {}
+
+        def _capture_during_chaos() -> None:
+            try:
+                snap = ctx.metrics_collector.snapshot_endpoint_slices()
+                if snap is not None:
+                    endpoint_slices_during["snapshot"] = snap
+            except Exception:  # pragma: no cover - best-effort observability
+                logger.debug("mid-chaos EndpointSlice snapshot failed", exc_info=True)
+
+        during_delay = max(1.0, chaos_duration * 0.5)
+        during_timer = threading.Timer(during_delay, _capture_during_chaos)
+        during_timer.daemon = True
+        during_timer.start()
+
         # Run experiment
         experiment_start = time.time()
         for p in probers.values():
@@ -862,6 +885,9 @@ def _run_single_iteration(
         runner.run_experiments(scenario.get("experiments", []))
 
         experiment_end = time.time()
+        # Cancel the mid-chaos snapshot timer if the fault finished before it
+        # fired (a no-op once it has already run).
+        during_timer.cancel()
         for p in probers.values():
             if p and hasattr(p, "mark_chaos_end"):
                 p.mark_chaos_end()
@@ -897,6 +923,7 @@ def _run_single_iteration(
         resource_data=prober_results.get("resource"),
         prometheus_data=prober_results.get("prometheus"),
         endpoint_slices_pre=endpoint_slices_pre,
+        endpoint_slices_during=endpoint_slices_during.get("snapshot"),
         collect_logs=ctx.collect_logs,
     )
 

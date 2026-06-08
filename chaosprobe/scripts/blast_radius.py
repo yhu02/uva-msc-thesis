@@ -18,10 +18,16 @@ This is the *availability* counterpart to the east-west latency-tail story (H5):
 the same co-location structure that raises the cross-node call fraction also
 shrinks the per-node blast radius. One graph property, two consequences.
 
-The metric is read straight from data ChaosProbe already records — the placement
-``assignments`` (deployment -> node) and the EndpointSlice ready counts captured
-pre- and post-chaos (``metrics.endpointSlices``) — so it needs no probe verdict
-(node-drain leaves LitmusChaos probes Unknown; this signal is independent of that).
+The metric is read straight from data ChaosProbe records — the placement
+``assignments`` (deployment -> node) and the EndpointSlice ready counts
+(``metrics.endpointSlices``) — so it needs no probe verdict (node-drain leaves
+LitmusChaos probes Unknown; this signal is independent of that).
+
+The blast is read at the *trough*: the mid-chaos ``duringChaos`` snapshot when
+present, else ``postChaos``. This matters for node-drain — the outage is transient
+(a pinned pod reschedules back once the node is uncordoned), so a post-chaos
+snapshot taken minutes later shows full recovery and a blast of 0. The duringChaos
+snapshot, taken while the node is still cordoned, catches the real trough.
 
 Per strategy it reports:
   - the placement's worst-case exposure: the most services co-located on any one
@@ -56,6 +62,7 @@ class BlastMetrics(TypedDict):
     maxNodeConcentration: int
     nodeDistribution: Dict[str, List[str]]
     meanRecoveryMs: Optional[float]
+    troughPhase: str
 
 
 def _strategies(summary: dict) -> Dict[str, dict]:
@@ -94,14 +101,24 @@ def _ready(phase: Optional[dict], svc: str) -> Optional[int]:
     return val if isinstance(val, int) else None
 
 
-def ready_deltas(endpoint_slices: dict, app_services: List[str]) -> Dict[str, tuple]:
-    """For each app service, (preChaos ready, postChaos ready) when both are known."""
+def trough_phase(endpoint_slices: dict) -> str:
+    """The phase that best captures the outage trough.
+
+    Prefer ``duringChaos`` (mid-fault snapshot — catches the transient node-drain
+    outage before pods reschedule back), falling back to ``postChaos`` when no
+    during-chaos snapshot was taken (older runs, non-node faults).
+    """
+    return "duringChaos" if endpoint_slices.get("duringChaos") is not None else "postChaos"
+
+
+def ready_deltas(endpoint_slices: dict, app_services: List[str], phase: str) -> Dict[str, tuple]:
+    """For each app service, (preChaos ready, trough ready) when both are known."""
     pre = endpoint_slices.get("preChaos")
-    post = endpoint_slices.get("postChaos")
+    trough = endpoint_slices.get(phase)
     deltas: Dict[str, tuple] = {}
     for svc in app_services:
         p = _ready(pre, svc)
-        q = _ready(post, svc)
+        q = _ready(trough, svc)
         if p is not None and q is not None:
             deltas[svc] = (p, q)
     return deltas
@@ -118,7 +135,8 @@ def blast_metrics(strategy: dict) -> Optional[BlastMetrics]:
     if not assignments or "preChaos" not in endpoint_slices:
         return None
 
-    deltas = ready_deltas(endpoint_slices, sorted(assignments))
+    phase = trough_phase(endpoint_slices)
+    deltas = ready_deltas(endpoint_slices, sorted(assignments), phase)
     if not deltas:
         return None
 
@@ -145,6 +163,7 @@ def blast_metrics(strategy: dict) -> Optional[BlastMetrics]:
         "maxNodeConcentration": max_on_node,
         "nodeDistribution": node_dist,
         "meanRecoveryMs": mean_recovery,
+        "troughPhase": phase,
     }
 
 
@@ -171,7 +190,7 @@ def report(summary: dict) -> Dict[str, BlastMetrics]:
 
     header = (
         f"  {'strategy':<16}{'drained':>9}{'on node':>9}"
-        f"{'blast':>7}{'pods lost':>11}{'max/node':>10}{'recovery ms':>13}"
+        f"{'blast':>7}{'pods lost':>11}{'max/node':>10}{'recovery ms':>13}{'trough':>13}"
     )
     print(header)
     # Order by observed blast radius, widest first — the headline contrast.
@@ -186,12 +205,16 @@ def report(summary: dict) -> Dict[str, BlastMetrics]:
             f"{m['podsLost']:>11}"
             f"{m['maxNodeConcentration']:>10}"
             f"{(('%.0f' % rec) if isinstance(rec, (int, float)) else '-'):>13}"
+            f"{m['troughPhase']:>13}"
         )
 
     print(
-        "\n  blast   = services driven to 0 ready endpoints by the drain (observed)\n"
+        "\n  blast   = services driven to 0 ready endpoints at the trough (observed)\n"
         "  on node = services the placement pinned to the drained node (predicted)\n"
         "  max/node= most services on any single node = worst-case blast if it drained\n"
+        "  trough  = which snapshot the blast was read from. duringChaos catches the\n"
+        "            transient outage; postChaos (older runs) usually misses it as pods\n"
+        "            reschedule back before it — read a 0 blast there as 'not captured'.\n"
     )
     blasts = {n: m["blastRadius"] for n, m in metrics.items()}
     if len(set(blasts.values())) > 1:

@@ -10,16 +10,20 @@ br = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(br)
 
 
-def _es(pre: dict, post: dict) -> dict:
+def _phase(counts: dict) -> dict:
+    return {"services": {s: {"ready": r} for s, r in counts.items()}}
+
+
+def _es(pre: dict, post: dict, during: dict = None) -> dict:
     """Build an endpointSlices block from {svc: ready} maps."""
-    return {
-        "preChaos": {"services": {s: {"ready": r} for s, r in pre.items()}},
-        "postChaos": {"services": {s: {"ready": r} for s, r in post.items()}},
-    }
+    block = {"preChaos": _phase(pre), "postChaos": _phase(post)}
+    if during is not None:
+        block["duringChaos"] = _phase(during)
+    return block
 
 
-def _strategy(assignments: dict, pre: dict, post: dict, recovery_ms=None) -> dict:
-    metrics = {"endpointSlices": _es(pre, post)}
+def _strategy(assignments: dict, pre: dict, post: dict, recovery_ms=None, during=None) -> dict:
+    metrics = {"endpointSlices": _es(pre, post, during)}
     if recovery_ms is not None:
         metrics["recovery"] = {"summary": {"meanRecovery_ms": recovery_ms}}
     return {"placement": {"assignments": assignments}, "metrics": metrics}
@@ -103,14 +107,38 @@ def test_ready_none_phase():
     assert br._ready(None, "frontend") is None
 
 
+# ── trough_phase ──────────────────────────────────────────────────────────────
+
+
+def test_trough_phase_prefers_during():
+    es = _es({"a": 1}, {"a": 1}, during={"a": 0})
+    assert br.trough_phase(es) == "duringChaos"
+
+
+def test_trough_phase_falls_back_to_post():
+    es = _es({"a": 1}, {"a": 0})
+    assert br.trough_phase(es) == "postChaos"
+
+
+def test_trough_phase_ignores_null_during():
+    es = _es({"a": 1}, {"a": 0})
+    es["duringChaos"] = None
+    assert br.trough_phase(es) == "postChaos"
+
+
 # ── ready_deltas ──────────────────────────────────────────────────────────────
 
 
 def test_ready_deltas_pairs_known_only():
     es = _es({"a": 3, "b": 3}, {"a": 0, "b": 3})
     # "c" absent from snapshots → excluded
-    deltas = br.ready_deltas(es, ["a", "b", "c"])
+    deltas = br.ready_deltas(es, ["a", "b", "c"], "postChaos")
     assert deltas == {"a": (3, 0), "b": (3, 3)}
+
+
+def test_ready_deltas_reads_named_phase():
+    es = _es({"a": 3}, {"a": 3}, during={"a": 0})
+    assert br.ready_deltas(es, ["a"], "duringChaos") == {"a": (3, 0)}
 
 
 # ── blast_metrics ─────────────────────────────────────────────────────────────
@@ -133,6 +161,23 @@ def test_blast_metrics_colocate_wide():
     assert m["maxNodeConcentration"] == 4
     assert m["meanRecoveryMs"] == 35000
     assert m["measuredServices"] == 4
+    assert m["troughPhase"] == "postChaos"  # no during snapshot here
+
+
+def test_blast_metrics_during_catches_transient_trough():
+    # The real node-drain shape: all up pre, all down mid-drain, recovered by
+    # post. Reading post would give blast 0; the during snapshot catches it.
+    strat = _strategy(
+        {"a": "w1", "b": "w1", "c": "w1"},
+        {"a": 1, "b": 1, "c": 1},
+        {"a": 1, "b": 1, "c": 1},  # postChaos: fully recovered
+        during={"a": 0, "b": 0, "c": 0},  # duringChaos: the trough
+    )
+    m = br.blast_metrics(strat)
+    assert m["troughPhase"] == "duringChaos"
+    assert m["blastRadius"] == 3
+    assert m["knockedToZero"] == ["a", "b", "c"]
+    assert m["drainedNode"] == "w1"
 
 
 def test_blast_metrics_spread_narrow():
