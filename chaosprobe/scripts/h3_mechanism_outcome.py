@@ -55,6 +55,8 @@ from typing import Optional
 
 from fault_taxonomy import is_churn
 
+from chaosprobe.metrics.statistics import tost_equivalence_correlation
+
 # --- route classification -------------------------------------------------
 # DEPENDENT: the request path touches productcatalogservice (the chaos target).
 #   /product/<id>  — product page render
@@ -232,6 +234,29 @@ def _star(p: float) -> str:
     return "***" if p < 0.001 else "** " if p < 0.01 else "*  " if p < 0.05 else "  "
 
 
+def _verdict(rho_d: float, p_d: float, rho_c: float, p_c: float, n_d: int) -> str:
+    """Classify one mechanism->outcome link, using TOST for the decoupling null.
+
+    A non-significant dependent correlation is *absence of evidence*; the TOST
+    equivalence test turns it into *evidence of absence* (the dependent
+    correlation is statistically inside the +/-0.3 band), which is what the H3
+    decoupling claim actually needs.
+    """
+    # H3 supported: significant on the dependent route, and clearly weaker on
+    # the control route (rules out a run-level confound lifting both).
+    supported = not math.isnan(rho_d) and p_d < 0.05 and abs(rho_d) - abs(rho_c) > 0.15
+    eq = (
+        tost_equivalence_correlation(rho_d, n_d) if not math.isnan(rho_d) else {"equivalent": False}
+    )
+    if supported:
+        return "H3 supported"
+    if eq["equivalent"]:
+        return "decoupled (TOST)"
+    if not math.isnan(p_c) and p_c < 0.05 and abs(rho_c) > 0.15:
+        return "confound? (both)"
+    return "no link"
+
+
 def report(rows: list[dict]) -> None:
     print(f"\nH3: mechanism -> fault-route tail  (n={len(rows)} strategy-cells, churn only)\n")
     for outcome, label in (("dep_p95", "p95"), ("dep_max", "max")):
@@ -241,17 +266,7 @@ def report(rows: list[dict]) -> None:
             xs = [r[key] for r in rows]
             rho_d, p_d, n_d = spearman(xs, [r[outcome] for r in rows])
             rho_c, p_c, _ = spearman(xs, [r["ctrl_" + label] for r in rows])
-            # H3 supported: significant on dependent, and clearly weaker on control
-            supported = not math.isnan(rho_d) and p_d < 0.05 and abs(rho_d) - abs(rho_c) > 0.15
-            verdict = (
-                "H3 supported"
-                if supported
-                else (
-                    "confound? (both)"
-                    if (not math.isnan(p_c) and p_c < 0.05 and abs(rho_c) > 0.15)
-                    else "no link"
-                )
-            )
+            verdict = _verdict(rho_d, p_d, rho_c, p_c, n_d)
             print(
                 f"  {name:<24} {rho_d:>9.2f}{_star(p_d)} {p_d:>7.3f}   "
                 f"{rho_c:>9.2f}{_star(p_c)} {p_c:>7.3f}   {verdict}"
