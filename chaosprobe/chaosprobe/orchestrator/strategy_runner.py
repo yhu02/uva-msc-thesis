@@ -38,6 +38,7 @@ from chaosprobe.orchestrator.recovery import wait_for_k8s_api
 from chaosprobe.orchestrator.run_phases import (
     _clean_stale_resources,
     _restart_unhealthy_infra,
+    _uncordon_orphaned_nodes,
     aggregate_iterations,
 )
 from chaosprobe.orchestrator.timeout import (
@@ -688,6 +689,10 @@ def _run_single_iteration(
     click.echo("    Cleaning stale resources from previous iteration...")
     _clean_stale_resources(ctx.namespace)
     _restart_unhealthy_infra(ctx.namespace)
+    # A prior node-drain that was interrupted/retried/timed out can leave its
+    # target node cordoned; uncordon it before the readiness gate so pods pinned
+    # there can schedule (otherwise the gate fails and the whole run cascades).
+    _uncordon_orphaned_nodes()
 
     step_label = "  Step 3" if ctx.iterations == 1 else "    Step A"
     click.echo(f"\n{step_label}: Waiting for cluster readiness...")
