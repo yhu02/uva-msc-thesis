@@ -183,6 +183,63 @@ perturbs a mechanism that does not reliably reach the user, and the aggregate
 score cannot rank (H1). The unified takeaway is a **layered decoupling that holds
 across both fault classes tested** — not a regime where load "reaches the user."
 
+## H5 — A graph-derived metric predicts the east-west placement penalty
+
+**Statement.** The east-west (inter-service) tail-latency penalty H4 attributes to a
+placement is predictable, *before any chaos*, from a graph metric: the **cross-node
+call fraction** — the fraction of the service dependency graph's inter-service edges
+whose endpoints sit on different nodes under that placement.
+
+**Operationalization.** All 8 placement strategies × *i* = 4 under a 200-user Locust
+spike (`results/20260608-070606`, archived). Per strategy, the cross-node fraction is
+computed from the *actual* per-iteration `podPlacements` + the dependency edges in
+`routeViewAggregate` (`scripts/cross_node_fraction.py`), and rank-correlated
+(Spearman) with the during-load median east-west p95.
+
+**Result — supported, coarsely.** ρ = **0.79** (n = 8, *p* < 0.05; critical ρ ≈ 0.74):
+
+| strategy | cross-node frac | east-west p95 (ms) |
+|---|---|---|
+| **colocate** | 0.00 | **33.9** |
+| **best-fit** | 0.13 | **35.3** |
+| dependency-aware | 0.73 | 42.6 |
+| spread | 0.73 | 43.5 |
+| baseline | 0.70 | 43.5 |
+| adversarial | 0.80 | 43.5 |
+| default | 0.78 | 45.5 |
+| random | 0.80 | 43.9 |
+
+A metric computable from the graph alone predicts the measured tail — the one place
+this study makes the Neo4j dependency graph *analytically* load-bearing rather than
+mere storage. Two secondary findings:
+
+- **Locality is not unique to `colocate`.** `best-fit` (bin-packing onto few nodes)
+  also achieves a low cross-node fraction (0.13) and the second-lowest tail (35.3 ms):
+  *any* node-packing placement gets the locality benefit.
+- **`dependency-aware` did not deliver.** Its fraction (0.73) is *spread-like*, not
+  intermediate — the BFS service-graph partition did **not** co-locate communicating
+  services as intended, so its tail (42.6 ms) ≈ `spread` (43.5 ms). The study's most
+  distinctive strategy does not beat the naive ones *as implemented*; the partition is
+  a candidate for future improvement.
+
+**Caveats (do not overstate this).**
+
+- *Coarse, not a smooth law.* The correlation is carried by the two **node-local**
+  placements (colocate, best-fit) sitting below the six **spreading** ones, which
+  cluster at 0.70–0.80 fraction / 42–46 ms with no clean trend *within* the cluster.
+  The defensible claim is "node-local placements have lower east-west tails and the
+  fraction captures that," not a fine continuous predictor.
+- *User layer stays weak.* On the user-facing routes `colocate` is only ~1.3× below
+  `spread` and barely dependency-specific (control 1.29× ≈ dependent 1.34×) — H5 is an
+  east-west **mechanism**-layer result, consistent with the H3/H4 decoupling, not a
+  user-visible win.
+- *Single batch.* One *i* = 4 run; "reproducible" needs ≥ 2 batches. The aggregate
+  score still cannot rank (all 8 scored 100, all CIs overlap — H1).
+
+```
+uv run python scripts/cross_node_fraction.py -s results/20260608-070606/summary.json
+```
+
 ## Synthesis
 
 Under single-replica churn, placement leaves a large, reproducible footprint at

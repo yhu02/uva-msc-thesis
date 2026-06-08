@@ -29,6 +29,12 @@ the user.
   not capture (H2).
 - **Mechanism and user-visible layers can decouple** — a placement effect at the
   mechanism layer did not, in this single-replica regime, reach the user (H3).
+- **A graph-derived metric predicts the east-west placement penalty** — across 8
+  placements, the cross-node call fraction (computable from the dependency graph +
+  placement, before any chaos) rank-correlates with the during-load east-west tail
+  (ρ = 0.79, n = 8). Coarse (it mainly separates node-local placements from spreading
+  ones) and single-batch, but it makes the dependency graph analytically load-bearing
+  (H5).
 
 ## What is bounded or preliminary (weaken — never state flatly)
 

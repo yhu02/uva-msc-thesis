@@ -1,6 +1,6 @@
 # Proposed experiments (research roadmap)
 
-The validated results so far ([Hypotheses & findings](hypotheses.md), H1–H4) are a
+The validated results so far ([Hypotheses & findings](hypotheses.md), H1–H5) are a
 careful but largely *negative / decoupling* story: under single-replica churn and
 under load contention, placement moves a **mechanism** layer but not, reproducibly,
 the **user** layer, and the aggregate score cannot rank. A complete thesis wants at
@@ -8,7 +8,7 @@ least one **positive, surprising, defensible** result. This page proposes the ne
 experiments that ChaosProbe can run to get there.
 
 These are **proposals, not findings** — none have been run as a clean campaign yet.
-They are labelled **P1–P4** to avoid colliding with the validated **H1–H4** in
+They are labelled **P1–P4** to avoid colliding with the validated **H1–H5** in
 `hypotheses.md`. Each is reconciled with what we have already *verified* this study
 (so we don't re-propose something the data already rules out — see
 [What we deliberately do not propose](#what-we-deliberately-do-not-propose)).
@@ -108,7 +108,7 @@ show it would indicate an instrumentation bug worth chasing.
 
 ---
 
-## New metric — cross-node call fraction (implemented; partially validated)
+## New metric — cross-node call fraction (implemented and validated — now H5)
 
 A graph-derived metric computable **before any chaos**, from the actual per-iteration
 pod→node placement (`podPlacements`) + the inter-service edges encoded in
@@ -117,21 +117,18 @@ nodes** under each strategy. It is the natural *explanator* for the east-west ta
 effect H4 measured (placement → cross-node fraction → east-west p95), and it makes the
 dependency graph load-bearing.
 
-- **Status: implemented** as `scripts/cross_node_fraction.py` (zero cluster cost).
-- **Partial validation on the existing load runs:** it cleanly separates `colocate`
-  (fraction **0.0** → east-west p95 ~34 ms) from the spreading strategies
-  (`default`/`spread`/`baseline`, fraction ~**0.72** → ~43–45 ms) — i.e. it correctly
-  predicts colocate's advantage. But those three tie near the graph's intrinsic
-  cross-node fraction, so this is a **colocate-vs-rest contrast, not a gradient**: the
-  current runs lack any strategy with an *intermediate* fraction.
-- **What it needs to become a *predictor* claim:** a run including the intermediate-
-  fraction strategies (`dependency-aware`, `best-fit`, `random`, `adversarial`), which
-  would populate the middle of the fraction axis and let the rank correlation mean
-  something. This is the cheapest motivation for an 8-strategy load run, and the
-  natural pairing with P2 (dependency-aware).
-- **Unlocks:** P2's mechanistic predictor and a standalone claim — "a placement's
-  east-west penalty is predictable from a graph metric without running chaos" — once
-  the gradient is filled in.
+- **Status: implemented** as `scripts/cross_node_fraction.py` (zero cluster cost) and
+  **validated** by an 8-strategy load run — promoted to a finding, **[H5](hypotheses.md#h5--a-graph-derived-metric-predicts-the-east-west-placement-penalty)**.
+- **Result:** across all 8 strategies the cross-node fraction rank-correlates with the
+  during-load east-west p95, **ρ = 0.79** (n = 8, *p* < 0.05) — the intermediate-
+  fraction strategies (`best-fit` 0.13, `random`/`adversarial` ~0.80) filled the
+  gradient the earlier 4-strategy runs lacked.
+- **Two secondary findings (in H5):** `best-fit` is also node-local (low fraction →
+  second-lowest tail — locality is not unique to `colocate`); `dependency-aware` did
+  **not** deliver (its fraction is spread-like — the BFS partition did not co-locate
+  communicating services).
+- **Caveats:** coarse (the correlation mainly separates node-local from spreading
+  placements, not a smooth law); the user layer stays weak (~1.3×); single batch.
 
 ---
 

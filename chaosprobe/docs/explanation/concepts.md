@@ -18,7 +18,7 @@ obscure those effects?* This is deliberately a **fault-class-by-measurement-laye
 study**, not a hunt for a single "best" strategy: a placement effect can appear
 at one layer (e.g. a kernel/network mechanism) without reaching another (the
 user-visible outcome), and an aggregate score can hide both. See
-[hypotheses & findings](hypotheses.md) for the falsifiable hypotheses (H1–H4)
+[hypotheses & findings](hypotheses.md) for the falsifiable hypotheses (H1–H5)
 and their bounded claims.
 
 ## The AI feedback loop
