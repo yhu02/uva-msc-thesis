@@ -46,6 +46,8 @@ from typing import Optional
 
 from fault_taxonomy import is_churn
 
+from chaosprobe.metrics.statistics import wilcoxon_signed_rank
+
 COMPARISON_SET = ("colocate", "default", "spread")
 
 
@@ -108,6 +110,16 @@ def report(data: dict) -> None:
     m1 = data["m1_runs"]
     wins = sum(1 for _, sp, co in m1 if sp > co)
     print(f"\n  M1 reproducibility: spread flush > colocate flush in {wins} / {len(m1)} runs")
+    if m1:
+        # Paired by run: spread vs colocate flush under identical cluster state.
+        # The Wilcoxon p tests the magnitude difference; the sign test gives the
+        # exact "k/k runs" probability the deck's count is really making.
+        w = wilcoxon_signed_rank([sp for _, sp, _ in m1], [co for _, _, co in m1])
+        sgn = w["sign_test"]
+        print(
+            f"  M1 paired test: Wilcoxon W={w['w_statistic']} p={w['p_two_sided']}; "
+            f"sign test {sgn['n_pos']}/{sgn['n']} p={sgn['p_two_sided']}"
+        )
 
     _fmt_table("M2  during-chaos CPU throttle rate (median across churn runs)", data["throttle"], 2)
     m2 = data["m2_runs"]

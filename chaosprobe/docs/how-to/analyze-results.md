@@ -138,6 +138,40 @@ chain). Note: a *gradient* needs the intermediate-fraction strategies
 `colocate` forcing node-locality the spreading strategies tie, and the script
 says so.
 
+## Node failure: placement × replicas interaction (E1)
+
+For `node-drain` runs across two replica counts (e.g. `run -r 1` and `run -r 3`),
+test whether placement is a *user-visible* availability lever and whether the
+effect interacts with replica count:
+
+```bash
+uv run python scripts/node_drain_interaction.py --results-dir results
+```
+
+It derives, per run and strategy, the trough availability (mean
+`ready_trough / ready_pre` over the measured services) and the replica count
+(from the pre-chaos ready count), then runs an **Aligned Rank Transform
+factorial ANOVA** (`art_anova`) over `placement × replicas`. The headline is the
+**interaction** term: a significant interaction means placement moves
+availability at multiple replicas but not at one. With only one replica level in
+the results, the replica and interaction effects are reported as `n/a`.
+
+## Stronger statistics in the hypothesis scripts
+
+The H1–H3 scripts above back their claims with the tests in
+`chaosprobe.metrics.statistics`:
+
+- `score_variance.py` prints a **bootstrap 95% CI** on `ICC_strategy`
+  (`icc_bootstrap`), so the "the score can't rank placements" claim carries its
+  uncertainty.
+- `mechanism_metrics.py` adds a **paired Wilcoxon signed-rank** test and an exact
+  **sign test** for the spread-vs-colocate flush comparison (`wilcoxon_signed_rank`),
+  turning the "k/k runs" count into a p-value.
+- `h3_mechanism_outcome.py` reports a **TOST equivalence** verdict
+  (`tost_equivalence_correlation`): "decoupled (TOST)" means the dependent-route
+  correlation is statistically *inside* ±0.3 — evidence of absence, not absence
+  of evidence.
+
 ## Next
 
 - Full flags for each command: [CLI reference](../reference/cli.md).

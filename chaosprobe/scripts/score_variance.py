@@ -53,6 +53,8 @@ from collections import defaultdict
 
 from fault_taxonomy import is_churn
 
+from chaosprobe.metrics.statistics import icc_bootstrap
+
 # z for a two-sided alpha=0.05 test and 80% power
 _Z = 1.959964 + 0.841621
 FOCAL = ("colocate", "spread")
@@ -112,6 +114,16 @@ def _n_for_power(d: float) -> float:
     return 2 * _Z * _Z / (d * d) if d > 0 else float("inf")
 
 
+def _format_icc_ci(ci: dict) -> str:
+    """Render the bootstrap ICC interval, or a clear note when it is undefined."""
+    if ci["ci_low"] is None or ci["ci_high"] is None:
+        return "  ICC 95% CI = n/a (insufficient runs to bootstrap)"
+    return (
+        f"  ICC 95% CI = [{ci['ci_low']}, {ci['ci_high']}]  "
+        f"(cluster bootstrap, {ci['n_resamples']} resamples)"
+    )
+
+
 def report(cells: dict[tuple[str, str], list[float]], n_iter: int) -> None:
     r = decompose(cells)
     t = r["total"]
@@ -127,6 +139,7 @@ def report(cells: dict[tuple[str, str], list[float]], n_iter: int) -> None:
         v = r[key]
         print(f"  {name:<22}{v:>9.1f}{100 * v / t:>8.1f}%{math.sqrt(v):>7.1f}")
     print(f"\n  ICC_strategy (signal fraction) = {r['icc']:.3f}")
+    print(_format_icc_ci(icc_bootstrap(cells)))
     print(
         "  strategy means: "
         + ", ".join(f"{k} {v:.1f}" for k, v in sorted(r["strat_means"].items()))
