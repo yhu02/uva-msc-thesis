@@ -109,6 +109,19 @@ uv run chaosprobe report -s rerun.json --diff baseline.json -o report.md
 Bundles `doctor` + `summarize` + `stats` (+ optional `diff`) into a single
 markdown appendix.
 
+## Compare during-load route tails (contention runs)
+
+For a `load-contention` run (driven with `--load-profile spike`), the metric is
+during-load route tail latency per placement, not the resilience score:
+
+```bash
+uv run python scripts/contention_routes.py -s <run>/summary.json
+```
+
+This reads `aggregated.routeViewAggregate` and compares the during-load route
+p95 across strategies (e.g. `colocate` vs `spread`) to surface the east-west
+inter-service locality effect.
+
 ## Next
 
 - Full flags for each command: [CLI reference](../reference/cli.md).

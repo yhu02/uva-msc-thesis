@@ -233,9 +233,10 @@ support — and what generalizes vs. what does not — see
   full run set. Contention was probed two ways: resource *hog* faults
   (`pod-cpu-hog`, `node-cpu-hog`, `node-memory-hog`) are absorbed by cgroup
   limits/requests and do not degrade the app; genuine *load* contention (H4)
-  does degrade it and *appears* to reorder the strategies in a single
-  3-iteration pilot with dirty provenance — but that is a pilot, not a finding,
-  and needs a clean, replicated re-run before any reordering is claimed.
+  does degrade it, and across two replicated *i* = 4 batches placement
+  reproducibly moves the east-west inter-service mechanism (colocate ~1.3–1.4×
+  lower inter-service tail) but does **not** reproducibly reach the user layer —
+  so no user-visible reordering is claimed under load.
 - **Single replica:** 100 % `pod-delete` guarantees full outage, so the
   outcome is dominated by availability, not topology. The production-relevant
   question — multi-replica anti-affinity (do replicas share a failure domain?) —
@@ -256,7 +257,7 @@ support — and what generalizes vs. what does not — see
 | **Version sensitivity** | kube-proxy / conntrack behaviour evolves across releases. | Archive exact Kubernetes, CNI, runtime, ChaosProbe, and commit metadata (`runMetadata`); present as a measurement study of a specific environment. |
 | **Placement mismatch** | The scheduler may not realize the intended placement. | Report `placementMatchRates`; flag or exclude mismatched iterations. |
 | **Run-to-run drift** | Iteration noise can dominate (H1). | Block runs, randomize strategy order, capture pre/post snapshots, model run as a random/blocking effect. |
-| **Dirty provenance** | Untracked files / missing metadata undermine credibility (H4). | Never quote results from runs failing `doctor --strict`; rerun H4 cleanly or hold it as a pilot. |
+| **Dirty provenance** | Untracked files / missing metadata undermine credibility (H4). | Never quote results from runs failing `doctor --strict`; the original dirty H4 pilot was replaced by two `doctor`-gated *i* = 4 batches. |
 | **Metric-availability gaps** | Missing PromQL queries can manufacture fake zeros. | Use `metricAvailability` to distinguish "not collected" from "collected zero". |
 | **Overclaiming causality** | Run-level slowness can confound correlations. | Use dependent vs control routes and within-run correlation; reserve causal language for the manipulated variable (placement). |
 
@@ -274,9 +275,12 @@ support — and what generalizes vs. what does not — see
 > is fault-class-specific: under single-replica `pod-delete` churn, placement
 > reproducibly changes kernel/network reconvergence signatures, but these
 > differences do not yield a stable user-visible advantage and are poorly
-> captured by aggregate resilience scores. A preliminary load-contention pilot
-> suggests latency-dominated faults may expose stronger user-visible placement
-> effects, motivating a clean follow-up. These results show that placement under
+> captured by aggregate resilience scores. A second fault class, load
+> contention (two replicated *i* = 4 batches), reinforces this layered picture:
+> placement reproducibly moves the east-west inter-service mechanism — co-located
+> services keep calls node-local and show lower inter-service tail latency — but
+> the user-visible effect does not survive replication, so no user-visible
+> placement advantage is claimed under load. These results show that placement under
 > chaos should not be evaluated with a single score alone: resilience conclusions
 > depend on both the fault class and the measurement layer. The thesis
 > contributes a reproducible experimental framework, a bounded empirical study,

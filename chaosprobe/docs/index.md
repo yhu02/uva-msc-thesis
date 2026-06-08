@@ -51,7 +51,7 @@ Background and rationale — the *why*.
 - [Concepts](explanation/concepts.md) — the AI feedback loop, placement
   strategies, resilience scoring, and the system architecture.
 - [Hypotheses & findings](explanation/hypotheses.md) — the falsifiable research
-  hypotheses (H1–H3), their status, and the committed script that reproduces
+  hypotheses (H1–H4), their status, and the committed script that reproduces
   each number.
 - [Scope of claims](explanation/scope-of-claims.md) — what the evidence does and
   does not support, and what generalizes vs. what does not. Read before quoting

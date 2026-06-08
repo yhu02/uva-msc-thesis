@@ -278,6 +278,11 @@ chaosprobe cleanup online-boutique --all
 
 Placement experiments control pod scheduling to study how co-location affects multiple resilience dimensions under chaos: pod recovery time, inter-service latency, Redis/disk I/O throughput, node resource utilisation, and fault cascade propagation. All strategies use a single shared experiment file (`pod-delete.yaml` — pod-delete on productcatalogservice with 7 frontend HTTP probes across 4 sensitivity tiers) while continuous probers collect multi-signal telemetry throughout each run.
 
+The thesis study uses two fault classes, run separately:
+
+- **Churn / availability** — [`pod-delete.yaml`](pod-delete.yaml) (above).
+- **Contention** — [`load-contention.yaml`](load-contention.yaml), run with `--load-profile spike`. A sustained 200-user Locust spike (targeting `frontend`) is the stressor; the chaos fault is a near-no-op `pod-cpu-hog` that only opens the during-chaos window. The metric is during-load route tail latency (p95) via `scripts/contention_routes.py`, not the resilience score. Synthetic *hog* faults are **not** used for contention: `cpu-hog.yaml`/`pod-cpu-hog` is CFS-capped, and [`node-memory-hog.yaml`](node-memory-hog.yaml) is retained but **demoted** — it cannot induce node pressure on this cluster (the stress helper self-evicts; see its header).
+
 **Strategies:**
 
 | Strategy | Description |
