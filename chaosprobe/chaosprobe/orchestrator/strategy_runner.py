@@ -1119,6 +1119,28 @@ def _is_unknown_dominated(ir: Dict[str, Any]) -> bool:
     return int(ir.get("unknownProbeCount", 0)) * 2 > len(verdicts)
 
 
+def _iteration_quality(ir: Dict[str, Any]) -> Tuple[int, int, int]:
+    """Rank an iteration result so a retry keeps the most-useful attempt.
+
+    Higher sorts better, most-significant field first:
+
+    1. a real (non-Unknown-dominated, non-``ERROR``) verdict — the gold outcome,
+       never sacrificed to a later Unknown or errored retry;
+    2. captured EndpointSlice metrics — the node-fault blast-radius signal a
+       failed retry would otherwise discard;
+    3. captured any metrics at all.
+
+    Used by :func:`_run_iteration_with_unknown_retry` to choose between attempts
+    instead of blindly returning the last one (a retry that raised or came back
+    emptier than the first attempt must not overwrite the first attempt's data).
+    """
+    metrics = ir.get("metrics") or {}
+    real_verdict = int(not _is_unknown_dominated(ir) and ir.get("verdict") not in (None, "ERROR"))
+    has_endpoints = int(bool(metrics.get("endpointSlices")))
+    has_metrics = int(bool(metrics))
+    return real_verdict, has_endpoints, has_metrics
+
+
 def _run_iteration_with_unknown_retry(
     ctx: RunContext,
     strategy_name: str,
@@ -1138,10 +1160,31 @@ def _run_iteration_with_unknown_retry(
     ``Pass``/``Fail`` verdicts are returned unchanged on the first try.
 
     Records ``retryCount`` on every iteration for transparency.
+
+    Across retries the *best* attempt is kept (see :func:`_iteration_quality`),
+    not the last: a first attempt that completed the fault and captured metrics
+    must not be discarded by a later retry that raised or came back emptier —
+    which is exactly what happens when a node-drain leaves the target node
+    cordoned and the retry's readiness gate then fails.
     """
     attempt = 0
+    best: Optional[Dict[str, Any]] = None
     while True:
-        ir = _run_single_iteration(ctx, strategy_name, strategy_result, iteration)
+        try:
+            ir = _run_single_iteration(ctx, strategy_name, strategy_result, iteration)
+        except Exception as exc:
+            # A retry that raised must not lose a usable earlier attempt. Fall
+            # back to the best attempt so far; only propagate when there is none.
+            if best is None:
+                raise
+            click.echo(
+                f"    Iteration {iteration}: retry raised ({exc}) — keeping the "
+                f"earlier attempt's measurements.",
+                err=True,
+            )
+            break
+        if best is None or _iteration_quality(ir) > _iteration_quality(best):
+            best = ir
         if _is_unknown_dominated(ir) and attempt < budget:
             attempt += 1
             n_unknown = ir.get("unknownProbeCount", 0)
@@ -1154,6 +1197,8 @@ def _run_iteration_with_unknown_retry(
             continue
         break
 
+    assert best is not None  # set on the first completed _run_single_iteration
+    ir = best
     ir["retryCount"] = attempt
     if _is_unknown_dominated(ir):
         ir["verdict"] = "ERROR"
