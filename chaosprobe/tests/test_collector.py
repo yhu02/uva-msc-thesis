@@ -263,6 +263,50 @@ class TestEndpointSliceSnapshot:
 
         assert result["endpointSlices"]["preChaos"] is pre
         assert result["endpointSlices"]["postChaos"]["services"]["frontend"]["ready"] == 1
+        # No during snapshot passed → the key is omitted entirely.
+        assert "duringChaos" not in result["endpointSlices"]
+
+    def test_collect_includes_during_snapshot_when_provided(self):
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[])
+        collector.discovery_api.list_namespaced_endpoint_slice.return_value = MagicMock(
+            data=json.dumps({"items": [self._slice("frontend", 1)]})
+        )
+        pre = {"services": {"frontend": {"ready": 3}}, "capturedAt": "t0"}
+        during = {"services": {"frontend": {"ready": 0}}, "capturedAt": "t1"}
+
+        result = collector.collect(
+            deployment_name="frontend",
+            since_time=1000.0,
+            until_time=1060.0,
+            endpoint_slices_pre=pre,
+            endpoint_slices_during=during,
+        )
+
+        assert result["endpointSlices"]["preChaos"] is pre
+        assert result["endpointSlices"]["duringChaos"] is during
+        assert result["endpointSlices"]["postChaos"]["services"]["frontend"]["ready"] == 1
+
+    def test_collect_includes_during_even_without_pre(self):
+        # A during snapshot alone is enough to emit the section.
+        collector, mock_core = _make_collector()
+        collector.core_api = mock_core
+        mock_core.list_namespaced_pod.return_value = MagicMock(items=[])
+        collector.discovery_api.list_namespaced_endpoint_slice.side_effect = ApiException(
+            status=403
+        )
+        during = {"services": {"frontend": {"ready": 0}}, "capturedAt": "t1"}
+
+        result = collector.collect(
+            deployment_name="frontend",
+            since_time=1000.0,
+            until_time=1060.0,
+            endpoint_slices_during=during,
+        )
+
+        assert result["endpointSlices"]["duringChaos"] is during
+        assert result["endpointSlices"]["postChaos"] is None
 
     def test_collect_omits_section_when_both_absent(self):
         collector, mock_core = _make_collector()

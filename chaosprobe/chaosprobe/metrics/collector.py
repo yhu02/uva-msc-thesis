@@ -48,6 +48,7 @@ class MetricsCollector:
         resource_data: Optional[Dict[str, Any]] = None,
         prometheus_data: Optional[Dict[str, Any]] = None,
         endpoint_slices_pre: Optional[Dict[str, Any]] = None,
+        endpoint_slices_during: Optional[Dict[str, Any]] = None,
         collect_logs: bool = False,
     ) -> Dict[str, Any]:
         """Collect all available metrics for a deployment during an experiment.
@@ -75,6 +76,14 @@ class MetricsCollector:
                                  ``endpointSlices`` so the net endpoint change
                                  around the fault window is visible. If None,
                                  only the post-chaos snapshot is recorded.
+            endpoint_slices_during: Mid-chaos EndpointSlice snapshot captured by
+                                 the caller while the fault is active (e.g. at the
+                                 drain midpoint). Recorded under ``endpointSlices.
+                                 duringChaos``. Unlike the post-chaos snapshot, it
+                                 catches the transient outage trough — services
+                                 whose endpoints drop to zero during a node drain
+                                 but reschedule back before post-chaos. If None,
+                                 the key is omitted.
             collect_logs: If True, collect container logs from target pods.
 
         Returns:
@@ -157,11 +166,19 @@ class MetricsCollector:
                 result["utilization"] = utilization
 
         endpoint_slices_post = self.snapshot_endpoint_slices()
-        if endpoint_slices_pre is not None or endpoint_slices_post is not None:
+        if (
+            endpoint_slices_pre is not None
+            or endpoint_slices_during is not None
+            or endpoint_slices_post is not None
+        ):
             result["endpointSlices"] = {
                 "preChaos": endpoint_slices_pre,
                 "postChaos": endpoint_slices_post,
             }
+            # Only emit duringChaos when it was actually captured, so existing
+            # consumers that key on pre/post are unaffected by its absence.
+            if endpoint_slices_during is not None:
+                result["endpointSlices"]["duringChaos"] = endpoint_slices_during
 
         if collect_logs:
             duration = until_time - since_time
