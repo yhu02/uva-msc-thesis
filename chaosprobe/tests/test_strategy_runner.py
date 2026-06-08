@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from chaosprobe.orchestrator import strategy_runner
 from chaosprobe.orchestrator.readiness import shell_escape
 from chaosprobe.orchestrator.strategy_runner import (
@@ -1083,6 +1085,64 @@ class TestRunIterationWithUnknownRetry:
         assert len(calls) == 1
         assert ir["retryCount"] == 0
         assert ir["verdict"] == "FAIL"
+
+    @staticmethod
+    def _unknown_with_metrics():
+        ir = TestRunIterationWithUnknownRetry._unknown()
+        ir["metrics"] = {"endpointSlices": {"preChaos": {}, "duringChaos": {}}}
+        return ir
+
+    def _seq_raising(self, monkeypatch, items):
+        # items: dicts are returned; Exception instances are raised, in order.
+        it = iter(items)
+
+        def fake(*a, **k):
+            item = next(it)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        monkeypatch.setattr(strategy_runner, "_run_single_iteration", fake)
+
+    def test_retry_raise_keeps_earlier_attempt_with_metrics(self, monkeypatch):
+        # First attempt completed the fault and captured metrics, then came back
+        # Unknown; the retry raises (e.g. readiness gate fails on a cordoned
+        # node). The earlier attempt's metrics must survive, not be discarded.
+        self._seq_raising(monkeypatch, [self._unknown_with_metrics(), RuntimeError("not ready")])
+        ir = strategy_runner._run_iteration_with_unknown_retry(MagicMock(), "default", {}, 1)
+        assert ir["retryCount"] == 1
+        assert ir["tainted"] is True  # still Unknown-dominated → tainted
+        assert ir["verdict"] == "ERROR"
+        # ...but the captured measurements are preserved, not overwritten.
+        assert ir["metrics"]["endpointSlices"]["duringChaos"] == {}
+
+    def test_first_attempt_raise_propagates(self, monkeypatch):
+        # No earlier attempt to fall back on → the exception propagates so
+        # _run_iterations records a genuine error iteration.
+        self._seq_raising(monkeypatch, [RuntimeError("k8s down")])
+        with pytest.raises(RuntimeError, match="k8s down"):
+            strategy_runner._run_iteration_with_unknown_retry(MagicMock(), "default", {}, 1)
+
+    def test_keeps_attempt_with_metrics_over_emptier_unknown(self, monkeypatch):
+        # Among Unknown attempts, the one that captured metrics wins even when a
+        # later, emptier Unknown attempt is the last one seen.
+        self._seq(
+            monkeypatch,
+            [self._unknown(), self._unknown_with_metrics(), self._unknown()],
+        )
+        ir = strategy_runner._run_iteration_with_unknown_retry(MagicMock(), "default", {}, 1)
+        assert ir["retryCount"] == 2
+        assert ir["tainted"] is True
+        assert "endpointSlices" in ir["metrics"]
+
+    def test_iteration_quality_prefers_real_verdict_over_metrics(self):
+        # A real Pass/Fail verdict outranks an Unknown attempt even if the latter
+        # captured metrics — never sacrifice a real outcome for a retry's data.
+        good = self._good()
+        unknown_metrics = self._unknown_with_metrics()
+        assert strategy_runner._iteration_quality(good) > strategy_runner._iteration_quality(
+            unknown_metrics
+        )
 
 
 class TestRunIterationsRetryWiring:
