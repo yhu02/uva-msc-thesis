@@ -1,5 +1,6 @@
 """Tests for the MetricsCollector container log collection."""
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -49,7 +50,9 @@ def _make_collector():
     # Default the discovery API to an empty EndpointSlice listing so the
     # post-chaos snapshot in collect() stays inert unless a test sets it.
     collector.discovery_api = MagicMock()
-    collector.discovery_api.list_namespaced_endpoint_slice.return_value = MagicMock(items=[])
+    collector.discovery_api.list_namespaced_endpoint_slice.return_value = MagicMock(
+        data=json.dumps({"items": []})
+    )
     return collector, mock_core
 
 
@@ -214,27 +217,26 @@ class TestCollectIntegration:
 class TestEndpointSliceSnapshot:
     @staticmethod
     def _slice(service_name, ready_count):
-        sl = MagicMock()
-        sl.metadata = MagicMock()
-        sl.metadata.labels = {"kubernetes.io/service-name": service_name}
-        eps = []
-        for _ in range(ready_count):
-            ep = MagicMock()
-            ep.conditions = MagicMock(ready=True, terminating=False)
-            eps.append(ep)
-        sl.endpoints = eps
-        return sl
+        # Raw EndpointSlice JSON (the collector reads slices via _preload_content=False).
+        return {
+            "metadata": {"labels": {"kubernetes.io/service-name": service_name}},
+            "endpoints": [
+                {"conditions": {"ready": True, "terminating": False}} for _ in range(ready_count)
+            ],
+        }
 
     def test_snapshot_summarizes_and_stamps_time(self):
         collector, _ = _make_collector()
         collector.discovery_api.list_namespaced_endpoint_slice.return_value = MagicMock(
-            items=[self._slice("frontend", 2)]
+            data=json.dumps({"items": [self._slice("frontend", 2)]})
         )
         snap = collector.snapshot_endpoint_slices()
         assert snap is not None
         assert snap["services"]["frontend"]["ready"] == 2
         assert "capturedAt" in snap
-        collector.discovery_api.list_namespaced_endpoint_slice.assert_called_once_with("test-ns")
+        collector.discovery_api.list_namespaced_endpoint_slice.assert_called_once_with(
+            "test-ns", _preload_content=False
+        )
 
     def test_snapshot_returns_none_on_api_error(self):
         collector, _ = _make_collector()
@@ -248,7 +250,7 @@ class TestEndpointSliceSnapshot:
         collector.core_api = mock_core
         mock_core.list_namespaced_pod.return_value = MagicMock(items=[])
         collector.discovery_api.list_namespaced_endpoint_slice.return_value = MagicMock(
-            items=[self._slice("frontend", 1)]
+            data=json.dumps({"items": [self._slice("frontend", 1)]})
         )
         pre = {"services": {"frontend": {"ready": 3}}, "capturedAt": "t0"}
 

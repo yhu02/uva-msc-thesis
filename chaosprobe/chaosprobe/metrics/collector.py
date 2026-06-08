@@ -7,6 +7,7 @@ Collects multiple categories of metrics during a chaos experiment window:
 - Event timeline (all pod lifecycle events)
 """
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -14,7 +15,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from chaosprobe.k8s import ensure_k8s_config
-from chaosprobe.metrics.endpointslices import summarize_endpoint_slices
+from chaosprobe.metrics.endpointslices import summarize_endpoint_slices_json
 from chaosprobe.metrics.utilization import compute_per_pod_utilization
 
 
@@ -181,11 +182,19 @@ class MetricsCollector:
         after — the pair captures the net endpoint change across the kill
         cycle that underlies the churn/reconvergence story.
         """
+        # Read raw JSON (``_preload_content=False``): the typed V1EndpointSlice
+        # model rejects ``endpoints: null``, which the API returns for an empty
+        # slice (all of a service's pods evicted at once, e.g. mid node-drain),
+        # raising ValueError and crashing the snapshot. json.JSONDecodeError is a
+        # subclass of ValueError, so one except covers both.
         try:
-            sliced = self.discovery_api.list_namespaced_endpoint_slice(self.namespace)
-        except ApiException:
+            resp = self.discovery_api.list_namespaced_endpoint_slice(
+                self.namespace, _preload_content=False
+            )
+            raw = json.loads(resp.data)
+        except (ApiException, ValueError):
             return None
-        summary = summarize_endpoint_slices(list(sliced.items))
+        summary = summarize_endpoint_slices_json(raw.get("items") or [])
         summary["capturedAt"] = datetime.now(timezone.utc).isoformat()
         return summary
 
