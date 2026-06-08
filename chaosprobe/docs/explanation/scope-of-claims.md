@@ -38,9 +38,12 @@ the user.
   not transfer cleanly to this fault class in this setup."*
 - *"recovery time predicts nothing"* → *"recovery-time decomposition was unstable
   and did not provide a stable ranking signal here."*
-- **Load-contention reordering (H4)** is a single pilot from a dirty-provenance,
-  3-iteration run — a hypothesis to confirm with a clean, replicated rerun, not a
-  finding.
+- **A user-visible placement effect under load contention (H4)** is *not* claimed.
+  Across two *i* = 4 batches the east-west inter-service locality reproduces
+  (colocate ~1.3–1.4× lower tail than spread), but the user-facing effect did not
+  survive replication — a ~2× dependency-specific reading in one batch collapsed to
+  ~1.1× with no dependency specificity in the clean batch. State only the mechanism
+  effect; the user-layer effect is run-dependent, not a finding.
 
 ## What is explicitly not claimed (remove)
 
@@ -71,8 +74,9 @@ The single-replica design means 100% `pod-delete` guarantees a full outage, so t
 outcome is dominated by availability rather than topology — the production-relevant
 multi-replica anti-affinity question is **structurally excluded**, not answered.
 Larger clusters, multi-replica services, other CNIs / kube-proxy modes, production
-traffic, scheduler integration, a clean node-memory-hog contention campaign, and a
-clean H4 load-contention rerun are all future work, not claims.
+traffic, scheduler integration, and additional load-contention batches to settle
+whether any user-layer effect survives replication (the east-west mechanism already
+reproduces) are all future work, not claims.
 
 ## Before quoting any number
 
