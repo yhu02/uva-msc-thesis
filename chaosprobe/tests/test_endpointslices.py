@@ -2,7 +2,59 @@
 
 from unittest.mock import MagicMock
 
-from chaosprobe.metrics.endpointslices import summarize_endpoint_slices
+from chaosprobe.metrics.endpointslices import (
+    summarize_endpoint_slices,
+    summarize_endpoint_slices_json,
+)
+
+
+def _slice_json(service_name, endpoints):
+    return {
+        "metadata": {
+            "labels": {"kubernetes.io/service-name": service_name} if service_name else {}
+        },
+        "endpoints": endpoints,
+    }
+
+
+class TestSummarizeEndpointSlicesJson:
+    def test_null_endpoints_is_empty_not_a_crash(self):
+        # The node-drain case: the API returns endpoints: null for an emptied
+        # slice. It must summarize to total 0, not raise.
+        out = summarize_endpoint_slices_json([_slice_json("productcatalog", None)])
+        assert out["services"]["productcatalog"] == {
+            "ready": 0,
+            "terminating": 0,
+            "notReady": 0,
+            "total": 0,
+        }
+
+    def test_classifies_ready_terminating_not_ready(self):
+        out = summarize_endpoint_slices_json(
+            [
+                _slice_json(
+                    "cart",
+                    [
+                        {"conditions": {"ready": True, "terminating": False}},
+                        {"conditions": {"ready": False, "terminating": True}},
+                        {"conditions": {}},  # neither -> notReady
+                    ],
+                )
+            ]
+        )
+        assert out["services"]["cart"] == {
+            "ready": 1,
+            "terminating": 1,
+            "notReady": 1,
+            "total": 3,
+        }
+
+    def test_slice_without_service_label_skipped(self):
+        assert summarize_endpoint_slices_json([_slice_json(None, [])]) == {"services": {}}
+
+    def test_empty_and_none_input(self):
+        assert summarize_endpoint_slices_json([]) == {"services": {}}
+        assert summarize_endpoint_slices_json(None) == {"services": {}}
 
 
 def _endpoint(ready=None, terminating=None, has_conditions=True):

@@ -64,3 +64,34 @@ def summarize_endpoint_slices(slices: List[Any]) -> Dict[str, Any]:
             else:
                 bucket["notReady"] += 1
     return {"services": {name: services[name] for name in sorted(services)}}
+
+
+def summarize_endpoint_slices_json(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Like :func:`summarize_endpoint_slices`, but from raw EndpointSlice JSON.
+
+    The typed ``discovery.k8s.io/v1`` ``V1EndpointSlice`` model marks ``endpoints``
+    as a *required* field, yet the API returns ``endpoints: null`` for an empty
+    slice — which happens when *all* of a service's pods are evicted at once (e.g.
+    mid ``node-drain``). Deserializing that raises ``ValueError`` and would crash
+    the snapshot, so the collector reads slices as raw JSON (``_preload_content=
+    False``) and summarizes from dicts here, where a null ``endpoints`` is simply
+    an empty list (``total = 0``) — itself the signal that the service lost all
+    its endpoints.
+    """
+    services: Dict[str, Dict[str, int]] = {}
+    for item in items or []:
+        labels = ((item or {}).get("metadata") or {}).get("labels") or {}
+        svc = labels.get(_SERVICE_NAME_LABEL)
+        if not (isinstance(svc, str) and svc):
+            continue
+        bucket = services.setdefault(svc, {"ready": 0, "terminating": 0, "notReady": 0, "total": 0})
+        for endpoint in item.get("endpoints") or []:
+            bucket["total"] += 1
+            cond = endpoint.get("conditions") or {}
+            if cond.get("terminating"):
+                bucket["terminating"] += 1
+            elif cond.get("ready"):
+                bucket["ready"] += 1
+            else:
+                bucket["notReady"] += 1
+    return {"services": {name: services[name] for name in sorted(services)}}
