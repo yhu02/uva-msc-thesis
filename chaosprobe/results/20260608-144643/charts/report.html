@@ -1,0 +1,2829 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>ChaosProbe — Thesis Experiment Report</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               margin: 0; padding: 0; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #0096D6; padding-bottom: 10px; }
+        h2 { color: #1a1a2e; margin-top: 40px; border-left: 4px solid #0096D6; padding-left: 12px; }
+        h3 { color: #555; }
+        .rq { background: #e8f4fd; border-left: 4px solid #0096D6; padding: 15px 20px;
+               margin: 20px 0; border-radius: 4px; font-style: italic; font-size: 1.1em; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; background: white;
+                 box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 6px; overflow: hidden; }
+        th, td { border: 1px solid #e0e0e0; padding: 10px 14px; text-align: left; }
+        th { background: #1a1a2e; color: white; font-weight: 600; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .section-charts { margin: 20px 0; }
+        .section-charts img { border: 1px solid #ddd; border-radius: 6px;
+                               box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 100%; }
+        .dimension { background: white; border-radius: 8px; padding: 20px 25px; margin: 20px 0;
+                      box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd;
+                   color: #888; font-size: 0.9em; }
+        .appendix { background: white; border-radius: 8px; padding: 20px 25px; margin: 20px 0;
+                     box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+        .appendix details { margin: 12px 0; }
+        .appendix summary { cursor: pointer; font-weight: 600; color: #1a1a2e; padding: 8px 0;
+                             font-size: 1.05em; }
+        .appendix summary:hover { color: #0096D6; }
+        .appendix code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px;
+                          font-size: 0.9em; }
+        .appendix .formula { background: #f8f9fa; border-left: 3px solid #0096D6;
+                              padding: 10px 15px; margin: 10px 0; font-family: monospace;
+                              font-size: 0.95em; border-radius: 0 4px 4px 0; }
+        .appendix ul { margin: 6px 0; padding-left: 24px; }
+        .appendix li { margin: 4px 0; }
+        .appendix p { margin: 8px 0; line-height: 1.5; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>ChaosProbe — Thesis Experiment Report</h1>
+
+    <div class="rq">
+        <strong>RQ:</strong> How does pod placement topology affect microservice resilience
+        under fault injection in Kubernetes?
+    </div>
+
+    <!-- ═══ Overview ═══ -->
+    <h2>Strategy Comparison Overview</h2>
+    <div class="dimension">
+        <table>
+            <tr>
+                <th>Strategy</th>
+                <th>Runs</th>
+                <th>Resilience Score</th>
+                <th>Std Dev</th>
+                <th>Range</th>
+                <th>Pass Rate</th>
+                <th>Mean Recovery (ms)</th>
+                <th>Median Recovery (ms)</th>
+                <th>P95 Recovery (ms)</th>
+            </tr>
+            
+        <tr>
+            <td>colocate</td>
+            <td>1</td>
+            <td>0.0</td>
+            <td>&plusmn;0.0</td>
+            <td>0&ndash;0</td>
+            <td>0%</td>
+            <td>10408.0</td>
+            <td>10187.0</td>
+            <td>10859.3</td>
+        </tr>
+        <tr>
+            <td>default</td>
+            <td>1</td>
+            <td>50.0</td>
+            <td>&plusmn;0.0</td>
+            <td>50&ndash;50</td>
+            <td>0%</td>
+            <td>n/a</td>
+            <td>n/a</td>
+            <td>n/a</td>
+        </tr>
+        <tr>
+            <td>spread</td>
+            <td>1</td>
+            <td>0.0</td>
+            <td>&plusmn;0.0</td>
+            <td>0&ndash;0</td>
+            <td>0%</td>
+            <td>34169.0</td>
+            <td>34169.0</td>
+            <td>34169.0</td>
+        </tr>
+        </table>
+        <p style="color:#666; font-size:0.85em; margin-top:8px;">
+            <strong>Note:</strong> Resilience scores blend LitmusChaos probe verdicts (25%)
+            with continuous metrics: recovery speed (25%), latency preservation (25%),
+            error rate (15%), and throughput preservation (10%). This produces finer-grained
+            differentiation than probe verdicts alone.
+        </p>
+        <div class="section-charts"><img src="resilience_scores.png" style="max-width:100%; margin:10px 0;">
+<img src="strategy_comparison_heatmap.png" style="max-width:100%; margin:10px 0;"></div>
+    </div>
+
+    <!-- ═══ Per-Iteration Breakdown ═══ -->
+    
+
+    <!-- ═══ Placement Topology ═══ -->
+    
+    <h2>Placement Topology</h2>
+    <div class="dimension">
+        <p>Pod-to-node assignments per strategy. Color groups pods on the same node.</p>
+        <table>
+            <tr><th>Deployment</th><th>colocate</th><th>spread</th></tr>
+            <tr><td style='font-size:0.85em;'>adservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#E3F2FD; font-size:0.85em;">worker1</td></tr>
+<tr><td style='font-size:0.85em;'>cartservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#FFF3E0; font-size:0.85em;">worker2</td></tr>
+<tr><td style='font-size:0.85em;'>checkoutservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#E8F5E9; font-size:0.85em;">worker3</td></tr>
+<tr><td style='font-size:0.85em;'>currencyservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td></tr>
+<tr><td style='font-size:0.85em;'>emailservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#E3F2FD; font-size:0.85em;">worker1</td></tr>
+<tr><td style='font-size:0.85em;'>frontend</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#FFF3E0; font-size:0.85em;">worker2</td></tr>
+<tr><td style='font-size:0.85em;'>paymentservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#E8F5E9; font-size:0.85em;">worker3</td></tr>
+<tr><td style='font-size:0.85em;'>productcatalogservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td></tr>
+<tr><td style='font-size:0.85em;'>recommendationservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#E3F2FD; font-size:0.85em;">worker1</td></tr>
+<tr><td style='font-size:0.85em;'>redis-cart</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#FFF3E0; font-size:0.85em;">worker2</td></tr>
+<tr><td style='font-size:0.85em;'>shippingservice</td><td style="background:#F3E5F5; font-size:0.85em;">worker4</td><td style="background:#E8F5E9; font-size:0.85em;">worker3</td></tr>
+
+        </table>
+    </div>
+
+    <!-- ═══ Dimension 1: Recovery Time ═══ -->
+    <h2>Dimension 1 — Recovery Time</h2>
+    <div class="dimension">
+        <p>Time from pod deletion to pod ready, measured via the Kubernetes Watch API.
+        Lower recovery time indicates better fault tolerance under the given placement.</p>
+        <div class="section-charts"><img src="recovery_times.png" style="max-width:100%; margin:10px 0;"></div>
+    </div>
+
+    <!-- ═══ Dimension 2: Inter-Service Latency ═══ -->
+    <h2>Dimension 2 — Inter-Service Latency</h2>
+    <div class="dimension">
+        <p>HTTP route latency measured via <code>kubectl exec</code> using python3/wget probes.
+        Degradation from pre-chaos to during-chaos quantifies fault impact on service communication.</p>
+        
+    <h2>Inter-Service Latency</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Route</th>
+            <th>Pre-Chaos Mean (ms)</th>
+            <th>During Chaos Mean (ms)</th>
+            <th>During Chaos P95 (ms)</th>
+            <th title="Mean cross-pod stddev during chaos — higher means vantage points disagreed more,
+ a placement-sensitivity signal">During Chaos Cross-Pod Stddev (ms)</th>
+            <th title="Highest single-pod mean latency observed during chaos">
+              Worst Vantage Point (ms)</th>
+            <th>Post-Chaos Mean (ms)</th>
+            <th>Errors During Chaos</th>
+        </tr>
+        
+            <tr>
+                <td>colocate</td>
+                <td>/</td>
+                <td>72.1</td>
+                <td>91.0</td>
+                <td>117.8</td>
+                <td>21.7</td>
+                <td>188.4</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>/_healthz</td>
+                <td>58.3</td>
+                <td>63.6</td>
+                <td>94.7</td>
+                <td>24.8</td>
+                <td>102.3</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>/cart</td>
+                <td>86.6</td>
+                <td>79.3</td>
+                <td>106.7</td>
+                <td>22.3</td>
+                <td>123.0</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>/product/OLJCESPC7Z</td>
+                <td>88.4</td>
+                <td>89.8</td>
+                <td>114.0</td>
+                <td>26.6</td>
+                <td>188.6</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>cartservice->redis-cart</td>
+                <td>5.0</td>
+                <td>8.3 <span style="color: red;">+64%</span></td>
+                <td>38.7</td>
+                <td>10.6</td>
+                <td>77.0</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>checkoutservice->cartservice,frontend->cartservice</td>
+                <td>1.1</td>
+                <td>10.2 <span style="color: red;">+869%</span></td>
+                <td>37.5</td>
+                <td>8.0</td>
+                <td>78.5</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>checkoutservice->currencyservice,frontend->currencyservice</td>
+                <td>9.1</td>
+                <td>9.0</td>
+                <td>41.6</td>
+                <td>6.5</td>
+                <td>81.5</td>
+                <td>n/a</td>
+                <td>3</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>checkoutservice->emailservice</td>
+                <td>7.5</td>
+                <td>6.6</td>
+                <td>39.4</td>
+                <td>7.9</td>
+                <td>78.6</td>
+                <td>n/a</td>
+                <td>3</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>checkoutservice->paymentservice</td>
+                <td>3.1</td>
+                <td>8.8 <span style="color: red;">+182%</span></td>
+                <td>38.7</td>
+                <td>11.4</td>
+                <td>78.2</td>
+                <td>n/a</td>
+                <td>3</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>checkoutservice->productcatalogservice,frontend->productcatalogservice,recommendationservice->productcatalogservice</td>
+                <td>1.1</td>
+                <td>5.6 <span style="color: red;">+404%</span></td>
+                <td>24.2</td>
+                <td>6.8</td>
+                <td>77.9</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>checkoutservice->shippingservice,frontend->shippingservice</td>
+                <td>12.7</td>
+                <td>5.1</td>
+                <td>41.0</td>
+                <td>6.0</td>
+                <td>82.0</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>frontend->adservice</td>
+                <td>1.9</td>
+                <td>4.6 <span style="color: red;">+139%</span></td>
+                <td>17.2</td>
+                <td>5.3</td>
+                <td>77.5</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>frontend->checkoutservice</td>
+                <td>9.7</td>
+                <td>4.7</td>
+                <td>37.0</td>
+                <td>5.7</td>
+                <td>80.6</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>frontend->recommendationservice</td>
+                <td>7.8</td>
+                <td>7.1</td>
+                <td>38.2</td>
+                <td>9.2</td>
+                <td>80.9</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>loadgenerator->frontend</td>
+                <td>6.1</td>
+                <td>4.8</td>
+                <td>37.5</td>
+                <td>6.0</td>
+                <td>81.4</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>/</td>
+                <td>103.8</td>
+                <td>116.8</td>
+                <td>168.9</td>
+                <td>32.3</td>
+                <td>207.1</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>/_healthz</td>
+                <td>68.4</td>
+                <td>75.1</td>
+                <td>109.5</td>
+                <td>25.2</td>
+                <td>196.9</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>/cart</td>
+                <td>136.9</td>
+                <td>131.7</td>
+                <td>214.7</td>
+                <td>35.9</td>
+                <td>253.1</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>/product/OLJCESPC7Z</td>
+                <td>115.1</td>
+                <td>139.8</td>
+                <td>199.8</td>
+                <td>27.4</td>
+                <td>357.3</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>cartservice->redis-cart</td>
+                <td>8.5</td>
+                <td>11.4</td>
+                <td>38.3</td>
+                <td>13.7</td>
+                <td>78.7</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>checkoutservice->cartservice,frontend->cartservice</td>
+                <td>8.2</td>
+                <td>5.6</td>
+                <td>39.1</td>
+                <td>6.1</td>
+                <td>80.8</td>
+                <td>n/a</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>checkoutservice->currencyservice,frontend->currencyservice</td>
+                <td>8.2</td>
+                <td>8.3</td>
+                <td>39.9</td>
+                <td>10.3</td>
+                <td>81.1</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>checkoutservice->emailservice</td>
+                <td>6.3</td>
+                <td>5.9</td>
+                <td>37.0</td>
+                <td>7.0</td>
+                <td>89.3</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>checkoutservice->paymentservice</td>
+                <td>6.1</td>
+                <td>3.0</td>
+                <td>6.0</td>
+                <td>1.8</td>
+                <td>37.0</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>checkoutservice->productcatalogservice,frontend->productcatalogservice,recommendationservice->productcatalogservice</td>
+                <td>4.1</td>
+                <td>9.5 <span style="color: red;">+130%</span></td>
+                <td>39.4</td>
+                <td>11.9</td>
+                <td>82.0</td>
+                <td>n/a</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>checkoutservice->shippingservice,frontend->shippingservice</td>
+                <td>4.8</td>
+                <td>11.8 <span style="color: red;">+144%</span></td>
+                <td>41.4</td>
+                <td>13.0</td>
+                <td>80.7</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>frontend->adservice</td>
+                <td>12.6</td>
+                <td>12.8</td>
+                <td>40.5</td>
+                <td>14.3</td>
+                <td>81.3</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>frontend->checkoutservice</td>
+                <td>6.1</td>
+                <td>7.2</td>
+                <td>39.1</td>
+                <td>8.6</td>
+                <td>79.3</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>frontend->recommendationservice</td>
+                <td>4.3</td>
+                <td>8.4 <span style="color: red;">+94%</span></td>
+                <td>40.2</td>
+                <td>10.2</td>
+                <td>80.7</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>loadgenerator->frontend</td>
+                <td>13.2</td>
+                <td>13.8</td>
+                <td>41.7</td>
+                <td>17.4</td>
+                <td>84.6</td>
+                <td>n/a</td>
+                <td>4</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>/</td>
+                <td>121.2</td>
+                <td>116.6</td>
+                <td>159.5</td>
+                <td>38.8</td>
+                <td>242.7</td>
+                <td>129.0</td>
+                <td>11</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>/_healthz</td>
+                <td>92.3</td>
+                <td>78.6</td>
+                <td>117.3</td>
+                <td>23.0</td>
+                <td>193.4</td>
+                <td>80.5</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>/cart</td>
+                <td>146.4</td>
+                <td>131.4</td>
+                <td>196.0</td>
+                <td>40.8</td>
+                <td>235.7</td>
+                <td>127.2</td>
+                <td>11</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>/product/OLJCESPC7Z</td>
+                <td>147.7</td>
+                <td>132.8</td>
+                <td>182.9</td>
+                <td>43.9</td>
+                <td>246.6</td>
+                <td>116.6</td>
+                <td>11</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cartservice->redis-cart</td>
+                <td>10.2</td>
+                <td>8.5</td>
+                <td>37.9</td>
+                <td>10.1</td>
+                <td>83.0</td>
+                <td>15.3</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>checkoutservice->cartservice,frontend->cartservice</td>
+                <td>11.9</td>
+                <td>6.8</td>
+                <td>38.0</td>
+                <td>7.3</td>
+                <td>84.9</td>
+                <td>6.9</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>checkoutservice->currencyservice,frontend->currencyservice</td>
+                <td>4.8</td>
+                <td>6.2</td>
+                <td>36.8</td>
+                <td>6.4</td>
+                <td>82.3</td>
+                <td>5.3</td>
+                <td>9</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>checkoutservice->emailservice</td>
+                <td>3.7</td>
+                <td>2.9</td>
+                <td>7.5</td>
+                <td>3.0</td>
+                <td>77.0</td>
+                <td>9.5</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>checkoutservice->paymentservice</td>
+                <td>15.7</td>
+                <td>10.3</td>
+                <td>40.8</td>
+                <td>11.7</td>
+                <td>81.6</td>
+                <td>5.0</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>checkoutservice->productcatalogservice,frontend->productcatalogservice,recommendationservice->productcatalogservice</td>
+                <td>7.9</td>
+                <td>16.6 <span style="color: red;">+110%</span></td>
+                <td>44.8</td>
+                <td>17.2</td>
+                <td>85.7</td>
+                <td>17.5</td>
+                <td>10</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>checkoutservice->shippingservice,frontend->shippingservice</td>
+                <td>7.0</td>
+                <td>5.6</td>
+                <td>31.6</td>
+                <td>5.6</td>
+                <td>78.3</td>
+                <td>8.8</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>frontend->adservice</td>
+                <td>5.9</td>
+                <td>6.9</td>
+                <td>39.5</td>
+                <td>8.9</td>
+                <td>79.9</td>
+                <td>1.6</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>frontend->checkoutservice</td>
+                <td>8.8</td>
+                <td>7.2</td>
+                <td>41.1</td>
+                <td>8.2</td>
+                <td>83.5</td>
+                <td>7.5</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>frontend->recommendationservice</td>
+                <td>7.8</td>
+                <td>5.1</td>
+                <td>33.9</td>
+                <td>6.2</td>
+                <td>85.4</td>
+                <td>5.8</td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>loadgenerator->frontend</td>
+                <td>16.6</td>
+                <td>5.0</td>
+                <td>16.1</td>
+                <td>2.1</td>
+                <td>78.7</td>
+                <td>6.3</td>
+                <td>0</td>
+            </tr>
+    </table>
+        <div class="section-charts"><img src="latency_by_strategy.png" style="max-width:100%; margin:10px 0;">
+<img src="latency_degradation.png" style="max-width:100%; margin:10px 0;"></div>
+    </div>
+
+    <!-- ═══ Dimension 3: Resource Utilization ═══ -->
+    <h2>Dimension 3 — Resource Utilization</h2>
+    <div class="dimension">
+        <p>Node-level CPU and memory utilization from the Kubernetes Metrics API.
+        Only nodes hosting namespace pods are included — idle nodes are excluded
+        so placement strategies produce distinct resource profiles.
+        Higher utilization during chaos correlates with resource contention from co-location.</p>
+        
+    <h2>Node Resource Utilization (Used Nodes Only)</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Phase</th>
+            <th>Mean CPU (%)</th>
+            <th title="Stddev of CPU% across used nodes — higher means load concentrated on fewer nodes
+ (colocate-like); lower means even spread">CPU Stddev (%)</th>
+            <th title="Hottest used node CPU% observed during the phase">Peak Node CPU (%)</th>
+            <th>Mean Memory (%)</th>
+            <th title="Stddev of Memory% across used nodes">Mem Stddev (%)</th>
+            <th title="Hottest used node Memory% observed during the phase">Peak Node Mem (%)</th>
+            <th>Samples</th>
+        </tr>
+        
+            <tr>
+                <td>colocate (3 used)</td>
+                <td>pre-chaos</td>
+                <td>14.6</td>
+                <td>3.1</td>
+                <td>52.8</td>
+                <td>65.2</td>
+                <td>0.1</td>
+                <td>72.4</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>colocate (3 used)</td>
+                <td>during-chaos</td>
+                <td>6.9</td>
+                <td>4.0</td>
+                <td>40.6</td>
+                <td>64.9</td>
+                <td>0.4</td>
+                <td>72.1</td>
+                <td>110</td>
+            </tr>
+            <tr>
+                <td>colocate (3 used)</td>
+                <td>post-chaos</td>
+                <td>3.5</td>
+                <td>0.1</td>
+                <td>4.6</td>
+                <td>65.1</td>
+                <td>0.0</td>
+                <td>71.1</td>
+                <td>12</td>
+            </tr>
+            <tr>
+                <td>default (3 used)</td>
+                <td>pre-chaos</td>
+                <td>16.5</td>
+                <td>2.0</td>
+                <td>43.8</td>
+                <td>64.9</td>
+                <td>0.0</td>
+                <td>68.8</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>default (3 used)</td>
+                <td>during-chaos</td>
+                <td>13.7</td>
+                <td>3.9</td>
+                <td>45.4</td>
+                <td>65.5</td>
+                <td>0.6</td>
+                <td>68.9</td>
+                <td>66</td>
+            </tr>
+            <tr>
+                <td>default (3 used)</td>
+                <td>post-chaos</td>
+                <td>10.4</td>
+                <td>0.6</td>
+                <td>15.9</td>
+                <td>65.7</td>
+                <td>0.1</td>
+                <td>66.1</td>
+                <td>12</td>
+            </tr>
+            <tr>
+                <td>spread (4 used)</td>
+                <td>pre-chaos</td>
+                <td>16.5</td>
+                <td>1.5</td>
+                <td>39.0</td>
+                <td>64.6</td>
+                <td>0.1</td>
+                <td>65.9</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread (4 used)</td>
+                <td>during-chaos</td>
+                <td>18.2</td>
+                <td>1.4</td>
+                <td>37.6</td>
+                <td>65.0</td>
+                <td>0.2</td>
+                <td>67.3</td>
+                <td>25</td>
+            </tr>
+            <tr>
+                <td>spread (4 used)</td>
+                <td>post-chaos</td>
+                <td>16.4</td>
+                <td>1.2</td>
+                <td>35.8</td>
+                <td>64.7</td>
+                <td>0.1</td>
+                <td>67.0</td>
+                <td>12</td>
+            </tr>
+    </table>
+    <p style="color:#666; font-size:0.85em; margin-top:8px;">
+        <strong>Note:</strong> Metrics are computed only for nodes that host at least one
+        namespace pod. Idle nodes are excluded so placement strategies (colocate vs spread)
+        produce visibly different resource profiles.
+    </p>
+    <h3>Per-Worker Node CPU During Chaos</h3>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Worker Node</th>
+            <th>Mean CPU (%)</th>
+            <th>Max CPU (%)</th>
+            <th>Mean Memory (%)</th>
+        </tr>
+        
+            <tr>
+                <td>colocate</td>
+                <td>worker1</td>
+                <td>3.8</td>
+                <td>10.1</td>
+                <td>61.5</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>worker2</td>
+                <td>4.2</td>
+                <td>9.6</td>
+                <td>62.4</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>worker3</td>
+                <td>5.4</td>
+                <td>11.9</td>
+                <td>65.2</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>worker4</td>
+                <td>14.4</td>
+                <td>40.6</td>
+                <td>70.7</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>worker1</td>
+                <td>8.1</td>
+                <td>14.8</td>
+                <td>65.4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>worker2</td>
+                <td>15.0</td>
+                <td>22.4</td>
+                <td>64.9</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>worker3</td>
+                <td>21.4</td>
+                <td>46.1</td>
+                <td>64.5</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>worker4</td>
+                <td>9.4</td>
+                <td>24.1</td>
+                <td>65.4</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>worker1</td>
+                <td>35.5</td>
+                <td>37.6</td>
+                <td>65.4</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>worker2</td>
+                <td>15.6</td>
+                <td>17.7</td>
+                <td>63.4</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>worker3</td>
+                <td>6.8</td>
+                <td>8.8</td>
+                <td>66.4</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>worker4</td>
+                <td>14.6</td>
+                <td>19.5</td>
+                <td>64.7</td>
+            </tr>
+    </table>
+    <p style="color:#666; font-size:0.85em; margin-top:8px;">
+        <strong>Key insight:</strong> Under colocate, one worker absorbs all application
+        CPU while others remain idle. The cluster-wide mean hides this hot-node effect.
+        Under spread, load distributes more evenly across workers.
+    </p>
+        <div class="section-charts"><img src="resource_utilization.png" style="max-width:100%; margin:10px 0;">
+<img src="resource_by_phase.png" style="max-width:100%; margin:10px 0;">
+<img src="resource_per_node.png" style="max-width:100%; margin:10px 0;"></div>
+    </div>
+
+    <!-- ═══ Dimension 4: I/O Throughput ═══ -->
+    <h2>Dimension 4 — I/O Throughput</h2>
+    <div class="dimension">
+        <p>Redis ops/s and sequential disk read/write bandwidth measured via
+        <code>redis-cli</code> and <code>dd</code>. Throughput degradation during chaos
+        reflects shared I/O contention on co-located nodes.</p>
+        
+    <h2>I/O Throughput</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Operation</th>
+            <th>Pre-Chaos Ops/s</th>
+            <th>During Chaos Ops/s</th>
+            <th>During Chaos Latency (ms)</th>
+            <th>During Chaos Bandwidth</th>
+            <th title="Mean cross-node stddev of ops/s during chaos — higher means nodes diverged,
+ a placement-sensitivity signal (disk only; redis is a single service)">
+              During Chaos Cross-Node Stddev (ops/s)</th>
+            <th title="Worst single-node min ops/s observed during chaos">
+              Worst Node Min (ops/s)</th>
+            <th>Post-Chaos Ops/s</th>
+        </tr>
+        
+            <tr>
+                <td>colocate</td>
+                <td>redis-read</td>
+                <td>22430.7</td>
+                <td>38590.0</td>
+                <td>0.53</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>45157.5</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>redis-write</td>
+                <td>6287.7</td>
+                <td>21023.2</td>
+                <td>0.66</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>5086.3</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>disk-read</td>
+                <td>37265.8</td>
+                <td>33409.4</td>
+                <td>0.04</td>
+                <td>2088.1 MB/s</td>
+                <td>0.0</td>
+                <td>5524.8</td>
+                <td>40237.1</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>disk-write</td>
+                <td>892.6</td>
+                <td>852.0</td>
+                <td>1.29</td>
+                <td>53.3 MB/s</td>
+                <td>0.0</td>
+                <td>276.2</td>
+                <td>709.4</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>redis-read</td>
+                <td>25268.9</td>
+                <td>37621.6</td>
+                <td>0.48</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>9778.3</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>redis-write</td>
+                <td>19049.0</td>
+                <td>24148.5</td>
+                <td>0.54</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>12510.6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>disk-read</td>
+                <td>35171.9</td>
+                <td>33895.1</td>
+                <td>0.04</td>
+                <td>2118.4 MB/s</td>
+                <td>2857.7</td>
+                <td>5019.5</td>
+                <td>31633.5</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>disk-write</td>
+                <td>5397.3</td>
+                <td>1644.9 <span style="color: red;">-70%</span></td>
+                <td>1.20</td>
+                <td>102.8 MB/s</td>
+                <td>1189.0</td>
+                <td>400.2</td>
+                <td>762.5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>redis-read</td>
+                <td>6690.7</td>
+                <td>33858.7</td>
+                <td>0.53</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>33672.3</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>redis-write</td>
+                <td>16301.8</td>
+                <td>35362.8</td>
+                <td>0.55</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>n/a</td>
+                <td>35233.0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>disk-read</td>
+                <td>25645.8</td>
+                <td>31624.4</td>
+                <td>0.05</td>
+                <td>1976.5 MB/s</td>
+                <td>0.0</td>
+                <td>4663.8</td>
+                <td>34588.0</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>disk-write</td>
+                <td>774.3</td>
+                <td>898.1</td>
+                <td>1.14</td>
+                <td>56.1 MB/s</td>
+                <td>0.0</td>
+                <td>631.0</td>
+                <td>907.6</td>
+            </tr>
+    </table>
+        <div class="section-charts"><img src="throughput_by_strategy.png" style="max-width:100%; margin:10px 0;">
+<img src="throughput_degradation.png" style="max-width:100%; margin:10px 0;"></div>
+    </div>
+
+    <!-- ═══ Prometheus Cluster Metrics ═══ -->
+    <h2>Supplementary — Prometheus Cluster Metrics</h2>
+    <div class="dimension">
+        <p>Pod readiness, CPU throttling, memory working set, and network receive bytes
+        collected via PromQL. These metrics supplement the primary four dimensions.</p>
+        
+    <h2>Prometheus Cluster Metrics</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>Metric</th>
+            <th>Phase</th>
+            <th>Mean</th>
+            <th>Max</th>
+            <th>Samples</th>
+        </tr>
+        
+            <tr>
+                <td>colocate</td>
+                <td>apiserver_inflight</td>
+                <td>pre-chaos</td>
+                <td>2.2857</td>
+                <td>4.0000</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>apiserver_inflight</td>
+                <td>during-chaos</td>
+                <td>2.5094</td>
+                <td>12.0000</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>apiserver_inflight</td>
+                <td>post-chaos</td>
+                <td>2.3333</td>
+                <td>3.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>apiserver_request_p99</td>
+                <td>pre-chaos</td>
+                <td>0.2436</td>
+                <td>0.3571</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>apiserver_request_p99</td>
+                <td>during-chaos</td>
+                <td>0.2637</td>
+                <td>0.3795</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>apiserver_request_p99</td>
+                <td>post-chaos</td>
+                <td>0.0858</td>
+                <td>0.0864</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>conntrack_entries_per_node</td>
+                <td>pre-chaos</td>
+                <td>6946.5714</td>
+                <td>8158.0000</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>conntrack_entries_per_node</td>
+                <td>during-chaos</td>
+                <td>4393.0189</td>
+                <td>10154.0000</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>conntrack_entries_per_node</td>
+                <td>post-chaos</td>
+                <td>3771.6667</td>
+                <td>4081.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>container_oom_events_per_pod</td>
+                <td>pre-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>container_oom_events_per_pod</td>
+                <td>during-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>container_oom_events_per_pod</td>
+                <td>post-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>pre-chaos</td>
+                <td>398.9987</td>
+                <td>746.7668</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>during-chaos</td>
+                <td>21.3123</td>
+                <td>61.3546</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>post-chaos</td>
+                <td>9.7259</td>
+                <td>11.2222</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>pre-chaos</td>
+                <td>5.8127</td>
+                <td>7.4667</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>during-chaos</td>
+                <td>5.2306</td>
+                <td>12.5996</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>post-chaos</td>
+                <td>0.8704</td>
+                <td>1.5333</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>pre-chaos</td>
+                <td>404.7320</td>
+                <td>751.7000</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>during-chaos</td>
+                <td>26.4239</td>
+                <td>73.5764</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>post-chaos</td>
+                <td>10.5963</td>
+                <td>12.7556</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_request_duration_p99</td>
+                <td>pre-chaos</td>
+                <td>0.0009</td>
+                <td>0.0012</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_request_duration_p99</td>
+                <td>during-chaos</td>
+                <td>0.0025</td>
+                <td>0.0053</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>coredns_request_duration_p99</td>
+                <td>post-chaos</td>
+                <td>0.0035</td>
+                <td>0.0040</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>cpu_throttling</td>
+                <td>pre-chaos</td>
+                <td>0.2946</td>
+                <td>0.4321</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>cpu_throttling</td>
+                <td>during-chaos</td>
+                <td>0.5233</td>
+                <td>0.9901</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>cpu_throttling</td>
+                <td>post-chaos</td>
+                <td>0.0860</td>
+                <td>0.1218</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>cpu_usage</td>
+                <td>pre-chaos</td>
+                <td>0.1109</td>
+                <td>0.1423</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>cpu_usage</td>
+                <td>during-chaos</td>
+                <td>0.1429</td>
+                <td>0.2559</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>cpu_usage</td>
+                <td>post-chaos</td>
+                <td>0.0408</td>
+                <td>0.0508</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>pre-chaos</td>
+                <td>0.0050</td>
+                <td>0.0050</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>during-chaos</td>
+                <td>0.0075</td>
+                <td>0.0099</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>post-chaos</td>
+                <td>0.0062</td>
+                <td>0.0077</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>pre-chaos</td>
+                <td>4.4904</td>
+                <td>4.8500</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>during-chaos</td>
+                <td>4.7950</td>
+                <td>4.9029</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>post-chaos</td>
+                <td>4.8820</td>
+                <td>4.9029</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>pre-chaos</td>
+                <td>54.2936</td>
+                <td>54.8982</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>during-chaos</td>
+                <td>54.4801</td>
+                <td>56.1110</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>post-chaos</td>
+                <td>54.9760</td>
+                <td>55.3335</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>memory_usage</td>
+                <td>pre-chaos</td>
+                <td>569044406.8571</td>
+                <td>688316416.0000</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>memory_usage</td>
+                <td>during-chaos</td>
+                <td>739462627.0189</td>
+                <td>1048354816.0000</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>memory_usage</td>
+                <td>post-chaos</td>
+                <td>677922133.3333</td>
+                <td>696426496.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_packets</td>
+                <td>pre-chaos</td>
+                <td>543.4879</td>
+                <td>599.1147</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_packets</td>
+                <td>during-chaos</td>
+                <td>407.5712</td>
+                <td>710.5348</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_packets</td>
+                <td>post-chaos</td>
+                <td>206.6977</td>
+                <td>212.7889</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_receive_bytes</td>
+                <td>pre-chaos</td>
+                <td>109080.7165</td>
+                <td>119698.8750</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_receive_bytes</td>
+                <td>during-chaos</td>
+                <td>79070.1801</td>
+                <td>142016.5190</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_receive_bytes</td>
+                <td>post-chaos</td>
+                <td>33744.4038</td>
+                <td>34404.7010</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_transmit_bytes</td>
+                <td>pre-chaos</td>
+                <td>89989.9733</td>
+                <td>98911.7331</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_transmit_bytes</td>
+                <td>during-chaos</td>
+                <td>60689.3381</td>
+                <td>118493.9624</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>network_transmit_bytes</td>
+                <td>post-chaos</td>
+                <td>20975.0124</td>
+                <td>21475.7232</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.3848</td>
+                <td>0.4182</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.4857</td>
+                <td>0.6485</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.3223</td>
+                <td>0.3437</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.0168</td>
+                <td>0.0181</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.0221</td>
+                <td>0.0271</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.0208</td>
+                <td>0.0218</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.0005</td>
+                <td>0.0006</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.0024</td>
+                <td>0.0044</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.0001</td>
+                <td>0.0001</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>pod_ready_count</td>
+                <td>pre-chaos</td>
+                <td>14.0000</td>
+                <td>14.0000</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>pod_ready_count</td>
+                <td>during-chaos</td>
+                <td>16.1887</td>
+                <td>20.0000</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>pod_ready_count</td>
+                <td>post-chaos</td>
+                <td>14.0000</td>
+                <td>14.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.3778</td>
+                <td>0.5556</td>
+                <td>7</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>during-chaos</td>
+                <td>0.3266</td>
+                <td>1.0889</td>
+                <td>53</td>
+            </tr>
+            <tr>
+                <td>colocate</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>post-chaos</td>
+                <td>0.0222</td>
+                <td>0.0667</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>apiserver_inflight</td>
+                <td>pre-chaos</td>
+                <td>2.3333</td>
+                <td>3.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>apiserver_inflight</td>
+                <td>during-chaos</td>
+                <td>2.6667</td>
+                <td>4.0000</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>apiserver_inflight</td>
+                <td>post-chaos</td>
+                <td>2.6667</td>
+                <td>4.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>apiserver_request_p99</td>
+                <td>pre-chaos</td>
+                <td>0.5443</td>
+                <td>0.5491</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>apiserver_request_p99</td>
+                <td>during-chaos</td>
+                <td>0.5397</td>
+                <td>0.5527</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>apiserver_request_p99</td>
+                <td>post-chaos</td>
+                <td>0.3987</td>
+                <td>0.4869</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>conntrack_entries_per_node</td>
+                <td>pre-chaos</td>
+                <td>15095.1667</td>
+                <td>16818.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>conntrack_entries_per_node</td>
+                <td>during-chaos</td>
+                <td>7136.7879</td>
+                <td>12757.0000</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>conntrack_entries_per_node</td>
+                <td>post-chaos</td>
+                <td>4013.0000</td>
+                <td>4348.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>container_oom_events_per_pod</td>
+                <td>pre-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>container_oom_events_per_pod</td>
+                <td>during-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>container_oom_events_per_pod</td>
+                <td>post-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>pre-chaos</td>
+                <td>335.4001</td>
+                <td>484.2889</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>during-chaos</td>
+                <td>41.5003</td>
+                <td>69.7779</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>post-chaos</td>
+                <td>25.5667</td>
+                <td>27.7111</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>pre-chaos</td>
+                <td>5.9778</td>
+                <td>7.1778</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>during-chaos</td>
+                <td>7.7865</td>
+                <td>13.5334</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>post-chaos</td>
+                <td>1.4407</td>
+                <td>2.6000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>pre-chaos</td>
+                <td>341.3742</td>
+                <td>490.9111</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>during-chaos</td>
+                <td>49.3441</td>
+                <td>83.3113</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>post-chaos</td>
+                <td>27.3852</td>
+                <td>29.2667</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_request_duration_p99</td>
+                <td>pre-chaos</td>
+                <td>0.0018</td>
+                <td>0.0020</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_request_duration_p99</td>
+                <td>during-chaos</td>
+                <td>0.0024</td>
+                <td>0.0036</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>coredns_request_duration_p99</td>
+                <td>post-chaos</td>
+                <td>0.0034</td>
+                <td>0.0035</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>cpu_throttling</td>
+                <td>pre-chaos</td>
+                <td>2.0223</td>
+                <td>2.0634</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>cpu_throttling</td>
+                <td>during-chaos</td>
+                <td>1.6809</td>
+                <td>2.0325</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>cpu_throttling</td>
+                <td>post-chaos</td>
+                <td>0.5279</td>
+                <td>0.7612</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>cpu_usage</td>
+                <td>pre-chaos</td>
+                <td>0.6208</td>
+                <td>0.6333</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>cpu_usage</td>
+                <td>during-chaos</td>
+                <td>0.5489</td>
+                <td>0.6172</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>cpu_usage</td>
+                <td>post-chaos</td>
+                <td>0.3478</td>
+                <td>0.3935</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>pre-chaos</td>
+                <td>0.0186</td>
+                <td>0.0186</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>during-chaos</td>
+                <td>0.0152</td>
+                <td>0.0189</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>post-chaos</td>
+                <td>0.0136</td>
+                <td>0.0136</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>pre-chaos</td>
+                <td>2.4532</td>
+                <td>2.4533</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>during-chaos</td>
+                <td>7.0284</td>
+                <td>10.0000</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>post-chaos</td>
+                <td>10.0000</td>
+                <td>10.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>pre-chaos</td>
+                <td>51.7279</td>
+                <td>51.7462</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>during-chaos</td>
+                <td>63.7409</td>
+                <td>71.7882</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>post-chaos</td>
+                <td>71.6927</td>
+                <td>71.7341</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>memory_usage</td>
+                <td>pre-chaos</td>
+                <td>540678826.6667</td>
+                <td>559939584.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>memory_usage</td>
+                <td>during-chaos</td>
+                <td>604335879.7576</td>
+                <td>667287552.0000</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>memory_usage</td>
+                <td>post-chaos</td>
+                <td>666195285.3333</td>
+                <td>667484160.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_packets</td>
+                <td>pre-chaos</td>
+                <td>1468.4035</td>
+                <td>1492.3527</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_packets</td>
+                <td>during-chaos</td>
+                <td>1397.0839</td>
+                <td>1514.5356</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_packets</td>
+                <td>post-chaos</td>
+                <td>1271.0541</td>
+                <td>1302.3393</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_receive_bytes</td>
+                <td>pre-chaos</td>
+                <td>251151.2791</td>
+                <td>256351.3189</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_receive_bytes</td>
+                <td>during-chaos</td>
+                <td>218687.7561</td>
+                <td>256662.3317</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_receive_bytes</td>
+                <td>post-chaos</td>
+                <td>170375.9756</td>
+                <td>176020.7441</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_transmit_bytes</td>
+                <td>pre-chaos</td>
+                <td>224183.7604</td>
+                <td>230972.8447</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_transmit_bytes</td>
+                <td>during-chaos</td>
+                <td>199697.0700</td>
+                <td>232688.1407</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>network_transmit_bytes</td>
+                <td>post-chaos</td>
+                <td>158749.5112</td>
+                <td>164917.0492</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>1.1057</td>
+                <td>1.1153</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.9816</td>
+                <td>1.0913</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.6049</td>
+                <td>0.6649</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.0246</td>
+                <td>0.0249</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.0222</td>
+                <td>0.0240</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.0214</td>
+                <td>0.0219</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.0002</td>
+                <td>0.0002</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.0001</td>
+                <td>0.0001</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.0001</td>
+                <td>0.0001</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>pod_ready_count</td>
+                <td>pre-chaos</td>
+                <td>15.1667</td>
+                <td>16.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>pod_ready_count</td>
+                <td>during-chaos</td>
+                <td>17.6364</td>
+                <td>21.0000</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>pod_ready_count</td>
+                <td>post-chaos</td>
+                <td>14.0000</td>
+                <td>14.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.4963</td>
+                <td>0.8000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>during-chaos</td>
+                <td>0.4620</td>
+                <td>1.2222</td>
+                <td>33</td>
+            </tr>
+            <tr>
+                <td>default</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>post-chaos</td>
+                <td>0.1704</td>
+                <td>0.2000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>apiserver_inflight</td>
+                <td>pre-chaos</td>
+                <td>3.0000</td>
+                <td>4.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>apiserver_inflight</td>
+                <td>during-chaos</td>
+                <td>2.6923</td>
+                <td>4.0000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>apiserver_inflight</td>
+                <td>post-chaos</td>
+                <td>3.0000</td>
+                <td>4.0000</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>apiserver_request_p99</td>
+                <td>pre-chaos</td>
+                <td>0.5589</td>
+                <td>0.5602</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>apiserver_request_p99</td>
+                <td>during-chaos</td>
+                <td>0.5671</td>
+                <td>0.5723</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>apiserver_request_p99</td>
+                <td>post-chaos</td>
+                <td>0.5635</td>
+                <td>0.5658</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>conntrack_entries_per_node</td>
+                <td>pre-chaos</td>
+                <td>14140.3333</td>
+                <td>16733.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>conntrack_entries_per_node</td>
+                <td>during-chaos</td>
+                <td>10834.0769</td>
+                <td>13604.0000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>conntrack_entries_per_node</td>
+                <td>post-chaos</td>
+                <td>9129.2000</td>
+                <td>10326.0000</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>container_oom_events_per_pod</td>
+                <td>pre-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>container_oom_events_per_pod</td>
+                <td>during-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>container_oom_events_per_pod</td>
+                <td>post-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>pre-chaos</td>
+                <td>309.9148</td>
+                <td>449.8445</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>during-chaos</td>
+                <td>57.3315</td>
+                <td>70.5778</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_cache_hit_rate_per_sec</td>
+                <td>post-chaos</td>
+                <td>46.5511</td>
+                <td>52.6222</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>pre-chaos</td>
+                <td>5.4778</td>
+                <td>6.6891</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>during-chaos</td>
+                <td>9.8872</td>
+                <td>13.6444</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_cache_miss_rate_per_sec</td>
+                <td>post-chaos</td>
+                <td>11.0755</td>
+                <td>14.2444</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>pre-chaos</td>
+                <td>315.3852</td>
+                <td>455.7332</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>during-chaos</td>
+                <td>67.1161</td>
+                <td>83.2000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_request_count_per_sec</td>
+                <td>post-chaos</td>
+                <td>57.6266</td>
+                <td>66.8667</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_request_duration_p99</td>
+                <td>pre-chaos</td>
+                <td>0.0018</td>
+                <td>0.0019</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_request_duration_p99</td>
+                <td>during-chaos</td>
+                <td>0.0018</td>
+                <td>0.0018</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>coredns_request_duration_p99</td>
+                <td>post-chaos</td>
+                <td>0.0018</td>
+                <td>0.0018</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_throttling</td>
+                <td>pre-chaos</td>
+                <td>1.9705</td>
+                <td>2.0506</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_throttling</td>
+                <td>during-chaos</td>
+                <td>1.9999</td>
+                <td>2.1117</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_throttling</td>
+                <td>post-chaos</td>
+                <td>2.0136</td>
+                <td>2.1933</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_usage</td>
+                <td>pre-chaos</td>
+                <td>0.5240</td>
+                <td>0.5342</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_usage</td>
+                <td>during-chaos</td>
+                <td>0.5393</td>
+                <td>0.5820</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>cpu_usage</td>
+                <td>post-chaos</td>
+                <td>0.5466</td>
+                <td>0.5802</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>pre-chaos</td>
+                <td>0.0152</td>
+                <td>0.0152</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>during-chaos</td>
+                <td>0.0142</td>
+                <td>0.0169</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_pleg_relist_duration_p99</td>
+                <td>post-chaos</td>
+                <td>0.0115</td>
+                <td>0.0117</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>pre-chaos</td>
+                <td>2.4331</td>
+                <td>2.4340</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>during-chaos</td>
+                <td>8.1100</td>
+                <td>9.4000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_pod_start_p99</td>
+                <td>post-chaos</td>
+                <td>8.9000</td>
+                <td>8.9000</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>pre-chaos</td>
+                <td>51.0565</td>
+                <td>51.0594</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>during-chaos</td>
+                <td>56.2578</td>
+                <td>57.5983</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>kubelet_runtime_ops_p99</td>
+                <td>post-chaos</td>
+                <td>57.4380</td>
+                <td>57.4606</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>memory_usage</td>
+                <td>pre-chaos</td>
+                <td>468427434.6667</td>
+                <td>475054080.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>memory_usage</td>
+                <td>during-chaos</td>
+                <td>463707214.7692</td>
+                <td>486121472.0000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>memory_usage</td>
+                <td>post-chaos</td>
+                <td>485116313.6000</td>
+                <td>493309952.0000</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_packets</td>
+                <td>pre-chaos</td>
+                <td>1197.7187</td>
+                <td>1238.4359</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_packets</td>
+                <td>during-chaos</td>
+                <td>1256.0473</td>
+                <td>1373.0480</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_packets</td>
+                <td>post-chaos</td>
+                <td>1236.3080</td>
+                <td>1287.8319</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_receive_bytes</td>
+                <td>pre-chaos</td>
+                <td>196656.9071</td>
+                <td>204567.1613</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_receive_bytes</td>
+                <td>during-chaos</td>
+                <td>202985.1211</td>
+                <td>218893.0103</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_receive_bytes</td>
+                <td>post-chaos</td>
+                <td>206734.5897</td>
+                <td>213839.4381</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_transmit_bytes</td>
+                <td>pre-chaos</td>
+                <td>172729.4724</td>
+                <td>179804.9669</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_transmit_bytes</td>
+                <td>during-chaos</td>
+                <td>180752.6069</td>
+                <td>195105.9609</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>network_transmit_bytes</td>
+                <td>post-chaos</td>
+                <td>177538.8172</td>
+                <td>183320.7016</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.9914</td>
+                <td>1.0089</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>1.0103</td>
+                <td>1.0250</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_cpu_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>1.0268</td>
+                <td>1.0648</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.0177</td>
+                <td>0.0181</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.0169</td>
+                <td>0.0173</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_io_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.0181</td>
+                <td>0.0184</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>during-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>node_memory_pressure_some_per_node</td>
+                <td>post-chaos</td>
+                <td>0.0000</td>
+                <td>0.0000</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>pod_ready_count</td>
+                <td>pre-chaos</td>
+                <td>14.0000</td>
+                <td>14.0000</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>pod_ready_count</td>
+                <td>during-chaos</td>
+                <td>16.6154</td>
+                <td>20.0000</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>pod_ready_count</td>
+                <td>post-chaos</td>
+                <td>15.2000</td>
+                <td>16.0000</td>
+                <td>5</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>pre-chaos</td>
+                <td>0.5222</td>
+                <td>0.8888</td>
+                <td>6</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>during-chaos</td>
+                <td>0.6838</td>
+                <td>0.9333</td>
+                <td>13</td>
+            </tr>
+            <tr>
+                <td>spread</td>
+                <td>tcp_retransmit_rate_per_node</td>
+                <td>post-chaos</td>
+                <td>0.8713</td>
+                <td>1.0892</td>
+                <td>5</td>
+            </tr>
+    </table>
+        <div class="section-charts"><img src="prometheus_by_phase.png" style="max-width:100%; margin:10px 0;"></div>
+    </div>
+
+    <!-- ═══ Appendix: Methodology ═══ -->
+    <h2>Appendix — Methodology</h2>
+    <div class="appendix">
+        <p>This appendix documents how each metric in this report is calculated.
+        All formulas reference the actual implementation in the ChaosProbe source code.</p>
+
+        <details>
+            <summary>A.1 — Phase Classification</summary>
+            <p>Every continuous prober classifies each sample into one of three phases
+            based on chaos lifecycle timestamps:</p>
+            <ul>
+                <li><strong>pre-chaos</strong> — before <code>mark_chaos_start()</code> is called</li>
+                <li><strong>during-chaos</strong> — from chaos start until chaos end (or timeout)</li>
+                <li><strong>post-chaos</strong> — after <code>mark_chaos_end()</code> is called</li>
+            </ul>
+            <p>If the chaos engine does not report an end time, a safety cap prevents
+            the during-chaos window from growing indefinitely:</p>
+            <div class="formula">
+                buffer = clamp(expected_duration &times; 0.15, min=15s, max=30s)<br>
+                if elapsed &ge; expected_duration + buffer &rarr; post-chaos
+            </div>
+            <p>This dynamic buffer scales with experiment duration while remaining bounded,
+            giving enough time to capture immediate post-fault recovery behaviour in
+            the during-chaos window.</p>
+        </details>
+
+        <details>
+            <summary>A.2 — Resilience Score</summary>
+            <p>The resilience score (0&ndash;100) is derived from LitmusChaos probe verdicts.
+            Each experiment has a <code>probeSuccessPercentage</code> (the fraction of
+            probes that passed). The final score is a weighted average across all experiments:</p>
+            <div class="formula">
+                score = &sum;(w<sub>i</sub> &times; probeSuccessPercentage<sub>i</sub>) / &sum;(w<sub>i</sub>)
+            </div>
+            <p>By default all experiments have equal weight (w=1). The report note
+            describes how continuous metrics (recovery speed, latency, error rate,
+            throughput) contribute to differentiation beyond probe verdicts alone.</p>
+        </details>
+
+        <details>
+            <summary>A.3 — Recovery Time</summary>
+            <p>Measured via the Kubernetes Watch API by observing real-time pod lifecycle events.
+            A <strong>recovery cycle</strong> is defined as:</p>
+            <div class="formula">
+                Pod DELETED &rarr; new Pod Scheduled &rarr; new Pod Ready
+            </div>
+            <p>Each cycle records three durations:</p>
+            <ul>
+                <li><code>deletionToScheduled_ms</code> — time from deletion event to the replacement pod being scheduled</li>
+                <li><code>scheduledToReady_ms</code> — time from scheduling to the pod reaching Ready status</li>
+                <li><code>totalRecovery_ms</code> — end-to-end: deletion to Ready</li>
+            </ul>
+            <p>Summary statistics across all cycles in a run:</p>
+            <div class="formula">
+                mean, median, min, max, P95 (all in milliseconds)
+            </div>
+            <p>P95 is computed as <code>sorted_values[floor(n &times; 0.95)]</code>.</p>
+        </details>
+
+        <details>
+            <summary>A.4 — Inter-Service Latency</summary>
+            <p>Latency is measured by executing HTTP requests from inside the cluster via
+            <code>kubectl exec</code>, using python3 (preferred) or wget as a fallback.
+            Each target pod is probed independently as a separate <em>vantage point</em>.</p>
+
+            <p><strong>Per-route summary</strong> (computed over successful samples only):</p>
+            <div class="formula">
+                mean = &sum;(latency<sub>i</sub>) / n<br>
+                median = middle value of sorted latencies<br>
+                P95 = sorted[floor(n &times; 0.95)]<br>
+                P99 = sorted[floor(n &times; 0.99)]<br>
+                stddev = sample standard deviation (0 if n=1)
+            </div>
+
+            <p><strong>Error rate</strong>:</p>
+            <div class="formula">
+                errorRate = error_count / total_samples
+            </div>
+
+            <p><strong>Cross-pod standard deviation</strong> (placement signal):</p>
+            <div class="formula">
+                For each sampling tick, compute stddev across all pod vantage points.<br>
+                meanCrossNodeStddev = mean(per-tick stddevs) over the phase
+            </div>
+            <p>A higher cross-pod stddev indicates that different pods experienced
+            different latencies, which is a signal of placement-dependent behaviour
+            (e.g., one pod shares a node with the fault target while another does not).</p>
+
+            <p><strong>Worst vantage point</strong>:</p>
+            <div class="formula">
+                maxCrossNodeLatency = max(per-tick max latency) over the phase
+            </div>
+        </details>
+
+        <details>
+            <summary>A.5 — Resource Utilization</summary>
+            <p>Node-level CPU and memory metrics are fetched from the Kubernetes Metrics API
+            (<code>metrics.k8s.io/v1beta1</code>) every sampling interval.</p>
+
+            <p><strong>Used-nodes-only filtering</strong>: only nodes hosting at least one
+            running pod in the target namespace are included. This prevents idle nodes
+            from diluting placement-specific signals. For example, <em>colocate</em>
+            concentrates all pods on a single node &mdash; averaging CPU across 3 cluster
+            nodes would show ~30% instead of the actual ~80% on that node.</p>
+
+            <p><strong>Per-tick aggregate</strong> (across used nodes):</p>
+            <div class="formula">
+                cpu_millicores = &sum;(node CPU millicores)<br>
+                memory_bytes = &sum;(node memory bytes)<br>
+                cpu_percent = mean(node CPU %) &mdash; average utilization across used nodes<br>
+                memory_percent = mean(node memory %)
+            </div>
+
+            <p><strong>Phase summary</strong>:</p>
+            <div class="formula">
+                meanCpu_percent = mean(per-tick cpu_percent) over phase<br>
+                stddevCpu_percent = stdev(per-tick cpu_percent) over phase<br>
+                peakNodeCpu_percent = max(per-tick cpu_percent) over phase
+            </div>
+            <p>The same pattern applies to memory metrics. Standard deviation across ticks
+            indicates variability; peak shows the worst-case node pressure observed.</p>
+        </details>
+
+        <details>
+            <summary>A.6 — I/O Throughput</summary>
+            <p>Two I/O subsystems are probed independently:</p>
+
+            <p><strong>Redis throughput</strong> (via <code>redis-benchmark</code>):</p>
+            <div class="formula">
+                ops_per_sec = parse(&quot;X requests per second&quot; from <code>redis-benchmark -q</code>)<br>
+                avg_latency_ms = p50 from <code>-q</code> output (else 1000 / ops_per_sec)
+            </div>
+            <p>Default concurrency saturates the server so node-level CPU contention
+            shows up as a throughput drop. Operations measured: SET and GET.</p>
+
+            <p><strong>Disk throughput</strong> (via <code>dd</code>):</p>
+            <div class="formula">
+                ops_per_sec = block_count / elapsed_s<br>
+                bytes_per_sec = total_bytes / elapsed_s<br>
+                avg_latency_ms = (elapsed_s &times; 1000) / block_count
+            </div>
+            <p>Sequential I/O with configurable block size. Operations measured:
+            write and read.</p>
+
+            <p><strong>Cross-node aggregation</strong> (placement signal):</p>
+            <div class="formula">
+                meanOpsPerSecond = mean(ops/s across all nodes)<br>
+                stddevOpsPerSecond = stdev(ops/s across all nodes)<br>
+                meanCrossNodeStddev = mean(per-tick cross-node stddev)<br>
+                worstMinOpsPerSecond = min(per-tick worst-node ops/s)
+            </div>
+            <p>Higher cross-node stddev indicates uneven I/O performance across nodes,
+            which correlates with placement-induced resource contention.</p>
+        </details>
+    </div>
+
+    <div class="footer">
+        Generated by ChaosProbe &middot;
+        1 iteration per strategy &middot;
+        4 metric dimensions &middot; 3 strategies evaluated
+    </div>
+</div>
+</body>
+</html>
