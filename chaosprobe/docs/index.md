@@ -56,5 +56,9 @@ Background and rationale — the *why*.
 - [Scope of claims](explanation/scope-of-claims.md) — what the evidence does and
   does not support, and what generalizes vs. what does not. Read before quoting
   any result.
+- [Proposed experiments](explanation/proposed-experiments.md) — the research
+  roadmap (P1–P4): the next, more-interesting experiments to run (multi-replica
+  node-failure, path-scoped network × dependency-aware placement, a graph-derived
+  cross-node-call-fraction metric), reconciled with what is already verified.
 - [`../TECHNICAL.md`](../TECHNICAL.md) — data flow, experiment design, resilience
   scoring methodology, and the statistics behind `stats` / `power` / `recommend`.
