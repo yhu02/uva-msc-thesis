@@ -14,7 +14,8 @@ uncertainty explicit instead of hiding it behind point estimates.
 import math
 import random
 import statistics
-from typing import Dict, List, Mapping, Optional, Sequence
+from collections import defaultdict
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 
 def _percentile(sorted_values: Sequence[float], p: float) -> float:
@@ -382,3 +383,517 @@ def pairwise_comparisons(
         out = sorted(out, key=lambda r: _as_float(r["p_raw"]))
 
     return out
+
+
+def _round_or_none(value: float, digits: int) -> Optional[float]:
+    """Round a float, collapsing NaN/inf to ``None`` for JSON-safe output."""
+    if not math.isfinite(value):
+        return None
+    return round(value, digits)
+
+
+def tost_equivalence_correlation(
+    rho: float,
+    n: int,
+    sesoi: float = 0.3,
+    alpha: float = 0.05,
+) -> Dict[str, object]:
+    """Two one-sided tests (TOST) for *equivalence* of a correlation to zero.
+
+    This is the instrument the thesis's H3 "decoupling" claim needs.  An
+    ordinary correlation test that fails to reject (p > 0.05) only shows
+    *absence of evidence*; TOST turns it into *evidence of absence* by
+    testing whether the correlation lies inside an equivalence band
+    (-sesoi, +sesoi) — a smallest-effect-size-of-interest the analyst
+    declares in advance (default |rho| = 0.3, a conventional "small"
+    boundary).  Equivalence is concluded only when **both** one-sided
+    tests reject, i.e. ``p_tost = max(p_lower, p_upper) < alpha``.
+
+    Uses the Fisher z-transform: ``z = atanh(rho)`` with standard error
+    ``1/sqrt(n - 3)``.  The bounds are transformed the same way.
+
+    Args:
+        rho: Observed correlation (Spearman or Pearson), in [-1, 1].
+        n: Number of paired observations the correlation was computed on.
+        sesoi: Smallest effect size of interest (equivalence half-width on
+            the correlation scale); must be in (0, 1).
+        alpha: One-sided significance level for each test.
+
+    Returns:
+        Dict with ``rho``, ``n``, ``sesoi``, ``alpha``, ``se``, ``z``,
+        ``p_lower``, ``p_upper``, ``p_tost``, ``equivalent`` (bool), and
+        ``bounds`` (the ``[-sesoi, sesoi]`` band).  When ``n <= 3`` the SE
+        is undefined: the p-values are ``None`` and ``equivalent`` is
+        ``False``.
+    """
+    bounds = [-abs(sesoi), abs(sesoi)]
+    if n <= 3 or not 0.0 < abs(sesoi) < 1.0:
+        return {
+            "rho": rho,
+            "n": n,
+            "sesoi": abs(sesoi),
+            "alpha": alpha,
+            "se": None,
+            "z": None,
+            "p_lower": None,
+            "p_upper": None,
+            "p_tost": None,
+            "equivalent": False,
+            "bounds": bounds,
+        }
+
+    # Clamp away from ±1 so atanh stays finite at the boundary.
+    clamped = max(-0.999999999, min(0.999999999, rho))
+    z_obs = math.atanh(clamped)
+    se = 1.0 / math.sqrt(n - 3)
+    z_low = math.atanh(-abs(sesoi))
+    z_high = math.atanh(abs(sesoi))
+
+    # H0_lower: rho <= -sesoi.  Reject (rho is above the lower bound) when
+    # (z_obs - z_low)/se is large and positive -> upper-tail probability.
+    stat_lower = (z_obs - z_low) / se
+    p_lower = _standard_normal_sf(stat_lower)
+    # H0_upper: rho >= +sesoi.  Reject (rho is below the upper bound) when
+    # (z_obs - z_high)/se is large and negative -> lower-tail probability.
+    stat_upper = (z_obs - z_high) / se
+    p_upper = _standard_normal_sf(-stat_upper)
+
+    p_tost = max(p_lower, p_upper)
+    return {
+        "rho": round(rho, 4),
+        "n": n,
+        "sesoi": abs(sesoi),
+        "alpha": alpha,
+        "se": round(se, 4),
+        "z": round(z_obs, 4),
+        "p_lower": round(p_lower, 4),
+        "p_upper": round(p_upper, 4),
+        "p_tost": round(p_tost, 4),
+        "equivalent": p_tost < alpha,
+        "bounds": bounds,
+    }
+
+
+def sign_test(a: Sequence[float], b: Sequence[float]) -> Dict[str, object]:
+    """Exact two-sided binomial sign test on paired observations.
+
+    Counts pairs where ``a > b`` vs ``a < b`` (ties dropped) and asks how
+    surprising the split is under a fair coin.  For the H2 mechanism
+    claim, this is the cleanest statement of "spread flushes more
+    conntrack than colocate in k/k sessions": with k/k in one direction
+    the exact p is ``2 * 0.5**k``.
+
+    Args:
+        a, b: Equal-length paired samples.
+
+    Returns:
+        Dict with ``n_pos``, ``n_neg``, ``n`` (non-tied pairs), and
+        ``p_two_sided``.
+
+    Raises:
+        ValueError: if the two samples differ in length.
+    """
+    if len(a) != len(b):
+        raise ValueError("sign_test requires equal-length paired samples")
+    n_pos = sum(1 for x, y in zip(a, b) if x > y)
+    n_neg = sum(1 for x, y in zip(a, b) if x < y)
+    n = n_pos + n_neg
+    if n == 0:
+        p = 1.0
+    else:
+        k = min(n_pos, n_neg)
+        tail = sum(math.comb(n, i) for i in range(0, k + 1)) * (0.5**n)
+        p = min(1.0, 2.0 * tail)
+    return {
+        "n_pos": n_pos,
+        "n_neg": n_neg,
+        "n": n,
+        "p_two_sided": round(p, 4),
+    }
+
+
+def wilcoxon_signed_rank(a: Sequence[float], b: Sequence[float]) -> Dict[str, object]:
+    """Paired Wilcoxon signed-rank test with normal-approximation p-value.
+
+    The paired counterpart to Mann-Whitney, for session-blocked designs
+    where each session yields one value per arm (e.g. spread vs colocate
+    measured under the same cluster state).  Pairing removes between-
+    session variance, so this is both more powerful and more honest than
+    an unpaired test here.  Zero differences are dropped (standard
+    Wilcoxon convention); ties in the absolute differences get average
+    ranks with the usual variance correction.  A continuity correction
+    keeps the approximation conservative, matching ``mann_whitney_u``.
+
+    The exact binomial ``sign_test`` is computed alongside and returned
+    under ``sign_test`` — report both.
+
+    Args:
+        a, b: Equal-length paired samples.
+
+    Returns:
+        Dict with ``w_statistic`` (= ``min(w_plus, w_minus)``),
+        ``w_plus``, ``w_minus``, ``z``, ``p_two_sided``, ``n_nonzero``,
+        ``n_pairs``, and a nested ``sign_test`` dict.
+
+    Raises:
+        ValueError: if the two samples differ in length.
+    """
+    if len(a) != len(b):
+        raise ValueError("wilcoxon_signed_rank requires equal-length paired samples")
+    sgn = sign_test(a, b)
+    diffs = [x - y for x, y in zip(a, b)]
+    nonzero = [d for d in diffs if d != 0]
+    n_r = len(nonzero)
+    if n_r == 0:
+        return {
+            "w_statistic": None,
+            "w_plus": 0.0,
+            "w_minus": 0.0,
+            "z": 0.0,
+            "p_two_sided": 1.0,
+            "n_nonzero": 0,
+            "n_pairs": len(a),
+            "sign_test": sgn,
+        }
+
+    abs_d = [abs(d) for d in nonzero]
+    ranks = _rank_with_ties(abs_d)
+    w_plus = sum(r for d, r in zip(nonzero, ranks) if d > 0)
+    w_minus = sum(r for d, r in zip(nonzero, ranks) if d < 0)
+    w = min(w_plus, w_minus)
+
+    mean_w = n_r * (n_r + 1) / 4.0
+    tie_term = 0.0
+    abs_counts: Dict[float, int] = {}
+    for d in abs_d:
+        abs_counts[d] = abs_counts.get(d, 0) + 1
+    for cnt in abs_counts.values():
+        if cnt > 1:
+            tie_term += cnt**3 - cnt
+    var_w = n_r * (n_r + 1) * (2 * n_r + 1) / 24.0 - tie_term / 48.0
+
+    if var_w <= 0:  # pragma: no cover - all-tied diffs collapse to n_r==0 above, so var_w>0 here
+        z = 0.0
+        p = 1.0
+    else:
+        z = max(0.0, abs(w - mean_w) - 0.5) / math.sqrt(var_w)
+        p = min(1.0, 2.0 * _standard_normal_sf(z))
+
+    return {
+        "w_statistic": round(w, 2),
+        "w_plus": round(w_plus, 2),
+        "w_minus": round(w_minus, 2),
+        "z": round(z, 3),
+        "p_two_sided": round(p, 4),
+        "n_nonzero": n_r,
+        "n_pairs": len(a),
+        "sign_test": sgn,
+    }
+
+
+def _icc_point(cells: Mapping[Tuple[object, object], Sequence[float]]) -> Dict[str, float]:
+    """Variance partition + ICC_strategy for a ``{(strategy, run): scores}`` map.
+
+    Mirrors ``scripts/score_variance.py:decompose`` exactly so the CLI
+    number and this helper's bootstrap reconcile: ``sig2_iter`` is the
+    mean within-cell population variance, ``sig2_run`` the mean (over
+    strategies) population variance of that strategy's cell means, and
+    ``sig2_strat`` the population variance of the strategy grand means.
+    Returns NaN components when there is no data to partition.
+    """
+    strategies = sorted({s for s, _ in cells}, key=repr)
+    if not strategies:
+        return {
+            "sig2_strat": float("nan"),
+            "sig2_run": float("nan"),
+            "sig2_iter": float("nan"),
+            "total": float("nan"),
+            "icc": float("nan"),
+        }
+
+    within = [statistics.pvariance(v) for v in cells.values() if len(v) >= 2]
+    sig2_iter = statistics.mean(within) if within else 0.0
+
+    strat_means: List[float] = []
+    run_vars: List[float] = []
+    for strat in strategies:
+        cell_means = [statistics.mean(v) for (s, _), v in cells.items() if s == strat and v]
+        if not cell_means:
+            continue
+        strat_means.append(statistics.mean(cell_means))
+        if len(cell_means) >= 2:
+            run_vars.append(statistics.pvariance(cell_means))
+    sig2_run = statistics.mean(run_vars) if run_vars else 0.0
+    sig2_strat = statistics.pvariance(strat_means) if strat_means else float("nan")
+
+    total = sig2_strat + sig2_run + sig2_iter
+    icc = sig2_strat / total if total else float("nan")
+    return {
+        "sig2_strat": sig2_strat,
+        "sig2_run": sig2_run,
+        "sig2_iter": sig2_iter,
+        "total": total,
+        "icc": icc,
+    }
+
+
+def icc_bootstrap(
+    cells: Mapping[Tuple[object, object], Sequence[float]],
+    confidence: float = 0.95,
+    n_resamples: int = 2000,
+    seed: Optional[int] = 42,
+) -> Dict[str, object]:
+    """ICC_strategy with a cluster-bootstrap confidence interval.
+
+    ``ICC_strategy`` is the share of resilience-score variance attributable
+    to the placement strategy — the thesis's H1 instrument.  A point
+    estimate alone invites "0.046 ± what?"; this adds a percentile CI by
+    resampling the nested design at the levels that carry the dependence:
+    strategies with replacement, then runs within each resampled strategy
+    with replacement (iterations ride along inside their run).  Resampled
+    units are relabelled so a strategy or run drawn twice counts as two
+    distinct cells.
+
+    Args:
+        cells: ``{(strategy, run): [per-iteration scores]}`` — the shape
+            ``score_variance.py:collect`` produces.
+        confidence: Two-sided confidence level for the interval.
+        n_resamples: Number of bootstrap resamples.
+        seed: RNG seed for reproducibility (None = nondeterministic).
+
+    Returns:
+        Dict with ``icc`` (point estimate), ``ci_low``, ``ci_high``,
+        ``confidence``, ``n_resamples``, ``n_strategies``, ``n_obs``, and
+        the ``sig2_strat`` / ``sig2_run`` / ``sig2_iter`` components.
+        NaN/empty results collapse to ``None``.
+    """
+    point = _icc_point(cells)
+    n_obs = sum(len(v) for v in cells.values())
+
+    strat_to_runs: Dict[object, List[Tuple[object, List[float]]]] = defaultdict(list)
+    for (s, run), v in cells.items():
+        strat_to_runs[s].append((run, list(v)))
+    strategies = sorted(strat_to_runs, key=repr)
+
+    boot: List[float] = []
+    if strategies:
+        rng = random.Random(seed)
+        n_strat = len(strategies)
+        for _ in range(n_resamples):
+            resampled: Dict[Tuple[object, object], Sequence[float]] = {}
+            for si in range(n_strat):
+                strat = strategies[rng.randrange(n_strat)]
+                runs = strat_to_runs[strat]
+                synth_strat = (strat, si)
+                for rj in range(len(runs)):
+                    run, values = runs[rng.randrange(len(runs))]
+                    resampled[(synth_strat, (run, rj))] = values
+            icc = _icc_point(resampled)["icc"]
+            if math.isfinite(icc):
+                boot.append(icc)
+
+    ci_low: Optional[float] = None
+    ci_high: Optional[float] = None
+    if boot:
+        boot.sort()
+        alpha = (1.0 - confidence) / 2.0
+        ci_low = _round_or_none(_percentile(boot, alpha), 4)
+        ci_high = _round_or_none(_percentile(boot, 1.0 - alpha), 4)
+
+    return {
+        "icc": _round_or_none(point["icc"], 4),
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "confidence": confidence,
+        "n_resamples": len(boot),
+        "n_strategies": len(strategies),
+        "n_obs": n_obs,
+        "sig2_strat": _round_or_none(point["sig2_strat"], 3),
+        "sig2_run": _round_or_none(point["sig2_run"], 3),
+        "sig2_iter": _round_or_none(point["sig2_iter"], 3),
+    }
+
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Continued-fraction expansion for the incomplete beta (Lentz's method)."""
+    tiny = 1e-30
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny  # pragma: no cover - Lentz zero-guard, not deterministically reachable
+    d = 1.0 / d
+    h = d
+    for m in range(1, 201):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny  # pragma: no cover - Lentz zero-guard
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny  # pragma: no cover - Lentz zero-guard
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny  # pragma: no cover - Lentz zero-guard
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny  # pragma: no cover - Lentz zero-guard
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-12:
+            break
+    return h
+
+
+def _betai(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta function I_x(a, b)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    lbeta = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    front = math.exp(lbeta + a * math.log(x) + b * math.log(1.0 - x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+def _f_sf(f: float, df1: float, df2: float) -> float:
+    """Survival function P(F >= f) for an F distribution with (df1, df2)."""
+    if f <= 0.0:
+        return 1.0
+    x = df2 / (df2 + df1 * f)
+    return _betai(df2 / 2.0, df1 / 2.0, x)
+
+
+def _two_factor_f(rows: Sequence[Tuple[object, object, float]]) -> Dict[str, Dict[str, object]]:
+    """Factorial ANOVA F/df/p for both main effects and the interaction.
+
+    Standard balanced-design sum-of-squares decomposition; for unbalanced
+    cells it is the unweighted-means approximation (ART assumes a balanced
+    factorial design, so callers should keep cells equal-sized for an
+    exact test).
+    """
+    values = [r[2] for r in rows]
+    n = len(values)
+    a_levels = sorted({r[0] for r in rows}, key=repr)
+    b_levels = sorted({r[1] for r in rows}, key=repr)
+    na = len(a_levels)
+    nb = len(b_levels)
+    gm = statistics.mean(values)
+
+    by_a: Dict[object, List[float]] = defaultdict(list)
+    by_b: Dict[object, List[float]] = defaultdict(list)
+    by_ab: Dict[Tuple[object, object], List[float]] = defaultdict(list)
+    for ra, rb, rv in rows:
+        by_a[ra].append(rv)
+        by_b[rb].append(rv)
+        by_ab[(ra, rb)].append(rv)
+
+    ss_total = sum((v - gm) ** 2 for v in values)
+    ss_a = sum(len(g) * (statistics.mean(g) - gm) ** 2 for g in by_a.values())
+    ss_b = sum(len(g) * (statistics.mean(g) - gm) ** 2 for g in by_b.values())
+    ss_cells = sum(len(g) * (statistics.mean(g) - gm) ** 2 for g in by_ab.values())
+    ss_ab = ss_cells - ss_a - ss_b
+    ss_error = ss_total - ss_cells
+
+    df_a = na - 1
+    df_b = nb - 1
+    df_ab = df_a * df_b
+    df_error = n - na * nb
+
+    def _effect(ss: float, df: int) -> Dict[str, object]:
+        if df <= 0 or df_error <= 0 or ss_error <= 0:
+            return {"f": None, "df1": df, "df2": df_error, "p": None}
+        ms = ss / df
+        ms_error = ss_error / df_error
+        f = ms / ms_error
+        return {
+            "f": round(f, 3),
+            "df1": df,
+            "df2": df_error,
+            "p": round(_f_sf(f, df, df_error), 4),
+        }
+
+    return {
+        "factor_a": _effect(ss_a, df_a),
+        "factor_b": _effect(ss_b, df_b),
+        "interaction": _effect(ss_ab, df_ab),
+    }
+
+
+def art_anova(data: Sequence[Tuple[object, object, float]]) -> Dict[str, object]:
+    """Aligned Rank Transform factorial ANOVA for a 2-factor design.
+
+    The non-parametric test the E1 node-drain experiment needs: its
+    headline is the *interaction* between placement and replica count
+    (placement moves user-visible availability at 3 replicas but not at
+    1), and ranks rather than raw values are the right currency for
+    bounded, non-normal availability/recovery responses.  ART (Wobbrock
+    et al., CHI 2011) aligns the response for each effect by subtracting
+    the other effects' cell-mean estimates, ranks the aligned values, runs
+    an ordinary factorial ANOVA on the ranks, and reports only the F for
+    the aligned effect.
+
+    Args:
+        data: List of ``(factor_a_level, factor_b_level, value)`` tuples.
+
+    Returns:
+        Dict with ``factor_a``, ``factor_b``, and ``interaction`` — each a
+        ``{f, df1, df2, p}`` dict — plus ``n``, ``levels_a``, ``levels_b``.
+        F/p are ``None`` for an effect when the design has too few
+        observations to leave error degrees of freedom.
+    """
+    rows = list(data)
+    a_levels = sorted({r[0] for r in rows}, key=repr)
+    b_levels = sorted({r[1] for r in rows}, key=repr)
+
+    base: Dict[str, object] = {
+        "n": len(rows),
+        "levels_a": a_levels,
+        "levels_b": b_levels,
+    }
+    if len(a_levels) < 2 or len(b_levels) < 2:
+        empty = {"f": None, "df1": 0, "df2": 0, "p": None}
+        base.update({"factor_a": empty, "factor_b": empty, "interaction": dict(empty)})
+        return base
+
+    gm = statistics.mean(r[2] for r in rows)
+    a_groups: Dict[object, List[float]] = defaultdict(list)
+    b_groups: Dict[object, List[float]] = defaultdict(list)
+    ab_groups: Dict[Tuple[object, object], List[float]] = defaultdict(list)
+    for ra, rb, rv in rows:
+        a_groups[ra].append(rv)
+        b_groups[rb].append(rv)
+        ab_groups[(ra, rb)].append(rv)
+    a_mean = {k: statistics.mean(v) for k, v in a_groups.items()}
+    b_mean = {k: statistics.mean(v) for k, v in b_groups.items()}
+    ab_mean = {k: statistics.mean(v) for k, v in ab_groups.items()}
+
+    def _aligned(effect: str) -> List[Tuple[object, object, float]]:
+        out: List[Tuple[object, object, float]] = []
+        for a, b, y in rows:
+            if effect == "a":
+                aligned = y - ab_mean[(a, b)] + a_mean[a]
+            elif effect == "b":
+                aligned = y - ab_mean[(a, b)] + b_mean[b]
+            else:  # interaction
+                aligned = y - a_mean[a] - b_mean[b] + gm
+            out.append((a, b, aligned))
+        return out
+
+    def _ranked(aligned: List[Tuple[object, object, float]]) -> List[Tuple[object, object, float]]:
+        ranks = _rank_with_ties([r[2] for r in aligned])
+        return [(r[0], r[1], rank) for r, rank in zip(aligned, ranks)]
+
+    base["factor_a"] = _two_factor_f(_ranked(_aligned("a")))["factor_a"]
+    base["factor_b"] = _two_factor_f(_ranked(_aligned("b")))["factor_b"]
+    base["interaction"] = _two_factor_f(_ranked(_aligned("ab")))["interaction"]
+    return base
