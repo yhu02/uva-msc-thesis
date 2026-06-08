@@ -1145,6 +1145,39 @@ class TestRunIterationWithUnknownRetry:
         )
 
 
+class TestTotalReadyEndpoints:
+    """The during-chaos sampler ranks snapshots by total ready endpoints."""
+
+    def test_sums_ready_across_services(self):
+        snap = {
+            "services": {
+                "a": {"ready": 3},
+                "b": {"ready": 1},
+                "c": {"ready": 0},
+            }
+        }
+        assert strategy_runner._total_ready_endpoints(snap) == 4
+
+    def test_none_snapshot_is_zero(self):
+        assert strategy_runner._total_ready_endpoints(None) == 0
+
+    def test_no_services_is_zero(self):
+        assert strategy_runner._total_ready_endpoints({"services": {}}) == 0
+
+    def test_missing_or_null_ready_treated_as_zero(self):
+        snap = {"services": {"a": {"ready": None}, "b": {}, "c": None, "d": {"ready": 2}}}
+        assert strategy_runner._total_ready_endpoints(snap) == 2
+
+    def test_trough_is_the_minimum(self):
+        # The sampler keeps the snapshot with the fewest ready endpoints; verify
+        # the ordering the sampler relies on.
+        healthy = {"services": {"a": {"ready": 3}, "b": {"ready": 3}}}
+        trough = {"services": {"a": {"ready": 0}, "b": {"ready": 1}}}
+        assert strategy_runner._total_ready_endpoints(
+            trough
+        ) < strategy_runner._total_ready_endpoints(healthy)
+
+
 class TestRunIterationsRetryWiring:
     """The retry helper is wired into the per-strategy iteration loop."""
 

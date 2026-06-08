@@ -51,6 +51,23 @@ from chaosprobe.placement.strategy import PlacementStrategy
 
 logger = logging.getLogger(__name__)
 
+# How often to sample EndpointSlices during the fault window when hunting the
+# outage trough (see the sampler in _run_single_iteration). Small enough to land
+# several samples inside even a short held-drain window, large enough that the
+# per-sample namespace list call is negligible.
+_DURING_SAMPLE_INTERVAL_S = 15
+
+
+def _total_ready_endpoints(snapshot: Optional[Dict[str, Any]]) -> int:
+    """Total ready endpoints across all services in an EndpointSlice snapshot.
+
+    The during-chaos sampler keeps the snapshot that minimises this — the moment
+    the most pods are down, i.e. the outage trough.
+    """
+    services = (snapshot or {}).get("services") or {}
+    return sum(int((svc or {}).get("ready") or 0) for svc in services.values())
+
+
 # Environment variables for the baseline trivial fault (pod-cpu-hog).
 # 1% CPU stress on 1 core for 1 second — imperceptible, no pods deleted.
 # CONTAINER_RUNTIME and SOCKET_PATH are required by pod-cpu-hog to
@@ -848,27 +865,34 @@ def _run_single_iteration(
         # snapshot in collect() can be diffed against a clean baseline.
         endpoint_slices_pre = ctx.metrics_collector.snapshot_endpoint_slices()
 
-        # Schedule a mid-chaos EndpointSlice snapshot. run_experiments() below
-        # blocks for the whole fault window, so a background timer fires at the
-        # drain midpoint to catch the transient outage trough — services whose
-        # endpoints drop to zero during a node drain but reschedule back before
-        # the post-chaos snapshot. The timer uses the metrics collector's own API
-        # client; the main thread is blocked in ChaosRunner's separate client, so
-        # the two never touch the same client concurrently.
-        endpoint_slices_during: Dict[str, Any] = {}
+        # Sample EndpointSlices repeatedly through the fault window and keep the
+        # worst (fewest ready) snapshot — the outage trough. run_experiments()
+        # below blocks for the whole window, and a node-drain's eviction timing
+        # within it (litmus does setup -> cordon -> evict -> hold -> uncordon, and
+        # the whole thing can run far longer than TOTAL_CHAOS_DURATION) is not
+        # known in advance, so a single fixed-offset snapshot routinely fires
+        # during setup and misses the trough. The sampler thread uses the metrics
+        # collector's API client while the main thread is blocked in ChaosRunner's
+        # separate client, so the two never touch the same client concurrently.
+        during_state: Dict[str, Any] = {}
+        stop_sampling = threading.Event()
 
-        def _capture_during_chaos() -> None:
-            try:
-                snap = ctx.metrics_collector.snapshot_endpoint_slices()
-                if snap is not None:
-                    endpoint_slices_during["snapshot"] = snap
-            except Exception:  # pragma: no cover - best-effort observability
-                logger.debug("mid-chaos EndpointSlice snapshot failed", exc_info=True)
+        def _sample_during_chaos() -> None:
+            while not stop_sampling.wait(_DURING_SAMPLE_INTERVAL_S):
+                try:
+                    snap = ctx.metrics_collector.snapshot_endpoint_slices()
+                except Exception:  # pragma: no cover - best-effort observability
+                    logger.debug("during-chaos sample failed", exc_info=True)
+                    continue
+                if snap is None:
+                    continue
+                ready = _total_ready_endpoints(snap)
+                if "snapshot" not in during_state or ready < during_state["minReady"]:
+                    during_state["snapshot"] = snap
+                    during_state["minReady"] = ready
 
-        during_delay = max(1.0, chaos_duration * 0.5)
-        during_timer = threading.Timer(during_delay, _capture_during_chaos)
-        during_timer.daemon = True
-        during_timer.start()
+        during_sampler = threading.Thread(target=_sample_during_chaos, daemon=True)
+        during_sampler.start()
 
         # Run experiment
         experiment_start = time.time()
@@ -890,9 +914,9 @@ def _run_single_iteration(
         runner.run_experiments(scenario.get("experiments", []))
 
         experiment_end = time.time()
-        # Cancel the mid-chaos snapshot timer if the fault finished before it
-        # fired (a no-op once it has already run).
-        during_timer.cancel()
+        # Stop the sampler and let its in-flight snapshot (if any) finish.
+        stop_sampling.set()
+        during_sampler.join(timeout=_DURING_SAMPLE_INTERVAL_S + 5)
         for p in probers.values():
             if p and hasattr(p, "mark_chaos_end"):
                 p.mark_chaos_end()
@@ -928,7 +952,7 @@ def _run_single_iteration(
         resource_data=prober_results.get("resource"),
         prometheus_data=prober_results.get("prometheus"),
         endpoint_slices_pre=endpoint_slices_pre,
-        endpoint_slices_during=endpoint_slices_during.get("snapshot"),
+        endpoint_slices_during=during_state.get("snapshot"),
         collect_logs=ctx.collect_logs,
     )
 
