@@ -74,6 +74,29 @@ class TestResolveNodeTargets:
         with pytest.raises(RuntimeError, match="appinfo.applabel"):
             _runner()._resolve_node_targets(engine)
 
+    def test_node_drain_resolves_singular_target_node(self, monkeypatch):
+        # node-drain reads the SINGULAR TARGET_NODE, not the plural TARGET_NODES.
+        runner = _runner()
+        monkeypatch.setattr(runner, "_resolve_target_node", lambda al: "worker3")
+        engine = _engine("node-drain", env=[{"name": "TARGET_NODE", "value": "auto"}])
+        runner._resolve_node_targets(engine)
+        env = engine["spec"]["experiments"][0]["spec"]["components"]["env"]
+        assert next(e["value"] for e in env if e["name"] == "TARGET_NODE") == "worker3"
+        assert _target_nodes(engine) is None  # must not add a plural TARGET_NODES
+
+    def test_node_drain_appends_singular_when_missing(self, monkeypatch):
+        runner = _runner()
+        monkeypatch.setattr(runner, "_resolve_target_node", lambda al: "worker1")
+        engine = _engine("node-drain", env=[])
+        runner._resolve_node_targets(engine)
+        env = engine["spec"]["experiments"][0]["spec"]["components"]["env"]
+        assert next(e["value"] for e in env if e["name"] == "TARGET_NODE") == "worker1"
+
+    def test_node_drain_missing_applabel_names_singular_env(self):
+        engine = _engine("node-drain", env=[{"name": "TARGET_NODE", "value": "auto"}], applabel="")
+        with pytest.raises(RuntimeError, match="TARGET_NODE"):
+            _runner()._resolve_node_targets(engine)
+
 
 def _pod(name, node, phase):
     return SimpleNamespace(

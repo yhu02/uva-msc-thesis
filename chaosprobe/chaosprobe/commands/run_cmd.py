@@ -1123,6 +1123,16 @@ def _acquire_run_lock() -> None:
         "analysis can separate run-to-run cluster drift from strategy effects."
     ),
 )
+@click.option(
+    "--replicas",
+    type=int,
+    default=0,
+    help=(
+        "Scale all app deployments to this many replicas before the run "
+        "(0 = leave the manifests unchanged). Use for multi-replica placement "
+        "experiments, where node-level faults differentiate placements."
+    ),
+)
 @neo4j_uri_option
 @neo4j_user_option
 @neo4j_password_option
@@ -1149,6 +1159,7 @@ def run(
     prometheus_url: Tuple[str, ...],
     baseline_duration: int,
     batch_id: Optional[str],
+    replicas: int,
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
@@ -1248,6 +1259,11 @@ def run(
     # Create reusable instances
     mutator = PlacementMutator(namespace)
     metrics_collector = MetricsCollector(namespace)
+
+    if replicas:
+        click.echo(f"Scaling app deployments to {replicas} replica(s)...")
+        scaled = mutator.scale_deployments(replicas)
+        click.echo(f"  Scaled {len(scaled)} deployment(s) to {replicas} replica(s)")
 
     _print_run_banner(
         namespace,

@@ -52,6 +52,35 @@ def _deployment(name, env):
     }
 
 
+class TestScaleDeployments:
+    def _mutator(self, names):
+        m = PlacementMutator.__new__(PlacementMutator)
+        m.namespace = "ns"
+        m.apps_api = MagicMock()
+        items = []
+        for n in names:
+            obj = MagicMock()
+            obj.metadata.name = n
+            items.append(obj)
+        m.apps_api.list_namespaced_deployment.return_value = MagicMock(items=items)
+        return m
+
+    def test_scales_app_deployments_skipping_infra_and_loadgen(self):
+        from chaosprobe.orchestrator.preflight import LITMUS_INFRA_DEPLOYMENTS
+
+        infra = sorted(LITMUS_INFRA_DEPLOYMENTS)[0]
+        m = self._mutator(["frontend", "cartservice", "loadgenerator", infra])
+        scaled = m.scale_deployments(3)
+        assert scaled == ["frontend", "cartservice"]
+        patched = {
+            c.args[0]: c.args[2] for c in m.apps_api.patch_namespaced_deployment.call_args_list
+        }
+        assert patched == {
+            "frontend": {"spec": {"replicas": 3}},
+            "cartservice": {"spec": {"replicas": 3}},
+        }
+
+
 class TestServiceDependencyRoutes:
     """`get_service_dependency_routes` preserves the target ``host:port``
     and inferred protocol (``grpc``/``tcp``) that the 2-tuple

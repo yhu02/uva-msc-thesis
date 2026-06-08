@@ -40,12 +40,17 @@ _MAX_TARGET_RETRIES = 2
 # ``appinfo.applabel`` instead, so the same scenario follows the placement
 # strategy: the node hogged is whichever node the strategy put that service on.
 #
-# Restricted to faults that both (a) read the plural ``TARGET_NODES`` env and
-# (b) auto-install via ``LitmusSetup.EXPERIMENT_URLS``.  node-drain / node-taint
-# are deliberately excluded: they read the *singular* ``TARGET_NODE``, so this
-# injection would be silently ignored; node-io-stress is not in the install
-# catalog.  Add them here only alongside the matching env name + catalog entry.
-_NODE_FAULTS = frozenset({"node-cpu-hog", "node-memory-hog"})
+# Maps each node-scoped fault to the env var it reads for target selection:
+# node-cpu-hog / node-memory-hog read the plural ``TARGET_NODES``; node-drain
+# reads the *singular* ``TARGET_NODE``.  All must auto-install via
+# ``LitmusSetup.EXPERIMENT_URLS``.  node-taint is still excluded (it also reads
+# ``TARGET_NODE`` — add it here only alongside a catalog entry + scenario);
+# node-io-stress is not in the install catalog.
+_NODE_FAULTS = {
+    "node-cpu-hog": "TARGET_NODES",
+    "node-memory-hog": "TARGET_NODES",
+    "node-drain": "TARGET_NODE",
+}
 
 
 def _parse_execution_data(execution_data: Any) -> Dict[str, Any]:
@@ -260,34 +265,36 @@ class ChaosRunner:
         )
 
     def _resolve_node_targets(self, engine_spec: Dict[str, Any]) -> None:
-        """Fill ``TARGET_NODES`` for node-scoped faults from ``appinfo.applabel``.
+        """Fill the node-target env for node-scoped faults from ``appinfo.applabel``.
 
-        Mutates *engine_spec* in place. A scenario that leaves ``TARGET_NODES``
-        unset or ``"auto"`` gets it resolved to the node currently hosting the
-        service named by ``appinfo.applabel``; an explicit non-auto value is
-        respected. No-op for pod-scoped faults.
+        Mutates *engine_spec* in place. A scenario that leaves its node-target env
+        (``TARGET_NODES`` for the hogs, ``TARGET_NODE`` for node-drain) unset or
+        ``"auto"`` gets it resolved to the node currently hosting the service named
+        by ``appinfo.applabel``; an explicit non-auto value is respected. No-op for
+        pod-scoped faults.
         """
         spec = engine_spec.get("spec", {})
         applabel = (spec.get("appinfo") or {}).get("applabel", "")
         for exp in spec.get("experiments", []):
-            if exp.get("name") not in _NODE_FAULTS:
+            env_name = _NODE_FAULTS.get(exp.get("name"))
+            if env_name is None:
                 continue
             env = exp.setdefault("spec", {}).setdefault("components", {}).setdefault("env", [])
-            entry = next((e for e in env if e.get("name") == "TARGET_NODES"), None)
+            entry = next((e for e in env if e.get("name") == env_name), None)
             current = str((entry or {}).get("value", "")).strip().lower()
             if entry and current and current != "auto":
                 continue  # explicit operator override — respect it
             if not applabel:
                 raise RuntimeError(
                     f"node fault {exp.get('name')!r} needs appinfo.applabel to resolve "
-                    "TARGET_NODES (or an explicit TARGET_NODES value)"
+                    f"{env_name} (or an explicit {env_name} value)"
                 )
             node = self._resolve_target_node(applabel)
             if entry is None:
-                env.append({"name": "TARGET_NODES", "value": node})
+                env.append({"name": env_name, "value": node})
             else:
                 entry["value"] = node
-            print(f"    node-fault: TARGET_NODES -> {node!r} (host of {applabel})")
+            print(f"    node-fault: {env_name} -> {node!r} (host of {applabel})")
 
     # ------------------------------------------------------------------
     # Internal -- single experiment lifecycle
