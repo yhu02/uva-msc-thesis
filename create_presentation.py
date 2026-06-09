@@ -202,11 +202,18 @@ def slide_title(slide, title_text, subtitle_text=None):
 
 
 def _find_latest_charts_dir():
-    """Find the most recent results directory containing charts."""
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "chaosprobe", "results")
-    dirs = sorted(glob.glob(os.path.join(base, "*/charts")), reverse=True)
-    return dirs[0] if dirs else None
+    """Find the most recent results directory containing charts.
+
+    Searches both the default ``results/`` output dir and the isolated
+    ``campaign-results/`` dir (where multi-session campaign runs land), and picks
+    the most recently modified so the deck tracks the latest run regardless of
+    which scheme produced it.
+    """
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chaosprobe")
+    dirs = []
+    for base in ("results", "campaign-results"):
+        dirs += glob.glob(os.path.join(root, base, "*", "charts"))
+    return max(dirs, key=os.path.getmtime) if dirs else None
 
 
 def add_image_or_placeholder(slide, left, top, width, height,
