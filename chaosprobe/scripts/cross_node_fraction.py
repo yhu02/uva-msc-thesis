@@ -74,6 +74,23 @@ def cross_node_fraction(
     return cross / len(placed)
 
 
+def target_scoped_cross_node_fraction(
+    pod_placements: Dict[str, str], edges: Set[Tuple[str, str]], target: str
+) -> Optional[float]:
+    """Cross-node fraction over only the edges incident on ``target``.
+
+    The global fraction (above) is a whole-graph metric. Session-1 data showed it
+    does NOT predict the conntrack flush: ``dependency-aware`` and ``random`` have
+    high global fractions yet don't flush. The hypothesis this serves is that the
+    flush is driven by whether the *killed service's own* dependents span nodes —
+    so we restrict to edges touching ``target`` (the chaos victim) and ask what
+    fraction of those cross a node boundary. Returns None if no incident edge has
+    both endpoints placed.
+    """
+    incident = {(a, b) for (a, b) in edges if a == target or b == target}
+    return cross_node_fraction(pod_placements, incident)
+
+
 def east_west_median_p95(route_view: list) -> Optional[float]:
     """Median during-chaos p95 over the east-west (inter-service) routes."""
     vals = [

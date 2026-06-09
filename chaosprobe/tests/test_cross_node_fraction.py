@@ -61,6 +61,29 @@ def test_cross_node_fraction_none_when_no_edge_placed():
     assert xnf.cross_node_fraction({}, {("a", "b")}) is None
 
 
+def test_target_scoped_only_counts_incident_edges():
+    # target=pcs. Its one edge (frontend->pcs) crosses nodes -> 1.0, even though a
+    # non-incident edge (cart->redis) sits on one node and would dilute the global.
+    placements = {
+        "frontend-x-y": "n1",
+        "productcatalogservice-x-y": "n2",
+        "cartservice-x-y": "n3",
+        "redis-cart-x-y": "n3",
+    }
+    edges = {
+        ("frontend", "productcatalogservice"),
+        ("cartservice", "redis-cart"),
+    }
+    assert xnf.cross_node_fraction(placements, edges) == 0.5  # global: 1 of 2 crosses
+    assert xnf.target_scoped_cross_node_fraction(placements, edges, "productcatalogservice") == 1.0
+
+
+def test_target_scoped_none_when_target_absent():
+    placements = {"a-x-y": "n1", "b-x-y": "n1"}
+    edges = {("a", "b")}
+    assert xnf.target_scoped_cross_node_fraction(placements, edges, "productcatalogservice") is None
+
+
 def test_east_west_median_p95_ignores_north_south_and_none():
     rva = [
         {"route": "/", "latencyProber": {"during-chaos": {"meanP95_ms": 800.0}}},
