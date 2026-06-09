@@ -172,6 +172,27 @@ The H1–H3 scripts above back their claims with the tests in
   correlation is statistically *inside* ±0.3 — evidence of absence, not absence
   of evidence.
 
+## Track a multi-session campaign
+
+A single session over-states the score's discriminating power (with one run the
+run-to-run variance component is structurally zero, so `ICC_strategy` looks
+several-fold larger than it is). Run independent sessions into a dedicated
+`campaign-results/` directory (`run ... -o campaign-results`, one timestamped run
+dir per session) and watch them accumulate:
+
+```bash
+uv run python scripts/campaign_status.py --results-dir campaign-results
+```
+
+It reports, across all clean sessions: **H1** `ICC_strategy` with its bootstrap CI
+(falling toward its true value as run-to-run variance becomes visible), **H2** the
+spread-vs-colocate conntrack flush paired by session (Wilcoxon + exact sign test —
+significant around N≥6), and an **H7** probe of whether the flush tracks a
+cross-node fraction, comparing the *global* graph fraction against the
+*target-scoped* one (edges incident on the chaos victim, via
+`target_scoped_cross_node_fraction`). It ends with a blunt sufficiency gate
+(how many more sessions are needed for a significant sign test).
+
 ## Next
 
 - Full flags for each command: [CLI reference](../reference/cli.md).
