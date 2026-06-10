@@ -90,9 +90,33 @@ majority of runs.
 **sign test *p* = 0.0156, paired Wilcoxon W = 0, *p* = 0.0225**. The earlier
 pooled run-set agreed (36.6 % vs 1.9 %, 16/16 runs). This is the most
 reproducible signal in the study and maps onto the Kubernetes SIG-Scalability
-network-programming reconvergence window documented upstream (see references —
-including the protocol-scoping caveat there: kube-proxy's *active* flush path
-is UDP-only, so the mechanism attribution must not name kube-proxy alone).
+network-programming reconvergence window documented upstream (see references).
+
+**Mechanism — measured by protocol decomposition (probe, 2026-06-10).** A
+dedicated probe (per-node `conntrack -L` protocol counts sampled every 5 s
+through one full `pod-delete` kill cycle under each placement; runs
+`20260610-195929` spread / `20260610-201052` colocate, archived as
+`run-20260610-200013` / `run-20260610-201131`; raw samples + pod spec in
+`thesis/data/conntrack-probe/`) decomposes the flush:
+
+| placement | pre-chaos TCP / UDP entries | UDP during kill cycle | TCP during kill cycle |
+|---|---|---|---|
+| `spread` | 3,857 / **1,822 (32 %)** | **−50 to −58 %** | *grows* (+6 to +16 %) |
+| `colocate` | 2,993 / **72 (2 %)** | tiny pool (noise) | *grows* |
+
+The placement-dependent signal is the **UDP (DNS) pool**: spreading the
+target's dependents across nodes sustains a ~25× larger standing pool of UDP
+conntrack entries (cross-node calls → connection churn → repeated DNS
+resolution), and the kill cycle collapses it — consistent with kube-proxy's
+*documented, deliberately UDP-only* active conntrack cleanup on endpoint
+change (kubernetes/kubernetes #48370, #108523, #126130; ipvs mode on this
+cluster). **TCP entries are never flushed and in fact grow during chaos**
+(reconnect churn), exactly matching upstream behaviour (#100698, #104098).
+The aggregate `conntrack_entries_per_node` drop H2 measures is therefore the
+UDP share collapsing, visible only under placements that maintain a large UDP
+pool. *Caveat:* the probe is one iteration per placement against the
+campaign's 7 sessions — quote it for the composition and direction, not for
+magnitudes.
 
 A secondary contention signal (CPU throttling) is *weaker* and should be
 reported as corroborating only: `colocate` throttles lowest in 6/7 campaign
@@ -298,18 +322,26 @@ placement-predicted blast (services pinned to the drained node) in every iterati
   (a single drain = 100% outage). `spread` is the mirror. One graph property
   (co-location), two opposing consequences — latency vs availability — now both
   measured: H5 is the latency face, H6 the availability face.
-- **Recovery time scales with blast radius too.** `colocate` recovers ~**4× slower**
-  (10.3 s vs 2.6 s): when the node uncordons, its 11 evicted pods contend to reschedule
-  at once, where `spread` has only 2. Blast radius and recovery latency are both
-  consequences of concentration.
+- **Recovery time is slower at the extremes contrast, but is *not* a gradient law.**
+  In the colocate-vs-spread pair, `colocate` recovers ~**4× slower** (10.3 s vs
+  2.6 s): when the node uncordons, its 11 evicted pods contend to reschedule at
+  once, where `spread` has only 2. The 6-strategy gradient run (below) shows this
+  does **not** generalize monotonically — intermediate-blast placements produced
+  both fast (4.6 s) and slow (33 s) recoveries — so the recovery claim is scoped
+  to the extremes contrast only.
+
+**Gradient extension (6 strategies, 2026-06-10).** A gradient run — all six
+placing strategies × `node-drain` × *i* = 3 (`results/20260610-172352`,
+`doctor --strict` clean, archived as `run-20260610-172430`) — confirms blast
+radius scales exactly with per-node concentration: **observed blast equals the
+placement-predicted blast for every strategy** (colocate 11, random 4,
+dependency-aware 3, best-fit 3, spread 2, adversarial 2; Spearman ρ = 1.0,
+n = 6). This is the availability analogue of H5's cross-node-fraction
+predictor: one graph-derived quantity (per-node concentration) predicts the
+availability consequence with rank correlation 1.0, just as the cross-node
+fraction predicts the latency consequence with ρ = 0.79.
 
 **Caveats (do not overstate this).**
-
-- *Two-point contrast, not yet a gradient.* This is the two extremes (most- vs
-  least-concentrated). That blast radius scales **continuously** with concentration —
-  the availability analogue of H5's cross-node-fraction predictor — needs the
-  intermediate placements (`best-fit`, `dependency-aware`, `adversarial`, `random`),
-  each with a different per-node concentration, in the run.
 - *The prediction is near-definitional; the empirical content is that it holds.* "Drain
   a node and you lose the pods on it" is arithmetic. What the experiment adds is that the
   predicted blast **actually materializes** under real chaos (no partial survival from
@@ -322,7 +354,8 @@ placement-predicted blast (services pinned to the drained node) in every iterati
   regime ChaosProbe's nodeSelector mutator realises.
 
 ```
-uv run python scripts/blast_radius.py -s results/20260608-205147/summary.json
+uv run python scripts/blast_radius.py -s results/20260610-172352/summary.json   # gradient run
+uv run python scripts/blast_radius.py -s results/20260608-205147/summary.json   # original two-point batch
 ```
 
 ## Synthesis
@@ -398,7 +431,7 @@ support — and what generalizes vs. what does not — see
 | **Small virtualized cluster** | Four 4 GiB KVM/QEMU workers may not generalize. | Claim bounded external validity; report *direction* and *mechanism*, not absolute latency values. |
 | **Version sensitivity** | kube-proxy / conntrack behaviour evolves across releases. | Archive exact Kubernetes, CNI, runtime, ChaosProbe, and commit metadata (`runMetadata`); present as a measurement study of a specific environment. |
 | **Placement mismatch** | The scheduler may not realize the intended placement. | Report `placementMatchRates`; flag or exclude mismatched iterations. |
-| **Run-to-run drift** | Iteration noise can dominate (H1). | Block runs, randomize strategy order, capture pre/post snapshots, model run as a random/blocking effect. |
+| **Run-to-run drift** | Iteration noise can dominate (H1). | Block runs (strategy order is fixed within every session, so order effects are constant across sessions rather than randomized), capture pre/post snapshots, model run as a random/blocking effect. |
 | **Dirty provenance** | Untracked files / missing metadata undermine credibility (H4). | Never quote results from runs failing `doctor --strict`; the original dirty H4 pilot was replaced by two `doctor`-gated *i* = 4 batches. |
 | **Metric-availability gaps** | Missing PromQL queries can manufacture fake zeros. | Use `metricAvailability` to distinguish "not collected" from "collected zero". |
 | **Overclaiming causality** | Run-level slowness can confound correlations. | Use dependent vs control routes and within-run correlation; reserve causal language for the manipulated variable (placement). |
