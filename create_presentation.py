@@ -4,19 +4,21 @@
 Slide structure follows standard thesis defense format:
   1. Title
   2. Background & Motivation
-  3. Research Question & Hypotheses
+  3. Research Question & Hypotheses (H1–H6)
   4. Related Work
   5. Placement Strategies (independent variable)
   6. Experimental Setup
   7. ChaosProbe Framework (architecture + lifecycle)
   8. Measurement Design (probers + probes + scoring)
-  9. Results — Resilience Scores
- 10. Results — Recovery Time & Latency
- 11. Results — Resources & Throughput
- 12. Discussion (hypothesis evaluation)
- 13. Threats to Validity
- 14. Conclusion & Future Work
- 15. Questions
+  9. Results — H1: the score cannot rank placements
+ 10. Results — H2: a kernel reconvergence signature moves
+ 11. Results — H3: the mechanism does not reach the user
+ 12. Results — H4 & H5: load contention + a graph predictor
+ 13. Results — H6: the latency/availability trade-off
+ 14. Negative Findings & Literature Predictions
+ 15. Threats to Validity
+ 16. Conclusion & Future Work
+ 17. Questions
 """
 
 import glob
@@ -312,8 +314,9 @@ add_text_box(slide, 0.8, 5.7, 11.7, 0.35, "Our Approach",
              font_size=16, bold=True, color=ACCENT_BLUE)
 add_text_box(slide, 0.8, 6.1, 11.7, 0.5,
     "ChaosProbe: an automated framework that systematically varies pod placement strategies, "
-    "injects faults via LitmusChaos, and measures recovery time, inter-service latency, "
-    "resource utilization, and I/O throughput to quantify placement's impact on resilience.",
+    "injects faults via LitmusChaos, and measures the response at three layers — aggregate score, "
+    "kernel/network mechanism, and user-visible outcome — to establish at which layer placement "
+    "effects appear under each fault class.",
     font_size=13, color=LIGHT_GRAY)
 
 # Pipeline arrows
@@ -343,56 +346,62 @@ slide_title(slide, "Research Question & Hypotheses")
 add_rounded_box(slide, 0.6, 1.3, 12.1, 0.85, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(3))
 add_text_box(slide, 0.8, 1.4, 11.7, 0.65,
-    "How do multi-dimensional metrics decompose chaos response across pod-placement strategies in Kubernetes?",
-    font_size=16, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
+    "Under which fault classes does pod placement measurably affect mechanism-level behaviour and "
+    "user-visible outcomes — and when do aggregate resilience scores obscure those effects?",
+    font_size=15, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
 
-# Theme group labels (above each theme's card group)
+# Theme group labels (above each fault-class card group)
 group_labels = [
-    ("Primary results — metrics", ACCENT_RED, 0.35, 2.55),
-    ("Methodology", ACCENT_BLUE, 6.65, 2.55),
-    ("Context & support", ACCENT_ORANGE, 8.75, 2.55),
+    ("Churn (pod-delete)", ACCENT_RED, 0.35, 2.55),
+    ("Load contention", ACCENT_ORANGE, 6.65, 2.55),
+    ("Node failure", ACCENT_PURPLE, 10.85, 2.55),
 ]
 for label, clr, x, y in group_labels:
     add_text_box(slide, x, y, 4, 0.25, label,
                  font_size=11, bold=True, color=clr)
 
-# Six hypotheses — single row. The thesis is built on the primary-source
-# metrics (M1-M3), not the resilience score: those reproduce across the 13
-# collected runs. The score is demoted to the decoupling finding (M4).
+# Six hypotheses H1-H6 — single row, grouped by fault class. The study is a
+# fault-class x measurement-layer matrix: the score layer is blind (H1), the
+# mechanism layer moves (H2, H4) without reaching the user (H3), and the
+# availability layer is where placement bites users — predictably (H5, H6).
 hypotheses = [
-    # Primary results — reproducible metric outcomes (M1-M3, red)
-    ("M1", "Spreading flushes conn-state",
-     "Primary metric. Under churn, spread/default flush 36-39% of "
-     "node conntrack entries; colocate stays flat (−1.6%). 12/12 "
-     "runs. The reproducible fault-response signal.",
+    # Churn (pod-delete) — H1-H3 (red)
+    ("H1", "The score cannot rank placements",
+     "ICC_strategy = 0.033 (CI 0.014-0.178): only 3.3% of score "
+     "variance is between-strategy (7 sessions, 147 iterations). "
+     "Focal colocate 64.0 vs spread 74.3 (d = 0.46) needs 73 "
+     "iters/strategy for 80% power; MDE at n=3 is ~51 points.",
      ACCENT_RED),
-    ("M2", "Co-location lowers CPU contention",
-     "Colocate throttles less than default/spread (during-chaos rate "
-     "1.54 vs 1.90, 1.94), with lower CPU usage/pressure. 11/13 runs. "
-     "Contention does not scale with density under churn.",
+    ("H2", "Placement moves a reconvergence signature",
+     "Churn flushes conntrack state: spread 38.5% vs colocate 2.7% "
+     "median; spread > colocate in 7/7 sessions (sign p = .016, "
+     "Wilcoxon p = .023). CPU throttling corroborates (colocate "
+     "lowest, 6/7).",
      ACCENT_RED),
-    ("M3", "'Spread is safer' doesn't transfer to churn",
-     "Both reproducible metrics favour co-location under churn. The "
-     "literature's spread-isolation prescription is inapplicable at the "
-     "mechanism layer — and does NOT reach the user (decoupling).",
+    ("H3", "The mechanism is decoupled from the user",
+     "Flush vs dependent-route p95: ρ = 0.07 (n.s., TOST-decoupled) "
+     "while the control route shows ρ = 0.29* — a run-level-confound "
+     "signature, not dependency-specific user impact.",
      ACCENT_RED),
-    # Methodology (M4, blue)
-    ("M4", "Score decoupled from metrics",
-     "Where conntrack & CPU reproduce (≥11/13), the resilience "
-     "score does NOT (33-89 across runs). The binary-probe score is "
-     "a lossy instrument; the metrics are the reliable outcome.",
-     ACCENT_BLUE),
-    # Context & support (S1-S2, orange/purple)
-    ("S1", "Mechanism signal is churn-specific",
-     "cpu-hog (n=2) does not reproduce: one run scored ~100 across "
-     "strategies, one saw many iterations fail (33-67, σ≈58). The "
-     "score is noisy under both faults; the reproducible M1/M2 signal "
-     "is churn-specific.",
+    # Load contention — H4-H5 (orange)
+    ("H4", "Under load, mechanism only",
+     "East-west effect replicates: colocate ~1.3-1.4x lower "
+     "inter-service p95 than spread (two i=4 batches). The "
+     "user-layer effect did not survive replication — no "
+     "user-visible placement claim under load.",
      ACCENT_ORANGE),
-    ("S2", "Recovery split is unstable",
-     "The d2s/s2r split is run-dependent: app-startup dominates in "
-     "some runs (84-96%), the scheduling term in others (up to ~78%). "
-     "Recovery decomposition is not a stable placement signal.",
+    ("H5", "A graph metric predicts the east-west tail",
+     "Cross-node call fraction (dependency graph + placement, "
+     "pre-chaos) vs east-west p95: ρ = 0.79 (n = 8, p < .05). "
+     "Coarse — separates node-local from spreading placements — "
+     "but makes the Neo4j graph analytically load-bearing.",
+     ACCENT_ORANGE),
+    # Node failure — H6 (purple)
+    ("H6", "Latency vs availability trade-off",
+     "Node drain: colocate loses 11/11 services (100% blast, "
+     "~10.3 s recovery) vs spread 2/11 (18%, ~2.6 s); two "
+     "doctor-clean batches. The co-location that wins H5's "
+     "latency loses H6's availability.",
      ACCENT_PURPLE),
 ]
 
@@ -406,7 +415,7 @@ for i, (label, title, desc, clr) in enumerate(hypotheses):
     # Card border box
     add_rounded_box(slide, x, y, card_w, card_h, VERY_DARK,
                     border_color=clr, border_width=Pt(2))
-    # Coloured header strip with the M/S label
+    # Coloured header strip with the H label
     add_rounded_box(slide, x, y, card_w, 0.35, clr, label,
                     13, WHITE, True)
     # Title
@@ -418,8 +427,8 @@ for i, (label, title, desc, clr) in enumerate(hypotheses):
 
 # Footer
 add_text_box(slide, 0.6, 7.05, 12.1, 0.35,
-    "Each hypothesis is testable from ChaosProbe-collected metrics; "
-    "the data column reports current evidence.",
+    "Each hypothesis is falsifiable from ChaosProbe-collected data. The literature "
+    "predictions L1-L3 are kept as context: inapplicable in this regime, not refuted.",
     font_size=10, color=MID_GRAY, alignment=PP_ALIGN.CENTER)
 
 
@@ -463,13 +472,13 @@ add_bullet_frame(slide, 8.9, 2.0, 3.4, 3.8, [
     "• Existing work studies placement\n  OR resilience — not their interaction",
     "• No framework systematically varies\n  placement under controlled chaos",
     "• Missing: quantitative comparison\n  across multiple dimensions",
-    "• ChaosProbe bridges this gap:\n  6 strategies × 2 faults × 4 metrics",
+    "• ChaosProbe bridges this gap:\n  8 placements × 3 fault classes,\n  layered metrics",
     "• Graph storage preserves causal\n  topology for analysis",
 ], font_size=11, color=LIGHT_GRAY)
 
 # Contention categories table
 add_text_box(slide, 0.5, 6.3, 12, 0.3,
-             "Expected Contention by Placement (Literature-Informed Hypotheses)",
+             "Expected Contention by Placement (Literature Predictions L1–L3 — tested as context)",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 contention_data = [
     ["Category", "Metric", "Colocate Impact", "Key Reference"],
@@ -574,10 +583,10 @@ for i, (name, desc, clr, dots, contention, note, cite) in enumerate(strat_data):
                  cite, font_size=7, color=ACCENT_BLUE)
 
 add_text_box(slide, 0.25, 6.95, 12.85, 0.5,
-             "Analytic weight: the reproducible findings (M1 conntrack flush, M2 CPU throttling) rest on the colocate "
-             "vs. spread/default locality contrast. Random, adversarial, best-fit & dependency-aware are a generality "
-             "check — designed for the contention hypothesis, present in only half the run set, they widen the placements "
-             "the noisy score still can't rank (M4) and await the cpu-hog contention matrix.",
+             "Analytic weight: the churn findings (H2 conntrack reconvergence, H3 decoupling) rest on the colocate vs. "
+             "spread locality contrast. All 8 placements enter the load matrix — H5's cross-node fraction is computed per "
+             "strategy (n = 8) — and H6 contrasts the two extremes (colocate vs. spread) under node drain; a gradient run "
+             "over the intermediate placements extends that two-point contrast.",
              font_size=8, color=MID_GRAY)
 
 
@@ -647,17 +656,17 @@ add_text_box(slide, 7.0, 2.7, 5.4, 0.3,
 # Experiment configurations — bottom
 add_rounded_box(slide, 0.5, 5.2, 6.0, 2.1, VERY_DARK,
                 border_color=CLR_CHAOS, border_width=Pt(2))
-add_text_box(slide, 0.7, 5.2, 5.6, 0.3, "Multi-Fault Placement Matrix",
+add_text_box(slide, 0.7, 5.2, 5.6, 0.3, "Three Fault Classes × Placement",
              font_size=14, bold=True, color=CLR_CHAOS)
 exp_data = [
-    ["", "Churn (pod-delete)", "Contention (pod-cpu-hog)"],
-    ["Target", "productcatalogservice", "productcatalogservice"],
-    ["Duration", "120s (CHAOS_INTERVAL=15s)", "120s (1 core, 100% load)"],
-    ["Probes", "7 httpProbes + 5 cmdProbes", "Same probe set"],
-    ["Role", "Tests churn-class story", "Tests if literature returns"],
+    ["", "Churn (pod-delete)", "Load (Locust spike)", "Node failure (drain)"],
+    ["Stressor", "Kill target every 15s, 120s", "200-user sustained spike", "Drain the target's node"],
+    ["Target", "productcatalogservice", "whole app under load", "node hosting the target"],
+    ["Layer read", "Score + mechanism + user", "East-west + user routes", "Blast radius + recovery"],
+    ["Hypotheses", "H1–H3", "H4–H5", "H6"],
 ]
-add_table(slide, 0.7, 5.55, 5.6, 1.6, 5, 3, exp_data,
-          font_size=9, header_color=CLR_CHAOS)
+add_table(slide, 0.7, 5.55, 5.6, 1.6, 5, 4, exp_data,
+          font_size=8, header_color=CLR_CHAOS)
 
 # Baseline + infrastructure — right bottom
 add_rounded_box(slide, 6.8, 3.9, 5.8, 1.1, VERY_DARK,
@@ -876,20 +885,20 @@ add_bullet_frame(slide, 6.8, 6.6, 6.0, 0.8, [
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 9 — RESULTS: RESILIENCE SCORES
+# SLIDE 9 — RESULTS: H1 — THE SCORE CANNOT RANK PLACEMENTS
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Results — Why the Score Is Demoted (M4)")
+slide_title(slide, "Results — H1: The Score Cannot Rank Placements")
 
 charts_dir = _find_latest_charts_dir()
 
-# Score distribution across runs — the M4 chart (overlapping boxes = no ranking)
+# Score distribution across runs — the H1 chart (overlapping boxes = no ranking)
 img_path = os.path.join(charts_dir, "score_distribution.png") if charts_dir else None
 add_image_or_placeholder(slide, 0.5, 1.4, 7.5, 4.5, img_path,
-                         "[Resilience Score Distribution Across Runs]\n\n"
+                         "[Resilience Score Distribution Across Sessions]\n\n"
                          "Box plot of resilience score (0–100%) per\n"
-                         "strategy across all churn runs — the boxes\n"
+                         "strategy across the churn sessions — the boxes\n"
                          "overlap, so the score cannot rank placements.\n\n"
                          "Generated by: scripts/distribution_charts.py")
 
@@ -900,16 +909,17 @@ add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Key Observations",
              font_size=16, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
     "• Baseline: 100% (stddev 0) —\n  methodology control holds",
-    "• The score does NOT reproduce across the 13\n  churn runs (≥3 iters, post-fix, baseline=100):",
-    "    colocate 49.7–83  (mean 69.5)\n    spread   33–88.7  (mean 70.5)\n    default  33–83    (mean 58.9)",
-    "• Within-strategy stddev (11–17) dwarfs\n  the colocate-vs-spread gap (~1 point)",
+    "• ICC_strategy = 0.033, 95% CI [0.014, 0.178]:\n  only 3.3% of score variance is\n  between-strategy",
+    "• Evidence base: 7 independent sessions,\n  147 churn iterations",
+    "• Focal contrast colocate 64.0 vs spread 74.3\n  (d = 0.46) → 73 iterations/strategy\n  needed for 80% power",
+    "• At the n = 3 actually run, the minimum\n  detectable effect is ≈ 51 score points",
     "• So the aggregate score cannot rank\n  placements — the signal is elsewhere",
 ], font_size=10, color=LIGHT_GRAY)
 
 # Hypothesis check
 add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
                 border_color=ACCENT_ORANGE, border_width=Pt(2))
-add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "M4 — the score is decoupled from the reproducible metrics",
+add_text_box(slide, 0.7, 6.2, 11.9, 0.3, "H1 — the aggregate score cannot rank placement strategies",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 0.7, 6.55, 4.0, 0.6,
     "L1 (colocate = worst): N/A",
@@ -921,202 +931,273 @@ add_text_box(slide, 8.9, 6.55, 4.0, 0.6,
     "L3 (recovery → score): N/A",
     font_size=12, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 0.7, 6.95, 11.9, 0.3,
-    "The aggregate score is not reproducible run-to-run, so it cannot adjudicate L1–L3. "
-    "They are resolved instead at the mechanism layer (next slides), where the signal IS stable.",
+    "The score's between-strategy variance is too small a fraction to adjudicate L1–L3 — "
+    "they are inapplicable in this regime, not refuted. The signal lives at the mechanism layer (next slides).",
     font_size=10, color=LIGHT_GRAY)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 10 — RESULTS: RECOVERY TIME & LATENCY
+# SLIDE 10 — RESULTS: H2 — A KERNEL RECONVERGENCE SIGNATURE MOVES
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
-slide_title(slide, "Results — Recovery Time & Latency")
+slide_title(slide, "Results — H2: A Kernel Reconvergence Signature Moves")
 
-# Recovery times chart — left
-img_path = os.path.join(charts_dir, "recovery_times.png") if charts_dir else None
-add_image_or_placeholder(slide, 0.3, 1.4, 6.2, 3.5, img_path,
-                         "[Recovery Times by Strategy]\n\n"
-                         "Box plot: pod deletion → ready (ms)\n"
-                         "per placement strategy.\n\n"
-                         "Generated by: chaosprobe visualize")
-add_text_box(slide, 0.3, 4.95, 6.2, 0.3, "Recovery Time (pod deletion → ready)",
-             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
+# Mechanism distribution chart — left
+img_path = os.path.join(charts_dir, "mechanism_distribution.png") if charts_dir else None
+add_image_or_placeholder(slide, 0.5, 1.4, 7.5, 4.5, img_path,
+                         "[Conntrack Flush Distribution by Strategy]\n\n"
+                         "Box plots per strategy across churn sessions:\n"
+                         "conntrack flush % during the kill cycle —\n"
+                         "spread high, colocate near zero.\n\n"
+                         "Generated by: scripts/distribution_charts.py")
 
-# Latency degradation chart — right
+# Key numbers — right
+add_rounded_box(slide, 8.5, 1.4, 4.3, 4.5, VERY_DARK,
+                border_color=CLR_OUTPUT, border_width=Pt(2))
+add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Conntrack Flush (per session)",
+             font_size=15, bold=True, color=CLR_OUTPUT)
+add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
+    "• Median flush during the kill cycle:\n  spread 38.5% vs colocate 2.7%",
+    "• spread > colocate in 7 / 7 sessions",
+    "• Sign test p = 0.0156;\n  Wilcoxon signed-rank p = 0.0225",
+    "• Mechanistic reading: churn tears down\n  cross-node flows that must reconverge;\n  node-local paths are spared",
+    "• Corroborating only: CPU throttling —\n  colocate lowest in 6 / 7 sessions\n  (weaker; lead with conntrack)",
+], font_size=10, color=LIGHT_GRAY)
+
+# Attribution caution — bottom
+add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
+                border_color=ACCENT_ORANGE, border_width=Pt(2))
+add_text_box(slide, 0.7, 6.2, 11.9, 0.3,
+             "H2 — a reconvergence signature, deliberately not attributed to a specific code path",
+             font_size=14, bold=True, color=ACCENT_ORANGE)
+add_text_box(slide, 0.7, 6.55, 11.9, 0.6,
+    "The flush is reported as a measured kernel/network reconvergence signature of the kill cycle. "
+    "It is not attributed to kube-proxy's active conntrack-flush path: upstream that path is UDP-only, "
+    "while this workload is TCP/gRPC — re-attribution of the exact mechanism is pending.",
+    font_size=10, color=LIGHT_GRAY)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 11 — RESULTS: H3 — THE MECHANISM DOES NOT REACH THE USER
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Results — H3: The Mechanism Does Not Reach the User")
+
+# Latency degradation chart — left (the user layer)
 img_path = os.path.join(charts_dir, "latency_degradation.png") if charts_dir else None
-add_image_or_placeholder(slide, 6.8, 1.4, 6.2, 3.5, img_path,
+add_image_or_placeholder(slide, 0.5, 1.4, 7.5, 4.5, img_path,
                          "[Latency Degradation: Pre vs During Chaos]\n\n"
                          "Grouped bar chart: HTTP route latency\n"
-                         "pre-chaos vs during-chaos per strategy.\n\n"
-                         "Generated by: chaosprobe visualize")
-add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "Latency Degradation (Pre-Chaos vs During-Chaos)",
-             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
-
-# Analysis — bottom
-add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
-                border_color=ACCENT_RED)
-add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "Recovery split is unstable (S2)",
-             font_size=14, bold=True, color=ACCENT_RED)
-add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
-    "• Recovery = deletion→scheduled + scheduled→ready;\n  their split is run-dependent",
-    "• app-startup dominates in some runs (84–96%),\n  the scheduling term in others (up to ~78%)",
-    "• Either way recovery rank is noise run-to-run — it\n  does not track the placement story (L3 inapplicable)",
-], font_size=11, color=LIGHT_GRAY)
-
-add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
-                border_color=ACCENT_ORANGE)
-add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "The fault signal is in the tail",
-             font_size=14, bold=True, color=ACCENT_ORANGE)
-add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
-    "• Targeted route during chaos: mean 231 ms but\n  p95 619 ms and max 3334 ms — tail is 14× the mean",
-    "• Routes not depending on the target stay flat at\n  70–110 ms — impact is route-specific, not node-wide",
-    "• Mean-based SLOs would miss the fault entirely\n  (Dean & Barroso, Tail at Scale)",
-], font_size=11, color=LIGHT_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 11 — RESULTS: RESOURCES & THROUGHPUT
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Results — Primary Metrics: Conntrack & CPU (M1, M2)")
-
-# Mechanism distribution — left: the actual M1 (conntrack) + M2 (throttle) signal
-img_path = os.path.join(charts_dir, "mechanism_distribution.png") if charts_dir else None
-add_image_or_placeholder(slide, 0.3, 1.4, 6.2, 3.5, img_path,
-                         "[Conntrack flush & CPU throttle distributions]\n\n"
-                         "Box plots per strategy across churn runs:\n"
-                         "conntrack flush % (M1) and during-chaos\n"
-                         "throttle rate (M2) — tight, reproducible.\n\n"
-                         "Generated by: scripts/distribution_charts.py")
-add_text_box(slide, 0.3, 4.95, 6.2, 0.3, "Conntrack Churn & CPU Throttling (M1, M2)",
-             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
-
-# Throughput chart — right
-img_path = os.path.join(charts_dir, "throughput_by_strategy.png") if charts_dir else None
-add_image_or_placeholder(slide, 6.8, 1.4, 6.2, 3.5, img_path,
-                         "[I/O Throughput by Strategy]\n\n"
-                         "Redis ops/s and disk R/W bytes/s\n"
-                         "per placement strategy.\n\n"
-                         "Generated by: chaosprobe visualize")
-add_text_box(slide, 6.8, 4.95, 6.2, 0.3, "I/O Throughput (Redis ops/s, Disk bytes/s)",
-             font_size=12, bold=True, color=ACCENT_BLUE, alignment=PP_ALIGN.CENTER)
-
-# Analysis — bottom
-add_rounded_box(slide, 0.3, 5.5, 6.2, 1.8, VERY_DARK,
-                border_color=CLR_METRICS)
-add_text_box(slide, 0.5, 5.5, 5.8, 0.3, "M2 — co-location lowers CPU contention",
-             font_size=14, bold=True, color=CLR_METRICS)
-add_bullet_frame(slide, 0.5, 5.85, 5.8, 1.3, [
-    "• Densest placement (colocate) throttles less than\n  default/spread — during-chaos rate 1.54 vs 1.90, 1.94",
-    "• colocate < default in 11 of 13 runs — reproducible",
-    "• Opposite of Bubble-Up's dense=more-contention; the\n  contention model does not fit a churn fault",
-], font_size=11, color=LIGHT_GRAY)
-
-add_rounded_box(slide, 6.8, 5.5, 6.2, 1.8, VERY_DARK,
-                border_color=CLR_OUTPUT)
-add_text_box(slide, 7.0, 5.5, 5.8, 0.3, "M1 — spreading flushes conn-state",
-             font_size=14, bold=True, color=CLR_OUTPUT)
-add_bullet_frame(slide, 7.0, 5.85, 5.8, 1.3, [
-    "• Spread/default flush 36–39% of node conntrack\n  entries during churn; colocate stays flat (−1.6%)",
-    "• Reproducible in all 12 runs measured — the primary,\n  large-effect fault-response metric",
-    "• Spreading maximises the cross-node flows pod churn\n  tears down — both metrics favour co-location (M3)",
-], font_size=11, color=LIGHT_GRAY)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SLIDE 12 — DISCUSSION
-# ══════════════════════════════════════════════════════════════════════
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-set_slide_bg(slide)
-slide_title(slide, "Discussion")
-
-# Strategy comparison heatmap — left
-img_path = os.path.join(charts_dir, "strategy_comparison_heatmap.png") if charts_dir else None
-add_image_or_placeholder(slide, 0.3, 1.4, 6.5, 3.5, img_path,
-                         "[Strategy Comparison Heatmap]\n\n"
-                         "All thesis dimensions normalised to 0-1.\n"
-                         "Green = better, Red = worse.\n\n"
+                         "pre-chaos vs during-chaos per strategy —\n"
+                         "the user layer the mechanism never moves.\n\n"
                          "Generated by: chaosprobe visualize")
 
-# Hypothesis evaluation — right
-add_text_box(slide, 7.2, 1.4, 5.5, 0.3, "Hypothesis Evaluation",
-             font_size=16, bold=True, color=ACCENT_BLUE)
+# Decoupling evidence — right
+add_rounded_box(slide, 8.5, 1.4, 4.3, 4.5, VERY_DARK,
+                border_color=ACCENT_GREEN, border_width=Pt(2))
+add_text_box(slide, 8.7, 1.45, 3.9, 0.3, "Decoupling Evidence",
+             font_size=16, bold=True, color=ACCENT_GREEN)
+add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
+    "• Conntrack flush → dependent-route p95:\n  ρ = 0.07 (n.s.) — and TOST declares it\n  statistically equivalent to zero",
+    "• Control route (does NOT depend on the\n  target): ρ = 0.29* — the correlation is\n  stronger where it shouldn't exist",
+    "• That pattern is the signature of a\n  run-level confound, not causation",
+    "• No dependency-specific propagation of\n  the mechanism to the user layer",
+], font_size=10, color=LIGHT_GRAY)
 
-hyp_results = [
-    ("L1", "Colocate = worst resilience",
-     "Score can't adjudicate (colocate 49.7–83\n"
-     "across runs). Mechanism: colocate throttles\n"
-     "LEAST and flushes no conn-state — not worst.",
-     ACCENT_ORANGE, "Mech."),
-    ("L2", "Spread = best fault isolation",
-     "Score can't adjudicate (spread 33–88.7).\n"
-     "Mechanism: spread flushes 28–52% of conntrack\n"
-     "under churn — it amplifies, not isolates.",
-     ACCENT_ORANGE, "Mech."),
-    ("L3", "Recovery time predicts score",
-     "Inapplicable on its own terms: the d2s/s2r split\n"
-     "is unstable run-to-run and the score is\n"
-     "non-reproducible. No stable relationship.",
-     ACCENT_RED, "Inapplic."),
-]
-
-for i, (label, title, explanation, clr, verdict) in enumerate(hyp_results):
-    y = 1.85 + i * 1.1
-    add_rounded_box(slide, 7.2, y, 0.7, 0.8, clr, label, 14, WHITE, True)
-    add_rounded_box(slide, 8.1, y, 4.6, 0.8, VERY_DARK,
-                    border_color=clr, border_width=Pt(2))
-    add_text_box(slide, 8.25, y + 0.02, 3.3, 0.25, title,
-                 font_size=12, bold=True, color=clr)
-    add_text_box(slide, 8.25, y + 0.3, 3.3, 0.45, explanation,
-                 font_size=10, color=LIGHT_GRAY)
-    add_rounded_box(slide, 11.5, y + 0.2, 1.1, 0.35, clr,
-                    verdict, 10, WHITE, True)
-
-# Key insights
-add_text_box(slide, 0.5, 5.6, 12, 0.3, "Key Insights",
-             font_size=18, bold=True, color=ACCENT_ORANGE)
-
-add_rounded_box(slide, 0.5, 6.0, 3.9, 1.2, VERY_DARK,
-                border_color=ACCENT_RED)
-add_text_box(slide, 0.7, 6.0, 3.5, 0.3, "M4 — score is the wrong instrument",
-             font_size=13, bold=True, color=ACCENT_RED)
-add_text_box(slide, 0.7, 6.3, 3.5, 0.8,
-    "The aggregate resilience score is not "
-    "reproducible: the same strategy spans "
-    "33–89 across 13 runs. It cannot rank "
-    "placements — the binary-probe scoring "
-    "discards the signal.",
-    font_size=10, color=LIGHT_GRAY)
-
-add_rounded_box(slide, 4.7, 6.0, 3.9, 1.2, VERY_DARK,
+# Synthesis — bottom
+add_rounded_box(slide, 0.3, 6.2, 6.2, 1.1, VERY_DARK,
                 border_color=ACCENT_BLUE)
-add_text_box(slide, 4.9, 6.0, 3.5, 0.3, "M1/M2 — metrics reproduce",
-             font_size=13, bold=True, color=ACCENT_BLUE)
-add_text_box(slide, 4.9, 6.3, 3.5, 0.8,
-    "Where the score is noise, the kernel/network "
-    "metrics are stable: conntrack flush (spread ≫ "
-    "colocate, 12/12 runs) and CPU throttling "
-    "(colocate < default, 11/13). These carry the "
-    "placement signal the score loses.",
+add_text_box(slide, 0.5, 6.2, 5.8, 0.3, "The layered churn story (H1–H3)",
+             font_size=14, bold=True, color=ACCENT_BLUE)
+add_text_box(slide, 0.5, 6.55, 5.8, 0.6,
+    "The score is blind (H1); the kernel layer moves with placement (H2); "
+    "the user layer does not follow (H3). Three layers, three different answers.",
     font_size=10, color=LIGHT_GRAY)
 
-add_rounded_box(slide, 8.9, 6.0, 3.9, 1.2, VERY_DARK,
-                border_color=ACCENT_GREEN)
-add_text_box(slide, 9.1, 6.0, 3.5, 0.3, "M3 — churn-driven, not contention",
-             font_size=13, bold=True, color=ACCENT_GREEN)
-add_text_box(slide, 9.1, 6.3, 3.5, 0.8,
-    "Pod-delete tears down cross-node conntrack "
-    "state (measured directly). Cross-node hops "
-    "exposed to the kill cycle become failure "
-    "surfaces; co-located, same-node paths stay "
-    "kernel-local and are spared.",
+add_rounded_box(slide, 6.8, 6.2, 6.2, 1.1, VERY_DARK,
+                border_color=ACCENT_ORANGE)
+add_text_box(slide, 7.0, 6.2, 5.8, 0.3, "Operator reading (bounded)",
+             font_size=14, bold=True, color=ACCENT_ORANGE)
+add_text_box(slide, 7.0, 6.55, 5.8, 0.6,
+    "For churn faults on single-replica services in this setup, pod placement "
+    "is not a user-visible resilience lever — the killed pod is simply gone.",
     font_size=10, color=LIGHT_GRAY)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 13 — THREATS TO VALIDITY
+# SLIDE 12 — RESULTS: H4 & H5 — LOAD CONTENTION + A GRAPH PREDICTOR
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Results — H4 & H5: Load Contention and a Graph Predictor")
+
+# H4 — left
+add_rounded_box(slide, 0.5, 1.4, 6.0, 4.4, VERY_DARK,
+                border_color=ACCENT_ORANGE, border_width=Pt(2))
+add_text_box(slide, 0.7, 1.45, 5.6, 0.3,
+             "H4 — the mechanism replicates; the user layer does not",
+             font_size=14, bold=True, color=ACCENT_ORANGE)
+add_bullet_frame(slide, 0.7, 1.85, 5.6, 3.8, [
+    "• 200-user Locust spike: the app is genuinely\n  resource-bound (hog faults never get there)",
+    "• East-west inter-service p95: colocate ~1.3–1.4×\n  lower than spread, in both i = 4 batches\n  (median ratio 1.39× and 1.36×)",
+    "• Co-location keeps inter-service calls node-local;\n  spread routes every call across the network —\n  the bottleneck under load",
+    "• User-facing routes: a ~2× reading in batch A\n  collapsed to ~1.1× in the clean batch, with no\n  dependency specificity",
+    "• So: no user-visible placement effect is claimed\n  under load — the mechanism effect is the finding",
+], font_size=10, color=LIGHT_GRAY)
+
+# H5 — right: cross-node fraction table + correlation
+add_rounded_box(slide, 6.8, 1.4, 6.0, 4.4, VERY_DARK,
+                border_color=ACCENT_GREEN, border_width=Pt(2))
+add_text_box(slide, 7.0, 1.45, 5.6, 0.3,
+             "H5 — cross-node call fraction predicts the east-west tail",
+             font_size=14, bold=True, color=ACCENT_GREEN)
+h5_data = [
+    ["Strategy", "Cross-node fraction", "East-west p95 (ms)"],
+    ["colocate", "0.00", "33.9"],
+    ["best-fit", "0.13", "35.3"],
+    ["dependency-aware", "0.73", "42.6"],
+    ["spread", "0.73", "43.5"],
+    ["random", "0.80", "43.9"],
+    ["default", "0.78", "45.5"],
+]
+add_table(slide, 7.0, 1.85, 5.6, 2.5, 7, 3, h5_data,
+          font_size=9, header_color=ACCENT_GREEN)
+add_bullet_frame(slide, 7.0, 4.45, 5.6, 1.3, [
+    "• Spearman ρ = 0.79 (n = 8 strategies, p < 0.05)",
+    "• Computable from the dependency graph + placement\n  before any chaos — the Neo4j graph becomes\n  analytically load-bearing, not mere storage",
+], font_size=10, color=LIGHT_GRAY)
+
+# Framing — bottom
+add_rounded_box(slide, 0.5, 6.0, 12.3, 1.2, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(2))
+add_text_box(slide, 0.7, 6.0, 11.9, 0.3,
+             "Framing: empirical validation of a static pre-chaos predictor — and a coarse one",
+             font_size=13, bold=True, color=ACCENT_BLUE)
+add_text_box(slide, 0.7, 6.35, 11.9, 0.8,
+    "Locality-as-objective already belongs to the literature (NetMARKS, graph-partitioning schedulers); the "
+    "contribution here is validating the graph-derived fraction against measured during-load tails. The correlation "
+    "is coarse — it separates the two node-local placements (colocate, best-fit) from the six spreading ones, which "
+    "cluster at 0.70–0.80 — and single-batch. Note dependency-aware's partition did not co-locate as intended (0.73, spread-like).",
+    font_size=10, color=LIGHT_GRAY)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 13 — RESULTS: H6 — THE LATENCY/AVAILABILITY TRADE-OFF
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Results — H6: The Latency/Availability Trade-Off")
+
+# Blast radius table — left
+add_rounded_box(slide, 0.5, 1.4, 6.5, 4.4, VERY_DARK,
+                border_color=ACCENT_RED, border_width=Pt(2))
+add_text_box(slide, 0.7, 1.45, 6.1, 0.3,
+             "Node drain on the target's node (third fault class)",
+             font_size=14, bold=True, color=ACCENT_RED)
+h6_data = [
+    ["Placement", "On drained node", "Blast radius", "Target recovery"],
+    ["colocate", "11 / 11 services", "11 — whole app offline (100%)", "~10.3 s"],
+    ["spread", "2 / 11 services", "2 services (18%)", "~2.6 s"],
+]
+add_table(slide, 0.7, 1.85, 6.1, 1.3, 3, 4, h6_data,
+          font_size=9, header_color=ACCENT_RED)
+add_bullet_frame(slide, 0.7, 3.35, 6.1, 2.4, [
+    "• Blast radius = services at 0 ready endpoints at the\n  outage trough, read from EndpointSlice snapshots —\n  not the score (a drain leaves every probe Unknown; H1)",
+    "• Observed blast equals the placement-predicted blast\n  in every iteration, across two doctor-clean batches",
+    "• Recovery scales with concentration too: 11 evicted\n  pods reschedule at once vs 2 — ~4× slower",
+], font_size=10, color=LIGHT_GRAY)
+
+# Trade-off framing — right
+add_rounded_box(slide, 7.3, 1.4, 5.5, 4.4, VERY_DARK,
+                border_color=ACCENT_PURPLE, border_width=Pt(2))
+add_text_box(slide, 7.5, 1.45, 5.1, 0.3,
+             "One placement property, two opposing consequences",
+             font_size=14, bold=True, color=ACCENT_PURPLE)
+add_bullet_frame(slide, 7.5, 1.85, 5.1, 3.8, [
+    "• colocate: best east-west tail (H5: 33.9 ms,\n  lowest) AND worst node-failure blast\n  (100% outage) — spread is the mirror",
+    "• H5 is the latency face, H6 the availability\n  face of the same co-location metric",
+    "• Where placement DOES bite users in this\n  study is availability under node failure —\n  and it is predictable from the placement",
+    "• Quantification of a known qualitative\n  trade-off (cell-based architectures), not\n  a discovery",
+    "• Two-point contrast (the extremes); a\n  6-strategy gradient run extends this",
+], font_size=10, color=LIGHT_GRAY)
+
+# Bottom synthesis
+add_rounded_box(slide, 0.5, 6.0, 12.3, 1.2, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(3))
+add_text_box(slide, 0.7, 6.15, 11.9, 0.9,
+    "The same co-location that wins H5's latency loses H6's availability. Placement is not 'good' or 'bad' — "
+    "it trades a measured east-west latency benefit against a measured node-failure blast radius, and both faces "
+    "are computable from the dependency graph before any chaos.",
+    font_size=12, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 14 — NEGATIVE FINDINGS & LITERATURE PREDICTIONS
+# ══════════════════════════════════════════════════════════════════════
+slide = prs.slides.add_slide(prs.slide_layouts[6])
+set_slide_bg(slide)
+slide_title(slide, "Negative Findings — Why the Obvious Experiments Are Wrong")
+
+# Hog faults absorbed — left
+add_rounded_box(slide, 0.5, 1.4, 6.0, 2.6, VERY_DARK,
+                border_color=ACCENT_RED, border_width=Pt(2))
+add_text_box(slide, 0.7, 1.45, 5.6, 0.3, "Hog faults are absorbed, not felt",
+             font_size=14, bold=True, color=ACCENT_RED)
+add_bullet_frame(slide, 0.7, 1.85, 5.6, 2.0, [
+    "• pod-cpu-hog: CFS-capped at the 200m container\n  limit — the hog throttles itself, not the app",
+    "• node-cpu-hog: loads the node, but CPU requests\n  keep the light app pods responsive",
+    "• Both scored 100 with the app fully up — the\n  'obvious' contention experiments measure nothing",
+    "• Contention only bites when the app is genuinely\n  resource-bound — i.e. under load (H4)",
+], font_size=10, color=LIGHT_GRAY)
+
+# Memory hog self-evicts — right
+add_rounded_box(slide, 6.8, 1.4, 6.0, 2.6, VERY_DARK,
+                border_color=ACCENT_ORANGE, border_width=Pt(2))
+add_text_box(slide, 7.0, 1.45, 5.6, 0.3, "node-memory-hog evicts itself first",
+             font_size=14, bold=True, color=ACCENT_ORANGE)
+add_bullet_frame(slide, 7.0, 1.85, 5.6, 2.0, [
+    "• On 4 GiB workers, the kubelet evicts the\n  LitmusChaos helper pod before any app pod\n  feels memory pressure",
+    "• The experiment kills its own instrument, not\n  the application (LitmusChaos issue #3397)",
+    "• Negative findings like these bound the fault\n  taxonomy: they tell you which experiments\n  measure the app and which measure the harness",
+], font_size=10, color=LIGHT_GRAY)
+
+# L1-L3 — bottom
+add_rounded_box(slide, 0.5, 4.3, 12.3, 2.9, VERY_DARK,
+                border_color=ACCENT_BLUE, border_width=Pt(2))
+add_text_box(slide, 0.7, 4.35, 11.9, 0.3,
+             "Literature predictions L1–L3 — inapplicable in this regime, not refuted",
+             font_size=14, bold=True, color=ACCENT_BLUE)
+l_preds = [
+    ("L1", "Colocate is the worst placement",
+     "The score cannot adjudicate it (H1), and the churn\n"
+     "mechanism points the other way: colocate flushes\n"
+     "the least conntrack state and throttles least."),
+    ("L2", "Spread isolates faults best",
+     "Under churn, spreading maximises the cross-node\n"
+     "flows the kill cycle tears down (H2) — and under\n"
+     "node drain spread does win availability (H6)."),
+    ("L3", "Recovery time predicts resilience",
+     "The recovery decomposition (d2s/s2r) is unstable\n"
+     "run-to-run and the score is too noisy to predict —\n"
+     "no stable relationship on either side."),
+]
+for i, (label, title, body) in enumerate(l_preds):
+    x = 0.7 + i * 4.05
+    add_rounded_box(slide, x, 4.75, 0.55, 0.45, ACCENT_BLUE, label, 12, WHITE, True)
+    add_text_box(slide, x + 0.65, 4.75, 3.3, 0.5, title,
+                 font_size=11, bold=True, color=WHITE)
+    add_text_box(slide, x, 5.35, 3.85, 1.3, body,
+                 font_size=10, color=LIGHT_GRAY)
+add_text_box(slide, 0.7, 6.75, 11.9, 0.4,
+    "These predictions come from contention regimes the churn fault class never enters — they are "
+    "inapplicable here, which is itself a fault-class-specific result, not a refutation of the literature.",
+    font_size=10, color=MID_GRAY)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLIDE 15 — THREATS TO VALIDITY
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
@@ -1133,21 +1214,22 @@ threats = [
         ("Virtualized environment",
          "Vagrant/libvirt (KVM/QEMU) introduces virtualization overhead. Bare-metal "
          "clusters may show different performance characteristics, especially for I/O metrics."),
-        ("Uneven strategy coverage",
-         "Reproducible findings rest on 3 configs (colocate, spread, default). The 4 contention "
-         "strategies (random, adversarial, best-fit, dependency-aware) appear in half the runs and no "
-         "reproducible finding — a generality check, not validated signals, pending more cpu-hog runs."),
+        ("Uneven contrast coverage",
+         "The churn findings (H2, H3) rest on the colocate-vs-spread locality contrast; H5 covers all "
+         "8 placements but is single-batch; H6 is a two-point contrast of the extremes — a 6-strategy "
+         "gradient run extends it. Intermediate placements are not yet validated per-hypothesis."),
     ]),
     ("External Validity", ACCENT_ORANGE, [
         ("Cluster scale",
          "5-node cluster (1 control plane @ 12 GiB + 4 uniform 4-GiB workers, 10 vCPU, 28 GiB). "
          "Larger clusters may show different placement effects."),
-        ("Fault types",
-         "Only pod-delete and pod-cpu-hog tested. Network partitions, disk faults, "
-         "and memory pressure may reveal different strategy rankings."),
+        ("Fault classes",
+         "Three classes tested: churn (pod-delete), load contention (Locust spike), node failure "
+         "(drain). Hog faults are absorbed by cgroup limits (negative finding); network partitions "
+         "and disk faults remain untested and may behave differently."),
         ("Traffic pattern",
-         "Steady-state load (50 users, 10/s). Bursty, ramping, or production-like "
-         "traffic patterns may affect results differently."),
+         "Steady-state load (50 users, 10/s) for churn; a 200-user spike for the load regime. "
+         "Production-like traffic patterns may affect results differently."),
         ("Metric portability",
          "PSI requires cgroup-v2, Felix requires Calico, etcd_debugging_* is K8s-version-"
          "fragile. metricAvailability surfaces which metrics were collected per run."),
@@ -1172,7 +1254,7 @@ for col, (category, clr, items) in enumerate(threats):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 14 — CONCLUSION & FUTURE WORK
+# SLIDE 16 — CONCLUSION & FUTURE WORK
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
@@ -1185,13 +1267,14 @@ add_text_box(slide, 0.7, 1.5, 5.4, 0.35, "Contributions",
              font_size=18, bold=True, color=ACCENT_GREEN)
 add_bullet_frame(slide, 0.7, 1.95, 5.4, 2.6, [
     "• ChaosProbe framework: automated placement-\n"
-    "  aware chaos testing for Kubernetes",
-    "• Systematic evaluation of 6 placement strategies\n"
-    "  under 2 fault types across 4 metric dimensions",
-    "• Neo4j graph storage preserving causal\n"
-    "  relationships for topology-aware analysis",
-    "• Reproducible methodology: seeded randomness,\n"
-    "  exact configs, automated comparison pipeline",
+    "  aware chaos evaluation for Kubernetes",
+    "• A fault-class × measurement-layer study:\n"
+    "  churn, load contention, node failure across\n"
+    "  score, mechanism, and user layers (H1–H6)",
+    "• The Neo4j dependency graph made analytically\n"
+    "  load-bearing: a pre-chaos placement predictor (H5)",
+    "• Statistical & provenance discipline: ICC variance\n"
+    "  partition, TOST, power analysis, doctor-gated runs",
 ], font_size=12, color=LIGHT_GRAY)
 
 # Key findings
@@ -1200,14 +1283,15 @@ add_rounded_box(slide, 6.8, 1.5, 5.8, 3.2, VERY_DARK,
 add_text_box(slide, 7.0, 1.5, 5.4, 0.35, "Key Findings",
              font_size=18, bold=True, color=ACCENT_BLUE)
 add_bullet_frame(slide, 7.0, 1.95, 5.4, 2.6, [
-    "• Aggregate resilience score is NOT\n"
-    "  reproducible (strategy spans 33–89/13 runs)",
-    "• But the mechanism layer IS: conntrack flush\n"
-    "  (spread≫colocate, 12/12) + throttling (11/13)",
-    "• Mechanism: pod-delete is churn-based, not\n"
-    "  contention — co-location keeps paths local",
-    "• Recovery's d2s/s2r split is unstable run-to-run,\n"
-    "  so it can't predict the outcome",
+    "• H1: the aggregate score cannot rank placements\n"
+    "  (3.3% between-strategy variance)",
+    "• H2 + H4: placement moves mechanism-layer\n"
+    "  signals in both churn and load regimes",
+    "• H3: those mechanisms do not reach the user\n"
+    "  (TOST-decoupled; control-route confound)",
+    "• H5 + H6: placement bites users at the availability\n"
+    "  layer — and both faces of the trade-off are\n"
+    "  predictable from the dependency graph",
 ], font_size=12, color=LIGHT_GRAY)
 
 # Future work
@@ -1216,27 +1300,27 @@ add_rounded_box(slide, 0.5, 4.9, 12.1, 1.6, VERY_DARK,
 add_text_box(slide, 0.7, 4.9, 11.7, 0.35, "Future Work",
              font_size=16, bold=True, color=ACCENT_ORANGE)
 add_bullet_frame(slide, 0.7, 5.3, 5.6, 1.15, [
-    "• Multi-replica services — does locality still win\n  when restart can happen on a peer pod?",
-    "• Larger cluster (20+ nodes), production-like traffic\n  & service-mesh instrumentation (Istio/Linkerd)",
-    "• Memory- and network-fault classes beyond CPU",
+    "• Multi-replica anti-affinity — the production question\n  this single-replica design structurally excludes",
+    "• H6 gradient: intermediate placements between the\n  extremes (6-strategy gradient run in flight)",
+    "• Larger clusters, other CNIs / kube-proxy modes,\n  production-like traffic",
 ], font_size=11, color=LIGHT_GRAY)
 add_bullet_frame(slide, 6.7, 5.3, 5.7, 1.15, [
-    "• Per-fault-class placement guidance — choose strategy\n  by expected fault type, not by general 'best practice'",
-    "• ML-based anomaly detection on collected dataset\n  (the Neo4j store is already structured for it)",
-    "• Per-fault-class extensions to Borg / Medea schedulers",
+    "• Re-attribute the conntrack flush to its exact code\n  path (upstream active flush is UDP-only; this\n  workload is TCP/gRPC)",
+    "• More load batches — does any user-layer effect\n  survive replication?",
+    "• Scheduler integration of the cross-node-fraction\n  predictor (H5)",
 ], font_size=11, color=LIGHT_GRAY)
 
 # Core message
 add_rounded_box(slide, 0.5, 6.7, 12.1, 0.7, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(3))
 add_text_box(slide, 0.7, 6.75, 11.7, 0.6,
-    "Placement-vs-resilience intuition from the literature is fault-class-specific. Under churn-based faults "
-    "(pod-delete), co-location wins because it minimises cross-node disruption during the kill cycle.",
-    font_size=14, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
+    "A single score is blind to placement (H1). Placement acts at the mechanism layer (H2, H4) without reaching "
+    "the user (H3); where it does reach users is availability under node failure — predictably (H5 + H6).",
+    font_size=13, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 15 — QUESTIONS
+# SLIDE 17 — QUESTIONS
 # ══════════════════════════════════════════════════════════════════════
 slide = prs.slides.add_slide(prs.slide_layouts[6])
 set_slide_bg(slide)
@@ -1255,10 +1339,10 @@ add_text_box(slide, 1.5, 3.7, 10.3, 0.8, "Questions?",
 
 # Summary badges at bottom
 summary_items = [
-    ("6", "Placement\nStrategies", CLR_ORCH),
-    ("4", "Metric\nDimensions", CLR_METRICS),
-    ("3/3", "Inapplicable\nunder churn", ACCENT_RED),
-    ("1", "Unified\nMechanism", ACCENT_BLUE),
+    ("8", "Placement\nStrategies", CLR_ORCH),
+    ("3", "Fault\nClasses", CLR_METRICS),
+    ("H1–H6", "Hypotheses\nTested", ACCENT_BLUE),
+    ("ρ = 0.79", "Graph\nPredictor", ACCENT_GREEN),
 ]
 for i, (val, label, clr) in enumerate(summary_items):
     x = 2.5 + i * 2.3
