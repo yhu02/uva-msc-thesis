@@ -2,13 +2,51 @@
 
 ## 8.1 Conclusion
 
-TODO(author): prose synthesis — restate the research question; answer it per
-fault class × layer (churn: mechanism yes / user no / score blind; load:
-mechanism yes / user not reproducibly; node failure: availability yes, and
-opposite in sign to the latency face); name the four contributions (§1.3) and
-the boundary of each claim (ch. 7). End on the methodological point: chaos
-evaluation of placement needs layered measurement and provenance-gated
-replication, not a single score.
+This thesis asked: **under which chaos fault classes does pod placement
+measurably affect mechanism-level behaviour and user-visible outcomes in a
+Kubernetes microservice application, and when do aggregate resilience scores
+obscure those effects?** The answer the data supports is layered, and
+different for each fault class tested.
+
+Under single-replica `pod-delete` **churn**, placement moves the mechanism
+layer, not the user layer, and the score is blind to both. Spreading the
+target's dependents reproducibly flushes a large fraction of per-node
+conntrack state during the kill cycle (38.5% vs 2.7% median, spread >
+colocate in 7/7 independent sessions; H2), yet this most reproducible signal
+in the study is statistically decoupled from the fault-dependent user routes
+(H3) — and the aggregate score cannot rank the strategies at all, with 3.3%
+of its variance between strategies and a minimum detectable effect larger
+than any gap that exists (H1). Under **load contention**, the regime where
+latency is the user-visible outcome, the same shape recurs: co-location
+reproducibly lowers the east-west inter-service tail (1.36–1.39× across two
+batches), but the user-layer effect did not survive clean replication, so
+none is claimed (H4). Under **node failure**, placement finally moves the
+layer that counts there — availability — and it does so with the opposite
+sign to the latency face: the co-location that minimizes the east-west tail
+(H5's static predictor, ρ = 0.79) maximizes blast radius and recovery time
+(11/11 services offline and ≈10.3 s recovery vs 2/11 and ≈2.6 s; H6). The
+aggregate score, finally, obscures placement effects in every regime tested:
+too noisy to rank under churn, uniformly saturated under load, and unusable
+under drain.
+
+The four contributions of §1.3 carry this answer, each within the boundary
+drawn in Chapter 7. The layered-decoupling result, the trade-off pair, and
+the score critique (claim 1) are statements about a single-replica
+deployment on one small virtualized v1.28.6/ipvs cluster — directions and
+layer structure, not absolute values, and never "spread is worse" or a best
+strategy. ChaosProbe (claim 2) and the provenance-gated campaign protocol
+(claim 3) are the portable parts: any cluster and workload can rerun this
+design, and every number quoted here traces to an archived, hash-stamped run
+(Appendix A). The negative findings (claim 4) bound which fault classes can
+test placement at all on clusters of this class.
+
+The methodological point is the one we would have the field retain. Chaos
+evaluation of placement needs **layered measurement and provenance-gated
+replication, not a single score**: each fault class deposited its placement
+signal in a different layer, a one-number instrument missed all of them, and
+the only findings that survived were the ones forced through independent
+sessions and strict provenance — including one striking user-layer "result"
+that did not.
 
 ## 8.2 Future work
 
@@ -66,4 +104,15 @@ worth a dedicated campaign.
   nftables), production traffic, multi-replica workloads, and scheduler
   integration of the cross-node fraction as a scoring plugin.
 
-TODO(author): prioritize + close.
+Prioritized: the highest-value next step is the multi-replica × node-drain
+experiment via option (b) — a small mutator extension unlocks the one regime
+this study structurally excluded, where placement *should* finally reach the
+user-visible layer, and a null there would be genuinely surprising rather
+than designed-in. Close behind it sit the two cheap completions of existing
+results — a second H5 batch and the H6 gradient — followed by the H2
+protocol-composition probe, which converts the study's most reproducible
+signal from mechanism-consistent to causally decomposed. P2 is the ambitious
+shot and should be attempted only with the packet/path check in place. The
+common thread is the method: every one of these experiments runs on the same
+layered, provenance-gated protocol this thesis contributes, and each would
+sharpen — not merely extend — the boundary of where placement matters.
