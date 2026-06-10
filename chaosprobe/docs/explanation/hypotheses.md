@@ -51,17 +51,24 @@ needed for 80 % power (α = .05, two-sided).
 **Prediction (falsifiable).** If placement drives the score, `ICC_strategy` is
 large and the focal contrast is detectable at feasible *n*.
 
-**Result — supported.** Only **4.6 %** of score variance is between-strategy
-(`ICC_strategy = 0.046`); the rest is iteration-level (61.8 %) and run-to-run
-(33.6 %) noise. The focal `colocate` (68.8) vs `spread` (70.2) gap is **1.4
-points** (*d* = 0.06), requiring **≈ 3,982 iterations/strategy** for 80 % power.
-Even the *widest* observed gap (`dependency-aware` 78.5 vs `default` 61.4,
-*d* = 0.77) needs 26/strategy, and at the *n* = 3 actually run the minimum
-detectable effect is **2.29 sd ≈ 51 score points** — larger than any gap that
-exists. The score isn't even stable within a single run.
+**Result — supported (clean campaign, primary evidence).** Across the
+**7-session E2 campaign** (s01–s07: independent single-commit sessions, all
+8 strategies × *i* = 3, 147 churn iterations, every session `doctor --strict`
+clean and archived), only **3.3 %** of score variance is between-strategy
+(`ICC_strategy = 0.033`, cluster-bootstrap 95 % CI **[0.014, 0.178]**); the
+rest is iteration-level (59.1 %) and run-to-run (37.6 %) noise. The focal
+`colocate` (64.0) vs `spread` (74.3) gap (*d* = 0.46) would need **73
+iterations/strategy** for 80 % power, and at the *n* = 3 actually run per
+session the minimum detectable effect is **2.29 sd ≈ 51 score points** —
+larger than any gap that exists. The score isn't even stable within a single
+run.
+
+The earlier pooled run-set (mixed code versions, 16 runs) read the same way —
+`ICC_strategy = 0.046`, focal gap *d* = 0.06 needing ≈ 3,982/strategy — and is
+retained only as the pilot; quote the campaign numbers.
 
 ```
-uv run python scripts/score_variance.py
+uv run python scripts/score_variance.py --results-dir campaign-results
 ```
 
 ## H2 — Placement reproducibly moves a kernel/network reconvergence signature
@@ -77,18 +84,24 @@ of `conntrack_entries_per_node`, per strategy per run; cross-run consistency of
 **Prediction (falsifiable).** `spread` flush > `colocate` flush in a large
 majority of runs.
 
-**Result — supported.** `spread` flushes a **36.6 %** median vs `colocate`
-**1.9 %**, with `spread > colocate` in **16 / 16** runs. This is the most
+**Result — supported (clean campaign, primary evidence).** Across the
+7-session E2 campaign, `spread` flushes a **38.5 %** median vs `colocate`
+**2.7 %**, with `spread > colocate` in **7 / 7** independent sessions —
+**sign test *p* = 0.0156, paired Wilcoxon W = 0, *p* = 0.0225**. The earlier
+pooled run-set agreed (36.6 % vs 1.9 %, 16/16 runs). This is the most
 reproducible signal in the study and maps onto the Kubernetes SIG-Scalability
-network-programming reconvergence window documented upstream (see references).
+network-programming reconvergence window documented upstream (see references —
+including the protocol-scoping caveat there: kube-proxy's *active* flush path
+is UDP-only, so the mechanism attribution must not name kube-proxy alone).
 
 A secondary contention signal (CPU throttling) is *weaker* and should be
-reported as corroborating only: `colocate` throttles below `default` in 13/16
-runs but is not the lowest strategy overall (`best-fit` is lower). Lead with
-conntrack; treat throttling as support, not a standalone claim.
+reported as corroborating only: `colocate` throttles lowest in 6/7 campaign
+sessions (and below `default` in 6/7), but in the pooled pilot `best-fit` was
+lower still. Lead with conntrack; treat throttling as support, not a
+standalone claim.
 
 ```
-uv run python scripts/mechanism_metrics.py
+uv run python scripts/mechanism_metrics.py --results-dir campaign-results
 ```
 
 ## H3 — The mechanism is decoupled from the user-visible outcome
@@ -108,12 +121,22 @@ run-level effects entirely.
 **Prediction (falsifiable).** A real link → ρ(dependent) significant and
 ≫ ρ(control).
 
-**Result — decoupling supported (three independent tests).**
+**Result — decoupling supported (clean campaign + three pilot tests).**
+
+Campaign (7 sessions, 49 strategy-cells, TOST equivalence testing): conntrack
+flush → dependent-route p95 is **ρ = 0.07 (*p* = 0.65)** while the *control*
+route is ρ = 0.29 (*p* = 0.043) — the mechanism correlates with the route that
+does **not** depend on the killed service, the signature of a run-level
+confound, and the dependent-route association is **decoupled by TOST**. The
+only dependent-significant association (TCP-retransmit delta, ρ = −0.32) is
+*negative* — the direction opposite a propagation story.
+
+The pooled pilot read the same way:
 
 - Pooled: conntrack flush → dependent-route p95 is ρ = 0.15 (*p* = 0.18, n.s.).
 - The only mechanism reaching significance (CoreDNS p99) is **stronger on the
-  control route** (ρ = 0.54) than the dependent route (ρ = 0.31) — the signature
-  of a run-level confound, not causation.
+  control route** (ρ = 0.54) than the dependent route (ρ = 0.31) — the same
+  confound signature.
 - Within-run (run effect removed): mean ρ ≈ **+0.10**, median ≈ 0.
 - Robust to route classification (folding the homepage into the dependent set,
   using `/_healthz` alone as control: ρ = 0.19, *p* = 0.09).
@@ -124,7 +147,7 @@ rate (1.4 %); `spread` flushes 9× more conntrack than `colocate` yet they tie o
 what the user experiences (8.0 % vs 8.9 % error).
 
 ```
-uv run python scripts/h3_mechanism_outcome.py --csv /tmp/h3_pairs.csv
+uv run python scripts/h3_mechanism_outcome.py --results-dir campaign-results --csv /tmp/h3_pairs.csv
 ```
 
 ## H4 — Under load contention, placement moves the mechanism, not (reproducibly) the user

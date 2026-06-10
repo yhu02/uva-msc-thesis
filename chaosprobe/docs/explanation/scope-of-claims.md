@@ -20,13 +20,15 @@ the user.
   collection, statistical comparison, Neo4j topology storage, provenance
   capture, and data-quality diagnostics.
 - **The aggregate resilience score is too unstable to rank placements** in the
-  current single-replica `pod-delete` churn campaign — between-strategy variance
-  is a small fraction of total score variance, undetectable at any feasible
+  single-replica `pod-delete` churn campaign — across 7 independent
+  single-commit sessions (147 iterations) between-strategy variance is 3.3 % of
+  total score variance (ICC CI [0.014, 0.178]), undetectable at any feasible
   iteration count (H1). The score should not be used alone to rank strategies.
 - **Mechanism-level metrics can be more reproducible than the aggregate score** —
   under churn, spreading the target's dependents reproducibly moves a
-  kernel/network reconvergence signature (conntrack flush) that the score does
-  not capture (H2).
+  kernel/network reconvergence signature (conntrack flush, spread > colocate in
+  7/7 independent sessions, sign test p = 0.016) that the score does not
+  capture (H2).
 - **Mechanism and user-visible layers can decouple** — a placement effect at the
   mechanism layer did not, in this single-replica regime, reach the user (H3).
 - **A graph-derived metric predicts the east-west placement penalty** — across 8
