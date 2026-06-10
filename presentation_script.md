@@ -18,35 +18,35 @@ Speaker notes for the thesis defense presentation.
 >
 > Chaos engineering is the discipline of deliberately injecting faults to build confidence in a system's resilience. However, existing work studies placement *or* resilience, but rarely their interaction under controlled fault injection. There is no systematic framework that quantifies how placement topology affects chaos resilience.
 >
-> ChaosProbe fills this gap. It is an automated framework that varies placement strategies, injects faults via LitmusChaos, and measures the impact across four dimensions: recovery time, inter-service latency, resource utilization, and I/O throughput.
+> ChaosProbe fills this gap. It is an automated framework that varies placement strategies, injects faults via LitmusChaos, and measures the response at three layers: the aggregate resilience score, the kernel and network mechanism layer, and the user-visible outcome. The contribution is establishing *at which layer* a placement effect appears under a given fault class -- and whether it reaches the user.
 
 ---
 
 ## Slide 3 -- Research Question & Hypotheses
 
-> Our research question is: *How do multi-dimensional metrics decompose chaos response across pod-placement strategies in Kubernetes?*
+> Our research question is: *Under which fault classes does pod placement measurably affect mechanism-level behaviour and user-visible outcomes -- and when do aggregate resilience scores obscure those effects?*
 >
-> The framing is deliberate. Earlier work asks which placement strategy is most resilient and collapses the answer into a single aggregate resilience score. We found that score is not reproducible at this scale, so we **build the thesis on the primary-source metrics instead** -- the kernel and network signals that *do* reproduce across runs. We state four metric findings, M1 through M4, plus two supporting hypotheses, S1 and S2. Separately, three *legacy literature predictions* -- **L1** (colocate is the worst), **L2** (spread gives the best fault isolation), and **L3** (recovery time predicts resilience) -- are the contention-model expectations the results put to the test. We label those L-, distinct from the M- and S- claims, to keep the families clear.
+> The framing is deliberate. This is a fault-class-by-measurement-layer study, not a placement ranking, and not a refutation of the placement literature. A placement effect can appear at the aggregate-score layer, at a kernel/network mechanism layer, and/or at the user-visible layer -- and these layers need not agree. We state six falsifiable hypotheses, H1 through H6, grouped by fault class. The narrative arc across them: the score is blind, placement does act at the mechanism layer, that action does not reach the user under churn or load -- and where placement *does* bite users is availability under node failure, where it is predictable.
 >
-> **Primary results -- the reproducible metrics (M1 through M3).** These are the spine of the thesis. Each is a primary-source metric, measured directly, and verified to reproduce across the collected runs.
+> **Churn (pod-delete) -- H1 through H3.**
 >
-> **M1: Spreading flushes cross-node connection state.** This is the headline metric. During pod-delete, the spread and default strategies flush 36 to 39 percent of the node's conntrack entries; colocate stays essentially flat, about minus 1.6 percent. This holds in every one of the twelve runs where both were measured -- a large, reproducible fault-response signal, and the dependent variable the noisy score never gave us.
+> **H1: The aggregate resilience score cannot rank placement strategies.** A variance partition across 7 independent sessions and 147 churn iterations gives an ICC for strategy of 0.033, with a bootstrap confidence interval of 0.014 to 0.178 -- only 3.3 percent of score variance is between-strategy. The focal contrast, colocate at 64.0 versus spread at 74.3, is d = 0.46, which would need 73 iterations per strategy for 80 percent power; at the n = 3 actually run, the minimum detectable effect is about 51 score points -- larger than any gap that exists. Note the scope: the claim is that the score cannot *rank* placement strategies in this regime, not that aggregate scoring is useless in general.
 >
-> **M2: Co-location lowers CPU contention rather than raising it.** The densest placement, colocate, throttles *less than the scheduler's own default and than spread* -- a median during-chaos throttle rate of 1.54, below default at 1.90 and spread at 1.94 -- with lower CPU usage and CPU pressure than those two as well. (Note this is the absolute during-chaos rate, not a ratio, and the comparison is against default and spread; one or two other strategies sit lower still.) Colocate throttles below default in eleven of thirteen runs. It is the opposite of what Bubble-Up and the Mars 2011 contention model predict, where denser packing should mean more contention.
+> **H2: Placement reproducibly moves a kernel/network reconvergence signature.** During the kill cycle, spread flushes a median 38.5 percent of per-node connection-tracking state; colocate 2.7 percent. Spread exceeds colocate in all 7 of 7 sessions -- sign test p = 0.0156, Wilcoxon signed-rank p = 0.0225. We call this a *reconvergence signature* and deliberately stop there: we do not attribute it to kube-proxy's active conntrack-flush path, because upstream that path is UDP-only and this workload is TCP and gRPC -- re-attribution of the exact mechanism is pending. CPU throttling corroborates -- colocate is lowest in 6 of 7 sessions -- but it is a weaker, supporting signal only.
 >
-> **M3: At the mechanism layer, the "spread is safer" prescription does not transfer to churn.** Both reproducible metrics -- conntrack churn and CPU throttling -- favour co-location under a churn fault. So the literature's spread-isolation prescription, written for contention regimes, is *inapplicable* here at the mechanism layer -- not merely unmeasurable on the application score. This is a bounded, reproducible mechanism-level result, not an absence of evidence. It is a claim about the mechanism layer only: whether that mechanism reaches the user is a separate question, and in this single-replica churn regime it does **not** (the decoupling result).
+> **H3: The mechanism is decoupled from the user-visible outcome.** The flush-to-dependent-route-p95 correlation is rho = 0.07 -- not significant, and a TOST equivalence test declares it statistically equivalent to zero. Meanwhile the *control* route, which does not depend on the killed service, shows rho = 0.29, significant. A correlation that is stronger where it should not exist is the signature of a run-level confound, not causation. There is no dependency-specific propagation of the mechanism to the user.
 >
-> **Methodology (M4).**
+> **Load contention -- H4 and H5.**
 >
-> **M4: The application resilience score is decoupled from the reproducible metrics.** Where conntrack and throttling reproduce -- eleven or twelve runs out of thirteen -- the binary-probe resilience score does not: a single strategy spans 33 to 89 across runs. The score is a lossy, high-variance instrument; the node-level metrics are the reliable measurement. Recognising that, and dropping to the metric layer, is the methodological contribution.
+> **H4: Under genuine load, placement moves the mechanism, not (reproducibly) the user.** Across two i = 4 batches under a 200-user spike, colocate's east-west inter-service p95 sits about 1.3 to 1.4 times below spread's -- the mechanism effect replicates. The user-layer effect did not survive replication, so we state only the mechanism effect.
 >
-> **Supporting hypotheses (S1 and S2).**
+> **H5: A graph-derived metric predicts the east-west placement penalty.** The cross-node call fraction -- computable from the dependency graph plus the placement, before any chaos -- rank-correlates with the during-load east-west tail at Spearman rho = 0.79 across all 8 strategies, p < 0.05. It is coarse -- it separates node-local placements from spreading ones -- but it makes the Neo4j dependency graph analytically load-bearing.
 >
-> **S1: The reproducible mechanism signal is churn-specific.** The contention fault -- a CPU hog -- does not reproduce any better than churn. Of the two cpu-hog runs we collected, one had every strategy score about 100, but the other saw widespread iteration failures: dependency-aware, adversarial and best-fit at 33, colocate at 67, with a standard deviation near 58. So the aggregate score is noisy under *both* fault classes. What the churn fault adds -- and the contention fault has not yet been shown to add at only two runs -- is the reproducible mechanism separation in M1 and M2, which is why expanding the multi-fault matrix is the priority for future work.
+> **Node failure -- H6.**
 >
-> **S2: The recovery-time decomposition is not a stable placement signal.** Recovery decomposes into deletion-to-scheduled plus scheduled-to-ready, but their split is run-dependent: in some runs the application-startup term dominates at 84 to 96 percent of the total, while in others -- including the most recent run -- the scheduling term dominates at up to about 78 percent. Recovery cannot carry the placement story in either direction, which is consistent with M4 and is also why L3 fails.
+> **H6: Co-location is a latency/availability trade-off.** Under a node drain, colocate loses all 11 services -- a 100 percent blast radius with about 10.3 seconds of target recovery -- while spread loses 2 of 11, about 2.6 seconds, reproduced across two doctor-clean batches. The same co-location that wins H5's latency loses H6's availability.
 >
-> All six claims are testable from data ChaosProbe already collects, and M1 and M2 are reproducible across the full run set. The baseline run -- a trivial pod-cpu-hog under default scheduling -- sits outside the set as a methodology control: a 100 percent score with zero variance validates the probes before any of these claims are evaluated.
+> Separately, the three *literature predictions* -- L1, colocate is worst; L2, spread isolates best; L3, recovery time predicts resilience -- are kept as context. Under this regime they are best described as inapplicable, never as refuted.
 
 ---
 
@@ -56,9 +56,9 @@ Speaker notes for the thesis defense presentation.
 >
 > On the chaos engineering side, we build on the Principles of Chaos Engineering by Basiri et al., and use LitmusChaos as our fault injection engine -- it is a CNCF sandbox project that operates via ChaosEngine CRDs.
 >
-> The gap is clear: existing work studies placement *or* resilience, but no framework systematically varies placement under controlled chaos and measures the interaction across multiple dimensions. ChaosProbe bridges this gap with 6 strategies, 2 fault types, and 4 metric dimensions, all stored in a Neo4j graph that preserves the causal topology.
+> The gap is clear: existing work studies placement *or* resilience, but no framework systematically varies placement under controlled chaos and measures the interaction across measurement layers. ChaosProbe bridges this gap with 8 placement configurations across 3 fault classes, with layered metrics, all stored in a Neo4j graph that preserves the causal topology.
 >
-> The table shows our literature-informed hypotheses: colocating pods shares cores leading to CPU throttling, shares memory leading to evictions, shares the network stack increasing latency, and shares disk bandwidth reducing I/O throughput.
+> The table shows the literature-informed contention predictions -- the L1-to-L3 family: colocating pods shares cores leading to CPU throttling, shares memory leading to evictions, shares the network stack increasing latency, and shares disk bandwidth reducing I/O throughput. We test these as context; as we will see, they turn out to be inapplicable in the churn regime rather than confirmed or refuted.
 
 ---
 
@@ -70,9 +70,9 @@ Speaker notes for the thesis defense presentation.
 >
 > **Default** uses the standard Kubernetes scheduler with full chaos injection. This is the placement null hypothesis -- what happens when we let the scheduler decide.
 >
-> **Colocate** pins all pods to a single node via `nodeSelector` (every deployment gets the same `kubernetes.io/hostname`). This is maximum contention and we expect the worst resilience.
+> **Colocate** pins all pods to a single node via `nodeSelector` (every deployment gets the same `kubernetes.io/hostname`). This is maximal co-location.
 >
-> **Spread** distributes pods evenly across workers via per-node `nodeSelector` assignment. This is minimum contention and we expect the best fault isolation.
+> **Spread** distributes pods evenly across workers via per-node `nodeSelector` assignment. This is minimal per-node concentration.
 >
 > **Random** uses a seeded random assignment per deployment. It is reproducible and serves as a null baseline for topology effects.
 >
@@ -82,7 +82,7 @@ Speaker notes for the thesis defense presentation.
 >
 > **Dependency-aware** co-locates communicating services via BFS partitioning of the service dependency graph.
 >
-> **A word on analytic weight.** Not all eight configurations carry equal weight in the results. The reproducible findings -- M1 and M2 -- rest on the contrast between three configurations: colocate, which keeps the target's network path node-local, versus spread and default, which expose it across nodes. The remaining four -- random, adversarial, best-fit, and dependency-aware -- were designed around a *resource-contention* hypothesis, and they serve here as a **generality check**: they widen the set of placements the noisy resilience score still fails to rank, which strengthens M4, and they are the placements where the contention model should finally bite under the cpu-hog matrix -- the priority for future work. They are not yet independently validated as reproducible signals -- half the run set predates their addition -- so the churn story is told on the three-configuration locality contrast, with the other four held in reserve for the contention matrix.
+> **A word on analytic weight.** Not all eight configurations carry equal weight in every result. The churn findings -- H2's reconvergence signature and H3's decoupling -- rest on the colocate-versus-spread locality contrast. All eight placements enter the load matrix: H5's cross-node fraction is computed per strategy, n = 8. H6 contrasts the two extremes, colocate versus spread, under node drain -- a two-point contrast; a gradient run over the intermediate placements extends it. One honest aside: dependency-aware, our most distinctive strategy, did not deliver as implemented -- its cross-node fraction came out spread-like (0.73), so the BFS partition did not co-locate communicating services as intended. That is a candidate for future improvement, not a validated win.
 
 ---
 
@@ -96,11 +96,11 @@ Speaker notes for the thesis defense presentation.
 > - Total: 10 vCPU, 28 GiB across the cluster
 > - Running Kubernetes v1.28.6 with Calico CNI and containerd 1.7.11
 >
-> The placement matrix uses a single fault: **pod-delete** targeting productcatalogservice -- a central service in the dependency graph. Total chaos duration is 120 seconds, with deletions every 15 seconds (CHAOS_INTERVAL), FORCE=true, and PODS_AFFECTED_PERC=100. Resilience is evaluated by 7 httpProbes across 4 sensitivity tiers, plus 5 Rust cmdProbes for orthogonal signals.
+> Three fault classes enter the matrix. **Churn**: pod-delete targeting productcatalogservice -- a central service in the dependency graph -- killed every 15 seconds for 120 seconds, with FORCE=true and PODS_AFFECTED_PERC=100; this is where H1 to H3 live. **Load contention**: a sustained 200-user Locust spike that makes the application genuinely resource-bound -- H4 and H5. **Node failure**: a drain of the node hosting the target -- H6, read at the availability layer. Resilience probes are 7 httpProbes across 4 sensitivity tiers plus 5 Rust cmdProbes.
 >
 > The baseline strategy swaps pod-delete for a trivial pod-cpu-hog on the same target -- 1 second duration, 1% CPU load on 0 cores -- so no pods are actually killed. All probes execute identically, and we expect a 100% score with zero recovery cycles. This validates the methodology.
 >
-> Infrastructure includes LitmusChaos for fault injection, Prometheus for cluster metrics, Neo4j for graph storage with 14 node types and 18 relationships, and Locust generating steady-state load at 50 users and 10 requests per second.
+> Infrastructure includes LitmusChaos for fault injection, Prometheus for cluster metrics, Neo4j for graph storage with 14 node types and 18 relationships, and Locust generating steady-state load at 50 users and 10 requests per second during churn runs.
 
 ---
 
@@ -116,7 +116,7 @@ Speaker notes for the thesis defense presentation.
 >
 > The **Orchestrator** coordinates the full experiment lifecycle: strategy runner, run phases, preflight checks, and port-forward management.
 >
-> **GraphStorage** writes everything to Neo4j -- 14 node types, 18 relationships, all queryable via Cypher.
+> **GraphStorage** writes everything to Neo4j -- 14 node types, 18 relationships, all queryable via Cypher. As H5 will show, this graph is not just storage: the cross-node call fraction computed from it is the study's pre-chaos placement predictor.
 >
 > **Visualization** produces matplotlib charts, an HTML report with appendix, and ML export in CSV or Parquet.
 >
@@ -148,112 +148,134 @@ Speaker notes for the thesis defense presentation.
 >
 > Alongside these we run 5 Rust cmdProbes -- check-redis, check-http-latency, check-dns-latency, check-tcp-connect, check-cart-flow -- which capture Redis collateral damage, post-chaos HTTP latency, DNS resolution time, TCP connect time, and a multi-route user journey.
 >
-> The resilience score is the mean probe success percentage across all probes, on a 0-100 scale. The verdict is PASS only if every probe passes. We also report a 95% bootstrap confidence interval on the mean, a 25th-percentile score, and a harmonic-mean variant that penalises low-score iterations more strongly -- per Dean and Barroso's *Tail at Scale* (2013), means alone hide what matters at the tails. For cross-strategy comparison we run pairwise Mann-Whitney U with Holm-Bonferroni correction so the family-wise error rate is controlled across the 28 pairs in the strategy matrix.
+> The resilience score is the mean probe success percentage across all probes, on a 0-100 scale. The verdict is PASS only if every probe passes. We also report a 95% bootstrap confidence interval on the mean, a 25th-percentile score, and a harmonic-mean variant that penalises low-score iterations more strongly -- per Dean and Barroso's *Tail at Scale* (2013), means alone hide what matters at the tails. For cross-strategy comparison we run pairwise Mann-Whitney U with Holm-Bonferroni correction, and the H1 analysis adds an ICC variance partition with bootstrap confidence intervals, TOST equivalence tests, and a power analysis.
 
 ---
 
-## Slide 9 -- Results: Why the Score Is Demoted (M4)
+## Slide 9 -- Results: H1 -- The Score Cannot Rank Placements
 
-> The methodology control holds first: **baseline achieved 100% with standard deviation zero** -- the probes and scoring work as designed. But the central finding on this slide is a negative one about the instrument itself: **the aggregate resilience score does not reproduce across runs.**
+> The methodology control holds first: **baseline achieved 100% with standard deviation zero** -- the probes and scoring work as designed. But the first finding is about the instrument itself: **the aggregate resilience score cannot rank placement strategies in this regime.**
 >
-> By "the thirteen runs" I mean the churn (pod-delete) runs with at least three iterations, collected after the east-west probe fix, with the baseline control passing -- the set on which the measurement is trustworthy (the n=2 pilot runs, the single-iteration smoke run, and the cpu-hog runs sit outside it). When we look across those thirteen runs, the *same* strategy's score swings across a wide band. Colocate ranges from 49.7 to 83. Spread ranges from 33 to 88.7 -- sometimes the worst strategy, sometimes the best. Default ranges from 33 to 83. The run-to-run standard deviation within a single strategy is between 11 and 17 points.
+> The evidence base is 7 independent sessions totalling 147 churn iterations. A variance partition of the per-iteration score gives an ICC for strategy of **0.033**, with a bootstrap 95% confidence interval of 0.014 to 0.178. In words: only **3.3 percent** of score variance is between-strategy; the rest is iteration-level and session-level noise.
 >
-> That matters because the gap *between* strategies is tiny by comparison. Colocate averages 69.5; spread averages 70.5 -- a one-point difference, swamped by a within-strategy spread of fifteen. At three iterations per run, no pairwise difference between the main strategies survives a Mann-Whitney test with Holm correction.
+> What would it take to detect the focal contrast anyway? Colocate averages 64.0, spread 74.3 -- an effect size of d = 0.46. Detecting that at 80 percent power needs **73 iterations per strategy**. At the three iterations per strategy actually run per session, the minimum detectable effect is roughly **51 score points** -- larger than any between-strategy gap that exists in the data.
 >
-> So the honest reading is: **the aggregate resilience score cannot rank these placements.** Any single run will show *some* ordering -- an earlier draft of this very deck reported a clean "containment versus leakage" split -- but that ordering is a draw of the noise, not a stable property of the strategy. L1, L2, and L3 are stated in terms of which strategy scores better, and the score has no power to adjudicate that. The next two slides show where the signal actually is: the per-mechanism kernel and network metrics, which *do* reproduce.
-
----
-
-## Slide 10 -- Results: Recovery Time & Latency
-
-> Recovery time -- the interval from pod deletion to pod ready -- is where L3 gets tested, and the test is structural rather than a horse-race between strategies.
->
-> When we decompose recovery into its two phases -- deletion-to-scheduled, then scheduled-to-ready -- the split turns out to be run-dependent. In some runs the scheduled-to-ready phase, which is application startup, is **84 to 96 percent of the total**; in others -- including the most recent run -- the deletion-to-scheduled phase dominates at up to about 78 percent. The decomposition does not point consistently at either term.
->
-> That is why **L3 is inapplicable here on its own terms, not refuted by a correlation.** Recovery time did not predict the resilience outcome in this regime: the split between its two phases is itself unstable run-to-run, and the resilience score it would supposedly predict is non-reproducible. There is no stable relationship to find on either side here — a bounded observation about this regime, not a general claim that recovery time carries no information.
->
-> Latency tells the second part of the story, and the lesson here is about *where* the fault signal lives. On the route that depends on the killed service, during-chaos latency has a mean of 231 milliseconds -- but a p95 of 619 and a maximum of 3,334. The tail is fourteen times the mean. Meanwhile routes that don't depend on the target stay flat at 70 to 110 milliseconds throughout. The impact is route-specific and concentrated in the tail; a mean-based SLO would miss it entirely. This is the *Tail at Scale* point made concrete, and it is why our scoring keeps p95 and a harmonic-mean variant rather than reporting means alone.
+> So the honest reading is scoped and precise: **the aggregate score cannot rank these placements.** Any single run will show *some* ordering, but that ordering is a draw of the noise. Note what this claim is not: it is not "aggregate scores don't work" -- it is that this score, in this regime, has no power to rank strategies. The literature predictions L1 to L3 are stated as score comparisons, so the score cannot adjudicate them -- they are inapplicable here, not refuted. The next slides show where the signal actually is.
 
 ---
 
-## Slide 11 -- Results: Primary Metrics — Conntrack & CPU (M1, M2)
+## Slide 10 -- Results: H2 -- A Kernel Reconvergence Signature Moves
 
-> This slide is the heart of the thesis: the two primary-source metrics that **do** reproduce across runs, where the aggregate score did not.
+> If the score is blind, is placement doing nothing? No -- it leaves a large, consistent footprint one layer down.
 >
-> **M1, connection-tracking churn, is the headline.** During the kill cycle, spread and default flush **36 to 39 percent** of the node's conntrack entries at the median; colocate stays essentially flat, about minus 1.6 percent. This holds in **all twelve runs** where both were measured -- a large, reproducible effect. It is the mechanism for everything else: pod-delete tears down and rebuilds the target's network identity every fifteen seconds, and spreading services across nodes maximises the number of cross-node flows that have to reconverge. Co-location keeps those paths node-local, so there is nothing to flush. This conntrack delta is the dependent variable we build on, in place of the score.
+> **H2 is the connection-tracking result.** During the kill cycle, spread flushes a median **38.5 percent** of per-node conntrack entries; colocate flushes **2.7 percent**. Spread exceeds colocate in **all 7 of 7 sessions** -- a sign test gives p = 0.0156, and a Wilcoxon signed-rank test on the paired session medians gives p = 0.0225. This is the most consistent signal in the study.
 >
-> **M2 is CPU throttling, and it inverts the contention model.** The densest placement -- colocate -- throttles *less than default and spread*, with a median during-chaos throttle rate of 1.54, below default at 1.90 and spread at 1.94, and with lower CPU usage and pressure than those two. Colocate throttles below default in **eleven of the thirteen runs**. The contention literature, Bubble-Up and Mars 2011, predicts the opposite: denser packing should mean more contention and more throttling. Under a churn-based fault, that prediction does not hold here -- a bounded, mechanism-layer observation, not a universal refutation of the contention model.
+> The mechanistic reading: pod-delete tears down and rebuilds the target's network identity every fifteen seconds. Spreading services across nodes maximises the number of cross-node flows that have to reconverge after each kill; co-location keeps those paths node-local, so there is little to flush.
 >
-> Both metrics favour co-location, and that is the synthesis -- **M3**: the literature's "spread is safer" prescription does not transfer to churn at the mechanism layer, reproducibly, even though the application score is too noisy to settle it. The mechanism is unambiguously churn-driven, not contention-driven. This is a mechanism-layer claim only -- it does not assert a user-visible advantage, which the decoupling result shows is absent in this regime.
-
----
-
-## Slide 12 -- Discussion
-
-> The discussion has two layers: what the aggregate score can and cannot tell us, and what the mechanism metrics resolve in its place.
+> One deliberate piece of discipline here: we report this as a **reconvergence signature**, and we do *not* attribute it to kube-proxy's active conntrack-flush code path. Upstream, that active flush path is UDP-only -- and this workload is TCP and gRPC. Re-attributing the flush to its exact code path is pending work; what is established is the measured signature and its placement dependence.
 >
-> Start with the instrument. **The aggregate resilience score is the wrong tool to adjudicate L1, L2, and L3.** It is not reproducible -- a single strategy spans 33 to 89 across runs -- so any "colocate beats spread" or "spread beats colocate" claim is a draw of the noise. The three predictions are framed as score comparisons, and the score has no power to settle them. So we resolve them at the mechanism layer, where the metrics *do* reproduce.
->
-> **L1 -- Colocate is the worst: not supported.** On the score, colocate is indistinguishable from the rest. On the mechanism that actually reproduces, colocate throttles *less than default and spread* and flushes essentially no connection state. Whatever "worst" would mean here, colocate is not it.
->
-> **L2 -- Spread provides the best fault isolation: not supported, and arguably inverted.** Spread flushes 28 to 52 percent of conntrack entries during churn -- the most of any strategy, in every run measured. Under a churn fault, spreading does not isolate the blast radius; it *enlarges* it, because it maximises the cross-node flows that pod-delete tears down.
->
-> **L3 -- Recovery time predicts resilience: inapplicable on its own terms.** The split between recovery's two phases is itself unstable run-to-run -- application startup dominates in some runs, the scheduling term in others -- and the score it would predict is non-reproducible. There is no stable relationship on either side to confirm or deny.
->
-> Now the mechanism. The placement literature builds its predictions on **contention-based faults** -- CPU hogs, memory hogs, disk stress -- where co-locating services makes them compete and spreading genuinely helps. The intuition behind L1, L2, and L3 all comes from that contention model.
->
-> **Pod-delete is not a contention fault. It is a churn fault.** Every 15 seconds the target pod is killed and rescheduled, and the kernel's conntrack table, kube-proxy rules, and CoreDNS cache must reconverge to a new pod IP. We measure that reconvergence directly through conntrack flushing -- and it is exactly the metric that separates the strategies reproducibly. Co-location keeps the target's path node-local, so little reconverges; spreading exposes more cross-node routes to the churn.
->
-> Three takeaways. First, **the aggregate resilience score is not a reliable ranking instrument at this scale** -- the contribution is recognising that and dropping to the mechanism layer, not publishing a strategy leaderboard. Second, **placement-vs-resilience intuition is fault-class-specific**: the literature's contention-based conclusions do not transfer to churn, and our two reproducible signals -- throttling and conntrack -- show the churn mechanism directly. Third, the operationally useful variable is **network-path locality under churn**, not density and not recovery speed: keep a churn-prone service's path confined and the kernel has less to reconverge.
+> CPU throttling corroborates the same locality picture -- colocate throttles least in 6 of 7 sessions -- but it is weaker and we treat it as supporting evidence only. The conntrack signature leads.
 
 ---
 
-## Slide 13 -- Threats to Validity
+## Slide 11 -- Results: H3 -- The Mechanism Does Not Reach the User
+
+> So placement moves a kernel-layer signal. Does that translate into anything the user feels? This is H3, and the answer is no -- in three independent tests.
+>
+> First, the direct correlation: conntrack flush against dependent-route p95 latency -- the route that actually depends on the killed service -- is **rho = 0.07**, not significant. And we go further than "not significant": a TOST equivalence test declares the association **statistically equivalent to zero** -- the decoupling is supported, not merely unproven.
+>
+> Second, the confound control. The *control* route -- which does **not** depend on the killed service -- shows **rho = 0.29, significant**. A mechanism-to-latency correlation that is stronger on the route with no dependency on the fault is the classic signature of a **run-level confound**: slow runs are slow everywhere, and the mechanism metric simply rides along. It is not causation.
+>
+> Third, there is no dependency-specific propagation: nothing in the data shows the mechanism reaching the user *through the dependency that was attacked*.
+>
+> The layered churn story is now complete: the score is blind (H1), the kernel layer moves with placement (H2), and the user layer does not follow (H3). The bounded operator reading: for churn faults on single-replica services in this setup, where you put the pods is not a user-visible resilience lever -- the killed pod is simply gone, and survivability is governed by availability dynamics, not topology.
+
+---
+
+## Slide 12 -- Results: H4 & H5 -- Load Contention and a Graph Predictor
+
+> Churn is one fault class. The contention literature is about a different one -- so H4 drives the cluster into *genuine* resource contention with a sustained 200-user Locust spike. As the negative-findings slide will show, hog faults never achieve this; load does.
+>
+> **H4: the mechanism effect replicates; the user-layer effect does not.** Across two independent i = 4 batches, colocate's east-west inter-service p95 sits consistently below spread's -- the median spread-to-colocate ratio is 1.39 in one batch and 1.36 in the other, so colocate is roughly **1.3 to 1.4 times faster at the inter-service layer**. Co-location keeps inter-service calls node-local; spread routes every call across the network, which is the bottleneck under load. On the **user-facing** routes, however, a roughly 2x reading in the first batch collapsed to about 1.1x in the clean-provenance batch, with no dependency specificity. So we claim **no user-visible placement effect under load** -- only the mechanism effect, which matches the churn decoupling rather than overturning it.
+>
+> **H5 asks whether that east-west penalty is predictable before any chaos runs.** The metric is the **cross-node call fraction**: the fraction of the dependency graph's inter-service edges whose endpoints land on different nodes under a given placement -- computable from the Neo4j graph plus the placement alone. Across all 8 strategies it rank-correlates with the measured during-load east-west tail at **Spearman rho = 0.79, n = 8, p < 0.05**. Colocate sits at fraction 0.00 with a 33.9 millisecond tail; best-fit at 0.13 and 35.3; the six spreading placements cluster at 0.70 to 0.80 and 42 to 46 milliseconds.
+>
+> Two framing cautions. First, this is the **empirical validation of a static pre-chaos predictor** -- locality-as-objective already belongs to the literature, NetMARKS and the graph-partitioning schedulers; our contribution is validating the graph-derived fraction against measured tails, which makes the dependency graph analytically load-bearing rather than mere storage. Second, the correlation is **coarse**: it separates the two node-local placements from the six spreading ones, with no clean trend inside the spreading cluster -- and it is single-batch. One secondary finding worth naming: dependency-aware's partition did not co-locate as intended -- its fraction is spread-like -- so the study's most distinctive strategy does not beat the naive ones as implemented.
+
+---
+
+## Slide 13 -- Results: H6 -- The Latency/Availability Trade-Off
+
+> H5 made co-location look good. H6 shows the bill: the third fault class, **node failure**, read at the availability layer -- the layer churn and load never reached.
+>
+> We drain the node hosting the target service, under colocate and under spread, across two doctor-clean batches. The **blast radius** is the number of services driven to zero ready endpoints at the outage trough, read from EndpointSlice snapshots sampled through the drain -- not from the resilience score, which is unusable here because a node drain leaves every LitmusChaos probe Unknown; that is H1 biting again.
+>
+> The result: **colocate loses all 11 services -- the whole application offline, a 100 percent blast radius -- with about 10.3 seconds of target recovery. Spread loses 2 of 11 -- 18 percent -- with about 2.6 seconds.** The observed blast equals the placement-predicted blast -- the services pinned to the drained node -- in every iteration. Recovery scales with concentration too: when the node comes back, colocate's 11 evicted pods contend to reschedule at once where spread has only 2, so colocate recovers about 4 times slower.
+>
+> **The trade-off is the finding.** The same co-location that gives the lowest east-west tail in H5 produces the worst node-failure outage in H6; spread is the mirror image. One placement property -- co-location -- two opposing measured consequences: latency and availability. And this is where placement finally *does* bite the user in this study: at the availability layer, predictably from the placement itself.
+>
+> Three honesty notes. The prediction "drain a node and you lose the pods on it" is near-definitional -- the empirical content is that the predicted blast actually materializes under real chaos, repeats across batches, and drives a measurable recovery-time penalty. This is the **quantification of a known qualitative trade-off** -- cell-based architecture practice already knows concentration trades blast radius for locality -- not a discovery. And it is a **two-point contrast** of the extremes; a 6-strategy gradient run extends this toward a continuous concentration-to-blast-radius relationship.
+
+---
+
+## Slide 14 -- Negative Findings & Literature Predictions
+
+> Before concluding, the experiments that *failed* -- they are load-bearing, because they explain why the study's path through fault classes looks the way it does. Call this slide "why the obvious experiments are wrong."
+>
+> **Hog faults are absorbed, not felt.** The obvious contention experiment is a CPU hog. But pod-cpu-hog is CFS-capped at the container's own 200-millicore limit -- the hog throttles itself, not the application. node-cpu-hog loads the node, but the app pods' CPU *requests* keep the light pods responsive. Both scored 100 with the application fully up. Contention only bites when the application is genuinely resource-bound -- which is why H4 uses real load instead.
+>
+> **node-memory-hog evicts itself first.** On our 4 GiB workers, the kubelet evicts the LitmusChaos helper pod before any application pod feels memory pressure -- the experiment kills its own instrument, not the app. This matches LitmusChaos issue #3397. The general lesson: negative findings bound the fault taxonomy -- they tell you which experiments measure the application and which measure the harness.
+>
+> **The literature predictions, L1 to L3, end as inapplicable -- never refuted.** L1, colocate is worst: the score cannot adjudicate it (H1), and the churn mechanism points the other way -- colocate flushes the least connection state. L2, spread isolates best: under churn, spreading maximises the cross-node flows the kill cycle tears down; though note that under node drain, spread genuinely does win availability (H6) -- the intuition has a regime where it holds. L3, recovery predicts resilience: the recovery decomposition is unstable run-to-run and the score is too noisy to predict -- no stable relationship on either side. These predictions come from contention regimes that the churn fault class never enters. Their inapplicability here is itself a fault-class-specific result.
+
+---
+
+## Slide 15 -- Threats to Validity
 
 > For internal validity:
 >
 > Our results are based on a single application -- Google Online Boutique. It is a representative benchmark, but other topologies may yield different results.
 >
-> We run a single replica per service, which means 100% pod-delete guarantees full unavailability. Production systems typically run multiple replicas, so our results represent worst-case single-replica scenarios.
+> We run a single replica per service, which means 100% pod-delete guarantees full unavailability and a node drain takes out every service pinned to that node. Production systems typically run multiple replicas with anti-affinity; that regime is structurally excluded by this design, so our results are about between-service blast radius under deployment-level placement, not replica failover.
 >
-> The reproducible mechanism findings rest on three configurations -- colocate, spread, and default. The four resource-contention strategies -- random, adversarial, best-fit, and dependency-aware -- appear in only half the run set and in none of the reproducible findings, so they function as a generality check rather than independently validated signals; confirming or refuting their intended contention-driven separation needs more cpu-hog runs.
+> Contrast coverage is uneven: the churn findings rest on the colocate-versus-spread locality contrast; H5 covers all 8 placements but is single-batch; H6 is a two-point contrast of the extremes, with a gradient run over the intermediate placements extending it.
 >
-> The cluster uses Vagrant with the libvirt (KVM/QEMU) provider, which introduces virtualization overhead. Bare-metal clusters may show different performance, especially for I/O metrics.
+> The cluster uses Vagrant with the libvirt (KVM/QEMU) provider, which introduces virtualization overhead. Bare-metal clusters may show different performance, especially for I/O metrics. Absolute values do not generalize; only directions and mechanisms are claimed, and only for this environment.
 >
 > For external validity:
 >
 > Our cluster has 5 nodes (1 control plane at 12 GiB, 4 uniform 4-GiB workers) with a total of 10 vCPU and 28 GiB. Larger clusters may show different placement effects.
 >
-> We only tested pod-delete and pod-cpu-hog. Network partitions, disk faults, and memory pressure faults may reveal different strategy rankings.
+> Three fault classes were tested -- churn, load contention, and node failure. The hog faults were absorbed by cgroup limits (a negative finding rather than a data point), and network partitions and disk faults remain untested.
 >
-> We used steady-state load at 50 users and 10 requests per second. Bursty or production-like traffic patterns may affect results differently.
+> We used steady-state load at 50 users for churn and a 200-user spike for the load regime. Production-like traffic may behave differently.
 >
-> Metric portability is also a threat -- PSI requires cgroup-v2, Felix metrics require Calico, and the etcd_debugging_* names are K8s-version-fragile. The `metricAvailability` map in our Prometheus prober surfaces which of these were collected on a given run, so the same analysis is honest about what data was actually available.
+> Metric portability is also a threat -- PSI requires cgroup-v2, Felix metrics require Calico, and the etcd_debugging_* names are K8s-version-fragile. The `metricAvailability` map in our Prometheus prober surfaces which of these were collected on a given run, so the analysis is honest about what data was actually available. And every figure quoted as a finding comes from an archived run that passes `doctor --strict` provenance gating.
 
 ---
 
-## Slide 14 -- Conclusion & Future Work
+## Slide 16 -- Conclusion & Future Work
 
 > Our contributions:
 >
-> First, the **ChaosProbe framework** itself -- an automated, placement-aware chaos testing tool for Kubernetes.
+> First, the **ChaosProbe framework** itself -- an automated, placement-aware chaos evaluation tool for Kubernetes, with provenance capture and data-quality gating built in.
 >
-> Second, a **systematic evaluation** of 6 placement strategies under 2 fault types across 4 metric dimensions.
+> Second, a **fault-class-by-measurement-layer study**: three fault classes -- churn, load contention, node failure -- read across the score, mechanism, and user layers, stated as six falsifiable hypotheses, H1 through H6.
 >
-> Third, **Neo4j graph storage** that preserves causal relationships for topology-aware analysis -- 14 node types, 18 relationship types.
+> Third, the **Neo4j dependency graph made analytically load-bearing**: the cross-node call fraction computed from it is a validated pre-chaos predictor of the east-west placement penalty (H5).
 >
-> Fourth, a **reproducible methodology** with seeded randomness, exact configurations, and an automated comparison pipeline.
+> Fourth, the **statistical and provenance discipline**: ICC variance partitions with bootstrap confidence intervals, TOST equivalence testing, power analysis, and doctor-gated clean-provenance runs behind every quoted number.
 >
-> Key findings: the headline is methodological. **The aggregate resilience score is not reproducible** -- a single strategy spans 33 to 89 across thirteen runs -- so it cannot rank placements, and the literature predictions L1 to L3, which are score comparisons, cannot be settled on it. **The mechanism layer, by contrast, does reproduce.** CPU throttling orders colocate below default in eleven of thirteen runs, and conntrack flushing separates spread from colocate in all twelve measured -- spread flushing 28 to 52 percent, colocate staying flat. Both point at the same cause: pod-delete is a churn-based fault, not a contention-based one, so co-located services keep their paths kernel-local during the kill cycle while spread amplifies exactly the cross-node traffic that churn disrupts. Recovery's two-phase split is unstable run-to-run, so it provides no stable ranking signal either way here. The methodology control held -- baseline scored 100% with zero variance on the included runs -- so the non-reproducibility is a genuine property of the score, not a measurement artefact.
+> The findings, as one arc: **the aggregate score cannot rank placements** -- only 3.3 percent of its variance is between-strategy (H1). That does not mean placement is inert: it reproducibly moves mechanism-layer signals in both regimes tested -- the conntrack reconvergence signature under churn (H2) and the east-west inter-service tail under load (H4) -- but those mechanism effects **do not reach the user** (H3, and H4's user layer did not survive replication). Where placement *does* bite users is the **availability layer under node failure**: co-location trades the best east-west latency (H5) for a 100 percent node-drain blast radius (H6), and both faces of that trade-off are predictable from the dependency graph before any chaos runs.
 >
-> The framework now supports a multi-fault matrix out of the box: pass `-e pod-delete.yaml -e cpu-hog.yaml` and every placement strategy runs once under each fault class. We have two contention-fault runs so far, but they do not yet reproduce -- one was clean, one had widespread failures -- so the most valuable next step is simply *more* cpu-hog runs, to establish whether the ordering flips back to the literature direction under contention. If it does, the fault-class-specific story is confirmed and turns into a concrete operator recommendation: pick the placement strategy by the dominant fault class for the workload. Other directions still ahead include multi-replica services where restart can happen on a peer pod, larger clusters with production-like traffic, memory- and network-fault classes, and integrating per-fault-class placement guidance into existing schedulers like Borg or Medea.
+> Future work: multi-replica anti-affinity is the production-relevant question this single-replica design structurally excludes. The H6 gradient -- intermediate placements between the extremes -- is already in flight as a 6-strategy run. Re-attributing the conntrack flush to its exact code path is pending, since upstream's active flush is UDP-only and this workload is TCP/gRPC. More load batches would settle whether any user-layer effect survives replication. And the cross-node-fraction predictor is a natural candidate for scheduler integration.
 >
-> To summarize: placement-vs-resilience intuition from the literature is fault-class-specific, but the more important caution is methodological -- the aggregate resilience score is too noisy to rank placements at this scale, and the reproducible signal lives in the mechanism metrics. Those metrics show the contention model's "spread is safer" guidance does not survive contact with a churn-based fault: under pod-delete, co-location minimises the cross-node connection state that has to reconverge during the kill cycle, while spread maximises it.
+> To summarize: resilience conclusions depend on both the fault class and the measurement layer. A single score is blind to placement; placement acts at the mechanism layer without reaching the user under churn and load; and where it does reach the user -- availability under node failure -- it is predictable. Evaluating placement under chaos therefore requires layered measurement, not a leaderboard.
 
 ---
 
-## Slide 15 -- Thank You
+## Slide 17 -- Thank You
 
 > Thank you. I am happy to take any questions.
 >
-> To recap: 6 placement strategies plus baseline and default-scheduler controls, 4 metric dimensions, 7 httpProbes across 4 tiers plus 5 Rust cmdProbes, and three literature-derived predictions (L1–L3). The aggregate resilience score turned out too non-reproducible to adjudicate those predictions -- that is itself a finding -- so the result rests on the two mechanism signals that *do* reproduce: CPU throttling and conntrack flushing. Both show that pod-delete is churn-based, not contention-based, and at the mechanism layer the contention model's spread-isolation prescription does not transfer to churn -- co-location keeps the network path local while spread exposes it, and recovery speed is not the bottleneck. That mechanism-layer effect does not, in this single-replica regime, reach the user; the contribution is the layered measurement discipline that separates those cases, not a universal "best strategy". ChaosProbe gives operators a framework to make this distinction empirically rather than by default.
+> To recap: 8 placement configurations, 3 fault classes, 6 hypotheses. The aggregate resilience score cannot rank placements (H1) -- that is itself a finding. Placement does move the mechanism layer in both churn and load regimes (H2, H4), but those effects are decoupled from the user (H3). Where placement reaches users is availability under node failure: the co-location that wins east-west latency (H5, rho = 0.79 graph predictor) loses the node-drain blast radius (H6) -- one placement property, two opposing measured consequences. The literature predictions L1 to L3 end as inapplicable in this regime, not refuted. ChaosProbe gives operators a framework to make these fault-class and layer distinctions empirically rather than by default.
