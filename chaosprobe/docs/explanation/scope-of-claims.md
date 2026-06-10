@@ -35,6 +35,13 @@ the user.
   (ρ = 0.79, n = 8). Coarse (it mainly separates node-local placements from spreading
   ones) and single-batch, but it makes the dependency graph analytically load-bearing
   (H5).
+- **Co-location is a measured latency/availability trade-off** — the same
+  co-location that lowers the east-west tail (H5) raises node-failure blast radius
+  and recovery time: under a node drain, `colocate` lost all 11 services (100%
+  outage, ~10.3 s target recovery) vs `spread`'s 2 of 11 (~2.6 s), reproduced
+  across two doctor-clean batches and measured from EndpointSlice outage troughs,
+  not the score (H6). Two-point contrast (the extremes), single-replica — the
+  quantification of a known qualitative trade-off, not its discovery.
 
 ## What is bounded or preliminary (weaken — never state flatly)
 

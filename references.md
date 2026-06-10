@@ -205,7 +205,16 @@ across controlled placement strategies rather than terminating at random.
 **Relevance:** Peer-reviewed (ISSTA 2024) chaos-engineering methodology that
 ranks degradation by metric dissemination. Useful related-work positioning:
 ChaosProbe varies *placement*; MicroRes varies *observability metric
-weighting*.
+weighting*. Two sharper positioning points (verified against the full text):
+(a) MicroRes performs **no** variance decomposition, ICC, power, or
+test-retest reliability analysis of its index — H1's reliability critique is
+the gap; but it reports 0.86–0.90 accuracy / 0.92–0.95 F1 for *binary*
+resilient-vs-non-resilient classification (per-dataset tuned thresholds), so
+H1 must stay scoped to "cannot rank placement strategies under session
+variance", never "aggregate scores don't work". (b) MicroRes's premise —
+resilience = degradation failing to disseminate from system to user metrics —
+is conceptually adjacent to H3: MicroRes *scores* the decoupling; this thesis
+*measures* it as a mechanism under a manipulated variable (placement).
 
 ### Kikuta et al. (2025) — ChaosEater
 > D. Kikuta, H. Ikeuchi, K. Tajiri.
@@ -301,6 +310,28 @@ This is the **exact mechanism** ChaosProbe's data is exposing. Cite alongside
 - [#93143 — conntrack entries not cleared when pod moves](https://github.com/kubernetes/kubernetes/issues/93143)
 - [#104098 — Kubernetes doesn't clear conntrack entry for TCP](https://github.com/kubernetes/kubernetes/issues/104098)
 - [#113203 — Connections stuck in conntrack when externalTrafficPolicy is "local"](https://github.com/kubernetes/kubernetes/issues/113203)
+
+### kubernetes/kubernetes Issues #48370, #108523, #126130, #129982 — active conntrack flush is UDP-only
+> The kube-proxy conntrack-cleanup family of issues documenting *which*
+> protocol's entries kube-proxy actively deletes on endpoint churn.
+
+- [#48370 — flush stale UDP conntrack entries when endpoints change](https://github.com/kubernetes/kubernetes/issues/48370)
+- [#108523 — conntrack entries removed on service/endpoint deletion are UDP & SCTP](https://github.com/kubernetes/kubernetes/issues/108523)
+- [#126130 — conntrack reconciler; "UDP is the only protocol that requires this"](https://github.com/kubernetes/kubernetes/issues/126130)
+- [#129982 — v1.32 netlink-reconciler regression: any UDP-port change triggered a full cleanup pass (since fixed)](https://github.com/kubernetes/kubernetes/issues/129982)
+
+**Relevance — protocol-scopes the H2 mechanism (important).** Upstream
+maintainers concluded that kube-proxy's *active* conntrack flush on endpoint
+churn applies to **UDP only**; TCP entries are deliberately never actively
+flushed and resolve via RST/teardown/timeouts (consistent with #100698 and
+#104098 above). Online Boutique's east-west traffic is gRPC/**TCP**, so the
+thesis must **not** attribute the measured flush (H2) to the kube-proxy flush
+path alone: the candidate mechanisms for TCP-entry disappearance are
+kernel-side teardown on pod-IP removal (RST/REJECT, CNI cleanup, state
+expiry), with the UDP/DNS flush path as a contributor. Note also that
+kube-proxy conntrack behaviour changed materially across v1.31–v1.32 (the
+netlink reconciler) — always pin the cluster's Kubernetes version when citing
+this mechanism.
 
 ### kubernetes/kubernetes Issue #133474
 > *Frequent churn between EndpointSlice objects.* Maintainer-tracked issue.
@@ -410,9 +441,118 @@ methodology peer — they vary topology, ChaosProbe varies placement.
 **Relevance:** Recent constraint-based K8s pod-packing work. Useful for
 future-work discussion (RL-based placement policies, scheduler extensions).
 
+### Wojciechowski et al. (2021) — NetMARKS
+> K. Wojciechowski et al. *NetMARKS: Network Metrics-AwaRe Kubernetes
+> Scheduler Powered by Service Mesh.* IEEE INFOCOM 2021.
+> DOI: `10.1109/INFOCOM42981.2021.9488670`.
+
+- [IEEE Xplore](https://ieeexplore.ieee.org/document/9488670/)
+
+**Relevance — H5's directional precedent; word H5's novelty against it.**
+A Kubernetes scheduler extender using *runtime* Istio service-mesh traffic
+metrics; reduces application response time up to 37% and inter-node bandwidth
+up to 50% by network-aware colocation. Establishes empirically that colocation
+lowers latency — the gradient H4/H5 replicate. The difference: NetMARKS
+*optimizes* using runtime telemetry; H5 *validates a static, pre-chaos
+graph-derived predictor* (cross-node dependency-edge fraction, ρ = 0.79
+against measured east-west p95). Claim the correlational validation of the
+static predictor as the contribution — not the locality concept, which
+NetMARKS (and the graph-partitioning placement literature, e.g. TraDE below)
+already own as an optimization objective. Note it reports end-to-end response
+time, not east-west p95 — directional precedent, not like-for-like.
+
+### TraDE (2024) — cross-node traffic-aware placement
+> *TraDE: Network and Traffic-aware Adaptive Scheduling for Microservices
+> Under Dynamics.* arXiv:2411.05323, 2024.
+
+- [arXiv:2411.05323](https://arxiv.org/abs/2411.05323)
+
+**Relevance:** Recent placement work using cross-node traffic/edge weight as
+an explicit scheduling objective — co-cite with NetMARKS when scoping H5's
+novelty to the *empirical validation* of the static metric.
+
+### Cast (ICSE 2026) — production resilience testing at Huawei Cloud
+> *Cast: Automated resilience testing via online traffic record-and-replay
+> with fault injection.* ICSE 2026 SEIP track. arXiv:2602.00972.
+
+- [arXiv (HTML)](https://arxiv.org/html/2602.00972v1)
+
+**Relevance:** The nearest 2026 industrial resilience-testing system — eight
+months in production, 137 potential vulnerabilities (89 confirmed) via
+traffic replay and application/RPC-level fault injection. Positioning:
+Cast finds *application-layer fault-handling bugs*; this thesis measures
+*infrastructure-layer placement mechanisms* — no placement, scheduling,
+kernel/network-mechanism, or blast-radius content.
+
+### ACM CSUR multi-vocal chaos-engineering review (2024)
+> *Chaos Engineering: A Multi-Vocal Literature Review.* arXiv:2412.01416;
+> ACM Computing Surveys. DOI: `10.1145/3777375`.
+
+- [arXiv:2412.01416](https://arxiv.org/abs/2412.01416)
+- [ACM Digital Library](https://dl.acm.org/doi/10.1145/3777375)
+
+**Relevance — gap evidence.** Field synthesis through April 2024 (≈90
+sources): defines chaos outcomes solely against steady-state user-visible
+indicators (latency, error rate, throughput, availability); contains no
+placement, kernel/scheduler, conntrack, or EndpointSlice content, and its
+open-research-issues section is organizational (culture, skills, resources),
+not statistical rigor of resilience metrics. Cite (together with the
+2512.16959 SLR above) as evidence the thesis's placement-aware, cross-layer,
+metric-reliability angle is absent from the consolidated literature —
+phrased as a *specific* gap, not a field-wide void.
+
+### AWS Well-Architected — cell-based architecture (blast radius)
+> *Reducing the Scope of Impact with Cell-Based Architecture.* AWS
+> Well-Architected whitepaper.
+
+- [AWS documentation](https://docs.aws.amazon.com/wellarchitected/latest/reducing-scope-of-impact-with-cell-based-architecture/reducing-scope-of-impact-with-cell-based-architecture.html)
+
+**Relevance — H6's practitioner anchor.** The industry articulation of the
+qualitative principle H6 quantifies: concentrating workload into one failure
+domain enlarges the scope of impact ("blast radius") when that domain fails.
+Position H6 as the controlled, measured quantification of this known
+trade-off on the placement axis (same placements, opposing latency vs
+availability gradients with H5) — not as discovering the trade-off.
+
 ---
 
-## 6. Application benchmark
+## 6. Methodology precedents (H1's statistical framing)
+
+### Maricq et al. (2018) — Taming Performance Variability
+> A. Maricq, D. Duplyakin, I. Jimenez, C. Maltzahn, R. Stutsman, R. Ricci.
+> *Taming Performance Variability.* OSDI 2018, pp. 409–425.
+
+- [USENIX page](https://www.usenix.org/conference/osdi18/presentation/maricq)
+- [PDF](https://www.usenix.org/system/files/osdi18-maricq.pdf)
+
+**Relevance — the stylistic model for the H1 chapter.** The venue-accepted
+precedent for "quantify the noise, prescribe the repetitions": a ~900,000-
+data-point, 835-server campaign showing supposedly identical hardware varies
+run-to-run, undermining quantitative system comparison, with CONFIRM
+recommending repetition counts from historical variability. Cite as the
+*argument-shape* precedent for H1's ICC + power analysis — with precision:
+CONFIRM uses nonparametric CI-width stopping, **not** formal hypothesis-test
+power analysis, and "blocked design" is this thesis's term, not the paper's.
+
+### Mytkowicz et al. (2009) — Producing Wrong Data Without Doing Anything Wrong!
+> T. Mytkowicz, A. Diwan, M. Hauswirth, P. F. Sweeney. ASPLOS 2009.
+
+- [Semantic Scholar](https://www.semanticscholar.org/paper/3886c40229b3de318de668e0c0f4202079eb6f55)
+
+**Relevance:** The classic measurement-bias paper — co-cite with Maricq so the
+variability-methodology lineage doesn't start in 2018.
+
+### Hoefler & Belli (2015) — Scientific Benchmarking of Parallel Computing Systems
+> T. Hoefler, R. Belli. SC 2015. DOI: `10.1145/2807591.2807644`.
+
+- [ACM Digital Library](https://dl.acm.org/doi/10.1145/2807591.2807644)
+
+**Relevance:** Rigorous-benchmarking methodology (report distributions and
+CIs, not means) — third leg of the H1 methodology lineage.
+
+---
+
+## 7. Application benchmark
 
 ### Google Cloud Platform — microservices-demo (Online Boutique)
 > *microservices-demo: Sample cloud-first application with 10 microservices
@@ -428,7 +568,7 @@ describing it.
 
 ---
 
-## 7. Coverage gaps and notes
+## 8. Coverage gaps and notes
 
 The Google Scholar pass surfaced **no peer-reviewed paper** that:
 - frames pod-delete as a churn-based fault distinct from contention-based ones, or
