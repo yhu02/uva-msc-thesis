@@ -1,0 +1,69 @@
+# One hostNetwork sampler pod per worker — reads the host's conntrack table
+# via /proc/net/nf_conntrack. Diagnostic only; removed after the probe.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ct-probe-worker1
+  namespace: default
+  labels: {app: ct-probe}
+spec:
+  nodeName: worker1
+  hostNetwork: true
+  restartPolicy: Never
+  tolerations: [{operator: Exists}]
+  containers:
+    - name: probe
+      image: alpine:3.20
+      command: ["sh", "-c", "apk add --no-cache conntrack-tools >/dev/null 2>&1 && sleep 14400"]
+      securityContext: {privileged: true}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ct-probe-worker2
+  namespace: default
+  labels: {app: ct-probe}
+spec:
+  nodeName: worker2
+  hostNetwork: true
+  restartPolicy: Never
+  tolerations: [{operator: Exists}]
+  containers:
+    - name: probe
+      image: alpine:3.20
+      command: ["sh", "-c", "apk add --no-cache conntrack-tools >/dev/null 2>&1 && sleep 14400"]
+      securityContext: {privileged: true}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ct-probe-worker3
+  namespace: default
+  labels: {app: ct-probe}
+spec:
+  nodeName: worker3
+  hostNetwork: true
+  restartPolicy: Never
+  tolerations: [{operator: Exists}]
+  containers:
+    - name: probe
+      image: alpine:3.20
+      command: ["sh", "-c", "apk add --no-cache conntrack-tools >/dev/null 2>&1 && sleep 14400"]
+      securityContext: {privileged: true}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ct-probe-worker4
+  namespace: default
+  labels: {app: ct-probe}
+spec:
+  nodeName: worker4
+  hostNetwork: true
+  restartPolicy: Never
+  tolerations: [{operator: Exists}]
+  containers:
+    - name: probe
+      image: alpine:3.20
+      command: ["sh", "-c", "apk add --no-cache conntrack-tools >/dev/null 2>&1 && sleep 14400"]
+      securityContext: {privileged: true}

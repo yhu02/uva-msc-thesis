@@ -133,36 +133,35 @@ attribution must be protocol-scoped: upstream maintainers document
 kube-proxy's *active* conntrack flush on endpoint churn as **UDP-only**
 (kubernetes/kubernetes #48370, #108523, #126130; TCP entries are deliberately
 never actively flushed — #100698, #104098). Online Boutique's east-west
-traffic is gRPC/**TCP**, so the measured flush is attributed to **kernel-side
-TCP teardown on pod-IP removal** (RST/REJECT, CNI cleanup, state expiry) with
-the **UDP/DNS flush path as a contributor** — not to kube-proxy alone. A
-re-attribution pass plus a protocol-composition probe (which protocol's
-entries actually disappear during the kill cycle) is **pending**; until it
-lands, the claim stays "a reproducible conntrack reconvergence signature",
-mechanism-consistent rather than causally decomposed. Conntrack behaviour
-also changed materially across K8s v1.31–v1.32; the result is pinned to
-v1.28.6 (§4.5).
+traffic is gRPC/**TCP**, which initially made the attribution look
+problematic: how can a UDP-only cleanup path produce a large flush in a
+TCP workload? A dedicated protocol-composition probe answered this
+empirically (per-node `conntrack -L` protocol counts sampled every 5 s
+through one full kill cycle under each placement; raw data in
+`thesis/data/conntrack-probe/`, archived runs `run-20260610-200013` and
+`run-20260610-201131`).
 
-Spelled out, the candidate mechanisms behind the measured flush are these.
-First, **kernel-side teardown of TCP state when the pod's IP disappears**:
-when the deleted pod's network namespace is torn down, established
-connections to its IP die — peers receive resets or time out, the CNI
-(Calico here) withdraws the pod's routes and addresses, and the conntrack
-entries keyed on that IP become dead state that the kernel reaps. None of
-this requires kube-proxy's flush path; it is a property of pod-IP lifetime.
-Second, **kube-proxy's active UDP flush as a contributor**: the workload's
-service discovery is DNS, and DNS traffic is UDP — the one traffic class
-for which kube-proxy (in ipvs mode on this cluster) *does* actively delete
-conntrack entries on endpoint change.
-The measured per-node entry counts cannot distinguish these contributions,
-because `conntrack_entries_per_node` is protocol-blind. That is exactly the
-gap the pending protocol-composition probe addresses: sampling the conntrack
-table by protocol through the kill cycle would decompose the flush into its
-TCP-teardown and UDP-flush components. Until then, the defensible statement
-is the one H2 makes — placement reproducibly moves a conntrack
-reconvergence signature whose direction and magnitude are
-mechanism-consistent with Kubernetes networking semantics — and not a
-causal decomposition among the candidate paths.
+The decomposition inverts the naive expectation and resolves the
+attribution cleanly. Under `spread`, the cluster sustains a standing pool of
+roughly 1,800 **UDP** conntrack entries — 32 % of all entries — where
+`colocate` sustains only ~72 (2 %): spreading the dependency graph across
+nodes means every inter-service call crosses the network, connection churn
+under load is constant, and each new connection re-resolves DNS, whose UDP
+flows populate conntrack on multiple nodes. During the kill cycle that UDP
+pool collapses by 50–58 % under `spread` — consistent with kube-proxy's
+documented UDP-only cleanup firing on the endpoint change — while **TCP
+entries do not flush at all; they grow** (+6 to +16 %) as retries and
+reconnects create new flows, exactly the upstream-documented TCP behaviour.
+The aggregate, protocol-blind `conntrack_entries_per_node` drop that H2
+measures is therefore the UDP (DNS) share collapsing — a signal that exists
+only under placements whose topology sustains a large standing UDP pool.
+The attribution is thus *both* placement-dependent *and* faithful to the
+upstream code path: placement determines the size of the flushable pool;
+kube-proxy's UDP-only cleanup is the mechanism that flushes it. The probe is
+a single iteration per placement, so we quote it for composition and
+direction, not magnitudes; the campaign's seven sessions carry the
+statistical weight. Conntrack behaviour also changed materially across
+K8s v1.31–v1.32; the result is pinned to v1.28.6 (§4.5).
 
 ## 6.4 L1–L3: inapplicable in this regime, not refuted
 

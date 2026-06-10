@@ -43,8 +43,9 @@ s07 `pod-delete.yaml` = `d1a57729…c79a58`) and of every data file
 | **H1, H2, H3** (7-session churn campaign, 147 iterations) | s01–s07 = run-20260608-233543, run-20260609-072731, run-20260609-154457, run-20260609-194339, run-20260610-050703, run-20260610-090416, run-20260610-130249 |
 | **H4** (load contention, two batches) | run-20260607-193053 (A) + run-20260607-221822 (B, clean) |
 | **H5** (cross-node fraction, 8 strategies) | run-20260608-070638 |
-| **H6** (node-drain blast radius, two batches) | `results/20260608-194746` (*i* = 1) + `results/20260608-205147` (*i* = 3) — **on disk under `results/`, not yet in `dist/`: archive pending** (run dirs contain colocate/default/spread; H6 quotes the colocate-vs-spread contrast). `TODO(author): archive via scripts/archive_run.py and replace this note with runIds.` |
-| **H6 gradient** (6 strategies × node-drain) | in flight at scaffold time (`results/20260610-172352`) — pending doctor verdict + archive |
+| **H6** (node-drain blast radius, two batches) | run-20260608-194827 (*i* = 1) + run-20260608-205229 (*i* = 3) (run dirs contain colocate/default/spread; H6 quotes the colocate-vs-spread contrast) |
+| **H6 gradient** (6 strategies × node-drain × *i* = 3) | run-20260610-172430 (`doctor --strict` clean; observed blast = predicted for all 6 strategies, Spearman ρ = 1.0) |
+| **H2 protocol-composition probe** (2 × *i* = 1 pod-delete, spread/colocate) | run-20260610-200013 (spread) + run-20260610-201131 (colocate); raw 5-s protocol samples in `thesis/data/conntrack-probe/` |
 | **H7** (discussion-tier, §8.2) | derived from s01–s07 (analysis-only; `campaign_status.py`) |
 | Pooled pilot (H1/H2/H3 corroboration only) | pre-campaign mixed-version `results/` runs — **pilot tier, not archive-clean; never quote as findings** |
 | node-memory-hog / hog negative findings | run-20260607-123106 (+ 1-iteration 100% probe, unarchived diagnostic) |
