@@ -41,14 +41,14 @@ chapter and a source disagree, the source wins and the chapter is a bug:
 | Section | Status |
 |---|---|
 | Abstract | **Drafted** (adapted from hypotheses.md; review wording) |
-| Introduction | Skeleton — claims fixed, prose TODO |
-| Related work | Skeleton — positioning fixed, prose TODO |
-| ChaosProbe (system) | Skeleton — architecture bullets fixed, prose + workflow figure TODO |
-| Methodology | Skeleton — design + statistics fixed, prose TODO |
+| Introduction | **Drafted** — full prose (problem, sub-questions, contributions, outline) |
+| Related work | **Drafted** — full prose around the positioning quadrant + lineages |
+| ChaosProbe (system) | **Drafted** — full prose; workflow figure (3.1) pending from figures pipeline |
+| Methodology | **Drafted** — full prose incl. formal model, cluster bootstrap, node-spec table |
 | Results | **Mostly drafted** — final numbers + tables in place; figures TODO; H6 gradient run pending |
-| Discussion | Skeleton — argument fixed, prose TODO |
-| Threats to validity | **Drafted** (ported tables) |
-| Conclusion & future work | Skeleton — items fixed, prose TODO |
+| Discussion | **Drafted** — full prose (decoupling, trade-off, H2 attribution, L1–L3, implications) |
+| Threats to validity | **Drafted** — tables + validity-vocabulary framing prose |
+| Conclusion & future work | **Drafted** — synthesis + prioritized future work |
 | Provenance appendix | **Drafted** (generated from `dist/` manifests) |
 
 ## Non-negotiable rules
