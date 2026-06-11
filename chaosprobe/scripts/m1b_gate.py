@@ -22,12 +22,25 @@ Phases
 - **B — replication gate.** r = 3 **anti-affine** for all services
   simultaneously (every service's 3 ready replicas must occupy 3 distinct
   nodes — the explicit "schedulable at the pinned N" criterion), then r = 3
-  **packed** on the solver's f = 0 assignment (1 node per service).
-  Scheduling latencies are recorded.
+  **packed** on a capacity-feasible deterministic round-robin of services
+  over the workers (:func:`packed_assignment`): each service's 3 replicas
+  on ONE node, services distributed ACROSS nodes — the C2 per-service
+  packing semantics.  Scheduling latencies are recorded.
 - **C — capacity record.** Sum live ``resources.requests`` (cpu/memory) on
   the gate's worker nodes against their allocatable, per DESIGN §7.1; the
   criterion is ≥ 30 % headroom on both resources while the heaviest cell
   (r = 3) is still deployed.
+
+After every ``engine.restore`` the gate waits for **quiescence**
+(:func:`wait_for_quiescence`): all deployments ready, no pod-restart-count
+change, and no new ``Unhealthy`` event for an uninterrupted
+``--settle-seconds`` window (capped by ``--settle-timeout``) — so the next
+apply never lands on a cluster still churning from the previous arm (the
+cascading 1 s gRPC readiness-probe-timeout signature).  When an apply or
+verify step times out or fails, a diagnostics snapshot
+(:func:`collect_diagnostics`) is embedded in the artifact: per-deployment
+ready/desired counts, pod phases/restarts/waiting reasons, and the last
+Unhealthy / FailedScheduling events.
 
 ``--restore-on-exit`` always restores default scheduling — also on
 exception or Ctrl-C — and the artifact is written in the same ``finally``,
@@ -49,20 +62,39 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import chaosprobe.placement.fraction_solver as fs
 from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
 from chaosprobe.placement import affinity_engine as engine
 
 #: Artifact schema identifier (bump on breaking shape changes).
-SCHEMA = "chaosprobe/m1b-gate-artifact/v1"
+#: v2 adds per-restore ``settle`` records, failure ``diagnostics``
+#: snapshots, and the phase-B ``packedAssignmentMethod`` field.
+SCHEMA = "chaosprobe/m1b-gate-artifact/v2"
 
 #: WORKPLAN M1b capacity criterion: ≥30 % headroom at the heaviest cell.
 HEADROOM_FLOOR = 0.30
 
 #: Default pre-registered fraction level grid (DESIGN §2.3, Knob A).
 DEFAULT_LEVELS = (0.0, 0.25, 0.5, 0.75, 1.0)
+
+#: Quiescence barrier defaults: the namespace must stay clean for
+#: ``DEFAULT_SETTLE_SECONDS``, waited for at most ``DEFAULT_SETTLE_TIMEOUT``.
+DEFAULT_SETTLE_SECONDS = 60.0
+DEFAULT_SETTLE_TIMEOUT = 300.0
+
+#: How phase B's packed assignment is built (recorded in the artifact).
+PACKED_ASSIGNMENT_METHOD = "round-robin"
+
+#: Event reason that resets the quiescence window (probe-timeout churn).
+_UNHEALTHY_REASON = "Unhealthy"
+
+#: Event reasons captured into a failure diagnostics snapshot.
+_DIAGNOSTIC_EVENT_REASONS = ("FailedScheduling", "Unhealthy")
+
+#: Newest-first cap on diagnostic events kept in the artifact.
+_DIAGNOSTIC_EVENT_LIMIT = 10
 
 
 @dataclass
@@ -75,11 +107,18 @@ class GateConfig:
     max_attempts: int = 6
     seed: int = 0
     timeout: float = 300.0
+    settle_seconds: float = DEFAULT_SETTLE_SECONDS
+    settle_timeout: float = DEFAULT_SETTLE_TIMEOUT
 
 
 def _now() -> str:
     """UTC timestamp for the artifact."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _iso(stamp: Optional[datetime]) -> Optional[str]:
+    """ISO timestamp for the artifact, passing ``None`` through."""
+    return stamp.isoformat() if stamp else None
 
 
 def parse_workers(spec: str) -> List[str]:
@@ -107,6 +146,201 @@ def parse_levels(spec: str) -> Tuple[float, ...]:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Quiescence barrier + failure diagnostics
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _event_time(event: Any) -> Optional[datetime]:
+    """Best-available timestamp of a Kubernetes event, UTC-normalised.
+
+    Prefers ``lastTimestamp``, then ``eventTime``, then the event object's
+    creation timestamp; returns ``None`` when none of them is a datetime.
+    """
+    metadata = getattr(event, "metadata", None)
+    candidates = (
+        getattr(event, "last_timestamp", None),
+        getattr(event, "event_time", None),
+        getattr(metadata, "creation_timestamp", None),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, datetime):
+            return candidate if candidate.tzinfo else candidate.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _quiescence_snapshot(api: engine.K8sApi, namespace: str) -> Dict[str, Any]:
+    """One poll of the barrier's three signals.
+
+    Returns ``notReady`` (deployments not fully rolled out), ``restarts``
+    (the namespace-wide pod restart-count total — any *change* between
+    polls, up or down, is churn), and ``lastUnhealthyAt`` (newest
+    ``Unhealthy`` event timestamp, or ``None``).
+    """
+    not_ready: List[str] = []
+    for dep in api.apps.list_namespaced_deployment(namespace).items:
+        desired = dep.spec.replicas if dep.spec.replicas is not None else 1
+        generation = dep.metadata.generation or 0
+        status = dep.status
+        observed = (status.observed_generation or 0) if status else 0
+        ready = (status.ready_replicas or 0) if status else 0
+        updated = (status.updated_replicas or 0) if status else 0
+        available = (status.available_replicas or 0) if status else 0
+        settled = (
+            observed >= generation
+            and updated >= desired
+            and ready >= desired
+            and available >= desired
+        )
+        if not settled:
+            not_ready.append(dep.metadata.name)
+
+    restarts = 0
+    for pod in api.core.list_namespaced_pod(namespace).items:
+        statuses = (pod.status.container_statuses or []) if pod.status else []
+        restarts += sum(cs.restart_count or 0 for cs in statuses)
+
+    last_unhealthy: Optional[datetime] = None
+    for event in api.core.list_namespaced_event(namespace).items:
+        if event.reason != _UNHEALTHY_REASON:
+            continue
+        stamp = _event_time(event)
+        if stamp is not None and (last_unhealthy is None or stamp > last_unhealthy):
+            last_unhealthy = stamp
+
+    return {"notReady": sorted(not_ready), "restarts": restarts, "lastUnhealthyAt": last_unhealthy}
+
+
+def wait_for_quiescence(
+    api: engine.K8sApi,
+    namespace: str,
+    settle_seconds: float = DEFAULT_SETTLE_SECONDS,
+    timeout: float = DEFAULT_SETTLE_TIMEOUT,
+    poll_seconds: float = 5.0,
+) -> Dict[str, Any]:
+    """Block until the namespace is quiescent, or ``timeout`` elapses.
+
+    Quiescent = one uninterrupted window of ``settle_seconds`` in which
+    every deployment is fully ready, the pod restart-count total does not
+    change, and no new ``Unhealthy`` event is recorded.  The window opens
+    once readiness is reached and **resets** on any churn signal — the
+    cascading 1 s gRPC readiness/liveness probe timeouts observed after an
+    apply are exactly what this barrier lets drain before the next apply.
+
+    On timeout the barrier does **not** abort the gate: the verify step
+    still judges the attempt, and the returned settle record (embedded in
+    the artifact) makes an unsettled start attributable after the fact.
+    """
+    started = time.monotonic()
+    deadline = started + timeout
+    polls = 0
+    resets = 0
+    window_opened: Optional[float] = None
+    window_opened_at: Optional[datetime] = None
+    previous_restarts: Optional[int] = None
+    quiescent = False
+    while True:
+        polls += 1
+        snapshot = _quiescence_snapshot(api, namespace)
+        now = time.monotonic()
+        churned = (
+            bool(snapshot["notReady"])
+            or (previous_restarts is not None and snapshot["restarts"] != previous_restarts)
+            or (
+                window_opened_at is not None
+                and snapshot["lastUnhealthyAt"] is not None
+                and snapshot["lastUnhealthyAt"] >= window_opened_at
+            )
+        )
+        previous_restarts = snapshot["restarts"]
+        if churned:
+            if window_opened is not None:
+                resets += 1
+            window_opened = None
+            window_opened_at = None
+        elif window_opened is None:
+            window_opened = now
+            window_opened_at = datetime.now(timezone.utc)
+        if window_opened is not None and now - window_opened >= settle_seconds:
+            quiescent = True
+            break
+        if now >= deadline:
+            break
+        time.sleep(poll_seconds)
+    return {
+        "quiescent": quiescent,
+        "waitedSeconds": round(time.monotonic() - started, 1),
+        "polls": polls,
+        "windowResets": resets,
+        "settleSeconds": settle_seconds,
+        "timeoutSeconds": timeout,
+        "notReady": snapshot["notReady"],
+        "restarts": snapshot["restarts"],
+        "lastUnhealthyAt": _iso(snapshot["lastUnhealthyAt"]),
+    }
+
+
+def collect_diagnostics(api: engine.K8sApi, namespace: str) -> Dict[str, Any]:
+    """Failure snapshot for the artifact when an apply/verify times out or fails.
+
+    Captures per-deployment ready/desired counts, every pod's phase, node,
+    restart count and container waiting reasons, and the newest
+    :data:`_DIAGNOSTIC_EVENT_LIMIT` ``Unhealthy`` / ``FailedScheduling``
+    events — so the failure is diagnosable from the artifact alone instead
+    of post-hoc kubectl archaeology.
+    """
+    deployments: Dict[str, Dict[str, int]] = {}
+    for dep in api.apps.list_namespaced_deployment(namespace).items:
+        status = dep.status
+        deployments[dep.metadata.name] = {
+            "desired": dep.spec.replicas if dep.spec.replicas is not None else 1,
+            "ready": (status.ready_replicas or 0) if status else 0,
+        }
+
+    pods: List[Dict[str, Any]] = []
+    for pod in api.core.list_namespaced_pod(namespace).items:
+        statuses = (pod.status.container_statuses or []) if pod.status else []
+        waiting = sorted(
+            {
+                cs.state.waiting.reason
+                for cs in statuses
+                if cs.state and cs.state.waiting and cs.state.waiting.reason
+            }
+        )
+        pods.append(
+            {
+                "pod": pod.metadata.name,
+                "phase": (pod.status.phase or "") if pod.status else "",
+                "node": pod.spec.node_name if pod.spec else None,
+                "restarts": sum(cs.restart_count or 0 for cs in statuses),
+                "waitingReasons": waiting,
+            }
+        )
+
+    events: List[Dict[str, Any]] = []
+    for event in api.core.list_namespaced_event(namespace).items:
+        if event.reason not in _DIAGNOSTIC_EVENT_REASONS:
+            continue
+        involved = event.involved_object
+        events.append(
+            {
+                "reason": event.reason,
+                "object": f"{involved.kind}/{involved.name}" if involved else "",
+                "count": event.count or 1,
+                "message": event.message or "",
+                "lastSeenAt": _iso(_event_time(event)),
+            }
+        )
+    events.sort(key=lambda entry: entry["lastSeenAt"] or "", reverse=True)
+
+    return {
+        "capturedAt": _now(),
+        "deployments": deployments,
+        "pods": pods,
+        "events": events[:_DIAGNOSTIC_EVENT_LIMIT],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Phase A — fraction gate (3-consecutive state machine per level)
 # ──────────────────────────────────────────────────────────────────────
 
@@ -129,6 +363,9 @@ def run_attempt(
     """
     record: Dict[str, Any] = {"attempt": attempt_no, "target": level, "startedAt": _now()}
     engine.restore(api, namespace, timeout=cfg.timeout)
+    record["settle"] = wait_for_quiescence(
+        api, namespace, settle_seconds=cfg.settle_seconds, timeout=cfg.settle_timeout
+    )
     solution = fs.solve(edges, services, len(workers), level, seed=cfg.seed + attempt_no - 1)
     assignment = {svc: workers[idx] for svc, idx in solution.assignment.items()}
     record["assignment"] = assignment
@@ -152,6 +389,8 @@ def run_attempt(
         record["liveAchievedF"] = round(achieved, 6)
         record["gap"] = round(abs(achieved - level), 6)
         record["inTolerance"] = abs(achieved - level) <= cfg.tolerance
+    if applied.pending or unverifiable:
+        record["diagnostics"] = collect_diagnostics(api, namespace)
     record["finishedAt"] = _now()
     return record
 
@@ -217,6 +456,31 @@ def run_phase_a(
 # ──────────────────────────────────────────────────────────────────────
 
 
+def packed_assignment(services: Sequence[str], workers: Sequence[str]) -> Dict[str, str]:
+    """Capacity-feasible packed assignment: sorted service *i* → worker *i mod W*.
+
+    Phase B's packed arm asserts the C2 **per-service** packing semantics —
+    every service's 3 replicas co-scheduled on ONE node — with services
+    distributed ACROSS nodes, *not* all services on one node.  The solver's
+    f = 0 assignment it replaces satisfied f = 0 by stacking all services on
+    a single worker, which at r = 3 needs ~3× the whole app's requests on
+    one node — unschedulable by arithmetic on this cluster's 4 GiB workers
+    (the observed live-run failure).
+
+    A deterministic round-robin is used instead of
+    ``fs.solve(..., capacity=...)`` because the solver's capacity support
+    takes one *uniform* ``node_capacity`` and optimises the cut fraction,
+    not balance — at f = 0 it fills a node to its budget before spilling,
+    the worst shape for a churn-prone cluster.  Round-robin minimises the
+    per-node service count (⌈S/W⌉), needs no live capacity reads, and
+    :func:`engine.verify_placement` still proves the packing (each
+    service's replicas on exactly its pinned node) from live pods.
+    """
+    if not workers:
+        raise ValueError("workers must be a non-empty list of worker node names")
+    return {svc: workers[i % len(workers)] for i, svc in enumerate(sorted(services))}
+
+
 def run_phase_b(
     api: engine.K8sApi,
     namespace: str,
@@ -227,40 +491,55 @@ def run_phase_b(
 ) -> Dict[str, Any]:
     """Phase B: r = 3 anti-affine for all services (3 distinct nodes each —
     the explicit M1b schedulability criterion), then r = 3 packed on the
-    solver's f = 0 assignment (1 node each).  Leaves the packed r = 3 state
-    deployed so Phase C records capacity at the heaviest cell."""
+    capacity-feasible round-robin assignment (each service on 1 node,
+    services spread over the workers).  Each arm starts from a restored,
+    **quiescent** state; a failing arm embeds a diagnostics snapshot.
+    Leaves the packed r = 3 state deployed so Phase C records capacity at
+    the heaviest cell."""
     out: Dict[str, Any] = {}
 
     engine.restore(api, namespace, timeout=cfg.timeout)
+    settle = wait_for_quiescence(
+        api, namespace, settle_seconds=cfg.settle_seconds, timeout=cfg.settle_timeout
+    )
     applied = engine.apply_placement(
         api, namespace, None, 3, engine.MODE_ANTI_AFFINE, workers, timeout=cfg.timeout
     )
     verification = engine.verify_placement(api, namespace, 3, engine.MODE_ANTI_AFFINE)
     out["antiAffine"] = {
         "appliedAt": _now(),
+        "settle": settle,
         "services": applied.applied,
         "pendingDeployments": applied.pending,
         "schedulingLatencySeconds": round(applied.duration_seconds, 3),
         "verification": verification.to_dict(),
         "passed": verification.passed,
     }
+    if applied.pending or not verification.passed:
+        out["antiAffine"]["diagnostics"] = collect_diagnostics(api, namespace)
 
     engine.restore(api, namespace, timeout=cfg.timeout)
-    solution = fs.solve(edges, services, len(workers), 0.0, seed=cfg.seed)
-    assignment = {svc: workers[idx] for svc, idx in solution.assignment.items()}
+    settle = wait_for_quiescence(
+        api, namespace, settle_seconds=cfg.settle_seconds, timeout=cfg.settle_timeout
+    )
+    assignment = packed_assignment(services, workers)
     applied = engine.apply_placement(
         api, namespace, assignment, 3, engine.MODE_PACKED, workers, timeout=cfg.timeout
     )
     packed_verification = engine.verify_placement(api, namespace, 3, engine.MODE_PACKED)
     out["packed"] = {
         "appliedAt": _now(),
+        "settle": settle,
         "assignment": assignment,
-        "solverAchievedF": round(solution.achieved_f, 6),
+        "packedAssignmentMethod": PACKED_ASSIGNMENT_METHOD,
+        "achievedF": round(fs.achieved_fraction(assignment, edges), 6),
         "pendingDeployments": applied.pending,
         "schedulingLatencySeconds": round(applied.duration_seconds, 3),
         "verification": packed_verification.to_dict(),
         "passed": packed_verification.passed,
     }
+    if applied.pending or not packed_verification.passed:
+        out["packed"]["diagnostics"] = collect_diagnostics(api, namespace)
 
     out["passed"] = bool(out["antiAffine"]["passed"] and out["packed"]["passed"])
     return out
@@ -384,8 +663,10 @@ def build_parser() -> argparse.ArgumentParser:
             "M1b live GO/NO-GO gate (v2-design/02-WORKPLAN.md M1b exit criteria). "
             "Phase A: solver fraction gate at r=1 (3 consecutive in-tolerance "
             "attempts per f-level, abort after 6). Phase B: r=3 anti-affine "
-            "(3 distinct nodes per service) then r=3 packed (1 node per service). "
-            "Phase C: live request sums vs allocatable (>=30% headroom). Emits "
+            "(3 distinct nodes per service) then r=3 packed (each service on 1 "
+            "node, services round-robined across the workers). Phase C: live "
+            "request sums vs allocatable (>=30% headroom). Every restore is "
+            "followed by a quiescence barrier before the next apply. Emits "
             "the committed verification artifact + PASS/FAIL summary lines."
         ),
     )
@@ -422,6 +703,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout", type=float, default=300.0, help="per-apply rollout timeout (s)"
     )
     parser.add_argument(
+        "--settle-seconds",
+        type=float,
+        default=DEFAULT_SETTLE_SECONDS,
+        help="quiescence window after each restore: all deployments ready, no "
+        "pod-restart change, no new Unhealthy event for this long before the "
+        "next apply (default 60)",
+    )
+    parser.add_argument(
+        "--settle-timeout",
+        type=float,
+        default=DEFAULT_SETTLE_TIMEOUT,
+        help="overall cap on each quiescence wait (s); on timeout the gate "
+        "proceeds and records the unsettled state in the artifact (default 300)",
+    )
+    parser.add_argument(
         "-o",
         "--output",
         default="m1b-gate-artifact.json",
@@ -450,6 +746,8 @@ def main(argv: List[str] | None = None) -> int:
         max_attempts=args.max_attempts,
         seed=args.seed,
         timeout=args.timeout,
+        settle_seconds=args.settle_seconds,
+        settle_timeout=args.settle_timeout,
     )
     edges, services = fs.load_dependency_graph(args.summary)
     if not edges:
@@ -469,10 +767,13 @@ def main(argv: List[str] | None = None) -> int:
             "maxAttempts": cfg.max_attempts,
             "seed": cfg.seed,
             "timeoutSeconds": cfg.timeout,
+            "settleSeconds": cfg.settle_seconds,
+            "settleTimeoutSeconds": cfg.settle_timeout,
             # An "attempt" starts from engine.restore() — default scheduling,
-            # single replica — not a full app redeploy; recorded for the
-            # pre-registration's "from a clean app deploy" term.
-            "attemptProtocol": "restore-to-default,solve,apply(r=1),schedule,verify-live",
+            # single replica — followed by the quiescence barrier; not a full
+            # app redeploy.  Recorded for the pre-registration's "from a
+            # clean app deploy" term.
+            "attemptProtocol": ("restore-to-default,quiesce,solve,apply(r=1),schedule,verify-live"),
         },
     }
     started = time.monotonic()
