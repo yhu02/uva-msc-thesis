@@ -273,22 +273,45 @@ mere storage. Two secondary findings:
   distinctive strategy does not beat the naive ones *as implemented*; the partition is
   a candidate for future improvement.
 
+**Replication (batch 2, 2026-06-10) — the separation replicates; the
+continuous correlation does not.** A second 8-strategy × *i* = 4 batch
+(`results/20260610-202347`, archived as `run-20260610-202426`; `doctor
+--strict` 0 errors — disclosed caveat: launched from a tree dirty only in
+non-code files, the presentation binary and three thesis figure PNGs, against
+commit `e543fbb`) reproduces the **two-regime structure exactly**: the
+node-local placements again have fraction ≈ 0 and the two lowest tails
+(`colocate` 0.00 → 33.2 ms, `best-fit` 0.00 → 35.7 ms) while all six spreading
+strategies sit at 0.73–0.82 → 41.6–44.2 ms. But the *continuous* Spearman
+collapses to **ρ = 0.25 (n.s.)** — `best-fit` packed fully this time (no
+intermediate 0.13 point) and there is no trend within the spreading cluster,
+so batch 1's ρ = 0.79 was carried by the lucky intermediate point plus
+within-cluster ordering noise.
+
+**The defensible H5 claim is therefore the two-regime separation, replicated:**
+node-local placements (fraction ≈ 0) show ~**1.25×** lower east-west tails
+than spreading placements (~34.5 vs ~42.4 ms medians in batch 2; ~34.6 vs
+~43.5 ms in batch 1), and the two node-local strategies occupy the two lowest
+tail ranks of 8 in **both** independent batches (per-batch null probability
+1/28 ≈ 0.036; jointly ≈ 0.0013). The cross-node fraction captures that
+separation pre-chaos. It is **not** a smooth continuous predictor — quote
+ρ = 0.79 only as the batch-1 value alongside batch 2's ρ = 0.25, never alone.
+
 **Caveats (do not overstate this).**
 
-- *Coarse, not a smooth law.* The correlation is carried by the two **node-local**
-  placements (colocate, best-fit) sitting below the six **spreading** ones, which
-  cluster at 0.70–0.80 fraction / 42–46 ms with no clean trend *within* the cluster.
-  The defensible claim is "node-local placements have lower east-west tails and the
-  fraction captures that," not a fine continuous predictor.
+- *A separator, not a law.* The fraction separates node-local from spreading
+  placements; within the spreading cluster (0.70–0.82 fraction / 42–46 ms)
+  there is no reproducible trend.
 - *User layer stays weak.* On the user-facing routes `colocate` is only ~1.3× below
   `spread` and barely dependency-specific (control 1.29× ≈ dependent 1.34×) — H5 is an
   east-west **mechanism**-layer result, consistent with the H3/H4 decoupling, not a
   user-visible win.
-- *Single batch.* One *i* = 4 run; "reproducible" needs ≥ 2 batches. The aggregate
-  score still cannot rank (all 8 scored 100, all CIs overlap — H1).
+- *Batch-2 provenance.* Batch 2's launching tree was dirty in non-code files
+  only (deck binary + figure PNGs); the running code matched `e543fbb`. The
+  aggregate score still cannot rank (all CIs overlap in both batches — H1).
 
 ```
 uv run python scripts/cross_node_fraction.py -s results/20260608-070606/summary.json
+uv run python scripts/cross_node_fraction.py -s results/20260610-202347/summary.json
 ```
 
 ## H6 — Co-location is a latency/availability trade-off: it shrinks east-west tail but enlarges node-failure blast radius

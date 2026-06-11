@@ -33,15 +33,23 @@ claimed under load.
 
 Two further results turn this decoupling into actionable structure. First, a
 **graph-derived metric** — the cross-node fraction of the service dependency
-graph's inter-service edges under a placement — predicts the east-west tail
-penalty *before any chaos is injected* (Spearman ρ = 0.79 across all 8
-strategies, n = 8). Second, under a third fault class, **node failure**, the
-same co-location that minimizes east-west latency maximizes blast radius and
-recovery time: draining the node hosting the target took all 11 services
-offline under `colocate` (recovery ≈ 10.3 s) versus 2 of 11 under `spread`
-(≈ 2.6 s), reproduced across two provenance-clean batches. Together they
-quantify a latency↔availability trade-off along a single measurable property
-of the placement.
+graph's inter-service edges under a placement — separates node-local from
+spreading placements *before any chaos is injected*, and that separation
+predicts the east-west tail penalty in **two independent batches** (the two
+node-local placements show the two lowest tails of eight both times, ~1.25×
+below the spreading cluster; a continuous correlation did not replicate and
+is not claimed). A protocol-composition probe further grounds the churn
+mechanism: the placement-dependent conntrack flush is the collapse of a
+standing UDP/DNS entry pool ~25× larger under spread, via kube-proxy's
+documented UDP-only cleanup, while TCP entries never flush. Second, under a
+third fault class, **node failure**, the same co-location that minimizes
+east-west latency maximizes blast radius: draining the node hosting the
+target took all 11 services offline under `colocate` (recovery ≈ 10.3 s)
+versus 2 of 11 under `spread` (≈ 2.6 s), reproduced across two
+provenance-clean batches — and a six-strategy gradient run shows observed
+blast equals placement-predicted blast for every strategy (Spearman ρ = 1.0).
+Together these quantify a latency↔availability trade-off along a single
+measurable property of the placement.
 
 These results show that placement under chaos should not be evaluated with a
 single score alone: resilience conclusions depend on both the fault class and
