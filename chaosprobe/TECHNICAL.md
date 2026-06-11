@@ -327,6 +327,21 @@ Queries one or more in-cluster Prometheus instances during the run. Auto-discove
 
 **Mechanism**: Patches `spec.template.spec.nodeSelector` with `kubernetes.io/hostname`. Tracks via `chaosprobe.io/placement-strategy` annotation.
 
+#### fraction_solver.py (v2 / M1a)
+
+Fraction-targeting placement solver + reachable-set enumerator — the M1a solver-feasibility spike of the v2 design ([`v2-design/00-DESIGN.md`](../v2-design/00-DESIGN.md) §2.3, [`v2-design/02-WORKPLAN.md`](../v2-design/02-WORKPLAN.md) M1a). Single source of truth for the dependency-graph extraction and the cross-node-fraction computation (`scripts/cross_node_fraction.py` imports from here).
+
+| Function | Purpose |
+|---|---|
+| `load_dependency_graph(summary_path)` | Weighted inter-service edges + services from a run's `summary.json` (`routeViewAggregate` route keys × recorded `podPlacements`; `locust.totalRequests` as call-volume weight, uniform 1.0 fallback for the volume-less v1 east-west routes) |
+| `achieved_fraction(assignment, edges)` | Weight share of inter-service edges whose endpoints sit on different nodes |
+| `solve(edges, services, n_nodes, target_f, capacity=None, seed=0, node_capacity=None)` | Greedy edge-cut assignment toward target `f` + local search (single moves + pairwise swaps), optional requests-based capacity; returns a `Solution` with the pre-registered acceptance verdict (\|achieved − target\| ≤ 0.05) |
+| `enumerate_reachable(edges, services, n_nodes, samples, seed)` | Achievable fraction set: **exhaustive** over canonical assignments (set partitions into ≤ N blocks via restricted-growth strings — 175,275 at N = 4 for 11 services, sub-second) when the count fits the budget, else seeded sampling + solver refinement (a subset, flagged `sampled`) |
+
+**CLI**: `python -m chaosprobe.placement.fraction_solver --summary <summary.json> --n-nodes N [--target f | --enumerate [--samples K]] [--seed S]`
+
+**Live-validation helper**: `scripts/apply_placement_map.py --map '{"svc": "workerN", ...}' [-n online-boutique] [--wait] [--summary <summary.json>] [--target f]` pins each Deployment via the mutator's own nodeSelector patching, reads back live pod placements, and prints the achieved fraction using the same `achieved_fraction` implementation; `--restore` removes the pins (the M1a solve→apply→schedule→verify loop).
+
 ---
 
 ### 2.6 Output (`output/`)
@@ -1098,6 +1113,7 @@ chaosprobe/
     contention_routes.py     # H4 during-load route-tail comparison (reads aggregated.routeViewAggregate)
     fault_taxonomy.py        # fault_class / is_churn helper used by the mechanism scripts
     archive_run.py           # run archiver + artifact manifest
+    apply_placement_map.py   # v2/M1a: pin an explicit service->node map + verify achieved fraction
   scenarios/
     online-boutique/
       deploy/                # 12 microservice manifests
