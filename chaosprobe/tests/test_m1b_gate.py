@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from chaosprobe.orchestrator import quiescence
 from chaosprobe.placement.affinity_engine import ApplyResult, ServiceCheck, VerificationResult
 from chaosprobe.placement.fraction_solver import Solution
 
@@ -375,15 +376,20 @@ def _snap(not_ready=(), restarts=0, last_unhealthy=None):
 
 
 def _wire_quiescence(monkeypatch, snapshots):
-    """Script _quiescence_snapshot (last entry repeats) + fake the clock."""
+    """Patch quiescence_snapshot (last entry repeats) + fake the clock.
+
+    The barrier moved into ``chaosprobe.orchestrator.quiescence`` (reused by
+    the v2 session driver), so its internals are patched on that module; the
+    script re-exports the public names unchanged.
+    """
     clock = _FakeTime()
-    monkeypatch.setattr(gate, "time", clock)
+    monkeypatch.setattr(quiescence, "time", clock)
     feed = list(snapshots)
 
     def fake_snapshot(api, namespace):
         return feed.pop(0) if len(feed) > 1 else feed[0]
 
-    monkeypatch.setattr(gate, "_quiescence_snapshot", fake_snapshot)
+    monkeypatch.setattr(quiescence, "quiescence_snapshot", fake_snapshot)
     return clock
 
 

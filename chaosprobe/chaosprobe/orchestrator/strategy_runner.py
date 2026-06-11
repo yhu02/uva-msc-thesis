@@ -45,6 +45,11 @@ from chaosprobe.orchestrator.timeout import (
     compute_effective_timeout,
     extract_chaos_duration,
 )
+from chaosprobe.orchestrator.v2_session import (
+    V2Session,
+    annotate_iteration,
+    apply_condition,
+)
 from chaosprobe.output.generator import OutputGenerator, build_route_view
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import PlacementStrategy
@@ -430,6 +435,12 @@ class RunContext:
     graph_store: Any  # Optional[Neo4jStore]
     ts: str  # session timestamp
 
+    # v2 complete-block session (None on the v1 named-strategy path).  When
+    # set, each "strategy" name is a v2 condition: _apply_placement routes
+    # the placement step through the fraction solver + affinity engine, and
+    # _run_iterations records per-iteration live fractions / taints.
+    v2_session: Optional[V2Session] = None
+
 
 # ---------------------------------------------------------------------------
 # Public entry-point
@@ -538,6 +549,20 @@ def _apply_placement(
     strategy_name: str,
     strategy_result: Dict[str, Any],
 ) -> None:
+    if ctx.v2_session is not None:
+        condition = ctx.v2_session.condition(strategy_name)
+        if condition is None:
+            raise click.ClickException(
+                f"unknown v2 condition '{strategy_name}' "
+                f"(session has: {[c.name for c in ctx.v2_session.conditions]})"
+            )
+        click.echo(
+            f"\n  Step 1+2: v2 condition {condition.name} "
+            f"(target f={condition.target_f:.2f}) — restore, quiesce, solve, apply, verify..."
+        )
+        strategy_result["placement"] = apply_condition(ctx.v2_session, condition)
+        return
+
     click.echo("\n  Step 1: Clearing existing placement...")
     ctx.mutator.clear_placement(wait=True, timeout=120)
     click.echo("    Placement cleared.")
@@ -1336,6 +1361,11 @@ def _run_iterations(
                 "error": str(e),
                 "podPlacements": {},
             }
+        # v2 sessions: record this iteration's live achieved fraction and
+        # apply the pre-registered rejection rule (|live − target| > 0.05
+        # taints, never drops) before the iteration enters aggregation.
+        if ctx.v2_session is not None:
+            annotate_iteration(ctx.v2_session, strategy_name, ir)
         results.append(ir)
         # Restart between iterations to prevent cascading damage.
         # Skip restart after the last iteration (cleanup happens at strategy level).
@@ -1537,6 +1567,18 @@ def _aggregate_strategy(
             "failed": 0 if ir["verdict"] == "PASS" else 1,
             "totalExperiments": 1,
         }
+        # Single-iteration runs never pass through aggregate_iterations, so
+        # without this the iteration's taint (v1 pre-chaos degradation, or the
+        # v2 rejection rule's |live − target| > 0.05) would be invisible in
+        # the strategies block — surviving only in per-iteration metadata.
+        # Additive keys, emitted only when tainted.
+        if not ir.get("preChaosHealthy", True) or ir.get("tainted"):
+            strategy_result["experiment"]["tainted"] = True
+            strategy_result["experiment"]["taintReasons"] = list(
+                dict.fromkeys(
+                    (ir.get("preChaosTaintReasons") or []) + (ir.get("taintReasons") or [])
+                )
+            )
         strategy_result["probeVerdicts"] = ir.get("probeVerdicts", {})
         strategy_result["metrics"] = ir["metrics"]
         strategy_result["anomalyLabels"] = ir.get("anomalyLabels")
