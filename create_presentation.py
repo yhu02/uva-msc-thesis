@@ -390,18 +390,21 @@ hypotheses = [
      "user-layer effect did not survive replication — no "
      "user-visible placement claim under load.",
      ACCENT_ORANGE),
-    ("H5", "A graph metric predicts the east-west tail",
+    ("H5", "A graph metric separates the placement regimes",
      "Cross-node call fraction (dependency graph + placement, "
-     "pre-chaos) vs east-west p95: ρ = 0.79 (n = 8, p < .05). "
-     "Coarse — separates node-local from spreading placements — "
-     "but makes the Neo4j graph analytically load-bearing.",
+     "pre-chaos): the node-local pair (colocate, best-fit; "
+     "fraction ≈ 0) takes the two lowest east-west tails of 8 "
+     "in BOTH load batches (joint null ≈ 0.0013), ~1.25× below "
+     "the spreading cluster. Continuous ρ = 0.79 (batch 1) did "
+     "not replicate (0.25 n.s.) — a separator, not a smooth law.",
      ACCENT_ORANGE),
     # Node failure — H6 (purple)
     ("H6", "Latency vs availability trade-off",
-     "Node drain: colocate loses 11/11 services (100% blast, "
-     "~10.3 s recovery) vs spread 2/11 (18%, ~2.6 s); two "
-     "doctor-clean batches. The co-location that wins H5's "
-     "latency loses H6's availability.",
+     "Node drain: colocate loses 11/11 services (100% blast) "
+     "vs spread 2/11 (18%). 6-strategy gradient: observed blast "
+     "= placement-predicted blast (11, 4, 3, 3, 2, 2; ρ = 1.0, "
+     "n = 6). Recovery is NOT monotone in blast — ~4× (10.3 s "
+     "vs 2.6 s) only at the colocate-vs-spread extremes.",
      ACCENT_PURPLE),
 ]
 
@@ -585,8 +588,8 @@ for i, (name, desc, clr, dots, contention, note, cite) in enumerate(strat_data):
 add_text_box(slide, 0.25, 6.95, 12.85, 0.5,
              "Analytic weight: the churn findings (H2 conntrack reconvergence, H3 decoupling) rest on the colocate vs. "
              "spread locality contrast. All 8 placements enter the load matrix — H5's cross-node fraction is computed per "
-             "strategy (n = 8) — and H6 contrasts the two extremes (colocate vs. spread) under node drain; a gradient run "
-             "over the intermediate placements extends that two-point contrast.",
+             "strategy (n = 8, two independent batches) — and H6 spans the full 6-strategy gradient under node drain "
+             "(observed blast = predicted for every strategy), with the recovery contrast scoped to the extremes.",
              font_size=8, color=MID_GRAY)
 
 
@@ -961,7 +964,8 @@ add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
     "• Median flush during the kill cycle:\n  spread 38.5% vs colocate 2.7%",
     "• spread > colocate in 7 / 7 sessions",
     "• Sign test p = 0.0156;\n  Wilcoxon signed-rank p = 0.0225",
-    "• Mechanistic reading: churn tears down\n  cross-node flows that must reconverge;\n  node-local paths are spared",
+    "• Protocol probe: TCP dominates the table\n  and DROPS at the kill cycles under BOTH\n  placements (−28% / −21%) — kernel-side\n  teardown; kube-proxy never flushes TCP",
+    "• The placement-dependent component is\n  the UDP/DNS pool: ~4× larger under\n  spread (chaos-window medians 910 vs 224)",
     "• Corroborating only: CPU throttling —\n  colocate lowest in 6 / 7 sessions\n  (weaker; lead with conntrack)",
 ], font_size=10, color=LIGHT_GRAY)
 
@@ -969,12 +973,12 @@ add_bullet_frame(slide, 8.7, 1.85, 3.9, 3.8, [
 add_rounded_box(slide, 0.5, 6.2, 12.3, 1.0, VERY_DARK,
                 border_color=ACCENT_ORANGE, border_width=Pt(2))
 add_text_box(slide, 0.7, 6.2, 11.9, 0.3,
-             "H2 — a reconvergence signature, deliberately not attributed to a specific code path",
+             "H2 — attribution protocol-scoped by a dedicated conntrack-composition probe",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 add_text_box(slide, 0.7, 6.55, 11.9, 0.6,
-    "The flush is reported as a measured kernel/network reconvergence signature of the kill cycle. "
-    "It is not attributed to kube-proxy's active conntrack-flush path: upstream that path is UDP-only, "
-    "while this workload is TCP/gRPC — re-attribution of the exact mechanism is pending.",
+    "Both paths are visible: kernel TCP teardown (kube-proxy never flushes TCP) and kube-proxy's documented "
+    "UDP-only cleanup, with more to clean under spread. The campaign's flush percentages (38.5% vs 2.7%, 7/7 "
+    "sessions) remain statistically primary and are not apportioned between the two paths (probe: i = 1).",
     font_size=10, color=LIGHT_GRAY)
 
 
@@ -1051,35 +1055,38 @@ add_bullet_frame(slide, 0.7, 1.85, 5.6, 3.8, [
 add_rounded_box(slide, 6.8, 1.4, 6.0, 4.4, VERY_DARK,
                 border_color=ACCENT_GREEN, border_width=Pt(2))
 add_text_box(slide, 7.0, 1.45, 5.6, 0.3,
-             "H5 — cross-node call fraction predicts the east-west tail",
+             "H5 — cross-node fraction separates node-local from spreading",
              font_size=14, bold=True, color=ACCENT_GREEN)
 h5_data = [
-    ["Strategy", "Cross-node fraction", "East-west p95 (ms)"],
-    ["colocate", "0.00", "33.9"],
-    ["best-fit", "0.13", "35.3"],
-    ["dependency-aware", "0.73", "42.6"],
-    ["spread", "0.73", "43.5"],
-    ["random", "0.80", "43.9"],
-    ["default", "0.78", "45.5"],
+    ["Strategy", "frac (B1)", "EW p95 (B1)", "frac (B2)", "EW p95 (B2)"],
+    ["colocate", "0.00", "33.9", "0.00", "33.2"],
+    ["best-fit", "0.13", "35.3", "0.00", "35.7"],
+    ["dependency-aware", "0.73", "42.6", "0.73", "43.8"],
+    ["spread", "0.73", "43.5", "0.73", "44.2"],
+    ["baseline", "0.70", "43.5", "0.78", "41.7"],
+    ["adversarial", "0.80", "43.5", "0.80", "42.0"],
+    ["default", "0.78", "45.5", "0.82", "41.6"],
+    ["random", "0.80", "43.9", "0.80", "42.8"],
 ]
-add_table(slide, 7.0, 1.85, 5.6, 2.5, 7, 3, h5_data,
-          font_size=9, header_color=ACCENT_GREEN)
-add_bullet_frame(slide, 7.0, 4.45, 5.6, 1.3, [
-    "• Spearman ρ = 0.79 (n = 8 strategies, p < 0.05)",
-    "• Computable from the dependency graph + placement\n  before any chaos — the Neo4j graph becomes\n  analytically load-bearing, not mere storage",
+add_table(slide, 7.0, 1.85, 5.6, 2.7, 9, 5, h5_data,
+          font_size=8, header_color=ACCENT_GREEN)
+add_bullet_frame(slide, 7.0, 4.6, 5.6, 1.15, [
+    "• Node-local pair = the 2 lowest tails of 8 in BOTH\n  batches (joint null ≈ 0.0013) — ~1.25× below the rest",
+    "• Continuous ρ = 0.79 (batch 1) → 0.25 n.s. (batch 2):\n  a replicated two-regime separator, not a smooth law",
 ], font_size=10, color=LIGHT_GRAY)
 
 # Framing — bottom
 add_rounded_box(slide, 0.5, 6.0, 12.3, 1.2, VERY_DARK,
                 border_color=ACCENT_BLUE, border_width=Pt(2))
 add_text_box(slide, 0.7, 6.0, 11.9, 0.3,
-             "Framing: empirical validation of a static pre-chaos predictor — and a coarse one",
+             "Framing: a replicated two-regime separator — not a validated smooth predictor",
              font_size=13, bold=True, color=ACCENT_BLUE)
 add_text_box(slide, 0.7, 6.35, 11.9, 0.8,
     "Locality-as-objective already belongs to the literature (NetMARKS, graph-partitioning schedulers); the "
-    "contribution here is validating the graph-derived fraction against measured during-load tails. The correlation "
-    "is coarse — it separates the two node-local placements (colocate, best-fit) from the six spreading ones, which "
-    "cluster at 0.70–0.80 — and single-batch. Note dependency-aware's partition did not co-locate as intended (0.73, spread-like).",
+    "contribution is validating the graph-derived fraction (Neo4j graph + podPlacements, pre-chaos) against measured "
+    "during-load tails in two independent batches. The continuous law is not claimed: batch 1's ρ = 0.79 was carried "
+    "by best-fit's intermediate 0.13 point and collapsed to ρ = 0.25 (n.s.) when best-fit packed fully in batch 2. "
+    "Note dependency-aware's partition did not co-locate as intended (0.73, spread-like, both batches).",
     font_size=10, color=LIGHT_GRAY)
 
 
@@ -1097,16 +1104,19 @@ add_text_box(slide, 0.7, 1.45, 6.1, 0.3,
              "Node drain on the target's node (third fault class)",
              font_size=14, bold=True, color=ACCENT_RED)
 h6_data = [
-    ["Placement", "On drained node", "Blast radius", "Target recovery"],
-    ["colocate", "11 / 11 services", "11 — whole app offline (100%)", "~10.3 s"],
-    ["spread", "2 / 11 services", "2 services (18%)", "~2.6 s"],
+    ["Strategy", "On drained node", "Blast (observed)", "Recovery (mean)"],
+    ["colocate", "11 / 11 services", "11 — whole app offline (100%)", "10.8 s"],
+    ["random", "4 / 11 services", "4", "4.6 s"],
+    ["dependency-aware", "3 / 11 services", "3", "33.3 s"],
+    ["best-fit", "3 / 11 services", "3", "9.7 s"],
+    ["spread", "2 / 11 services", "2 (18%)", "2.6 s"],
+    ["adversarial", "2 / 11 services", "2", "33.1 s"],
 ]
-add_table(slide, 0.7, 1.85, 6.1, 1.3, 3, 4, h6_data,
+add_table(slide, 0.7, 1.85, 6.1, 2.2, 7, 4, h6_data,
           font_size=9, header_color=ACCENT_RED)
-add_bullet_frame(slide, 0.7, 3.35, 6.1, 2.4, [
-    "• Blast radius = services at 0 ready endpoints at the\n  outage trough, read from EndpointSlice snapshots —\n  not the score (a drain leaves every probe Unknown; H1)",
-    "• Observed blast equals the placement-predicted blast\n  in every iteration, across two doctor-clean batches",
-    "• Recovery scales with concentration too: 11 evicted\n  pods reschedule at once vs 2 — ~4× slower",
+add_bullet_frame(slide, 0.7, 4.2, 6.1, 1.55, [
+    "• Observed blast = placement-predicted blast for ALL 6\n  placing strategies — Spearman ρ = 1.0 (n = 6); read from\n  EndpointSlice troughs, not the score (probes Unknown; H1)",
+    "• Recovery is NOT monotone in blast (4.6 s and 33.3 s both\n  at intermediate blast) — the ~4× contrast (10.3 s vs 2.6 s)\n  is claimed only at the colocate-vs-spread extremes",
 ], font_size=10, color=LIGHT_GRAY)
 
 # Trade-off framing — right
@@ -1116,11 +1126,11 @@ add_text_box(slide, 7.5, 1.45, 5.1, 0.3,
              "One placement property, two opposing consequences",
              font_size=14, bold=True, color=ACCENT_PURPLE)
 add_bullet_frame(slide, 7.5, 1.85, 5.1, 3.8, [
-    "• colocate: best east-west tail (H5: 33.9 ms,\n  lowest) AND worst node-failure blast\n  (100% outage) — spread is the mirror",
+    "• colocate: best east-west tail (H5: ~33–34 ms\n  in both batches) AND worst node-failure\n  blast (100% outage) — spread is the mirror",
     "• H5 is the latency face, H6 the availability\n  face of the same co-location metric",
     "• Where placement DOES bite users in this\n  study is availability under node failure —\n  and it is predictable from the placement",
     "• Quantification of a known qualitative\n  trade-off (cell-based architectures), not\n  a discovery",
-    "• Two-point contrast (the extremes); a\n  6-strategy gradient run extends this",
+    "• Reproduced: two doctor-clean two-point\n  batches + a completed 6-strategy gradient",
 ], font_size=10, color=LIGHT_GRAY)
 
 # Bottom synthesis
@@ -1216,8 +1226,8 @@ threats = [
          "clusters may show different performance characteristics, especially for I/O metrics."),
         ("Uneven contrast coverage",
          "The churn findings (H2, H3) rest on the colocate-vs-spread locality contrast; H5 covers all "
-         "8 placements but is single-batch; H6 is a two-point contrast of the extremes — a 6-strategy "
-         "gradient run extends it. Intermediate placements are not yet validated per-hypothesis."),
+         "8 placements across two independent batches; H6's extremes contrast is extended by a completed "
+         "6-strategy gradient (blast ρ = 1.0) — but recovery is validated only at the extremes."),
     ]),
     ("External Validity", ACCENT_ORANGE, [
         ("Cluster scale",
@@ -1272,7 +1282,8 @@ add_bullet_frame(slide, 0.7, 1.95, 5.4, 2.6, [
     "  churn, load contention, node failure across\n"
     "  score, mechanism, and user layers (H1–H6)",
     "• The Neo4j dependency graph made analytically\n"
-    "  load-bearing: a pre-chaos placement predictor (H5)",
+    "  load-bearing: a replicated pre-chaos placement\n"
+    "  separator (H5)",
     "• Statistical & provenance discipline: ICC variance\n"
     "  partition, TOST, power analysis, doctor-gated runs",
 ], font_size=12, color=LIGHT_GRAY)
@@ -1301,11 +1312,11 @@ add_text_box(slide, 0.7, 4.9, 11.7, 0.35, "Future Work",
              font_size=16, bold=True, color=ACCENT_ORANGE)
 add_bullet_frame(slide, 0.7, 5.3, 5.6, 1.15, [
     "• Multi-replica anti-affinity — the production question\n  this single-replica design structurally excludes",
-    "• H6 gradient: intermediate placements between the\n  extremes (6-strategy gradient run in flight)",
+    "• Recovery dynamics across the H6 gradient — why\n  intermediate-blast placements recover\n  non-monotonically",
     "• Larger clusters, other CNIs / kube-proxy modes,\n  production-like traffic",
 ], font_size=11, color=LIGHT_GRAY)
 add_bullet_frame(slide, 6.7, 5.3, 5.7, 1.15, [
-    "• Re-attribute the conntrack flush to its exact code\n  path (upstream active flush is UDP-only; this\n  workload is TCP/gRPC)",
+    "• Apportion the H2 flush between kernel TCP teardown\n  and kube-proxy's UDP-only cleanup (steady-state,\n  multi-iteration probe)",
     "• More load batches — does any user-layer effect\n  survive replication?",
     "• Scheduler integration of the cross-node-fraction\n  predictor (H5)",
 ], font_size=11, color=LIGHT_GRAY)
@@ -1342,7 +1353,7 @@ summary_items = [
     ("8", "Placement\nStrategies", CLR_ORCH),
     ("3", "Fault\nClasses", CLR_METRICS),
     ("H1–H6", "Hypotheses\nTested", ACCENT_BLUE),
-    ("ρ = 0.79", "Graph\nPredictor", ACCENT_GREEN),
+    ("ρ = 1.0", "Blast Radius\nPredicted", ACCENT_GREEN),
 ]
 for i, (val, label, clr) in enumerate(summary_items):
     x = 2.5 + i * 2.3
