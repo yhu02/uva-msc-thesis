@@ -2,7 +2,7 @@
 
 Creates, starts, stops, and collects results from all continuous
 measurement probers (latency, throughput, resources, Prometheus,
-recovery watcher) and the optional Locust load generator.
+conntrack, recovery watcher) and the optional Locust load generator.
 """
 
 import logging
@@ -26,6 +26,7 @@ def create_and_start_probers(
     measure_disk: bool,
     measure_resources: bool,
     measure_prometheus: bool,
+    measure_conntrack: bool,
     prometheus_url: Tuple[str, ...],
     http_routes: Any = None,
     service_routes: Any = None,
@@ -36,6 +37,7 @@ def create_and_start_probers(
     Returns a dict keyed by prober name with the prober instances (or
     None for disabled probers).
     """
+    from chaosprobe.metrics.conntrack import ConntrackProtocolProber
     from chaosprobe.metrics.latency import ContinuousLatencyProber
     from chaosprobe.metrics.prometheus import ContinuousPrometheusProber
     from chaosprobe.metrics.recovery import RecoveryWatcher
@@ -71,11 +73,12 @@ def create_and_start_probers(
         if measure_prometheus
         else None
     )
+    conntrack_prober = ConntrackProtocolProber(namespace) if measure_conntrack else None
 
     # Propagate expected chaos duration to all probers so the base class
     # can cap "during-chaos" phase labeling (previously only latency had this).
     if expected_chaos_duration is not None:
-        for p in (redis_prober, disk_prober, resource_prober, prometheus_prober):
+        for p in (redis_prober, disk_prober, resource_prober, prometheus_prober, conntrack_prober):
             if p is not None:
                 p._expected_chaos_duration = expected_chaos_duration
 
@@ -88,6 +91,7 @@ def create_and_start_probers(
             ("disk I/O throughput probing", disk_prober),
             ("resource utilization probing", resource_prober),
             ("Prometheus metrics collection", prometheus_prober),
+            ("conntrack protocol sampling", conntrack_prober),
         ]
         if p is not None
     ]
@@ -109,6 +113,7 @@ def create_and_start_probers(
         "disk": disk_prober,
         "resource": resource_prober,
         "prometheus": prometheus_prober,
+        "conntrack": conntrack_prober,
     }
 
 
@@ -137,6 +142,7 @@ def stop_and_collect_probers(
             probers.get("disk"),
             probers.get("resource"),
             probers.get("prometheus"),
+            probers.get("conntrack"),
             probers.get("watcher"),
         ]
         if p is not None
@@ -226,6 +232,24 @@ def stop_and_collect_probers(
                 click.echo(f"    Prometheus: {data.get('reason', 'unavailable')}")
         except Exception as e:
             click.echo(f"    Warning: failed to collect Prometheus data: {e}", err=True)
+
+    # Conntrack protocol samples
+    if probers.get("conntrack"):
+        try:
+            data = probers["conntrack"].result()
+            results["conntrack"] = data
+            meta = data.get("meta", {})
+            if meta.get("available"):
+                click.echo(
+                    f"    Conntrack: {len(data.get('samples', []))} protocol samples "
+                    f"across {len(meta.get('nodes', []))} node(s)"
+                )
+            else:
+                click.echo(f"    Conntrack: {meta.get('reason', 'unavailable')}")
+            if meta.get("probeErrors", 0) > 0:
+                error_breakdown["conntrack"] = meta["probeErrors"]
+        except Exception as e:
+            click.echo(f"    Warning: failed to collect conntrack data: {e}", err=True)
 
     # Recovery watcher
     if probers.get("watcher"):

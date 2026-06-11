@@ -47,6 +47,7 @@ class MetricsCollector:
         disk_data: Optional[Dict[str, Any]] = None,
         resource_data: Optional[Dict[str, Any]] = None,
         prometheus_data: Optional[Dict[str, Any]] = None,
+        conntrack_data: Optional[Dict[str, Any]] = None,
         endpoint_slices_pre: Optional[Dict[str, Any]] = None,
         endpoint_slices_during: Optional[Dict[str, Any]] = None,
         collect_logs: bool = False,
@@ -70,6 +71,12 @@ class MetricsCollector:
                            from ContinuousResourceProber. If None, omitted.
             prometheus_data: Pre-collected Prometheus metrics from
                              ContinuousPrometheusProber. If None, omitted.
+            conntrack_data: Pre-collected per-node protocol-labeled conntrack
+                            samples from ConntrackProtocolProber
+                            (``{"samples": [...], "meta": {...}}``). Surfaced
+                            as ``conntrackProtocolSamples`` +
+                            ``conntrackProtocolMeta``. If None, both keys are
+                            omitted so "not collected" never reads as zero.
             endpoint_slices_pre: Pre-chaos EndpointSlice snapshot captured by
                                  the caller before the kill cycle. Paired with
                                  a fresh post-chaos snapshot under
@@ -164,6 +171,13 @@ class MetricsCollector:
             utilization = compute_per_pod_utilization(pod_status, prometheus_data)
             if utilization.get("pods"):
                 result["utilization"] = utilization
+
+        if conntrack_data is not None:
+            # Flat sample list ({ts, node, proto, count, phase}) — the chaos
+            # windows are recorded separately (anomalyLabels), so analysis
+            # aligns samples with windows by timestamp.
+            result["conntrackProtocolSamples"] = conntrack_data.get("samples") or []
+            result["conntrackProtocolMeta"] = conntrack_data.get("meta") or {}
 
         endpoint_slices_post = self.snapshot_endpoint_slices()
         if (

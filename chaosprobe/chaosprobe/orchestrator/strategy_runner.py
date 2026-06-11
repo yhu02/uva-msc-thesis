@@ -405,6 +405,7 @@ class RunContext:
     measure_disk: bool
     measure_resources: bool
     measure_prometheus: bool
+    measure_conntrack: bool
     prometheus_url: Tuple[str, ...]
     collect_logs: bool
     load_profile: Optional[str]
@@ -799,6 +800,7 @@ def _run_single_iteration(
         measure_disk=ctx.measure_disk,
         measure_resources=ctx.measure_resources,
         measure_prometheus=ctx.measure_prometheus,
+        measure_conntrack=ctx.measure_conntrack,
         prometheus_url=ctx.prometheus_url,
         http_routes=http_routes or None,
         service_routes=service_routes or None,
@@ -823,7 +825,7 @@ def _run_single_iteration(
     # when explicitly set, since baseline collection has its own knob.
     pre_chaos_window = ctx.baseline_duration if ctx.baseline_duration > 0 else ctx.settle_time
     has_probers = any(
-        probers.get(k) for k in ("latency", "redis", "disk", "resource", "prometheus")
+        probers.get(k) for k in ("latency", "redis", "disk", "resource", "prometheus", "conntrack")
     )
     post_chaos_window = ctx.settle_time
 
@@ -951,6 +953,7 @@ def _run_single_iteration(
         disk_data=prober_results.get("disk"),
         resource_data=prober_results.get("resource"),
         prometheus_data=prober_results.get("prometheus"),
+        conntrack_data=prober_results.get("conntrack"),
         endpoint_slices_pre=endpoint_slices_pre,
         endpoint_slices_during=during_state.get("snapshot"),
         collect_logs=ctx.collect_logs,

@@ -21,7 +21,7 @@ flowchart TD
     PF["Pre-flight checks<br/>(orchestrator/preflight.py)"]
     PM["PlacementMutator<br/>(placement/mutator.py)"]
     LR["LocustRunner<br/>(loadgen/runner.py)"]
-    PRB["Continuous probers<br/>(metrics/{latency,prometheus,recovery,resource,redis,disk})"]
+    PRB["Continuous probers<br/>(metrics/{latency,prometheus,recovery,resource,redis,disk,conntrack})"]
     CR["ChaosRunner<br/>(chaos/runner.py)"]
     K8s[("Kubernetes cluster")]
     Litmus[("LitmusChaos<br/>+ ChaosCenter")]
@@ -97,7 +97,7 @@ ChaosProbe CLI
       ├── Metrics Collection
       │     ├── RecoveryWatcher (metrics/recovery.py)
       │     ├── ContinuousProberBase (metrics/base.py)
-      │     ├── Latency, Throughput, Resources, Prometheus probers
+      │     ├── Latency, Throughput, Resources, Prometheus, Conntrack probers
       │     ├── AnomalyLabels, Cascade, Remediation, TimeSeries
       │     └── MetricsCollector (metrics/collector.py)
       │
@@ -223,7 +223,7 @@ Collects ChaosResult CRDs and calculates resilience metrics. Supports all Litmus
 
 Abstract base for all continuous probers. Manages background thread lifecycle, phase tracking (PreChaos/DuringChaos/PostChaos), and aggregation.
 
-Subclasses: `ContinuousLatencyProber`, `ContinuousRedisProber`, `ContinuousDiskProber`, `ContinuousResourceProber`, `ContinuousPrometheusProber`.
+Subclasses: `ContinuousLatencyProber`, `ContinuousRedisProber`, `ContinuousDiskProber`, `ContinuousResourceProber`, `ContinuousPrometheusProber`, `ConntrackProtocolProber`.
 
 **Used-nodes-only aggregation**: `ContinuousResourceProber` aggregates node-level CPU and memory metrics only across nodes that host pods in the target namespace. This prevents idle nodes from diluting placement-specific signals (e.g., `colocate` concentrates all pods on one node — averaging across all cluster nodes would hide the actual resource pressure on that node).
 
@@ -263,7 +263,7 @@ Used internally by `aggregate_iterations` (CI for the mean score) and by `chaosp
 
 Orchestrates post-experiment data collection and merges with pre-collected watcher data.
 
-Output includes: `deploymentName`, `timeWindow`, `recovery`, `podStatus`, `eventTimeline`, `nodeInfo`, plus continuous prober data (`latency`, `redis`, `disk`, `resources`, `prometheus`). When Prometheus data is present, also attaches `utilization` (see `utilization.py` below). When EndpointSlice data is available it also attaches `endpointSlices` (see below).
+Output includes: `deploymentName`, `timeWindow`, `recovery`, `podStatus`, `eventTimeline`, `nodeInfo`, plus continuous prober data (`latency`, `redis`, `disk`, `resources`, `prometheus`, and `conntrackProtocolSamples` + `conntrackProtocolMeta` from the conntrack prober). When Prometheus data is present, also attaches `utilization` (see `utilization.py` below). When EndpointSlice data is available it also attaches `endpointSlices` (see below).
 
 `podStatus.pods[].containers[]` carries `oomKillCount` (current + last-termination OOMKills); the pod-status object also exposes `totalOOMKills` summed across containers. `nodeInfo.conditions` includes `Ready` / `MemoryPressure` / `DiskPressure` / `PIDPressure` / `NetworkUnavailable` so pressure-driven evictions can be correlated with recovery latency.
 
@@ -287,6 +287,16 @@ Queries one or more in-cluster Prometheus instances during the run. Auto-discove
 | CoreDNS cache + etcd | `coredns_cache_hit_rate_per_sec`, `coredns_cache_miss_rate_per_sec`, `etcd_compaction_duration_p99` |
 
 `result()` returns `available`, `serverUrls`, `queries` (with `{namespace}` resolved), `metricAvailability` (per-label `bool` recording which queries returned non-empty data at least once during the run — needed to distinguish "metric returned 0" from "metric was never collected"), `timeSeries`, and per-phase `phases` aggregations (sum-across-series → mean/min/max/stdev across samples).
+
+#### conntrack.py — ConntrackProtocolProber (v2 M1b)
+
+**Class: `ConntrackProtocolProber(namespace, interval=5.0, exec_fn=None, ready_timeout=120.0)`**
+
+First-class version of the ad-hoc v1 protocol probe (`thesis/data/conntrack-probe/`): samples each worker node's connection-tracking table by protocol every 5 s, for every iteration, so the H2 mechanism signal (kernel TCP teardown vs. kube-proxy's UDP-only cleanup) is collected with replication instead of the v1 one-shot.
+
+`start()` discovers the worker nodes (control planes excluded) and calls `ensure_samplers(core_api, node_names)`, which idempotently maintains one privileged `hostNetwork` sampler pod per worker in the `chaosprobe-system` namespace (image `alpine:3.20`, tolerates all taints). The `conntrack-tools` package is **version-pinned** (`apk add conntrack-tools=1.4.8-r0`, the Alpine 3.20 release) and the running binary's version is **recorded** per node by exec'ing `conntrack --version` once the sampler is ready — closing the v1/M1a "unpinned, unrecorded toolchain" finding. Sampler pods persist across iterations (re-`start()` adopts them) and are removed once at the end of the run via `cleanup_sampler_pods(core_api)` (managed-label selector `app.kubernetes.io/managed-by=chaosprobe,app.kubernetes.io/component=conntrack-sampler`).
+
+Each tick execs the v1 probe's exact command per node (`conntrack -L 2>/dev/null | awk '{print $1}' | sort | uniq -c`) over the Kubernetes exec stream API (injectable via `exec_fn` for tests). `result()` returns `{"samples": [{ts, node, proto, count, phase}, …], "meta": {available, toolVersion, toolVersionsByNode, intervalSeconds, samplerImage, packagePin, samplerNamespace, nodes[, reason][, probeErrors]}}`, which `MetricsCollector.collect()` surfaces as `conntrackProtocolSamples` / `conntrackProtocolMeta`. Samples align with the recorded chaos windows (`anomalyLabels`) by timestamp. Every cluster-facing step degrades gracefully — a failed sampler, install, or exec yields a warning plus `meta.available=false`/`probeErrors`, never a crashed run.
 
 #### utilization.py — Per-pod utilization fractions
 
@@ -620,6 +630,7 @@ See **Section 11 → Cypher Query Cookbook** for the underlying Cypher queries.
 | `--measure-disk/--no-measure-disk` | on | Disk I/O throughput |
 | `--measure-resources/--no-measure-resources` | on | Node/pod resource utilization (used nodes only) |
 | `--measure-prometheus/--no-measure-prometheus` | on | Prometheus cluster metrics |
+| `--measure-conntrack/--no-measure-conntrack` | on | Per-node protocol-labeled conntrack entry counts (privileged hostNetwork sampler pod per worker) |
 | `--collect-logs/--no-collect-logs` | on | Container logs from target deployment |
 | `--prometheus-url` | auto-discovered | Prometheus URL(s); repeat for multiple |
 | `--baseline-duration` | 0 | Seconds of steady-state collection before chaos |
@@ -1088,6 +1099,7 @@ chaosprobe/
       throughput.py          # Redis/disk throughput probers
       resources.py           # Resource usage prober (used nodes only)
       prometheus.py          # Prometheus metrics prober
+      conntrack.py           # Per-node protocol-labeled conntrack prober (v2 M1b)
       anomaly_labels.py      # Ground-truth ML labels
       cascade.py             # Fault propagation tracking
       timeseries.py          # Time-series alignment
