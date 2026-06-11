@@ -16,7 +16,14 @@ Both environments are external dependencies with cost; neither is assumed.
   by the user. **Decision date: DATE-TBD-BY-USER** (informed by M1a's
   quantization report, below). The **8 × 4 GiB fallback** is available but
   changes the solver's reachable-fraction set, so adopting it requires the
-  M1b solver gate to run at N = 8.
+  M1b solver gate to run at N = 8. **vCPU-escalation contingency (decide at
+  M0):** M1a's report includes the *measured* request sums collected from
+  the live v1 cluster (`kubectl` sum of `resources.requests`, ×3 for r = 3)
+  — data that exists *before* the buy. If measured vCPU requests exceed
+  ~1.3× the DESIGN §7.1 placeholders, procure **6 vCPU/node instead of 4**
+  at M0 (DESIGN §7.1); the M1b capacity check then re-verifies against the
+  procured hardware. This keeps the escalation decidable at M0 rather than
+  discovered post-purchase.
 - **Second environment (M5 transfer arm):** managed-Kubernetes **billing
   decision** with **budget owner = the user**. If undecided or unavailable
   by the **end of M4**, the transfer arm is dropped and reported as
@@ -48,7 +55,10 @@ the M0 hardware decision**.
   level. Without this, the N = 6/8 enumerations that feed M0 are an
   unvalidated model; with it, the analytical N = 6 claim inherits
   demonstrated fidelity.
-- Quantization report (reachable f per N) delivered to the user for M0.
+- Quantization report (reachable f per N) delivered to the user for M0,
+  **including the measured request sums from the live v1 cluster**
+  (`kubectl` sum of `resources.requests`, with the ×3 r = 3 projection) so
+  the M0 vCPU-escalation contingency is decidable before purchase.
 
 ## M1b — Engine + cluster + full GO/NO-GO gate at the pinned N (contingent on M0)
 
@@ -125,9 +135,12 @@ campaign data exists before this point.
   f-levels in randomized order × r = 1 × churn + load, n per cell from M2.
 - **C2 (replication × drain, V2-H3):** r {1, 3} × mode {packed, anti-affine}
   × node-drain, including the TOST packing control.
-- **C3 (DNS intervention, V2-H2):** cache on/off × f {0, 1} × churn, paired
-  sessions, randomized cache order; primary contrast within-placement
-  (spread), packed arm as the registered secondary check.
+- **C3 (placement-dependence + DNS intervention, V2-H2):** cache on/off ×
+  f {0, 1} × churn, paired sessions, randomized cache order; two in-family
+  primaries combined as a conjunction — (a) between-placement cache-off
+  contrast (spread > packed; the packed arm is the comparator) and (b)
+  within-spread cache shrinkage ≥50 %; the packed-arm *no-cache-effect*
+  expectation is the registered secondary check (not in family).
 - **V2-H6 (exploratory, iptables):** the f = 0/f = 1 endpoint cells only,
   riding on C1/C3 endpoints, ≥5 sessions; droppable second in the de-scope
   order.
