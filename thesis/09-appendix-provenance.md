@@ -26,6 +26,12 @@ close-wait 1 h), containerd 1.7.11, Ubuntu 22.04.3 LTS, Calico CNI, namespace
 | run-20260610-050703 | 2026-06-10 | `a80d25b5cb6f` | `run-20260610-050703.tar.gz` | all 8 × pod-delete | 3 | campaign **s05** |
 | run-20260610-090416 | 2026-06-10 | `a80d25b5cb6f` | `run-20260610-090416.tar.gz` | all 8 × pod-delete | 3 | campaign **s06** |
 | run-20260610-130249 | 2026-06-10 | `a80d25b5cb6f` | `run-20260610-130249.tar.gz` | all 8 × pod-delete | 3 | campaign **s07** |
+| run-20260608-194827 | 2026-06-08 | `97799efa5ea5` | `run-20260608-194827.tar.gz` | colocate, default, spread × node-drain | 1 | H6 two-point batch (*i* = 1) |
+| run-20260608-205229 | 2026-06-08 | `3d437cdd2e4a` | `run-20260608-205229.tar.gz` | colocate, default, spread × node-drain | 3 | H6 two-point batch (*i* = 3) |
+| run-20260610-172430 | 2026-06-10 | `6696e6be175d` | `run-20260610-172430.tar.gz` | 6 placing strategies × node-drain | 3 | H6 gradient (doctor-clean) |
+| run-20260610-200013 | 2026-06-10 | `e543fbb9e5fe` | `run-20260610-200013.tar.gz` | spread × pod-delete | 1 | H2 protocol probe (spread) |
+| run-20260610-201131 | 2026-06-10 | `e543fbb9e5fe` | `run-20260610-201131.tar.gz` | colocate × pod-delete | 1 | H2 protocol probe (colocate) |
+| run-20260610-202426 | 2026-06-10 | `e543fbb9e5fe` | `run-20260610-202426.tar.gz` | all 8 × load-contention | 4 | H5 **batch 2** (doctor-strict 0 errors; launching tree dirty in non-code files only: deck binary + 3 figure PNGs) |
 
 "All 8" = baseline, default, colocate, spread, adversarial, random, best-fit,
 dependency-aware. "Independent single-commit session" means each session ran
@@ -42,7 +48,7 @@ s07 `pod-delete.yaml` = `d1a57729…c79a58`) and of every data file
 |---|---|
 | **H1, H2, H3** (7-session churn campaign, 147 iterations) | s01–s07 = run-20260608-233543, run-20260609-072731, run-20260609-154457, run-20260609-194339, run-20260610-050703, run-20260610-090416, run-20260610-130249 |
 | **H4** (load contention, two batches) | run-20260607-193053 (A) + run-20260607-221822 (B, clean) |
-| **H5** (cross-node fraction, 8 strategies) | run-20260608-070638 |
+| **H5** (cross-node fraction, 8 strategies, two batches) | run-20260608-070638 (batch 1) + run-20260610-202426 (batch 2) |
 | **H6** (node-drain blast radius, two batches) | run-20260608-194827 (*i* = 1) + run-20260608-205229 (*i* = 3) (run dirs contain colocate/default/spread; H6 quotes the colocate-vs-spread contrast) |
 | **H6 gradient** (6 strategies × node-drain × *i* = 3) | run-20260610-172430 (`doctor --strict` clean; observed blast = predicted for all 6 strategies, Spearman ρ = 1.0) |
 | **H2 protocol-composition probe** (2 × *i* = 1 pod-delete, spread/colocate) | run-20260610-200013 (spread) + run-20260610-201131 (colocate); raw 5-s protocol samples in `thesis/data/conntrack-probe/` |

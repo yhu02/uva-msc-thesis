@@ -40,26 +40,24 @@ names its immutable tarball in [`chaosprobe/dist/`](../../chaosprobe/dist/):
 |---|---|---|---|
 | `fig-01-workflow.png` — ChaosProbe pipeline (mutate → inject → cross-layer collect → provenance-gate → analyze) | `1` | none (schematic) | — |
 | `fig-02-core-matrix.png` — 8 strategies × 3 fault classes, cells shaded by archived-run coverage, columns annotated with the hypotheses they feed | `2` | s01–s07, both H4 batches, H5 run, both H6 batches | all 12 archives above |
-| `fig-03-h1-score-distributions.png` — per-strategy per-iteration aggregate-score distributions across the 7 churn sessions, annotated with ICC = 0.033, CI [0.014, 0.177] | `3` | s01–s07 | `run-20260608-233543` … `run-20260610-130249` |
+| `fig-03-h1-score-distributions.png` — per-strategy per-iteration aggregate-score distributions across the 7 churn sessions, annotated with ICC = 0.033, CI [0.014, 0.178] (the on-figure annotation prints the same seeded bootstrap value 0.1775 rounded down to 0.177; the manuscript standardizes on 0.178) | `3` | s01–s07 | `run-20260608-233543` … `run-20260610-130249` |
 | `fig-04-h1-icc-trajectory.png` — ICC point + cluster-bootstrap CI recomputed on each session prefix s01→s0k (0.22 at k=1 collapsing to 0.033 at k=7) | `4` | s01–s07 | same as fig-03 |
 | `fig-05-h2-conntrack.png` — conntrack flush % per strategy across sessions (medians: spread 38.5 %, colocate 2.7 %) + paired slopegraph, spread > colocate 7/7, sign p=0.0156, Wilcoxon p=0.0225 | `5` | s01–s07 | same as fig-03 |
 | `fig-06-h3-scatter.png` — flush % vs worst dependent-route p95 (ρ=0.07, n.s.) beside flush % vs control-route p95 (ρ=0.29, p=0.043): the run-level confound signature | `6` | s01–s07 | same as fig-03 |
-| `fig-07-h5-fraction-vs-tail.png` — realised cross-node call fraction vs during-load east-west median p95, 8 strategies labeled, Spearman ρ=0.79; node-local pair (colocate, best-fit) as squares | `7` | `results/20260608-070606` | `run-20260608-070638.tar.gz` |
-| `fig-08-h6-trough-timeline.png` — EndpointSlice total-ready through the drain (pre / during / post snapshots) for colocate vs spread in both H6 batches; the i=3 batch catches the 11/11 vs 2/11 trough (2/14 vs 12/14 endpoints ready) | `8` | `results/20260608-194746`, `results/20260608-205147` | `run-20260608-194827.tar.gz`, `run-20260608-205229.tar.gz` |
-| `fig-09-tradeoff.png` — capstone: during-load east-west p95 (x, H5) vs node-drain blast radius (y, H6) for the strategies present in both; H5-only strategies shown as rug marks pending drain data | `9` | H5 run + both H6 batches | `run-20260608-070638.tar.gz`, `run-20260608-194827.tar.gz`, `run-20260608-205229.tar.gz` |
+| `fig-07-h5-fraction-vs-tail.png` — realised cross-node call fraction vs during-load east-west median p95, 8 strategies labeled (batch 1: Spearman ρ=0.79 — **quote only alongside batch 2's ρ=0.25 n.s.**; the replicated claim is the two-regime separation, see §5.5); node-local pair (colocate, best-fit) as squares. Render is batch-1 only; batch 2 (`run-20260610-202426`) reproduces the separation with best-fit at fraction 0.00 | `7` | `results/20260608-070606` | `run-20260608-070638.tar.gz` |
+| `fig-08-h6-trough-timeline.png` — EndpointSlice total-ready through the drain for colocate vs spread; the i=3 batch catches the 11/11 vs 2/11 trough (2/14 vs 12/14 endpoints ready). Regenerated 2026-06-10 with `--gradient-run results/20260610-172352` | `8` | `results/20260608-194746`, `results/20260608-205147`, `results/20260610-172352` | `run-20260608-194827.tar.gz`, `run-20260608-205229.tar.gz`, `run-20260610-172430.tar.gz` |
+| `fig-09-tradeoff.png` — capstone: during-load east-west p95 (x, H5 batch 1) vs node-drain blast radius (y, H6) — all six placing strategies have measured y-values from the completed gradient run (observed = predicted blast, ρ = 1.0, n = 6). Regenerated 2026-06-10 with `--gradient-run` | `9` | H5 run + both H6 batches + gradient run | `run-20260608-070638.tar.gz`, `run-20260608-194827.tar.gz`, `run-20260608-205229.tar.gz`, `run-20260610-172430.tar.gz` |
 
-## Pending: the 6-strategy node-drain gradient run
+## Regeneration with the gradient run
 
-At generation time the gradient node-drain run (`results/20260610-172352`) had
-only a `partial_summary.json` — no completed `summary.json` — so it is **not**
-included. Once it completes **and** passes
-`uv run chaosprobe doctor -s results/20260610-172352/summary.json --strict`,
-regenerate the H6-dependent figures with the same script:
+fig-02/08/09 were regenerated on 2026-06-10 after the 6-strategy node-drain
+gradient run completed and passed `doctor --strict`:
 
 ```bash
 uv run python scripts/thesis_figures.py --out-dir ../thesis/figures \
     --figure 2,8,9 --gradient-run results/20260610-172352
 ```
 
-`fig-09` then gains real y-values for the strategies currently shown as rug
-marks, and `fig-02`'s node-drain column counts update automatically.
+fig-01/03/04/05/06/07 are unchanged from the original generation. A fig-07
+variant overlaying H5 batch 2 (`results/20260610-202347`) is future work —
+until then the batch-2 verdict lives in §5.5's table and caption.

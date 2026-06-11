@@ -452,14 +452,17 @@ future-work discussion (RL-based placement policies, scheduler extensions).
 A Kubernetes scheduler extender using *runtime* Istio service-mesh traffic
 metrics; reduces application response time up to 37% and inter-node bandwidth
 up to 50% by network-aware colocation. Establishes empirically that colocation
-lowers latency — the gradient H4/H5 replicate. The difference: NetMARKS
+lowers latency — the direction H4/H5 replicate. The difference: NetMARKS
 *optimizes* using runtime telemetry; H5 *validates a static, pre-chaos
-graph-derived predictor* (cross-node dependency-edge fraction, ρ = 0.79
-against measured east-west p95). Claim the correlational validation of the
-static predictor as the contribution — not the locality concept, which
-NetMARKS (and the graph-partitioning placement literature, e.g. TraDE below)
-already own as an optimization objective. Note it reports end-to-end response
-time, not east-west p95 — directional precedent, not like-for-like.
+graph-derived two-regime separator* — the cross-node dependency-edge
+fraction separates node-local from spreading placements and that separation
+predicted the east-west tail in two independent batches (batch-1 ρ = 0.79
+collapsed to ρ = 0.25 in batch 2; claim the replicated separation, never
+ρ = 0.79 alone). Claim the empirical validation of the static separator as
+the contribution — not the locality concept, which NetMARKS (and the
+graph-partitioning placement literature, e.g. TraDE below) already own as an
+optimization objective. Note it reports end-to-end response time, not
+east-west p95 — directional precedent, not like-for-like.
 
 ### TraDE (2024) — cross-node traffic-aware placement
 > *TraDE: Network and Traffic-aware Adaptive Scheduling for Microservices

@@ -92,31 +92,36 @@ pooled run-set agreed (36.6 % vs 1.9 %, 16/16 runs). This is the most
 reproducible signal in the study and maps onto the Kubernetes SIG-Scalability
 network-programming reconvergence window documented upstream (see references).
 
-**Mechanism — measured by protocol decomposition (probe, 2026-06-10).** A
+**Mechanism — protocol composition measured (probe, 2026-06-10).** A
 dedicated probe (per-node `conntrack -L` protocol counts sampled every 5 s
 through one full `pod-delete` kill cycle under each placement; runs
 `20260610-195929` spread / `20260610-201052` colocate, archived as
-`run-20260610-200013` / `run-20260610-201131`; raw samples + pod spec in
-`thesis/data/conntrack-probe/`) decomposes the flush:
+`run-20260610-200013` / `run-20260610-201131`; raw samples, chaos-window
+timestamps, and pod spec in `thesis/data/conntrack-probe/`) yields three
+window-robust composition findings (chaos-window medians, cluster-total):
 
-| placement | pre-chaos TCP / UDP entries | UDP during kill cycle | TCP during kill cycle |
-|---|---|---|---|
-| `spread` | 3,857 / **1,822 (32 %)** | **−50 to −58 %** | *grows* (+6 to +16 %) |
-| `colocate` | 2,993 / **72 (2 %)** | tiny pool (noise) | *grows* |
+| quantity | `spread` | `colocate` |
+|---|---|---|
+| UDP entries (median) | **910** | **224** |
+| TCP entries (median) | 4,197 | 3,965 |
+| TCP drop at first kill cycle | 5,935 → 4,253 (**−28 %**) | 4,973 → 3,937 (**−21 %**) |
 
-The placement-dependent signal is the **UDP (DNS) pool**: spreading the
-target's dependents across nodes sustains a ~25× larger standing pool of UDP
-conntrack entries (cross-node calls → connection churn → repeated DNS
-resolution), and the kill cycle collapses it — consistent with kube-proxy's
-*documented, deliberately UDP-only* active conntrack cleanup on endpoint
-change (kubernetes/kubernetes #48370, #108523, #126130; ipvs mode on this
-cluster). **TCP entries are never flushed and in fact grow during chaos**
-(reconnect churn), exactly matching upstream behaviour (#100698, #104098).
-The aggregate `conntrack_entries_per_node` drop H2 measures is therefore the
-UDP share collapsing, visible only under placements that maintain a large UDP
-pool. *Caveat:* the probe is one iteration per placement against the
-campaign's 7 sessions — quote it for the composition and direction, not for
-magnitudes.
+(1) **TCP dominates the table and drops sharply at the kill cycles in both
+placements** — and since kube-proxy never actively flushes TCP
+(kubernetes/kubernetes #100698, #104098), those drops are **kernel-side
+teardown** of flows traversing the killed pod. (2) **The clearly
+placement-dependent component is UDP (DNS)**: under steady load `spread`
+sustains ~**4×** more UDP entries than `colocate` — cross-node calls drive
+connection churn and DNS re-resolution, and kube-proxy's *documented,
+deliberately UDP-only* cleanup (#48370, #108523, #126130; ipvs mode here)
+has correspondingly more to clean under spread. (3) The probe **cannot
+decompose the campaign's flush percentages**: with *i* = 1 the pre-chaos
+baseline contains the Locust start-up ramp (UDP transiently spiked to 5,485
+inside spread's pre-window), so pre-vs-during percentages from this probe
+are window-contaminated — both candidate mechanisms (kernel TCP teardown;
+UDP/DNS cleanup) are *visible*, and their relative shares in the campaign's
+38.5 % vs 2.7 % medians remain unapportioned. Quote the probe for
+composition and event timing only.
 
 A secondary contention signal (CPU throttling) is *weaker* and should be
 reported as corroborating only: `colocate` throttles lowest in 6/7 campaign
@@ -247,7 +252,10 @@ computed from the *actual* per-iteration `podPlacements` + the dependency edges 
 `routeViewAggregate` (`scripts/cross_node_fraction.py`), and rank-correlated
 (Spearman) with the during-load median east-west p95.
 
-**Result — supported, coarsely.** ρ = **0.79** (n = 8, *p* < 0.05; critical ρ ≈ 0.74):
+**Result — batch 1 (see the replication block below before quoting).**
+Batch-1 ρ = **0.79** (n = 8, *p* < 0.05; critical ρ ≈ 0.74) — a value that did
+*not* replicate as a continuous law in batch 2 (ρ = 0.25, n.s.); the
+replicated finding is the two-regime separation:
 
 | strategy | cross-node frac | east-west p95 (ms) |
 |---|---|---|
@@ -362,7 +370,8 @@ dependency-aware 3, best-fit 3, spread 2, adversarial 2; Spearman ρ = 1.0,
 n = 6). This is the availability analogue of H5's cross-node-fraction
 predictor: one graph-derived quantity (per-node concentration) predicts the
 availability consequence with rank correlation 1.0, just as the cross-node
-fraction predicts the latency consequence with ρ = 0.79.
+fraction separates the latency regimes on the H5 axis (two-regime separation,
+replicated across both load batches).
 
 **Caveats (do not overstate this).**
 - *The prediction is near-definitional; the empirical content is that it holds.* "Drain

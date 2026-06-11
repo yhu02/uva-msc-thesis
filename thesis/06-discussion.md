@@ -90,7 +90,7 @@ its own right.
 ## 6.2 The trade-off as the operator takeaway
 
 H5 and H6 are the same graph property read on two axes: co-location minimizes
-the east-west tail (33.9 ms vs ~43–46 ms) and maximizes node-failure blast
+the east-west tail (~33–34 ms vs ~42–44 ms across both batches) and maximizes node-failure blast
 radius (11/11 vs 2/11) and recovery (≈10.3 s vs ≈2.6 s). The cross-node
 fraction prices the *latency* face before any chaos; the services-per-node
 concentration prices the *availability* face. An operator does not get to
@@ -141,27 +141,35 @@ through one full kill cycle under each placement; raw data in
 `thesis/data/conntrack-probe/`, archived runs `run-20260610-200013` and
 `run-20260610-201131`).
 
-The decomposition inverts the naive expectation and resolves the
-attribution cleanly. Under `spread`, the cluster sustains a standing pool of
-roughly 1,800 **UDP** conntrack entries — 32 % of all entries — where
-`colocate` sustains only ~72 (2 %): spreading the dependency graph across
-nodes means every inter-service call crosses the network, connection churn
-under load is constant, and each new connection re-resolves DNS, whose UDP
-flows populate conntrack on multiple nodes. During the kill cycle that UDP
-pool collapses by 50–58 % under `spread` — consistent with kube-proxy's
-documented UDP-only cleanup firing on the endpoint change — while **TCP
-entries do not flush at all; they grow** (+6 to +16 %) as retries and
-reconnects create new flows, exactly the upstream-documented TCP behaviour.
-The aggregate, protocol-blind `conntrack_entries_per_node` drop that H2
-measures is therefore the UDP (DNS) share collapsing — a signal that exists
-only under placements whose topology sustains a large standing UDP pool.
-The attribution is thus *both* placement-dependent *and* faithful to the
-upstream code path: placement determines the size of the flushable pool;
-kube-proxy's UDP-only cleanup is the mechanism that flushes it. The probe is
-a single iteration per placement, so we quote it for composition and
-direction, not magnitudes; the campaign's seven sessions carry the
-statistical weight. Conntrack behaviour also changed materially across
-K8s v1.31–v1.32; the result is pinned to v1.28.6 (§4.5).
+The probe's window-robust findings keep **both** candidate mechanisms in
+play and locate the placement-dependence precisely. First, **TCP dominates
+the conntrack table under both placements (≈80 %+ of entries) and drops
+sharply at the kill cycles in both** (spread −28 %, colocate −21 % within
+one cycle): since kube-proxy never actively flushes TCP, these drops are
+kernel-side teardown of flows traversing the killed pod — the path that
+needs no kube-proxy involvement. Second, **the clearly placement-dependent
+component is UDP (DNS)**: under steady load `spread` sustains ~4× more UDP
+entries than `colocate` (chaos-window medians 910 vs 224) — spreading the
+dependency graph across nodes means inter-service calls cross the network,
+connection churn drives DNS re-resolution, and those UDP flows are exactly
+the traffic class kube-proxy's documented UDP-only cleanup acts on.
+`colocate`'s UDP count even *rises* during chaos (restart-driven lookups),
+underlining that the UDP level tracks churn topology, not a fixed quota.
+
+What the probe deliberately does **not** establish is the apportionment:
+with one iteration per placement and a pre-chaos window contaminated by the
+load generator's start-up ramp (UDP transiently spiked to 5,485 inside
+spread's baseline), pre-vs-during percentages from the probe are not
+meaningful, and the campaign's 38.5 % vs 2.7 % flush medians cannot be
+split between the TCP-teardown and UDP-cleanup paths from this data. The
+defensible attribution is therefore: the H2 signature is real, reproducible,
+and placement-dependent; both kernel TCP teardown and the UDP/DNS pool
+visibly participate; the UDP pool is the component whose *size* placement
+controls; and the exact shares await a steady-state, multi-iteration probe
+(§8.2). The probe is quoted for composition and event timing only; the
+campaign's seven sessions carry the statistical weight. Conntrack behaviour
+also changed materially across K8s v1.31–v1.32; the result is pinned to
+v1.28.6 (§4.5).
 
 ## 6.4 L1–L3: inapplicable in this regime, not refuted
 

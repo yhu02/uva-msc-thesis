@@ -60,7 +60,7 @@ because the drift was measured, not despite it.
 | Absolute metric values (latency, recovery s, flush %) | **No** | Tied to a small virtualized 5-node cluster. |
 | Mechanism behaviour (conntrack, kube-proxy sync) | **Environment-contingent** | Depends on CNI, kube-proxy mode (ipvs here), kernel/conntrack settings — archived per run so the scope is explicit. |
 | The score-instability finding | **This regime** | Established for single-replica `pod-delete`; "cannot rank placement strategies under session variance", not "scores don't work"; not asserted for multi-replica or contention-dominated regimes. |
-| The H5 predictor | **As a validated static screen here** | Coarse (separates node-local from spreading placements), single batch; validation of the metric, not of the locality concept. |
+| The H5 separator | **As a validated static screen here** | Two-regime separation replicated across two independent batches (ρ 0.79 → 0.25: the continuous correlation did not replicate and is not claimed); validation of the metric, not of the locality concept. |
 | The H6 trade-off | **Qualitatively known; quantified here** | Two-point contrast, single-replica; the *quantification* is this environment's. |
 | Anything about multi-replica / HA failover | **Not in scope** | Structurally excluded by the single-replica design (§8.2). |
 

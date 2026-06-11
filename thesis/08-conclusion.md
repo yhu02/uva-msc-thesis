@@ -23,7 +23,9 @@ batches), but the user-layer effect did not survive clean replication, so
 none is claimed (H4). Under **node failure**, placement finally moves the
 layer that counts there — availability — and it does so with the opposite
 sign to the latency face: the co-location that minimizes the east-west tail
-(H5's static predictor, ρ = 0.79) maximizes blast radius and recovery time
+(H5's cross-node-fraction separator — the two node-local placements held the
+two lowest tails of eight in both batches, joint *p* ≈ 0.0013) maximizes
+blast radius and recovery time
 (11/11 services offline and ≈10.3 s recovery vs 2/11 and ≈2.6 s; H6). The
 aggregate score, finally, obscures placement effects in every regime tested:
 too noisy to rank under churn, uniformly saturated under load, and unusable
@@ -92,14 +94,19 @@ worth a dedicated campaign.
 
 ### Other extensions
 
-- **Second H5 batch** — the cross-node-fraction validation is single-batch;
-  one replication would lift it to the same evidentiary tier as H2/H4's
-  mechanism results.
-- **H6 gradient completion** — intermediate-concentration strategies × node
-  drain (run in flight at scaffold time; §5.6 stub) to test continuous
-  blast-radius scaling.
-- **H2 re-attribution** — the protocol-composition probe (§6.3): decompose
-  the conntrack flush into TCP-teardown vs UDP/DNS-flush contributions.
+- **Third H5 batch / different cluster** — the second batch (§5.5) reproduced
+  the two-regime separation but collapsed the continuous correlation
+  (ρ 0.79 → 0.25); a third batch on a different cluster would test whether
+  the *separation* transfers beyond this environment.
+- **H6 gradient: denser concentrations** — the 6-strategy gradient (§5.6,
+  observed = predicted blast, ρ = 1.0) is complete; the open questions are
+  denser intermediate per-node concentrations and the multi-replica regime,
+  plus an explanation for the non-monotone recovery times.
+- **H2 flush apportionment** — the protocol-composition probe (§6.3) shows
+  both mechanisms (kernel TCP teardown at kills; the placement-dependent
+  UDP/DNS pool) but, at *i* = 1 with a ramp-contaminated baseline, cannot
+  apportion the campaign's flush percentages between them; a steady-state
+  multi-iteration probe would.
 - Larger/bare-metal clusters, other CNIs and kube-proxy modes (iptables,
   nftables), production traffic, multi-replica workloads, and scheduler
   integration of the cross-node fraction as a scoring plugin.
