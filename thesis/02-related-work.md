@@ -14,35 +14,17 @@ The four nearest works, and the axis on which each differs:
 | **Cloud-edge fault-injection study** — Liu et al. (2025), [arXiv:2507.16109](https://arxiv.org/abs/2507.16109) | Largest existing K8s failure-injection dataset (11,965 experiments), architecture-level benchmarking of cloud-edge deployments. | Benchmarks **where the cluster runs, not where pods land**: no churn-vs-contention distinction, no conntrack/kube-proxy mechanism, no placement-strategy comparison. Complementary and orthogonal. |
 | **NetMARKS** — Wojciechowski et al. (INFOCOM 2021), [DOI 10.1109/INFOCOM42981.2021.9488670](https://ieeexplore.ieee.org/document/9488670/); **TraDE** (2024), [arXiv:2411.05323](https://arxiv.org/abs/2411.05323) | Locality as an *optimization objective*: network/traffic-aware schedulers that co-locate using runtime telemetry (NetMARKS: up to 37% response-time reduction). | They *optimize* with runtime metrics; **H5 validates a static, pre-chaos two-regime separator** — the cross-node dependency-edge fraction separates node-local from spreading placements, and that separation predicted the east-west tail in two independent batches (batch-1 ρ = 0.79 did **not** replicate as a continuous law: ρ = 0.25 n.s. in batch 2; the replicated claim is the separation, not a smooth correlation). The locality concept itself is theirs. NetMARKS reports end-to-end response time, not east-west p95: directional precedent, not like-for-like. |
 
-These four works define the axes of the space this thesis sits in. Two of
-them evaluate resilience without touching placement: MicroRes profiles how
-degradation disseminates from system metrics to user metrics but treats the
-deployment topology as given, and Cast injects faults at the application/RPC
-layer of a production cloud without any infrastructure-layer manipulation.
-Two of them manipulate or benchmark deployment topology without chaos-style
-evaluation of the result: NetMARKS and TraDE use placement as an optimization
-lever, driven by runtime traffic telemetry, and report the latency
-improvement; Liu et al. inject faults at scale but vary the *cluster
-architecture* (cloud vs. edge), not the pod placement within a cluster.
-
-The intersection — manipulate placement as the controlled variable, inject
-faults from distinct classes, measure the outcome at the mechanism layer and
-the user layer simultaneously, and audit the reliability of the aggregate
-score that current practice would use instead — is empty, and that
-intersection is where this thesis sits. The positioning is deliberately
-modest on each individual axis: MicroRes owns the insight that system-layer
-degradation and user-layer degradation can decouple (they *score* that
-decoupling; we *measure its mechanism* under a manipulated variable); the
-network-aware-scheduling literature owns locality as an objective (H5 only
-validates a static predictor of it); and the score-reliability critique (H1)
-is scoped precisely against what MicroRes actually demonstrated. MicroRes's
-reported success — 0.86–0.90 accuracy and 0.92–0.95 F1 — is for *binary*
-resilient-vs-non-resilient classification with per-dataset tuned thresholds,
-and it stands as the explicit counterexample to any broader reading of H1:
-aggregate indices demonstrably can do binary classification. What H1 shows is
-narrower and previously unexamined — that an aggregate score of this style
-cannot *rank placement strategies* when session-level variance is accounted
-for, at any feasible iteration count, in the regime we test.
+These four works define the axes of the space this thesis sits in: MicroRes
+and Cast evaluate resilience without touching placement, while NetMARKS/TraDE
+and Liu et al. vary deployment topology without chaos-style evaluation of the
+outcome. The intersection — manipulate placement as the controlled variable,
+inject faults from distinct classes, measure the mechanism and user layers
+simultaneously, and audit the reliability of the aggregate score current
+practice would use instead — is empty, and that intersection is where this
+thesis sits. The positioning is deliberately modest on each axis, and each
+differentiator — including the precise scoping of H1 against MicroRes's
+binary-classification success — is stated once, in the table above; the
+MicroRes scoping is restated only where it bites, at the H1 result (§5.1).
 
 Stated as coordinates: on the axis *what is manipulated*, this thesis sits
 with the schedulers (placement) and against the profilers (observability

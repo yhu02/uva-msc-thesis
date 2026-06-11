@@ -15,6 +15,8 @@ framework is deliberately *evaluation-shaped* rather than
 not try to find a good placement — it realizes a chosen placement exactly,
 disturbs it, and measures what happens at each layer.
 
+![Figure 3.1 — ChaosProbe experiment workflow](figures/fig-01-workflow.png)
+
 **Figure 3.1: ChaosProbe experiment workflow** — placement mutation →
 settle → load + chaos injection → post-chaos probing → aggregation →
 provenance stamping → archive.

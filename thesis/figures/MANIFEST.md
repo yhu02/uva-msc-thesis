@@ -36,6 +36,13 @@ names its immutable tarball in [`chaosprobe/dist/`](../../chaosprobe/dist/):
 
 ## Figures
 
+**Filename ↔ in-text figure number crosswalk** (the file numbering is offset
++1 from the ch5 captions because fig-01 is the ch3 workflow figure — wire
+LaTeX `\includegraphics` by this map, not by inference):
+fig-01 = Fig 3.1 · fig-02 = Fig 5.1 · fig-03 = Fig 5.2 · fig-04 = Fig 5.3 ·
+fig-05 = Fig 5.4 · fig-06 = Fig 5.5 · fig-07 = Fig 5.6 · fig-08 = Fig 5.7 ·
+fig-09 = Fig 5.8.
+
 | Figure | Command (`--figure`) | Source runs | dist/ archives |
 |---|---|---|---|
 | `fig-01-workflow.png` — ChaosProbe pipeline (mutate → inject → cross-layer collect → provenance-gate → analyze) | `1` | none (schematic) | — |
@@ -44,9 +51,9 @@ names its immutable tarball in [`chaosprobe/dist/`](../../chaosprobe/dist/):
 | `fig-04-h1-icc-trajectory.png` — ICC point + cluster-bootstrap CI recomputed on each session prefix s01→s0k (0.22 at k=1 collapsing to 0.033 at k=7) | `4` | s01–s07 | same as fig-03 |
 | `fig-05-h2-conntrack.png` — conntrack flush % per strategy across sessions (medians: spread 38.5 %, colocate 2.7 %) + paired slopegraph, spread > colocate 7/7, sign p=0.0156, Wilcoxon p=0.0225 | `5` | s01–s07 | same as fig-03 |
 | `fig-06-h3-scatter.png` — flush % vs worst dependent-route p95 (ρ=0.07, n.s.) beside flush % vs control-route p95 (ρ=0.29, p=0.043): the run-level confound signature | `6` | s01–s07 | same as fig-03 |
-| `fig-07-h5-fraction-vs-tail.png` — realised cross-node call fraction vs during-load east-west median p95, 8 strategies labeled (batch 1: Spearman ρ=0.79 — **quote only alongside batch 2's ρ=0.25 n.s.**; the replicated claim is the two-regime separation, see §5.5); node-local pair (colocate, best-fit) as squares. Render is batch-1 only; batch 2 (`run-20260610-202426`) reproduces the separation with best-fit at fraction 0.00 | `7` | `results/20260608-070606` | `run-20260608-070638.tar.gz` |
+| `fig-07-h5-fraction-vs-tail.png` — realised cross-node call fraction vs during-load east-west median p95, 8 strategies labeled; node-local pair (colocate, best-fit) as squares. The on-figure title states the **claimed** two-regime separation and quotes the continuous ρ only as the retracted pair (batch-1 ρ=0.79 → batch-2 ρ=0.25 n.s., §5.5); render is batch-1 only — batch 2 (`run-20260610-202426`) reproduces the separation with best-fit at fraction 0.00. Regenerated 2026-06-11 (title restated to the claimed result) | `7` | `results/20260608-070606` | `run-20260608-070638.tar.gz` |
 | `fig-08-h6-trough-timeline.png` — EndpointSlice total-ready through the drain for colocate vs spread; the i=3 batch catches the 11/11 vs 2/11 trough (2/14 vs 12/14 endpoints ready). Regenerated 2026-06-10 with `--gradient-run results/20260610-172352` | `8` | `results/20260608-194746`, `results/20260608-205147`, `results/20260610-172352` | `run-20260608-194827.tar.gz`, `run-20260608-205229.tar.gz`, `run-20260610-172430.tar.gz` |
-| `fig-09-tradeoff.png` — capstone: during-load east-west p95 (x, H5 batch 1) vs node-drain blast radius (y, H6) — all six placing strategies have measured y-values from the completed gradient run (observed = predicted blast, ρ = 1.0, n = 6). Regenerated 2026-06-10 with `--gradient-run` | `9` | H5 run + both H6 batches + gradient run | `run-20260608-070638.tar.gz`, `run-20260608-194827.tar.gz`, `run-20260608-205229.tar.gz`, `run-20260610-172430.tar.gz` |
+| `fig-09-tradeoff.png` — capstone: during-load east-west p95 (x, H5 batch 1) vs node-drain blast radius (y, H6) — all six placing strategies have measured y-values from the completed gradient run (observed = predicted blast, ρ = 1.0, n = 6); `default` (load-measured only, no drain arm) remains a rug mark. Regenerated 2026-06-11 with `--gradient-run` (crowded-cluster labels de-collided with leader lines; rug annotation reworded) | `9` | H5 run + both H6 batches + gradient run | `run-20260608-070638.tar.gz`, `run-20260608-194827.tar.gz`, `run-20260608-205229.tar.gz`, `run-20260610-172430.tar.gz` |
 
 ## Regeneration with the gradient run
 
@@ -58,6 +65,15 @@ uv run python scripts/thesis_figures.py --out-dir ../thesis/figures \
     --figure 2,8,9 --gradient-run results/20260610-172352
 ```
 
-fig-01/03/04/05/06/07 are unchanged from the original generation. A fig-07
+fig-07/09 were regenerated again on 2026-06-11 (same source runs) for the
+structural-review fixes: fig-07's title now states the claimed two-regime
+separation, and fig-09 de-collides the co-located labels:
+
+```bash
+uv run python scripts/thesis_figures.py --out-dir ../thesis/figures \
+    --figure 7,9 --gradient-run results/20260610-172352
+```
+
+fig-01/03/04/05/06 are unchanged from the original generation. A fig-07
 variant overlaying H5 batch 2 (`results/20260610-202347`) is future work —
 until then the batch-2 verdict lives in §5.5's table and caption.

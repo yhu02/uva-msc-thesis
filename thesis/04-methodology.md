@@ -294,7 +294,5 @@ split controls for within runs (§4.1). The environment values above are not
 incidental: the H2 mechanism is contingent on the kube-proxy mode (`ipvs`
 here), the conntrack configuration, and the Kubernetes version, all of
 which are stamped into every archived run's manifest so that each
-mechanism-level claim carries its exact scope (§3.2, §7.2). Absolute
-numbers from this cluster — latencies, flush percentages, recovery times —
-are not portable; the campaign's claims are about directions, layers, and
-reproducibility within this pinned environment (§7.2).
+mechanism-level claim carries its exact scope (§3.2). What does and does not
+port out of this pinned environment is stated once, in §7.2's table.

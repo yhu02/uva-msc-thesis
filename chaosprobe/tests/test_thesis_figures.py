@@ -500,6 +500,47 @@ def test_fig08_trough_timeline(tmp_path):
     _assert_png(tf.fig08_trough_timeline(trajs, tf.h6_blast(named), str(tmp_path)))
 
 
+def test_fig09_label_groups_chains_the_crowded_spreading_cluster():
+    # The spreading strategies crowd x ~ 42.6-43.9 (incl. adversarial + spread
+    # exactly co-located at 43.5) -> one cluster; the node-local pair sits
+    # apart and stays as singletons.
+    h5 = [
+        tf.H5Point("colocate", 0.0, 33.9, True),
+        tf.H5Point("best-fit", 0.13, 35.3, True),
+        tf.H5Point("dependency-aware", 0.73, 42.6, False),
+        tf.H5Point("spread", 0.73, 43.5, False),
+        tf.H5Point("adversarial", 0.80, 43.5, False),
+        tf.H5Point("random", 0.80, 43.9, False),
+    ]
+    groups = tf.fig09_label_groups(h5)
+    names = [[p.strategy for p in g] for g in groups]
+    assert names == [
+        ["colocate"],
+        ["best-fit"],
+        ["dependency-aware", "adversarial", "spread", "random"],
+    ]
+
+
+def test_fig09_label_groups_single_point_zero_span():
+    groups = tf.fig09_label_groups([tf.H5Point("colocate", 0.0, 33.9, True)])
+    assert [[p.strategy for p in g] for g in groups] == [["colocate"]]
+
+
+def test_fig09_tradeoff_stacks_coincident_labels(tmp_path):
+    # Render path through the stacked-label (len(group) > 1) branch.
+    h5 = [
+        tf.H5Point("colocate", 0.0, 33.9, True),
+        tf.H5Point("spread", 0.73, 43.5, False),
+        tf.H5Point("adversarial", 0.80, 43.5, False),
+    ]
+    blast = {
+        "colocate": tf.H6Blast("colocate", 11, 11, {"g": 11}),
+        "spread": tf.H6Blast("spread", 2, 11, {"g": 2}),
+        "adversarial": tf.H6Blast("adversarial", 2, 11, {"g": 2}),
+    }
+    _assert_png(tf.fig09_tradeoff(h5, blast, str(tmp_path)))
+
+
 def test_fig09_tradeoff_with_pending_rug(tmp_path):
     h5 = [
         tf.H5Point("colocate", 0.0, 34.0, True),

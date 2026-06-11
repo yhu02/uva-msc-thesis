@@ -222,12 +222,11 @@ mode.
   availability counterpart).
 
 Each of these is an implication of a measured result, and each inherits that
-result's scope. The first follows from H1's variance decomposition, and it
-is the one with the sharpest operational edge: an evaluation pipeline that
-runs a handful of chaos iterations per placement and picks the
-highest-scoring one is — in this regime — selecting on noise, with a
-minimum detectable effect (~51 score points at *n* = 3) far larger than any
-real between-strategy gap. The second is the constructive alternative the
+result's scope. The first follows from H1's variance decomposition — and
+from the three regime-specific score failure modes diagnosed in §6.1 — and
+it is the one with the sharpest operational edge: an evaluation pipeline
+that runs a handful of chaos iterations per placement and picks the
+highest-scoring one is, in this regime, selecting on noise. The second is the constructive alternative the
 three-layer design demonstrates: each fault class deposited its placement
 signal in a different, *predictable* layer, so instrumenting that layer
 (conntrack/EndpointSlice for churn, east-west route tails under load,
@@ -239,10 +238,9 @@ availability face, both before any experiment is run — with chaos
 experiments then reserved for validating the shortlisted candidates rather
 than searching the whole space.
 
-These are statements about this regime and this environment — a
-single-replica deployment on a small virtualized v1.28.6/ipvs cluster, per
-the scope tables of Chapter 7 — and we do not claim they transfer beyond
-it. What is portable is the *method*: manipulate placement, measure at the
+These are statements about this regime and this environment, with the
+portability boundary stated in §7.2's table. What is portable is the
+*method*: manipulate placement, measure at the
 layer the fault class perturbs, control the user layer with
 dependent-vs-control routes, gate every number on provenance, and audit the
 aggregate score's reliability before trusting it to rank anything.
