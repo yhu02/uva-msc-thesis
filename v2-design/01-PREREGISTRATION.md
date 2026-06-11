@@ -6,11 +6,32 @@
 > and n's may be revised; **after** it, any deviation is reported as a
 > deviation. No campaign data informing these hypotheses may be collected
 > before the freeze. The build has not started; placeholders marked **TBD**
-> are filled from M2's A/A variance estimates before freezing.
+> or **finalized at M2** are filled from M2's A/A variance estimates before
+> freezing.
 
 Design context, knobs, and instrumentation: [`00-DESIGN.md`](00-DESIGN.md).
 All v1 references (H1–H6) are to archived, `doctor --strict`-clean runs
-documented in `chaosprobe/docs/explanation/hypotheses.md`.
+documented in `chaosprobe/docs/explanation/hypotheses.md`; **v1 numeric
+literals are quoted only in DESIGN §10** (the canonical mapping table) and
+cited from here by reference.
+
+## Confirmatory family and multiplicity
+
+- **Confirmatory family:** the **single primary test of each of V2-H1,
+  V2-H2, V2-H3, and V2-H5**, **Holm-corrected** across this four-member
+  family.
+- **V2-H3's two co-primary outcomes** (trough depth × duration; user-route
+  error rate) are combined as **both-must-pass (conjunction)**: V2-H3 is
+  supported only if *both* outcomes show the registered interaction. A
+  conjunction is conservative (it can only lower the per-hypothesis type-I
+  rate), so no additional alpha adjustment is applied for the two outcomes.
+- **V2-H4 is descriptive** — a registered figure and reporting protocol, not
+  a member of the family; no p-value is registered.
+- **V2-H6 is an exploratory secondary** — labeled as such, uncorrected,
+  outside the family; its outcome is reported but cannot support a
+  confirmatory claim.
+- Sensitivity analyses (e.g. V2-H1's Spearman check) are non-confirmatory
+  and labeled as such wherever reported.
 
 ## Hypotheses
 
@@ -20,126 +41,224 @@ documented in `chaosprobe/docs/explanation/hypotheses.md`.
 monotonically in the achieved cross-node fraction f across the designed
 levels {0, 0.25, 0.5, 0.75, 1.0}.
 
-**Motivating pilot.** v1-H5: node-local (f ≈ 0) placements showed ~1.25×
-lower east-west tails than spreading (f ≈ 0.7–0.8) placements in two
-independent batches, but the interior was never sampled and the continuous
-correlation did not replicate (ρ 0.79 → 0.25).
+**Motivating pilot.** v1-H5 (two-regime separator, interior never sampled);
+see DESIGN §10 / `hypotheses.md`.
 
-**Test.** Page's trend test across the ordered f levels (session medians as
-units; Spearman over designed levels as the sensitivity check). n sessions
+**Design (required for the test's validity).** Every C1 session is a
+**complete block**: it visits **all 5 f-levels in randomized order**
+(recorded seed). Sessions are therefore replicated complete ordered blocks,
+which is exactly the design Page's L requires.
+
+**Test (primary, in family).** Page's trend test across the ordered f levels
+(session medians as units, one observation per level per session). Spearman
+over designed levels is the sensitivity check (non-confirmatory). n sessions
 per level: **TBD from M2 power analysis** (≥2 minimum, §Session design).
 
-**SESOI.** A monotone trend with a total effect of **≥10 % increase in
-east-west p95 from f = 0 to f = 1**. A statistically detectable but <10 %
-trend is reported as below the SESOI, not as support.
+**Fallback path (pre-registered now).** If the M1 solver gate forces the
+nearest-achievable-fraction design (DESIGN §9), the regressor becomes
+continuous achieved-f and Page's test no longer applies. The replacement is
+fixed here: **primary = linear mixed-effects model** with achieved-f as a
+continuous fixed effect and session as a random effect (test on the
+achieved-f slope); **secondary (nonparametric) = Jonckheere–Terpstra** over
+the ordered achievable levels. The switch, if taken, is recorded before
+freeze.
 
-**Falsified by.** Non-monotone medians beyond noise (Page's test n.s. at
-α = 0.05), or a monotone trend smaller than the SESOI. If the two-regime
-step shape recurs (flat interior, jump at the extremes), that is a
-*distinct* registered outcome: "threshold, not dose-response" — it would
+**SESOI.** A monotone trend with a total effect of **≥15 % increase in
+east-west p95 from f = 0 to f = 1**. Derivation: the bar is set **between
+the A/A noise band** (placeholder; finalized at M2 — the SESOI must exceed
+it) **and v1's measured ~25 % two-regime separation** (DESIGN §10), so that
+an effect at the v1 magnitude clears it with margin while anything inside
+instrument noise cannot. A statistically detectable but <15 % trend is
+reported as below the SESOI, not as support.
+
+**Falsified by.** Non-monotone medians beyond noise (primary test n.s. at
+the Holm-adjusted α), or a monotone trend smaller than the SESOI. If the
+two-regime step shape recurs (flat interior, jump at the extremes), that is
+a *distinct* registered outcome: "threshold, not dose-response" — it would
 confirm v1-H5's separator reading and falsify the continuous-dose reading.
 
-### V2-H2 — Intervention: NodeLocal DNSCache collapses the placement-dependent flush component
+### V2-H2 — Intervention: NodeLocal DNSCache collapses spread's during-churn UDP drop
 
-**Statement.** With NodeLocal DNSCache enabled, the spread-vs-packed
-(f = 1 vs f = 0, r = 1) difference in during-churn UDP-conntrack drop shrinks
-by **≥50 %** relative to cache-off, paired across sessions.
+**Statement.** With NodeLocal DNSCache enabled, **spread's (f = 1, r = 1)
+own during-churn UDP-conntrack-entry drop shrinks by ≥50 % relative to its
+cache-off drop** — a **within-placement, paired** contrast (cache-on vs
+cache-off, paired across sessions). The denominator is spread's cache-off
+UDP drop, which v1 measured as large (DESIGN §10), so the ratio is
+well-defined.
 
-**Motivating pilot.** v1-H2 (flush 38.5 % vs 2.7 %, spread > colocate 7/7
-sessions, sign test p = 0.0156) plus the protocol probe: the
-placement-dependent component is UDP/DNS (~4× more UDP entries under spread;
-kube-proxy's cleanup is deliberately UDP-only).
+**Secondary check (registered, not in family).** The packed (f = 0) arm is
+expected to show **no cache effect**: its UDP pool sits near the noise floor
+(~72–224 entries in the v1 protocol probe — DESIGN §10;
+`thesis/data/conntrack-probe/`), which is precisely why it cannot serve as
+the primary denominator. A material cache effect in the packed arm would be
+reported as evidence against the cross-node-DNS account.
 
-**Test.** Paired comparison (Wilcoxon signed-rank) of the per-session
-spread-minus-packed UDP-drop difference, cache-on vs cache-off; sessions
+**Motivating pilot.** v1-H2 (flush asymmetry, 7/7 sessions) + the protocol
+probe (the placement-dependent component is UDP/DNS; kube-proxy's cleanup is
+deliberately UDP-only); see DESIGN §10 / `hypotheses.md`.
+
+**Test (primary, in family).** Wilcoxon signed-rank on the per-session
+paired shrinkage of spread's UDP drop (cache-on vs cache-off); sessions
 paired by design (same cluster state window, randomized cache order).
 
-**SESOI / falsified by.** Supported iff the median paired shrinkage is
-≥50 % with a bootstrap CI excluding 0 % shrinkage. If the spread-vs-packed
-UDP-drop difference persists at >50 % of its cache-off size, the UDP/DNS
-account of H2's placement dependence is **wrong** and is reported as
-falsified. TCP-drop behaviour is recorded but carries no registered
-prediction (v1 evidence: kernel-side, not placement-mediated).
+**SESOI / falsified by.** Supported iff the median paired shrinkage is ≥50 %
+with a bootstrap CI excluding 0 % shrinkage. If spread's UDP drop persists
+at >50 % of its cache-off size with the cache on, the UDP/DNS account of
+H2's placement dependence is **wrong** and is reported as falsified.
+TCP-drop behaviour is recorded but carries no registered prediction (v1
+evidence: kernel-side, not placement-mediated).
 
 ### V2-H3 — Replication rescue under node-drain
 
 **Statement.** At r = 3 **anti-affine**, user-visible availability loss under
 node-drain is smaller than at r = 1 by a pre-set margin, while r = 3
-**packed** ≈ r = 1 — i.e. an interaction: replication rescues availability
-only when replicas do not share the failure domain.
+**packed** is equivalent to r = 1 — i.e. an interaction: replication rescues
+availability only when replicas do not share the failure domain.
 
-**Motivating pilot.** v1-H6 (blast = placement-predicted blast, ρ = 1.0,
-n = 6; colocate 11/11 services down vs spread 2/11) and the cancelled E1
-pilot, which showed v1's engine *could not* express anti-affinity (all 3
-replicas pinned to one node → structurally null).
+**Motivating pilot.** v1-H6 (blast = placement-predicted blast) and the
+deliberately skipped E1 pilot (v1's engine could not express anti-affinity);
+see DESIGN §10 / `hypotheses.md`.
 
-**Test.** Aligned-rank-transform (ART) ANOVA on user-visible availability
-loss (EndpointSlice trough depth × duration, and user-route error rate as
-co-primary), factors r ∈ {1, 3} × mode {packed, anti-affine}; the registered
-effect is the **interaction term**. Margin (the "pre-set margin" for the
-anti-affine r = 3 vs r = 1 contrast): **TBD at freeze**, set from A/A
-variance, no smaller than the A/A 95 % noise band.
+**Test (primary, in family).** Aligned-rank-transform (ART) ANOVA on
+user-visible availability loss, factors r ∈ {1, 3} × mode {packed,
+anti-affine}; the registered effect is the **interaction term**, evaluated
+on **two co-primary outcomes — EndpointSlice trough depth × duration, and
+user-route error rate — combined as both-must-pass (conjunction; see
+§Confirmatory family)**. Margin (for the anti-affine r = 3 vs r = 1
+contrast): **TBD at freeze**, set from A/A variance, no smaller than the A/A
+95 % noise band.
 
-**Falsified by.** No interaction (e.g. anti-affine r = 3 ≈ r = 1: replication
-does not rescue), or packed r = 3 < r = 1 (the packing control fails,
-implying the engine does not pack as specified — an instrument failure,
-triggering the validity checks, not a finding).
+**Packing control (instrument check, TOST).** The packed r = 3 ≈ r = 1
+control is registered as a **TOST equivalence test**: packed r = 3 must fall
+**within the A/A-derived equivalence band of r = 1** (band finalized at M2,
+same band as the rescue margin). Falling **outside the band in either
+direction** flags the instrument (the engine does not pack as specified —
+an instrument failure triggering the validity checks, not a finding). A bare
+"packed r3 < r1" inequality is *not* used: near-equal arms differ by noise
+in both directions, and an unthresholded inequality would make the control a
+coin flip.
 
-### V2-H4 — The placement frontier is non-degenerate
+**Falsified by.** No interaction on either co-primary outcome (e.g.
+anti-affine r = 3 ≈ r = 1: replication does not rescue), with the packing
+control passing its TOST (instrument valid).
 
-**Statement.** No placement (f, r, mode) dominates both faces — east-west
-tail (latency) and blast radius/recovery (availability) — and the Pareto
-frontier contains **≥2 non-dominated placements**.
+### V2-H4 — The placement frontier (DESCRIPTIVE — registered figure + reporting protocol)
 
-**Test.** Descriptive, with cluster-bootstrap CIs on each placement's
-two-face coordinates; a placement dominates iff its CI region beats another's
-on both faces simultaneously. No p-value is registered; this hypothesis is
-falsified descriptively.
+**Status.** **Descriptive, not a falsifiable hypothesis, and not in the
+confirmatory family.** The label V2-H4 is retained for continuity. Rationale
+(registered): under cluster-bootstrap CIs on noisy two-face coordinates,
+"≥2 non-dominated placements" is nearly self-confirming — the noisier the
+data, the more non-dominated points appear — so no confirmatory claim is
+registered on frontier cardinality.
 
-**Falsified by.** A single placement whose CI region dominates all others on
-both faces. Per `00-DESIGN.md` §6, that outcome would be reported prominently
-as the headline result, not suppressed — the registration exists to prevent
-the opposite temptation.
+**Reporting protocol (binding).** For each placement (f, r, mode), report
+east-west tail (latency face) vs blast radius/recovery (availability face)
+with cluster-bootstrap CIs. **Dominance is declared only with margins**:
+placement A dominates B iff A is better than B by **≥ δ_latency on the
+latency face AND ≥ δ_blast on the availability face**, with δ values tied to
+the A/A noise band (**finalized at M2**). The non-dominated set under those
+margins is reported, with the margins stated alongside the figure. A single
+placement dominating all others by ≥ δ on both faces would be reported
+prominently as the headline result, not suppressed — this protocol exists to
+prevent the opposite temptation.
 
-### V2-H5 — The layered scorecard is more reliable than the v1 aggregate score
+### V2-H5 — The layered scorecard is reliable, and more reliable than the v1 aggregate
 
-**Statement.** On identical session data, the test-retest reliability of the
-layered sub-scores exceeds that of the v1 aggregate score:
-ICC(sub-scores) > ICC(v1 aggregate), where v1's campaign value was
-ICC = 0.033 [0.014, 0.178].
+**Statement.** On fresh v2 campaign sessions, each retained layered
+sub-score (availability, mechanism-reconvergence, user-tail) is more
+reliable than the v1 aggregate score computed on the same v2 sessions
+(ICC(sub-score) > ICC(v1 aggregate); v1's own campaign value ICC_old =
+0.033 is the motivating pilot — DESIGN §10), **and** reaches an **absolute
+bar: ICC ≥ 0.5**. Beating ICC_old alone is a near-zero bar (the aggregate is
+already known to be unreliable); the absolute bar is what makes the
+scorecard's reliability a claim about usefulness, not just superiority over
+a broken instrument.
 
-**Test.** Both instruments computed per session from the same raw data;
-condition-level ICC for each; bootstrap CI on the **difference**
-ICC_new − ICC_old must exclude zero. Evaluated per sub-score (availability,
-mechanism, user-tail), Holm-corrected; the scorecard "passes" only if at
-least the availability and mechanism sub-scores individually beat the
-aggregate.
+**Registered threat — design-informed-by-v1 circularity.** The three
+sub-scores were chosen *because* v1 showed signal in those layers; an
+evaluation on v1 sessions would therefore be circular. **Mitigation
+(binding):** (1) sub-score definitions are **frozen at the M2 commit,
+before any v2 reliability data exists**; (2) reliability is evaluated
+**exclusively on v2 campaign sessions — never on v1 sessions**; (3) the
+absolute ICC ≥ 0.5 bar applies in addition to the head-to-head comparison.
 
-**Falsified by.** Any sub-score's reliability CI overlapping or falling below
-the aggregate's — reported as the scorecard failing its own test.
+**Test (primary, in family).** Both instruments computed per session from
+the same v2 raw data; condition-level ICC for each; bootstrap CI on the
+difference ICC_new − ICC_old must exclude zero, **and** each sub-score's
+ICC point estimate must reach ≥ 0.5 with its CI excluding ICC_old.
+Evaluated per sub-score, Holm-corrected **within** V2-H5 across the three
+sub-scores; the scorecard "passes" only if at least the availability and
+mechanism sub-scores individually clear **both** bars.
 
-## A/A calibration protocol (gates everything above)
+**Falsified by.** Any retained sub-score failing the absolute ICC ≥ 0.5 bar,
+or its reliability CI overlapping or falling below the aggregate's —
+reported as the scorecard failing its own test.
 
-Before **any** between-condition comparison: **≥3 identical-placement session
-pairs** (same f, r, mode, fault; nothing varied) are run and pushed through
-the full analysis pipeline as if they were A/B comparisons.
+### V2-H6 — Exploratory secondary: iptables-mode direction transfer
 
-- The pipeline's empirical false-positive rate across all registered tests
-  must be **≤ nominal α (0.05)**. If it exceeds α, the `doctor` gates and
-  taint rules are tightened and the A/A block is **repeated** before any
-  comparison runs.
-- A/A variance estimates also fix the TBD quantities: per-cell n (power
-  analysis at 80 % power for each SESOI), and V2-H3's margin.
+**Status.** **Exploratory secondary, outside the confirmatory family,
+uncorrected, labeled as such.** Reduced cells: the **f = 0 and f = 1
+endpoints only** (riding on C1/C3 endpoint cells). **Second in the
+pre-declared de-scope order** (dropped after the second workload if M1
+overruns).
+
+**Statement.** The **spread-vs-packed direction of the UDP-drop contrast
+(V2-H2's cache-off arms)** is preserved under kube-proxy **iptables** mode:
+spread's during-churn UDP-conntrack drop exceeds packed's, as under ipvs.
+
+**Test.** Sign test across **≥5 sessions** at the f = 0/f = 1 endpoints
+only. No magnitude prediction is registered — v1's evidence is
+mode-specific by construction; direction is the only transferable claim.
+
+**Reported as.** Direction preserved / direction not preserved /
+not-attempted (if de-scoped), in the exploratory-results section only.
+
+## A/A calibration protocol
+
+Before **any** between-condition comparison: **≥3 identical-placement
+session pairs** (same f, r, mode, fault; nothing varied) are run and pushed
+through the full analysis pipeline as if they were A/B comparisons.
+
+**What the A/A block can and cannot do (registered honestly).** Its two
+achievable functions are:
+
+1. **Variance-component estimation** — within- and between-session variance
+   feed the M2 power analysis (per-cell n), the SESOI noise bands (V2-H1),
+   the V2-H3 margin and TOST equivalence band, V2-H4's δ dominance margins,
+   and the pre-window UDP-slope taint threshold (§Session design).
+2. **Qualitative pipeline sanity check** — the full pipeline runs end-to-end
+   on null data and its outputs are inspected.
+
+**It is NOT a false-positive-rate estimator, and no numeric "FPR ≤ α" gate
+is registered.** The arithmetic is plain: to upper-bound a 0.05
+false-positive rate, observing **zero** significant A/A findings in n
+independent tests gives a 95 % Clopper–Pearson upper bound of
+1 − 0.05^(1/n), which reaches 0.05 only at **n ≥ 59** — on the order of
+**60+ A/A tests**, far beyond what 3 session pairs (FPR resolution
+{0, 1/3, 2/3, 1}) can deliver. A handful of A/A pairs cannot certify any α.
+
+**Rule (replaces the dropped FPR gate).** **Any statistically significant
+A/A finding triggers investigation and a fix-then-rerun**: the cause is
+diagnosed, the `doctor` gates / taint rules / instrumentation are fixed, and
+the A/A block is repeated before any comparison runs. The halt criterion is
+in §Stopping rules.
 
 ## Session design
 
 - **Unit of analysis: the session** (one provisioned cluster lifetime, one
-  commit), exactly as in v1's E2 campaign — between-session variance was
-  37.6 % of score variance in v1; ignoring it produced v1's retracted
-  user-layer readings.
-- **Randomized condition order within session**, from a recorded seed
-  (v1 fixed the order, making order effects constant but unmeasurable; v2
-  randomizes and records).
+  commit), exactly as in v1's E2 campaign — between-session variance was a
+  large share of v1 score variance (DESIGN §10); ignoring it produced v1's
+  retracted user-layer readings.
+- **C1 sessions are complete blocks:** every C1 session visits **all 5
+  f-levels in randomized order**, from a recorded seed (v1 fixed the order,
+  making order effects constant but unmeasurable; v2 randomizes and
+  records). This is what licenses Page's L for V2-H1.
+- **Load generator (binding, from DESIGN §4):** Locust runs **host-side**,
+  excluded by construction from cross-node-fraction edge accounting and
+  per-node conntrack aggregation. The pre-chaos baseline window starts only
+  **after the load ramp completes + 60 s settle**. Validity check: the
+  pre-window UDP-entry slope must be ≈ 0 (threshold tied to the A/A noise
+  band, **finalized at M2**); iterations violating it are tainted.
 - **≥2 sessions per cell minimum**; actual n per cell **TBD from the M2
   power analysis** against each SESOI — placeholders here are deliberately
   not numbers, to avoid anchoring before the A/A variance is known.
@@ -152,18 +271,43 @@ the full analysis pipeline as if they were A/B comparisons.
 
 ## Stopping / abandon rules
 
-1. **Solver gate (M1).** If the solver cannot hit f targets within ±0.05 on
-   the live cluster, switch to the pre-committed **nearest-achievable-
-   fraction fallback** (achieved-f as regressor; V2-H1 becomes an
-   observed-dose trend test). The switch is recorded here before freeze.
-2. **A/A gate (M2).** If, after one round of gate/taint tightening, the A/A
-   false-positive rate still exceeds **2α**, the campaign is **halted** and
-   the instrumentation redesigned; no comparative claims are made from the
-   existing pipeline.
-3. **Capacity null.** If both extreme placements (f = 0 and f = 1) fail
-   app-readiness gates on the primary cluster (cluster cannot host the
-   design), the affected campaign is descoped to the achievable region and
-   the descope reported — not silently narrowed.
+1. **Solver gate (M1b) — decidable terms.** An **"attempt"** is one full
+   solve → apply → schedule → verify cycle starting from a clean app deploy.
+   The gate passes a level when **3 consecutive attempts at that f-level**
+   each land within ±0.05 of target; the counter is **per f-level and resets
+   on a miss** at that level. The gate outcome is recorded by a **committed
+   verification artifact** — the solver log plus the achieved-f table,
+   checked by a `doctor` rule — not by judgment. The gate **must run at the
+   pinned N = 6** (the reachable-fraction set is N-dependent) and re-runs if
+   the 8 × 4 GiB fallback cluster is adopted. **No-go** → the pre-committed
+   nearest-achievable-fraction fallback (achieved-f as regressor; V2-H1
+   switches to its pre-registered mixed-model / Jonckheere–Terpstra tests).
+   The switch is recorded here before freeze.
+2. **A/A gate (M2).** Any statistically significant A/A finding →
+   investigate, fix, rerun the A/A block (see §A/A). **Halt criterion: a
+   second statistically significant A/A finding after a fix** — the campaign
+   is **halted** and the instrumentation redesigned; no comparative claims
+   are made from the existing pipeline.
+3. **Capacity null — decidable predicate.** The rule fires at a cell when
+   the **app-ready gate fails in >50 % of iterations in ≥2 consecutive
+   sessions at that cell**, with the failure signature **distinguished from
+   v1's benign capacity-timeout taint** (see
+   `chaosprobe/docs/how-to/reproducing-thesis-results.md`): a route showing
+   ~100 % errors / zero successful pre-chaos samples is a broken probe — a
+   bug to fix, not capacity. The rule covers **the anti-affine r = 3 arm,
+   not only the f = 0/f = 1 extremes**: a service's 3 replicas need 3
+   schedulable distinct nodes, and the rule fires if anti-affine scheduling
+   fails (replicas Pending on anti-affinity at the pinned N). On firing, the
+   affected campaign is descoped to the achievable region and the descope
+   reported — not silently narrowed.
+4. **Second-environment transfer arm — pre-declared droppable.** If the
+   second environment is **unavailable by the end of M4** (procurement /
+   billing gate M0 unexercised, per [`02-WORKPLAN.md`](02-WORKPLAN.md)), the
+   transfer arm is dropped and **reported as not-attempted**. V2-H4 and
+   V2-H5 depend only on primary-environment data and complete regardless.
+5. **De-scope order under M1 overrun (pre-declared).** First drop the
+   second workload (hotelReservation), then the iptables arm (V2-H6).
+   Recorded as deviations.
 
 ## Deviations policy
 
