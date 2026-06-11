@@ -82,8 +82,10 @@ against the `litmus-go` source: the percentage is computed against node
 **capacity** and **clamped to allocatable** (not free memory), with no safety
 margin — on an already-utilized node the stressor cannot sustain its target,
 and the **helper pod is the kubelet's first eviction victim**: it self-evicts
-before any app pod is touched (cf. LitmusChaos issue
-[#3397](https://github.com/litmuschaos/litmus/issues/3397)). No percentage or
+before any app pod is touched (per `litmus-go`'s
+[`calculateMemoryConsumption`](https://github.com/litmuschaos/litmus-go/blob/master/chaoslib/litmus/node-memory-hog/lib/node-memory-hog.go):
+percentage of node capacity, clamped to allocatable, no in-use accounting).
+No percentage or
 absolute-MiB setting fixes this on 4 GiB workers. Memory pressure becomes
 placement-sensitive only via multi-replica + node-level exhaustion (§8.2,
 option b path).

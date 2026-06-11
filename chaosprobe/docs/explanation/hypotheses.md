@@ -107,9 +107,14 @@ window-robust composition findings (chaos-window medians, cluster-total):
 | TCP drop at first kill cycle | 5,935 → 4,253 (**−28 %**) | 4,973 → 3,937 (**−21 %**) |
 
 (1) **TCP dominates the table and drops sharply at the kill cycles in both
-placements** — and since kube-proxy never actively flushes TCP
-(kubernetes/kubernetes #100698, #104098), those drops are **kernel-side
-teardown** of flows traversing the killed pod. (2) **The clearly
+placements** — kube-proxy has no TCP conntrack-deletion path (verified
+across the ≤v1.31 exec cleaner and the ≥v1.32 netlink reconciler;
+kubernetes/kubernetes #100698, #104098), so those drops are **kernel-side
+teardown** of flows traversing the killed pod — FIN/RST transitions move
+entries into short-timeout close states (10–120 s per the
+`nf_conntrack_tcp_timeout_*` sysctl defaults), not instantaneous deletion,
+and abruptly severed flows without a sequence-valid close can linger in
+`ESTABLISHED`, which is why the drop is partial. (2) **The clearly
 placement-dependent component is UDP (DNS)**: under steady load `spread`
 sustains ~**4×** more UDP entries than `colocate` — cross-node calls drive
 connection churn and DNS re-resolution, and kube-proxy's *documented,

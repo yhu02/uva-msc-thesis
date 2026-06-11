@@ -156,6 +156,22 @@ separately so each is a one-line falsifiable target:
    self-eviction autopsy — and the discussion-tier H7 thread (target-scoped
    cross-node fraction as a flush predictor).
 
+**What the candidate did versus what the tooling did.** Because the
+framework automates heavily, we state the division of labor plainly.
+*Authored for this thesis*: the placement mutator and all eight strategies;
+the three-layer measurement design with its dependent-vs-control route
+confound check; the cross-node-fraction metric (H5) and the blast-radius
+trough measurement (H6); the provenance gate (`doctor --strict`), the
+discard-not-patch rule, and the multi-session campaign protocol; the
+churn-vs-contention fault-class framing; every committed analysis script
+(variance partition, paired tests, TOST, figure generation); and the
+judgment calls the gate forced — including retracting two of our own
+headline numbers (§5.8). *Integrated off-the-shelf*: LitmusChaos (fault
+execution), Prometheus/Locust (collection and load), Neo4j (graph storage),
+and the Online Boutique application. The science — what to vary, what to
+measure, what to believe — is the candidate's; the third-party components
+execute it.
+
 Claim 1 is substantiated by Chapters 5 and 6. Chapter 5 reports each
 hypothesis with its data, statistics, and archived provenance; Chapter 6
 argues that the three results are one structure — placement effects are real

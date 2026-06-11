@@ -48,6 +48,15 @@ fit, not for resilience or fault isolation." Cite for the `best-fit` strategy.
 reference. Source for L2's predicted ordering. The thesis finds this prescription
 **does not transfer** to single-replica churn faults — it remains valid for the
 multi-replica availability regime Kubernetes designed topology spread for.
+**H6-scoping precision (verified 2026-06-11):** describe Medea as
+*"qualitative resilience motivation plus a trace-driven unavailability
+analysis (15-day machine-unavailability traces; 16 %/24 % median/max
+container-unavailability improvement vs J-Kube)"* — never "purely
+qualitative". Its performance evaluation (HBase/TensorFlow, 400-node
+pre-production cluster) and its resilience evaluation (synthetic LRAs over
+unavailability traces) are SEPARATE experiments on different setups: Medea
+never measures a latency-vs-blast-radius pair on the same workload under
+the same placements, which is exactly the gap H5+H6 fill.
 
 ### Ousterhout et al. (2013) — Sparrow
 > K. Ousterhout, P. Wendell, M. Zaharia, I. Stoica.
@@ -218,14 +227,19 @@ is conceptually adjacent to H3: MicroRes *scores* the decoupling; this thesis
 
 ### Kikuta et al. (2025) — ChaosEater
 > D. Kikuta, H. Ikeuchi, K. Tajiri.
-> *ChaosEater: LLM-Powered Fully Automated Chaos Engineering.* ASE 2025 NIER
-> Track. (40th IEEE/ACM ASE.)
+> *ChaosEater: LLM-Powered Fully Automated Chaos Engineering.* ASE 2025
+> (40th IEEE/ACM Int'l Conf. on Automated Software Engineering), NIER track,
+> pp. 3861–3865. DOI: `10.1109/ASE63991.2025.00331`.
 
-- [arXiv:2511.07865](https://arxiv.org/abs/2511.07865)
+- [arXiv:2511.07865](https://arxiv.org/abs/2511.07865) (the NIER paper — cite this, not the 114-page extended report arXiv:2501.11107)
+- [DOI](https://doi.org/10.1109/ASE63991.2025.00331)
+- [GitHub](https://github.com/ntt-dkiku/chaos-eater)
 
-**Relevance:** Recent peer-reviewed chaos-engineering work (Nov 2025). LLM-
-driven experiment design — orthogonal to ChaosProbe but useful for situating
-the thesis in the 2025 chaos-engineering landscape.
+**Relevance:** Formally published peer-reviewed chaos-engineering work
+(verified 2026-06-11; note NIER is a short-paper new-ideas track — cite it
+as such). Automates the CE cycle with LLM agents on Kubernetes; full-text
+verified to contain zero placement/scheduling/blast-radius/conntrack
+content — adjacent lane, does not preempt H2/H5/H6.
 
 ---
 
@@ -331,7 +345,49 @@ kernel-side teardown on pod-IP removal (RST/REJECT, CNI cleanup, state
 expiry), with the UDP/DNS flush path as a contributor. Note also that
 kube-proxy conntrack behaviour changed materially across v1.31–v1.32 (the
 netlink reconciler) — always pin the cluster's Kubernetes version when citing
-this mechanism.
+this mechanism. Round-2 verification (2026-06-11) added: the UDP-only
+property is verified across **both** implementations — the exec-based
+cleaner (≤v1.31, `conntrack -D … -p udp`, visible verbatim in
+[#125467](https://github.com/kubernetes/kubernetes/issues/125467) logs) and
+the netlink reconciler (≥v1.32,
+[`cleanup.go`](https://github.com/kubernetes/kubernetes/blob/master/pkg/proxy/conntrack/cleanup.go)
+filtering `protocol != UDP`); pre-reconciler kube-proxy also flushed SCTP
+(treated like UDP — irrelevant here, no SCTP). Phrase as a verified property
+of all existing call sites, **not** an API guarantee.
+
+### Linux nf_conntrack TCP state-machine timeouts (H2 teardown semantics)
+> *Netfilter conntrack sysctl reference.* kernel.org documentation.
+
+- [docs.kernel.org/networking/nf_conntrack-sysctl.html](https://docs.kernel.org/networking/nf_conntrack-sysctl.html)
+
+**Relevance — the required hedge on "kernel-side teardown".** TCP conntrack
+entries are not destroyed instantly on close; they transition into
+short-timeout states: `nf_conntrack_tcp_timeout_close` = 10 s,
+`_close_wait` = 60 s, `_fin_wait` = 120 s, `_time_wait` = 120 s — vs
+`_established` = 432,000 s (5 days). The probe's −28 %/−21 % within-cycle
+TCP drops are therefore phrased as *"FIN/RST-driven transition into
+close states expiring ≤ 120 s"*, not instantaneous deletion; abruptly
+severed flows without a sequence-valid close can linger in `ESTABLISHED`
+(modern kernels lower the timeout only for sequence-valid RSTs), which is
+why the drops are partial.
+
+### Kubernetes DNS conntrack races (background for the UDP/DNS pool)
+> kubernetes/kubernetes [#56903](https://github.com/kubernetes/kubernetes/issues/56903)
+> ("DNS intermittent delays of 5s", 2017–2019); XING engineering,
+> [*A reason for unexplained connection timeouts on Kubernetes/Docker*](https://tech.xing.com/a-reason-for-unexplained-connection-timeouts-on-kubernetes-docker-abd041cf7e02);
+> Pumputis (Weaveworks), *Racy conntrack and DNS lookup timeouts* (site
+> defunct — use an archive.org link).
+
+**Relevance:** the canonical operational literature establishing that
+Kubernetes DNS traffic is a major UDP-conntrack workload with well-known
+pathologies. **Two distinct races — do not conflate:** (a) the same-socket
+conntrack insert/confirm race on parallel A/AAAA queries (Pumputis;
+kernel fix in Linux 5.0; mitigated by NodeLocal DNSCache), diagnosed via
+the rising `insert_failed` counter; (b) the SNAT port-allocation race that
+`--random-fully` addresses (XING). Cited as background for why the
+standing UDP pool is DNS-dominated; the thesis's placement-dependent
+pool-size observation itself has no prior description in the literature
+checked (claimed as observation, scoped to this environment).
 
 ### kubernetes/kubernetes Issue #133474
 > *Frequent churn between EndpointSlice objects.* Maintainer-tracked issue.
@@ -552,6 +608,48 @@ variability-methodology lineage doesn't start in 2018.
 
 **Relevance:** Rigorous-benchmarking methodology (report distributions and
 CIs, not means) — third leg of the H1 methodology lineage.
+
+### TOST / equivalence-testing package (H3's "evidence of absence")
+> D. J. Schuirmann. *A comparison of the two one-sided tests procedure and
+> the power approach for assessing the equivalence of average
+> bioavailability.* J. Pharmacokinetics & Biopharmaceutics 15, 1987.
+> DOI: `10.1007/BF01068419`.
+> D. Lakens. *Equivalence Tests: A Practical Primer for t Tests,
+> Correlations, and Meta-Analyses.* Social Psychological and Personality
+> Science 8(4), 2017. [DOI](https://journals.sagepub.com/doi/10.1177/1948550617697177)
+> D. Lakens, A. M. Scheel, P. M. Isager. *Equivalence Testing for
+> Psychological Research.* AMPPS 1(2), 2018.
+> [DOI](https://journals.sagepub.com/doi/10.1177/2515245918770963)
+> A. Benavoli, G. Corani, J. Demšar, M. Zaffalon. *Time for a Change: a
+> Tutorial for Comparing Multiple Classifiers Through Bayesian Analysis.*
+> JMLR 18(77), 2017. [paper](https://jmlr.org/papers/v18/16-305.html)
+
+**Relevance (verified 2026-06-11):** no native TOST precedent exists in
+systems-performance venues — the thesis says so explicitly and imports the
+procedure from biostatistics (Schuirmann 1987 original; Lakens 2017 as the
+practical primer, incl. the verbatim point that researchers "often
+incorrectly conclude an effect is absent based [on] a nonsignificant
+result"). Benavoli et al. is the peer-reviewed CS-venue precedent for
+*affirmatively accepting* practical equivalence (ROPE; accepts equivalence
+in 22 % of NHST non-rejections in its case study — "impossible with the
+NHST"). TOST requires a pre-declared SESOI (Lakens/Scheel/Isager): ours is
+|ρ| = 0.3, fixed in the committed analysis code before the campaign. Do
+**not** cite Furia/Feldt/Torkar (TSE 2021) as a TOST/ROPE-procedure
+precedent — verified to contain neither; citable only for the NHST critique.
+
+### KEP-895 — Pod Topology Spread (upstream trade-off rationale)
+> Kubernetes Enhancement Proposal 895, sig-scheduling.
+
+- [KEP-895](https://github.com/kubernetes/enhancements/tree/master/keps/sig-scheduling/895-pod-topology-spread)
+
+**Relevance — H6 scoping citation.** The upstream design rationale for
+spreading motivates "high availability" qualitatively; its only
+quantitative criteria are **scheduler-internal** (plugin execution-latency
+p90 ≤ 100 ms plus two scheduler-log error-frequency SLOs — phrase it that
+way, not "only plugin latency"). Establishes that the
+availability-vs-performance trade-off is asserted but unquantified
+upstream — part of the H6 "qualitatively known, quantified here" scoping
+triplet with Medea (§1) and AWS cell placement (§5).
 
 ---
 

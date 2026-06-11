@@ -114,10 +114,20 @@ We are explicit about what is and is not new here. That concentrating
 workload into one failure domain enlarges the blast radius when that domain
 fails is a known qualitative principle — it is the premise of cell-based
 architecture guidance in industry
-([AWS Well-Architected](https://docs.aws.amazon.com/wellarchitected/latest/reducing-scope-of-impact-with-cell-based-architecture/reducing-scope-of-impact-with-cell-based-architecture.html))
-— and the H6 prediction taken alone is near-definitional (drain a node,
-lose the pods on it). The contribution is the *quantification on the
-placement axis with both faces measured*: the same placements that H5
+([AWS Well-Architected](https://docs.aws.amazon.com/wellarchitected/latest/reducing-scope-of-impact-with-cell-based-architecture/reducing-scope-of-impact-with-cell-based-architecture.html);
+its cell-placement guidance treats co-locating partition keys as a
+qualitative factor, and its only blast-radius quantification is 1/N scoping
+arithmetic), the motivation for Kubernetes' own topology-spread constraints
+([KEP-895](https://github.com/kubernetes/enhancements/tree/master/keps/sig-scheduling/895-pod-topology-spread),
+which asserts high availability qualitatively and quantifies only
+scheduler-internal criteria), and the resilience rationale in Medea
+([Garefalakis et al. 2018](https://www.microsoft.com/en-us/research/wp-content/uploads/2018/01/medea-eurosys2018.pdf)
+— qualitative motivation plus a trace-driven unavailability analysis,
+performed separately from its performance evaluation, with no injected-fault
+or blast-radius experiment). The H6 prediction taken alone is also
+near-definitional (drain a node, lose the pods on it). The contribution is
+the *quantification on the placement axis with both faces measured on the
+same workload under identical placements* — which none of those sources do: the same placements that H5
 prices for latency are drained and priced for availability, the predicted
 blast radius materializes exactly in every iteration, and concentration
 additionally drives a ~4× recovery-time penalty that is not definitional
@@ -145,9 +155,19 @@ The probe's window-robust findings keep **both** candidate mechanisms in
 play and locate the placement-dependence precisely. First, **TCP dominates
 the conntrack table under both placements (≈80 %+ of entries) and drops
 sharply at the kill cycles in both** (spread −28 %, colocate −21 % within
-one cycle): since kube-proxy never actively flushes TCP, these drops are
-kernel-side teardown of flows traversing the killed pod — the path that
-needs no kube-proxy involvement. Second, **the clearly placement-dependent
+one cycle): kube-proxy has no TCP conntrack-deletion path — a verified
+property of every existing call site from the exec-based cleaner (≤ v1.31,
+`conntrack -D … -p udp`) through the netlink reconciler (≥ v1.32, which
+filters `protocol != UDP`; SCTP was treated like UDP pre-reconciler), though
+not an API guarantee — so these drops are kernel-side teardown of flows
+traversing the killed pod. Precisely: connection close transitions entries
+into short-timeout conntrack states (`nf_conntrack_tcp_timeout_close` = 10 s,
+`_close_wait` = 60 s, `_fin_wait` and `_time_wait` = 120 s, vs five days for
+`ESTABLISHED`), so FIN/RST-driven teardown expires entries within ≤ 120 s of
+the kill — consistent with the observed within-cycle drops — while abruptly
+severed connections whose peers never emit a sequence-valid close can linger
+in `ESTABLISHED`, which is why the drop is partial rather than total. None
+of this needs kube-proxy involvement. Second, **the clearly placement-dependent
 component is UDP (DNS)**: under steady load `spread` sustains ~4× more UDP
 entries than `colocate` (chaos-window medians 910 vs 224) — spreading the
 dependency graph across nodes means inter-service calls cross the network,

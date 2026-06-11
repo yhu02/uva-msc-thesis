@@ -138,8 +138,9 @@ dependency graph load-bearing.
   reconciliation point with an externally-suggested plan: we **verified** this study
   that `node-memory-hog` *cannot induce node pressure* on this cluster — its stress
   helper is the kubelet's first eviction victim and self-evicts before app pods are
-  touched (checked against the `litmus-go` source + LitmusChaos
-  [#3397](https://github.com/litmuschaos/litmus/issues/3397); a 100% probe showed zero
+  touched (checked against the `litmus-go` source —
+  [`calculateMemoryConsumption`](https://github.com/litmuschaos/litmus-go/blob/master/chaoslib/litmus/node-memory-hog/lib/node-memory-hog.go) applies the percentage to node *capacity*,
+  clamps to allocatable, and ignores in-use memory; a 100% probe showed zero
   MemoryPressure/OOM/eviction). And `pod-memory-hog` OOM-kills the *target pod*
   regardless of where it sits — a pod-scoped, **placement-insensitive** fault, like
   churn. So "spread beats colocate under a memory hog" is expected to **null** at

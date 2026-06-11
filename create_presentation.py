@@ -1169,7 +1169,7 @@ add_text_box(slide, 7.0, 1.45, 5.6, 0.3, "node-memory-hog evicts itself first",
              font_size=14, bold=True, color=ACCENT_ORANGE)
 add_bullet_frame(slide, 7.0, 1.85, 5.6, 2.0, [
     "• On 4 GiB workers, the kubelet evicts the\n  LitmusChaos helper pod before any app pod\n  feels memory pressure",
-    "• The experiment kills its own instrument, not\n  the application (LitmusChaos issue #3397)",
+    "• The experiment kills its own instrument, not\n  the application (litmus-go: % of node capacity,\n  clamped to allocatable)",
     "• Negative findings like these bound the fault\n  taxonomy: they tell you which experiments\n  measure the app and which measure the harness",
 ], font_size=10, color=LIGHT_GRAY)
 

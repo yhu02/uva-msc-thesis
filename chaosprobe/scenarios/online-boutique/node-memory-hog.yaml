@@ -14,7 +14,8 @@
 #     self-relieves rather than reaching the node-NotReady state it needs.
 #   - Empirically, at 75% AND 100% the target worker stayed ~75% memory with ZERO
 #     MemoryPressure / OOM / app-pod eviction (the helper just ran to Completed).
-#   - Matches litmuschaos/litmus issue #3397 ("memory hog not working under load").
+#   - Root cause per litmus-go calculateMemoryConsumption: the percentage is
+#     of node CAPACITY, clamped to allocatable, with no free-memory accounting.
 #     No percentage or MEBIBYTES value reliably fixes this on these 4 GiB nodes.
 #
 # CONCLUSION: synthetic hogs are absorbed by cgroup requests/limits; genuine
