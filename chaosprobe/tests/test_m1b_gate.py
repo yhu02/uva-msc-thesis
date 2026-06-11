@@ -1,0 +1,565 @@
+"""Tests for scripts/m1b_gate.py — the M1b live GO/NO-GO gate.
+
+Pure-Python per CONTRIBUTING: the affinity engine and Kubernetes APIs are
+MagicMocks; no cluster is touched.  Covers the per-level state machine
+(consecutive counter resets on a miss, abort after max attempts), all three
+phases, the artifact shape, restore-on-exit on success *and* on exception,
+and the CLI argument validation.
+"""
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from chaosprobe.placement.affinity_engine import ApplyResult, ServiceCheck, VerificationResult
+from chaosprobe.placement.fraction_solver import Solution
+
+_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "m1b_gate.py"
+_spec = importlib.util.spec_from_file_location("m1b_gate", _SCRIPT)
+assert _spec is not None and _spec.loader is not None
+gate = importlib.util.module_from_spec(_spec)
+sys.modules["m1b_gate"] = gate  # dataclasses resolve annotations via sys.modules
+_spec.loader.exec_module(gate)
+
+WORKERS = ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8"]
+EDGES = [("a", "b", 1.0), ("b", "c", 1.0)]
+SERVICES = ["a", "b", "c"]
+
+
+def _cfg(**overrides):
+    return gate.GateConfig(**overrides)
+
+
+def _solution(assignment, achieved, target):
+    return Solution(
+        assignment=assignment,
+        achieved_f=achieved,
+        target_f=target,
+        accepted=abs(achieved - target) <= 0.05,
+    )
+
+
+def _apply_result(services, pending=(), duration=1.5):
+    return ApplyResult(applied=sorted(services), pending=list(pending), duration_seconds=duration)
+
+
+def _verification(r, mode, oks):
+    checks = [
+        ServiceCheck(
+            service=svc,
+            ok=ok,
+            reason="" if ok else "boom",
+            ready_replicas=r,
+            nodes=["w1"],
+            assigned_node=None,
+        )
+        for svc, ok in oks.items()
+    ]
+    return VerificationResult(r=r, mode=mode, passed=all(oks.values()), services=checks)
+
+
+# ── CLI parsing helpers ───────────────────────────────────────────────
+
+
+def test_parse_workers_preserves_order():
+    assert gate.parse_workers(" w2 , w1 ,w3") == ["w2", "w1", "w3"]
+
+
+@pytest.mark.parametrize("spec", ["", " , ", "w1,w2,w1"])
+def test_parse_workers_rejects_empty_or_duplicates(spec):
+    with pytest.raises(ValueError):
+        gate.parse_workers(spec)
+
+
+def test_parse_levels_default_grid():
+    assert gate.parse_levels("0,0.25,0.5,0.75,1.0") == (0.0, 0.25, 0.5, 0.75, 1.0)
+
+
+@pytest.mark.parametrize("spec", ["abc", "0.5,oops"])
+def test_parse_levels_rejects_non_floats(spec):
+    with pytest.raises(ValueError, match="comma-separated floats"):
+        gate.parse_levels(spec)
+
+
+@pytest.mark.parametrize("spec", ["", "1.5", "-0.1,0.5"])
+def test_parse_levels_rejects_out_of_range(spec):
+    with pytest.raises(ValueError, match="in \\[0, 1\\]"):
+        gate.parse_levels(spec)
+
+
+# ── Phase A: one attempt ──────────────────────────────────────────────
+
+
+def _wire_attempt(monkeypatch, live_nodes, solver_assignment=None, pending=()):
+    """Wire the engine + solver mocks for one run_attempt call."""
+    solver_assignment = solver_assignment or {"a": 0, "b": 1, "c": 1}
+    restore = MagicMock()
+    apply_mock = MagicMock(return_value=_apply_result(solver_assignment, pending=pending))
+    solve = MagicMock(return_value=_solution(solver_assignment, 0.5, 0.5))
+    monkeypatch.setattr(gate.engine, "restore", restore)
+    monkeypatch.setattr(gate.engine, "apply_placement", apply_mock)
+    monkeypatch.setattr(gate.engine, "live_service_nodes", MagicMock(return_value=live_nodes))
+    monkeypatch.setattr(gate.fs, "solve", solve)
+    return restore, apply_mock, solve
+
+
+def test_run_attempt_in_tolerance(monkeypatch):
+    # live: a|b cross (edge a->b), b|c together (edge b->c) -> f = 0.5
+    restore, apply_mock, solve = _wire_attempt(monkeypatch, {"a": ["w1"], "b": ["w2"], "c": ["w2"]})
+    api = MagicMock()
+    record = gate.run_attempt(api, "ns", EDGES, SERVICES, WORKERS, 0.5, 1, _cfg())
+    assert record["inTolerance"] is True
+    assert record["liveAchievedF"] == 0.5
+    assert record["gap"] == 0.0
+    assert record["assignment"] == {"a": "w1", "b": "w2", "c": "w2"}
+    assert record["solverAchievedF"] == 0.5
+    assert record["schedulingLatencySeconds"] == 1.5
+    restore.assert_called_once_with(api, "ns", timeout=300.0)
+    solve.assert_called_once_with(EDGES, SERVICES, 8, 0.5, seed=0)
+    apply_mock.assert_called_once_with(
+        api,
+        "ns",
+        {"a": "w1", "b": "w2", "c": "w2"},
+        1,
+        gate.engine.MODE_PACKED,
+        WORKERS,
+        timeout=300.0,
+    )
+
+
+def test_run_attempt_judges_on_live_pods_not_solver(monkeypatch):
+    # Solver promised f=0.5, but live pods all landed on one node -> f=0.0.
+    _wire_attempt(monkeypatch, {"a": ["w1"], "b": ["w1"], "c": ["w1"]})
+    record = gate.run_attempt(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.5, 1, _cfg())
+    assert record["liveAchievedF"] == 0.0
+    assert record["inTolerance"] is False
+
+
+def test_run_attempt_unverifiable_service_is_a_miss(monkeypatch):
+    _wire_attempt(monkeypatch, {"a": ["w1"], "b": [], "c": ["w1", "w2"]})
+    record = gate.run_attempt(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.5, 1, _cfg())
+    assert record["inTolerance"] is False
+    assert record["liveAchievedF"] is None
+    assert "b, c" in record["reason"]
+
+
+def test_run_attempt_seed_advances_per_attempt(monkeypatch):
+    _, _, solve = _wire_attempt(monkeypatch, {"a": ["w1"], "b": ["w2"], "c": ["w2"]})
+    gate.run_attempt(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.5, 4, _cfg(seed=10))
+    assert solve.call_args.kwargs["seed"] == 13  # base 10 + attempt 4 - 1
+
+
+# ── Phase A: the per-level state machine ──────────────────────────────
+
+
+def _scripted_attempts(monkeypatch, hits):
+    """Replace run_attempt with a script of in-tolerance outcomes."""
+    outcomes = iter(hits)
+
+    def fake_attempt(api, ns, edges, services, workers, level, attempt_no, cfg):
+        return {"attempt": attempt_no, "target": level, "inTolerance": next(outcomes)}
+
+    monkeypatch.setattr(gate, "run_attempt", fake_attempt)
+
+
+def test_run_level_passes_on_three_consecutive(monkeypatch):
+    _scripted_attempts(monkeypatch, [True, True, True])
+    result = gate.run_level(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.25, _cfg())
+    assert result["passed"] is True
+    assert result["totalAttempts"] == 3
+    assert [a["consecutiveAfter"] for a in result["attempts"]] == [1, 2, 3]
+
+
+def test_run_level_counter_resets_on_miss(monkeypatch):
+    _scripted_attempts(monkeypatch, [True, True, False, True, True, True])
+    result = gate.run_level(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.5, _cfg())
+    assert result["passed"] is True
+    assert result["totalAttempts"] == 6
+    assert [a["consecutiveAfter"] for a in result["attempts"]] == [1, 2, 0, 1, 2, 3]
+
+
+def test_run_level_aborts_after_max_attempts(monkeypatch):
+    _scripted_attempts(monkeypatch, [True, True, False, True, False, True])
+    result = gate.run_level(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.75, _cfg())
+    assert result["passed"] is False
+    assert result["totalAttempts"] == 6  # aborted at max_attempts
+    assert result["bestConsecutive"] == 2
+    assert result["requiredConsecutive"] == 3
+
+
+def test_run_phase_a_aggregates_levels(monkeypatch):
+    levels = iter([{"passed": True, "target": 0.0}, {"passed": False, "target": 1.0}])
+    monkeypatch.setattr(gate, "run_level", lambda api, ns, e, s, w, level, cfg: next(levels))
+    result = gate.run_phase_a(MagicMock(), "ns", EDGES, SERVICES, WORKERS, _cfg(levels=(0.0, 1.0)))
+    assert result["passed"] is False
+    assert result["nNodes"] == 8
+    assert [level["target"] for level in result["levels"]] == [0.0, 1.0]
+
+
+def test_run_phase_a_all_pass(monkeypatch):
+    monkeypatch.setattr(
+        gate, "run_level", lambda api, ns, e, s, w, level, cfg: {"passed": True, "target": level}
+    )
+    result = gate.run_phase_a(MagicMock(), "ns", EDGES, SERVICES, WORKERS, _cfg())
+    assert result["passed"] is True
+    assert len(result["levels"]) == 5
+
+
+# ── Phase B ───────────────────────────────────────────────────────────
+
+
+def _wire_phase_b(monkeypatch, anti_ok=True, packed_ok=True):
+    restore = MagicMock()
+    apply_mock = MagicMock(return_value=_apply_result(SERVICES, duration=7.0))
+    verify = MagicMock(
+        side_effect=[
+            _verification(3, "anti-affine", {svc: anti_ok for svc in SERVICES}),
+            _verification(3, "packed", {svc: packed_ok for svc in SERVICES}),
+        ]
+    )
+    solve = MagicMock(return_value=_solution({"a": 0, "b": 0, "c": 0}, 0.0, 0.0))
+    monkeypatch.setattr(gate.engine, "restore", restore)
+    monkeypatch.setattr(gate.engine, "apply_placement", apply_mock)
+    monkeypatch.setattr(gate.engine, "verify_placement", verify)
+    monkeypatch.setattr(gate.fs, "solve", solve)
+    return restore, apply_mock, verify, solve
+
+
+def test_run_phase_b_passes_both_arms(monkeypatch):
+    restore, apply_mock, verify, solve = _wire_phase_b(monkeypatch)
+    api = MagicMock()
+    result = gate.run_phase_b(api, "ns", EDGES, SERVICES, WORKERS, _cfg())
+    assert result["passed"] is True
+    assert result["antiAffine"]["passed"] is True
+    assert result["antiAffine"]["schedulingLatencySeconds"] == 7.0
+    assert result["packed"]["assignment"] == {"a": "w1", "b": "w1", "c": "w1"}
+    assert result["packed"]["solverAchievedF"] == 0.0
+    # anti-affine arm: assignment=None (the scheduler chooses)
+    anti_call = apply_mock.call_args_list[0]
+    assert anti_call.args[2] is None
+    assert anti_call.args[3:5] == (3, gate.engine.MODE_ANTI_AFFINE)
+    packed_call = apply_mock.call_args_list[1]
+    assert packed_call.args[3:5] == (3, gate.engine.MODE_PACKED)
+    solve.assert_called_once_with(EDGES, SERVICES, 8, 0.0, seed=0)
+    assert restore.call_count == 2  # clean state before each arm
+
+
+@pytest.mark.parametrize("anti_ok, packed_ok", [(False, True), (True, False)])
+def test_run_phase_b_fails_when_either_arm_fails(monkeypatch, anti_ok, packed_ok):
+    _wire_phase_b(monkeypatch, anti_ok=anti_ok, packed_ok=packed_ok)
+    result = gate.run_phase_b(MagicMock(), "ns", EDGES, SERVICES, WORKERS, _cfg())
+    assert result["passed"] is False
+    assert result["antiAffine"]["passed"] is anti_ok
+    assert result["packed"]["passed"] is packed_ok
+
+
+# ── Phase C ───────────────────────────────────────────────────────────
+
+
+def _phase_c_pod(node, namespace, cpu="100m", memory="128Mi", phase="Running", resources=True):
+    pod = MagicMock()
+    pod.spec.node_name = node
+    pod.status.phase = phase
+    pod.metadata.namespace = namespace
+    container = MagicMock()
+    if resources:
+        container.resources.requests = {"cpu": cpu, "memory": memory}
+    else:
+        container.resources = None
+    pod.spec.containers = [container]
+    return pod
+
+
+def _phase_c_node(name, cpu="4", memory="8Gi"):
+    node = MagicMock()
+    node.metadata.name = name
+    node.status.allocatable = {"cpu": cpu, "memory": memory}
+    return node
+
+
+def _phase_c_api(pods, nodes):
+    api = MagicMock()
+    api.core.list_pod_for_all_namespaces.return_value = MagicMock(items=pods)
+    api.core.list_node.return_value = MagicMock(items=nodes)
+    return api
+
+
+def test_run_phase_c_records_headroom_and_passes():
+    api = _phase_c_api(
+        pods=[
+            _phase_c_pod("w1", "ns", cpu="500m", memory="1Gi"),
+            _phase_c_pod("w2", "kube-system", cpu="500m", memory="1Gi"),
+            _phase_c_pod("elsewhere", "ns"),  # not on a gate worker: excluded
+            _phase_c_pod("w1", "ns", phase="Succeeded"),  # terminal: excluded
+            _phase_c_pod("w2", "ns", resources=False),  # no requests: contributes 0
+        ],
+        nodes=[_phase_c_node("w1"), _phase_c_node("w2"), _phase_c_node("control-plane")],
+    )
+    result = gate.run_phase_c(api, "ns", ["w1", "w2"])
+    assert result["passed"] is True
+    assert result["appNamespaceRequests"] == {"cpuMillicores": 500, "memoryBytes": 2**30}
+    assert result["allNamespaceRequestsOnWorkers"]["cpuMillicores"] == 1000
+    assert result["allocatablePerWorker"] == {
+        "w1": {"cpuMillicores": 4000, "memoryBytes": 8 * 2**30},
+        "w2": {"cpuMillicores": 4000, "memoryBytes": 8 * 2**30},
+    }
+    assert result["headroom"]["cpu"] == 0.875
+    assert result["missingWorkers"] == []
+
+
+def test_run_phase_c_fails_below_headroom_floor():
+    api = _phase_c_api(
+        pods=[_phase_c_pod("w1", "ns", cpu="3500m", memory="1Gi")],
+        nodes=[_phase_c_node("w1")],
+    )
+    result = gate.run_phase_c(api, "ns", ["w1"])
+    assert result["passed"] is False
+    assert result["headroom"]["cpu"] == 0.125
+
+
+def test_run_phase_c_fails_when_a_worker_is_missing():
+    api = _phase_c_api(pods=[], nodes=[_phase_c_node("w1")])
+    result = gate.run_phase_c(api, "ns", ["w1", "w9"])
+    assert result["passed"] is False
+    assert result["missingWorkers"] == ["w9"]
+
+
+def test_run_phase_c_zero_allocatable_reads_as_no_headroom():
+    api = _phase_c_api(pods=[], nodes=[])
+    result = gate.run_phase_c(api, "ns", ["w1"])
+    assert result["headroom"] == {"cpu": 0.0, "memory": 0.0}
+    assert result["passed"] is False
+
+
+def test_pod_without_spec_or_status_is_skipped():
+    pod = MagicMock()
+    pod.spec = None
+    pod.status = None
+    api = _phase_c_api(pods=[pod], nodes=[_phase_c_node("w1")])
+    result = gate.run_phase_c(api, "ns", ["w1"])
+    assert result["allNamespaceRequestsOnWorkers"] == {"cpuMillicores": 0, "memoryBytes": 0}
+
+
+# ── summary lines ─────────────────────────────────────────────────────
+
+
+def _full_artifact(passed=True):
+    return {
+        "phaseA": {
+            "levels": [
+                {
+                    "target": 0.25,
+                    "passed": passed,
+                    "bestConsecutive": 3 if passed else 1,
+                    "requiredConsecutive": 3,
+                    "totalAttempts": 3 if passed else 6,
+                }
+            ],
+            "passed": passed,
+        },
+        "phaseB": {
+            "antiAffine": {
+                "passed": passed,
+                "schedulingLatencySeconds": 7.0,
+                "verification": {"services": [{"ok": passed}, {"ok": True}]},
+            },
+            "packed": {
+                "passed": True,
+                "schedulingLatencySeconds": 3.0,
+                "verification": {"services": [{"ok": True}, {"ok": True}]},
+            },
+            "passed": passed,
+        },
+        "phaseC": {"passed": passed, "headroom": {"cpu": 0.62, "memory": 0.81}},
+        "passed": passed,
+    }
+
+
+def test_summary_lines_pass_verdicts():
+    lines = gate.summary_lines(_full_artifact(passed=True))
+    assert lines[0] == "PASS  phase-A f=0.25  best streak 3/3 in 3 attempt(s)"
+    assert "PASS  phase-B r=3 anti-affine  2/2 services verified (latency 7.0s)" in lines
+    assert any(line.startswith("PASS  phase-C capacity  headroom cpu 62%") for line in lines)
+    assert lines[-1] == "OVERALL: PASS"
+
+
+def test_summary_lines_fail_verdicts():
+    lines = gate.summary_lines(_full_artifact(passed=False))
+    assert lines[0].startswith("FAIL  phase-A f=0.25")
+    assert any(line.startswith("FAIL  phase-B r=3 anti-affine  1/2") for line in lines)
+    assert lines[-1] == "OVERALL: FAIL"
+
+
+def test_summary_lines_partial_artifact_only_overall():
+    assert gate.summary_lines({"passed": False}) == ["OVERALL: FAIL"]
+
+
+# ── main ──────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def summary_file(tmp_path):
+    summary = {
+        "strategies": {
+            "default": {
+                "iterations": [
+                    {"podPlacements": {"a-aa1-bb2": "w1", "b-aa1-bb2": "w2", "c-aa1-bb2": "w2"}}
+                ],
+                "aggregated": {"routeViewAggregate": [{"route": "a->b"}, {"route": "b->c"}]},
+            }
+        }
+    }
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps(summary))
+    return str(path)
+
+
+def _wire_main(monkeypatch, phase_a=None, phase_b=None, phase_c=None):
+    api = MagicMock()
+    monkeypatch.setattr(gate.engine.K8sApi, "from_cluster", MagicMock(return_value=api))
+    restore = MagicMock()
+    monkeypatch.setattr(gate.engine, "restore", restore)
+    artifact = _full_artifact()
+    monkeypatch.setattr(gate, "run_phase_a", MagicMock(return_value=phase_a or artifact["phaseA"]))
+    monkeypatch.setattr(gate, "run_phase_b", MagicMock(return_value=phase_b or artifact["phaseB"]))
+    monkeypatch.setattr(gate, "run_phase_c", MagicMock(return_value=phase_c or artifact["phaseC"]))
+    return api, restore
+
+
+def _argv(summary_file, out, *extra):
+    return [
+        "--summary",
+        summary_file,
+        "--workers",
+        ",".join(WORKERS),
+        "-o",
+        out,
+        *extra,
+    ]
+
+
+def test_main_pass_writes_artifact_and_returns_zero(monkeypatch, tmp_path, capsys, summary_file):
+    api, restore = _wire_main(monkeypatch)
+    out = str(tmp_path / "artifact.json")
+    assert gate.main(_argv(summary_file, out)) == 0
+    artifact = json.loads(Path(out).read_text())
+    assert artifact["schema"] == gate.SCHEMA
+    assert artifact["passed"] is True
+    assert artifact["workers"] == WORKERS
+    assert artifact["namespace"] == "online-boutique"
+    assert artifact["config"]["levels"] == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert artifact["phaseA"]["passed"] is True
+    assert "startedAt" in artifact and "finishedAt" in artifact
+    output = capsys.readouterr().out
+    assert f"Gate artifact written to {out}" in output
+    assert "OVERALL: PASS" in output
+    restore.assert_not_called()  # no --restore-on-exit
+    # phases received the parsed graph + workers
+    args = gate.run_phase_a.call_args.args
+    assert args[0] is api
+    assert args[2] == [("a", "b", 1.0), ("b", "c", 1.0)]
+    assert args[3] == ["a", "b", "c"]
+
+
+def test_main_failure_returns_one(monkeypatch, tmp_path, capsys, summary_file):
+    _wire_main(monkeypatch, phase_c={"passed": False, "headroom": {"cpu": 0.1, "memory": 0.2}})
+    out = str(tmp_path / "artifact.json")
+    assert gate.main(_argv(summary_file, out)) == 1
+    assert json.loads(Path(out).read_text())["passed"] is False
+    assert "OVERALL: FAIL" in capsys.readouterr().out
+
+
+def test_main_restore_on_exit_restores_on_success(monkeypatch, tmp_path, summary_file):
+    api, restore = _wire_main(monkeypatch)
+    out = str(tmp_path / "artifact.json")
+    assert gate.main(_argv(summary_file, out, "--restore-on-exit")) == 0
+    restore.assert_called_once_with(api, "online-boutique", timeout=300.0)
+
+
+def test_main_exception_still_restores_and_writes_artifact(monkeypatch, tmp_path, summary_file):
+    api, restore = _wire_main(monkeypatch)
+    monkeypatch.setattr(gate, "run_phase_b", MagicMock(side_effect=RuntimeError("node down")))
+    out = str(tmp_path / "artifact.json")
+    with pytest.raises(RuntimeError, match="node down"):
+        gate.main(_argv(summary_file, out, "--restore-on-exit"))
+    restore.assert_called_once()
+    artifact = json.loads(Path(out).read_text())
+    assert artifact["passed"] is False
+    assert "node down" in artifact["aborted"]
+    assert artifact["phaseA"]["passed"] is True  # partial record survives
+
+
+def test_main_sigint_still_restores_and_writes_artifact(monkeypatch, tmp_path, summary_file):
+    _, restore = _wire_main(monkeypatch)
+    monkeypatch.setattr(gate, "run_phase_a", MagicMock(side_effect=KeyboardInterrupt()))
+    out = str(tmp_path / "artifact.json")
+    with pytest.raises(KeyboardInterrupt):
+        gate.main(_argv(summary_file, out, "--restore-on-exit"))
+    restore.assert_called_once()
+    assert "KeyboardInterrupt" in json.loads(Path(out).read_text())["aborted"]
+
+
+def test_main_restore_failure_never_masks_the_run(monkeypatch, tmp_path, capsys, summary_file):
+    _, restore = _wire_main(monkeypatch)
+    restore.side_effect = RuntimeError("api gone")
+    out = str(tmp_path / "artifact.json")
+    assert gate.main(_argv(summary_file, out, "--restore-on-exit")) == 0
+    assert "restore-on-exit failed: api gone" in capsys.readouterr().err
+
+
+def test_main_custom_gate_knobs(monkeypatch, tmp_path, summary_file):
+    _wire_main(monkeypatch)
+    out = str(tmp_path / "artifact.json")
+    argv = _argv(
+        summary_file,
+        out,
+        "-n",
+        "other-ns",
+        "--levels",
+        "0,1",
+        "--tolerance",
+        "0.1",
+        "--consecutive",
+        "2",
+        "--max-attempts",
+        "4",
+        "--seed",
+        "7",
+        "--timeout",
+        "60",
+    )
+    assert gate.main(argv) == 0
+    artifact = json.loads(Path(out).read_text())
+    assert artifact["namespace"] == "other-ns"
+    assert artifact["config"] == {
+        "levels": [0.0, 1.0],
+        "tolerance": 0.1,
+        "consecutive": 2,
+        "maxAttempts": 4,
+        "seed": 7,
+        "timeoutSeconds": 60.0,
+        "attemptProtocol": "restore-to-default,solve,apply(r=1),schedule,verify-live",
+    }
+    cfg = gate.run_phase_a.call_args.args[5]
+    assert cfg.consecutive == 2 and cfg.max_attempts == 4 and cfg.seed == 7
+
+
+def test_main_rejects_bad_workers(monkeypatch, summary_file):
+    with pytest.raises(SystemExit, match="duplicate"):
+        gate.main(["--summary", summary_file, "--workers", "w1,w1"])
+
+
+def test_main_rejects_bad_levels(monkeypatch, summary_file):
+    with pytest.raises(SystemExit, match="in \\[0, 1\\]"):
+        gate.main(["--summary", summary_file, "--workers", "w1,w2", "--levels", "2.0"])
+
+
+def test_main_rejects_summary_without_edges(monkeypatch, tmp_path):
+    path = tmp_path / "empty.json"
+    path.write_text(json.dumps({"strategies": {}}))
+    with pytest.raises(SystemExit, match="no inter-service edges"):
+        gate.main(["--summary", str(path), "--workers", "w1,w2"])
