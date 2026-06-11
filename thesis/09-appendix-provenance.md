@@ -1,5 +1,12 @@
 # Appendix A — Run provenance · Appendix B — Negative findings
 
+> **Artifact availability.** All 17 run archives below, together with the
+> conntrack protocol-probe bundle, SHA-256 checksums, and a claims→archives
+> README, are published as a versioned public dataset:
+> **DOI [10.5281/zenodo.20639146](https://doi.org/10.5281/zenodo.20639146)**
+> (CC-BY-4.0, published 2026-06-11). Reviewers do not need repository access
+> to verify any quoted number.
+
 ## A. Archived-run provenance
 
 Generated from the per-archive `artifact-manifest.json` files in
