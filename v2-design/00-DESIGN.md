@@ -138,14 +138,19 @@ showed the clearly placement-dependent conntrack component is **UDP (DNS)**:
 spread sustains several-fold more UDP entries than packed placements,
 matching kube-proxy's deliberately UDP-only cleanup. NodeLocal DNSCache
 moves pod DNS to a node-local cache, removing most cross-node UDP DNS flows
-from conntrack. **Prediction (falsifiable): with the cache ON, spread's
-during-churn UDP-conntrack drop collapses** (quantified within-placement bar
-in V2-H2 — the contrast is paired within the spread placement, against its
-own cache-off drop, because the packed arm's UDP pool is too small to serve
-as a denominator; see pre-registration). If spread's UDP drop persists
-largely unchanged with the cache on, the UDP/DNS account of H2's placement
-dependence is wrong. This is the mechanism *proof* step v1 explicitly
-deferred ("H2 flush apportionment", §8.2).
+from conntrack. **V2-H2 is a two-part confirmatory conjunction** (see
+pre-registration): **(a)** the placement-dependence replication —
+between-placement, cache-off arms: spread's during-churn UDP drop exceeds
+packed's, a paired *directional* comparison of absolute drops, for which
+the packed arm IS the comparator (no ratio denominator is involved);
+**(b)** the intervention — within-spread, paired: **with the cache ON,
+spread's during-churn UDP-conntrack drop collapses by ≥50 %** against its
+own cache-off drop (the within-spread *ratio* uses spread's own drop as
+denominator precisely because the packed arm's pool is too small for a
+ratio — but only for part (b)). Family input: max(p_a, p_b). If spread's
+UDP drop persists largely unchanged with the cache on, the UDP/DNS account
+of H2's placement dependence is wrong. This is the mechanism *proof* step
+v1 explicitly deferred ("H2 flush apportionment", §8.2).
 
 **Arm 2 — kube-proxy ipvs vs iptables (exploratory secondary, V2-H6).** v1
 ran ipvs only and flagged mechanism behaviour as environment-contingent
@@ -294,11 +299,16 @@ artifacts.
   the heaviest cell: memory ~81 % (8/42), vCPU ~62 % (8/21); at **2× the
   placeholder requests** (16 GiB / 16 vCPU): memory ~62 %, vCPU ~24 % —
   so at 2×, **vCPU is the binding resource and the >30 % headroom claim
-  holds only at measured-≈-placeholder levels**. The M1b capacity check
-  therefore verifies the *measured* request sums against allocatable on
-  both resources, and if measured vCPU requests exceed ~1.3× the
-  placeholders, the pinned spec escalates to 6 × 6 vCPU (an M0-flagged
-  contingency), keeping ≥30 % vCPU headroom at the heaviest cell.
+  holds only at measured-≈-placeholder levels**. The *measured* request
+  sums are therefore collected in **M1a from the live v1 cluster**
+  (`kubectl` sum of `resources.requests`, ×3 for the r = 3 projection) —
+  data that exists **before the M0 purchase** — and the escalation decision
+  is taken **at M0**: if measured vCPU requests exceed ~1.3× these
+  placeholders, the spec to procure escalates to **6 × 6 vCPU** (the
+  contingency is listed in the WORKPLAN M0 gate), keeping ≥30 % vCPU
+  headroom at the heaviest cell. The M1b capacity check then re-verifies
+  the same sums against the *procured* hardware's allocatable on both
+  resources.
 - **Anti-affinity feasibility:** at r = 3 anti-affine, each service's 3
   replicas need **3 schedulable, distinct nodes**; N = 6 satisfies this with
   slack. "r = 3 anti-affine schedulable at the pinned N" is an **explicit
@@ -368,7 +378,7 @@ restating numbers.
 | v1 result (archived) | v1 literals (canonical) | v2 successor | What changes |
 |---|---|---|---|
 | H5 two-regime separator (2 batches) | ~1.25× ≈ 25 % east-west tail separation, f ≈ 0 vs ≈ 0.70–0.82; lone interior point 0.13 vanished in batch 2; ρ 0.79 → 0.25 | V2-H1 dose-response (**confirmatory**) | Interior of the dose sampled by design |
-| H2 flush (7/7 sessions, sign test p = 0.0156) + protocol probe (UDP placement-dependence) | flush medians 38.5 % vs 2.7 %; UDP entries spread 910 vs colocate 224 (~4×); packed/colocate UDP pool ~72–224 entries across the probe window | V2-H2 DNS-cache intervention (**confirmatory**) | Consistency → controlled intervention; within-placement contrast avoids the near-zero packed denominator |
+| H2 flush (7/7 sessions, sign test p = 0.0156) + protocol probe (UDP placement-dependence) | flush medians 38.5 % vs 2.7 %; UDP entries spread 910 vs colocate 224 (~4×); packed/colocate UDP pool ~72–224 entries across the probe window | V2-H2 placement-dependence + DNS-cache intervention (**confirmatory**, two-part conjunction) | Consistency → replication (between-placement, directional) plus controlled intervention (within-spread ratio, whose denominator is spread's own drop — avoiding the near-zero packed pool for the ratio while keeping packed as the part-(a) comparator) |
 | H6 blast = predicted; E1 deliberately skipped (structurally null) | ρ = 1.0, n = 6; colocate 11/11 services down vs spread 2/11 | V2-H3 replication rescue (**confirmatory**) | Anti-affinity becomes expressible; E1 finally runnable |
 | H5 × H6 trade-off (two-point) | (see rows above) | V2-H4 Pareto frontier (**descriptive**) | Two points → frontier with CIs and δ dominance margins |
 | H1 score reliability | ICC = 0.033, CI [0.014, 0.178], 7 sessions / 147 iterations; MDE ≈ 51 points at n = 3; between-session variance 37.6 % of score variance | V2-H5 scorecard reliability (**confirmatory**) | Critique → constructive replacement; absolute bar + fresh-data evaluation |

@@ -54,7 +54,7 @@ which is exactly the design Page's L requires.
 over designed levels is the sensitivity check (non-confirmatory). n sessions
 per level: **TBD from M2 power analysis** (≥2 minimum, §Session design).
 
-**Fallback path (pre-registered now).** If the M1 solver gate forces the
+**Fallback path (pre-registered now).** If the M1b solver gate forces the
 nearest-achievable-fraction design (DESIGN §9), the regressor becomes
 continuous achieved-f and Page's test no longer applies. The replacement is
 fixed here: **primary = linear mixed-effects model** with achieved-f as a
