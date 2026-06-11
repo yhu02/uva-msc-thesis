@@ -1,0 +1,117 @@
+# DeathStarBench hotelReservation — geo (gRPC, port 8083) + mongodb-geo
+# Source: https://github.com/delimitrou/DeathStarBench/tree/6ecb09706140f8730b5385c08f1386c654c3c526/hotelReservation/kubernetes/geo
+# Upstream commit: 6ecb0970 (2024-06-27, latest commit touching hotelReservation).
+# Adaptations vs upstream: `io.kompose.service` labels -> `app:` (ChaosProbe prober
+# convention); images pinned by tag; explicit resources.requests; tcpSocket readiness
+# probes added; kompose/istio annotations dropped; mongodb hostPath PV/PVC replaced by
+# emptyDir (chaos runs need no persistence; each service re-seeds its database on boot).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geo
+  labels:
+    app: geo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: geo
+  template:
+    metadata:
+      labels:
+        app: geo
+    spec:
+      containers:
+        - name: hotel-reserv-geo
+          image: deathstarbench/hotel-reservation:0.3.5
+          command: ["./geo"]
+          ports:
+            - containerPort: 8083
+          readinessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            tcpSocket:
+              port: 8083
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: geo
+  labels:
+    app: geo
+spec:
+  type: ClusterIP
+  selector:
+    app: geo
+  ports:
+    - name: grpc
+      port: 8083
+      targetPort: 8083
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb-geo
+  labels:
+    app: mongodb-geo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-geo
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mongodb-geo
+    spec:
+      hostname: geo-db
+      containers:
+        - name: hotel-reserv-geo-mongo
+          image: mongo:4.4.6
+          ports:
+            - containerPort: 27017
+          readinessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            tcpSocket:
+              port: 27017
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - mountPath: /data/db
+              name: data
+      volumes:
+        - name: data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-geo
+  labels:
+    app: mongodb-geo
+spec:
+  type: ClusterIP
+  selector:
+    app: mongodb-geo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017

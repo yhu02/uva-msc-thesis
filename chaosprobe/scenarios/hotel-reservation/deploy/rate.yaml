@@ -1,0 +1,175 @@
+# DeathStarBench hotelReservation — rate (gRPC, port 8084) + memcached-rate + mongodb-rate
+# Source: https://github.com/delimitrou/DeathStarBench/tree/6ecb09706140f8730b5385c08f1386c654c3c526/hotelReservation/kubernetes/rate
+# Upstream commit: 6ecb0970 (2024-06-27, latest commit touching hotelReservation).
+# Adaptations vs upstream: `io.kompose.service` labels -> `app:` (ChaosProbe prober
+# convention); images pinned by tag; explicit resources.requests; tcpSocket readiness
+# probes added; kompose/istio annotations dropped; mongodb hostPath PV/PVC replaced by
+# emptyDir (chaos runs need no persistence; each service re-seeds its database on boot).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rate
+  labels:
+    app: rate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rate
+  template:
+    metadata:
+      labels:
+        app: rate
+    spec:
+      containers:
+        - name: hotel-reserv-rate
+          image: deathstarbench/hotel-reservation:0.3.5
+          command: ["./rate"]
+          ports:
+            - containerPort: 8084
+          readinessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            tcpSocket:
+              port: 8084
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rate
+  labels:
+    app: rate
+spec:
+  type: ClusterIP
+  selector:
+    app: rate
+  ports:
+    - name: grpc
+      port: 8084
+      targetPort: 8084
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memcached-rate
+  labels:
+    app: memcached-rate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memcached-rate
+  template:
+    metadata:
+      labels:
+        app: memcached-rate
+    spec:
+      containers:
+        - name: hotel-reserv-rate-mmc
+          # Upstream env kept for parity; library/memcached ignores MEMCACHED_* vars
+          # (it runs with its defaults: 64 MB cache, 4 threads).
+          image: memcached:1.6.42-alpine
+          env:
+            - name: MEMCACHED_CACHE_SIZE
+              value: "128"
+            - name: MEMCACHED_THREADS
+              value: "2"
+          ports:
+            - containerPort: 11211
+          readinessProbe:
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            tcpSocket:
+              port: 11211
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memcached-rate
+  labels:
+    app: memcached-rate
+spec:
+  type: ClusterIP
+  selector:
+    app: memcached-rate
+  ports:
+    - name: memcached
+      port: 11211
+      targetPort: 11211
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb-rate
+  labels:
+    app: mongodb-rate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-rate
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mongodb-rate
+    spec:
+      hostname: rate-db
+      containers:
+        - name: hotel-reserv-rate-mongo
+          image: mongo:4.4.6
+          ports:
+            - containerPort: 27017
+          readinessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            tcpSocket:
+              port: 27017
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - mountPath: /data/db
+              name: data
+      volumes:
+        - name: data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-rate
+  labels:
+    app: mongodb-rate
+spec:
+  type: ClusterIP
+  selector:
+    app: mongodb-rate
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017

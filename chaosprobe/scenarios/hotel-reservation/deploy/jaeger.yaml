@@ -1,0 +1,94 @@
+# DeathStarBench hotelReservation — jaeger all-in-one (tracing; every app service
+# sends spans to jaeger:6831/UDP per the image's baked-in config.json).
+# Source: https://github.com/delimitrou/DeathStarBench/tree/6ecb09706140f8730b5385c08f1386c654c3c526/hotelReservation/kubernetes/jaeger
+# Upstream commit: 6ecb0970 (2024-06-27, latest commit touching hotelReservation).
+# Adaptations vs upstream: `io.kompose.service` labels -> `app:` (ChaosProbe prober
+# convention); image pinned (upstream uses jaegertracing/all-in-one:latest — 1.58.1 is
+# the release current at the pinned commit date); explicit resources.requests;
+# MEMORY_MAX_TRACES added to bound the in-memory trace store; tcpSocket readiness
+# probe added; kompose/istio annotations dropped.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  labels:
+    app: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: hotel-reserv-jaeger
+          image: jaegertracing/all-in-one:1.58.1
+          env:
+            - name: MEMORY_MAX_TRACES
+              value: "10000"
+          ports:
+            - containerPort: 14269
+            - containerPort: 5778
+            - containerPort: 14268
+            - containerPort: 14267
+            - containerPort: 16686
+            - containerPort: 5775
+              protocol: UDP
+            - containerPort: 6831
+              protocol: UDP
+            - containerPort: 6832
+              protocol: UDP
+          readinessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            tcpSocket:
+              port: 16686
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  labels:
+    app: jaeger
+spec:
+  type: ClusterIP
+  selector:
+    app: jaeger
+  ports:
+    - name: admin
+      port: 14269
+      targetPort: 14269
+    - name: configs
+      port: 5778
+      targetPort: 5778
+    - name: collector-http
+      port: 14268
+      targetPort: 14268
+    - name: collector-tchan
+      port: 14267
+      targetPort: 14267
+    - name: query
+      port: 16686
+      targetPort: 16686
+    - name: zipkin-compact
+      port: 5775
+      targetPort: 5775
+      protocol: UDP
+    - name: agent-compact
+      port: 6831
+      targetPort: 6831
+      protocol: UDP
+    - name: agent-binary
+      port: 6832
+      targetPort: 6832
+      protocol: UDP
