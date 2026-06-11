@@ -43,6 +43,7 @@ coverage.xml
 # Output files
 *.json
 !scenarios/**/*.json
+!chaosprobe/scenarios/**/*.json
 !chaosprobe/examples/**/*.json
 
 # Experiment run outputs — never committed (charts/reports/data are runtime artifacts)
