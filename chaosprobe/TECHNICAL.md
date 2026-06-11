@@ -342,6 +342,28 @@ Fraction-targeting placement solver + reachable-set enumerator — the M1a solve
 
 **Live-validation helper**: `scripts/apply_placement_map.py --map '{"svc": "workerN", ...}' [-n online-boutique] [--wait] [--summary <summary.json>] [--target f]` pins each Deployment via the mutator's own nodeSelector patching, reads back live pod placements, and prints the achieved fraction using the same `achieved_fraction` implementation; `--restore` removes the pins (the M1a solve→apply→schedule→verify loop).
 
+#### affinity_engine.py (v2 / M1b)
+
+Replica-level affinity placement engine — the M1b engine build of the v2 design ([`v2-design/00-DESIGN.md`](../v2-design/00-DESIGN.md) §2.2 / Knob B §2.3, [`v2-design/02-WORKPLAN.md`](../v2-design/02-WORKPLAN.md) M1b). Placement is expressed as scheduler constraints and the achieved placement is **verified from live pods, never assumed**. Supported cells (`r = 2` deliberately unsupported per DESIGN §2.3):
+
+| (r, mode) | Patch emitted |
+|---|---|
+| `r=1` (either mode) | `replicas: 1` + required nodeAffinity pin to the assigned node (`kubernetes.io/hostname In [node]`) — v1 nodeSelector semantics as affinity, the comparability anchor |
+| `r=3` packed | `replicas: 3` + the same nodeAffinity pin — all replicas co-scheduled on one node (v1's structural behaviour, the C2 control) |
+| `r=3` anti-affine | `replicas: 3` + required podAntiAffinity on `kubernetes.io/hostname` against the service's own `app` label, **no node pin** — 3 replicas on 3 distinct scheduler-chosen nodes (the E1-enabling contrast) |
+
+All patches keep the v1 mutator's managed-annotation convention (`chaosprobe.io/placement-strategy`, values `affinity-r<r>-<mode>`), switch to a `Recreate` rollout, and delete any stale v1 hostname nodeSelector.
+
+| Function | Purpose |
+|---|---|
+| `build_patch(service, node_name, r, mode, node_names)` | Pure Deployment patch builder for one (r, mode) cell, with validation (pin ∈ `node_names`; anti-affine needs ≥ r distinct nodes and no pin) |
+| `apply_placement(api, namespace, assignment, r, mode, node_names, …)` | Patch + wait for rollouts; `assignment=None` for r=3 anti-affine (discovers app deployments, excluding chaos infra + loadgenerator); returns `ApplyResult` (applied, pending, scheduling latency) |
+| `verify_placement(api, namespace, r, mode)` | Reads live Running+Ready pods per managed deployment; anti-affine passes iff every service spans exactly r distinct nodes, packed iff exactly 1, r=1 iff on the pinned node; returns a `VerificationResult` with per-service detail for the gate artifact |
+| `restore(api, namespace, …)` | Resets every managed (or stale-pinned) deployment to single-replica unpinned scheduling (replicas 1, affinity removed, annotation cleared, RollingUpdate restored) |
+| `live_service_nodes(api, namespace, services)` | `{service: distinct ready-pod nodes}` — the live read behind the gate's achieved-fraction recomputation |
+
+**M1b gate script**: `scripts/m1b_gate.py -n <ns> --summary <summary.json> --workers w1,…,wN [-o m1b-gate-artifact.json] [--restore-on-exit]` runs the pre-registered live GO/NO-GO gate (WORKPLAN M1b exit criteria; the pre-registration's decidable "attempt"/"consecutive" terms). Phase A: per target f, solve→apply(r=1)→schedule→verify cycles judged on the live achieved fraction — 3 consecutive in-tolerance (±0.05) attempts pass a level, the counter resets on a miss, abort as FAIL after 6 attempts. Phase B: r=3 anti-affine for all services (3 distinct nodes each — the explicit schedulability criterion), then r=3 packed on the solver's f=0 assignment, with scheduling latencies. Phase C: live `resources.requests` sums vs per-worker allocatable (≥ 30 % headroom on cpu and memory at the heaviest cell). Emits the committed verification artifact (per-phase/level/attempt outcomes, timestamps, achieved values) plus PASS/FAIL summary lines; `--restore-on-exit` restores default scheduling even on exception/Ctrl-C, and an aborted run still writes its partial artifact.
+
 ---
 
 ### 2.6 Output (`output/`)
