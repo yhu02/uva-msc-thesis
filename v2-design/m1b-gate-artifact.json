@@ -1,0 +1,1036 @@
+{
+  "schema": "chaosprobe/m1b-gate-artifact/v2",
+  "startedAt": "2026-06-11T16:16:44.297617+00:00",
+  "namespace": "online-boutique",
+  "workers": [
+    "worker1",
+    "worker2",
+    "worker3",
+    "worker4",
+    "worker5",
+    "worker6",
+    "worker7",
+    "worker8"
+  ],
+  "summary": "/home/yhu02/private/uva-msc-thesis/chaosprobe/campaign-results/s07/summary.json",
+  "config": {
+    "levels": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "consecutive": 3,
+    "maxAttempts": 6,
+    "seed": 42,
+    "timeoutSeconds": 600.0,
+    "settleSeconds": 60.0,
+    "settleTimeoutSeconds": 300.0,
+    "attemptProtocol": "restore-to-default,quiesce,solve,apply(r=1),schedule,verify-live"
+  },
+  "phaseA": {
+    "tolerance": 0.05,
+    "nNodes": 8,
+    "levels": [
+      {
+        "target": 0.0,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.0,
+            "startedAt": "2026-06-11T16:16:44.297640+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 62.5,
+              "polls": 11,
+              "windowResets": 0,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T15:56:38+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker2",
+              "frontend": "worker2",
+              "cartservice": "worker2",
+              "productcatalogservice": "worker2",
+              "currencyservice": "worker2",
+              "recommendationservice": "worker2",
+              "shippingservice": "worker2",
+              "adservice": "worker2",
+              "emailservice": "worker2",
+              "paymentservice": "worker2",
+              "redis-cart": "worker2"
+            },
+            "solverAchievedF": 0.0,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 35.757,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:18:22.694872+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.0,
+            "startedAt": "2026-06-11T16:18:22.694934+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 87.7,
+              "polls": 15,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:18:45+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker1",
+              "frontend": "worker1",
+              "cartservice": "worker1",
+              "productcatalogservice": "worker1",
+              "currencyservice": "worker1",
+              "recommendationservice": "worker1",
+              "shippingservice": "worker1",
+              "adservice": "worker1",
+              "emailservice": "worker1",
+              "paymentservice": "worker1",
+              "redis-cart": "worker1"
+            },
+            "solverAchievedF": 0.0,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 37.005,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:20:31.329248+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.0,
+            "startedAt": "2026-06-11T16:20:31.329269+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 104.5,
+              "polls": 18,
+              "windowResets": 3,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:21:04+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker7",
+              "frontend": "worker7",
+              "cartservice": "worker7",
+              "productcatalogservice": "worker7",
+              "currencyservice": "worker7",
+              "recommendationservice": "worker7",
+              "shippingservice": "worker7",
+              "adservice": "worker7",
+              "emailservice": "worker7",
+              "paymentservice": "worker7",
+              "redis-cart": "worker7"
+            },
+            "solverAchievedF": 0.0,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.788,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:22:54.422492+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 0.25,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.25,
+            "startedAt": "2026-06-11T16:22:54.422509+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 90.3,
+              "polls": 16,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:23:17+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker2",
+              "frontend": "worker2",
+              "cartservice": "worker2",
+              "productcatalogservice": "worker1",
+              "currencyservice": "worker2",
+              "recommendationservice": "worker2",
+              "shippingservice": "worker2",
+              "adservice": "worker2",
+              "emailservice": "worker2",
+              "paymentservice": "worker4",
+              "redis-cart": "worker2"
+            },
+            "solverAchievedF": 0.266667,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.636,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.266667,
+            "gap": 0.016667,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:25:03.670349+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.25,
+            "startedAt": "2026-06-11T16:25:03.670365+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 100.7,
+              "polls": 18,
+              "windowResets": 3,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:25:36+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker1",
+              "frontend": "worker1",
+              "cartservice": "worker1",
+              "productcatalogservice": "worker4",
+              "currencyservice": "worker1",
+              "recommendationservice": "worker1",
+              "shippingservice": "worker1",
+              "adservice": "worker1",
+              "emailservice": "worker1",
+              "paymentservice": "worker8",
+              "redis-cart": "worker1"
+            },
+            "solverAchievedF": 0.266667,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.006,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.266667,
+            "gap": 0.016667,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:27:22.746399+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.25,
+            "startedAt": "2026-06-11T16:27:22.746416+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 93.2,
+              "polls": 17,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:27:55+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker7",
+              "frontend": "worker7",
+              "cartservice": "worker7",
+              "productcatalogservice": "worker5",
+              "currencyservice": "worker7",
+              "recommendationservice": "worker5",
+              "shippingservice": "worker7",
+              "adservice": "worker7",
+              "emailservice": "worker7",
+              "paymentservice": "worker3",
+              "redis-cart": "worker7"
+            },
+            "solverAchievedF": 0.266667,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 37.282,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.266667,
+            "gap": 0.016667,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:29:43.684568+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 0.5,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.5,
+            "startedAt": "2026-06-11T16:29:43.684588+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 98.3,
+              "polls": 18,
+              "windowResets": 3,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:30:16+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker2",
+              "frontend": "worker1",
+              "cartservice": "worker2",
+              "productcatalogservice": "worker1",
+              "currencyservice": "worker1",
+              "recommendationservice": "worker1",
+              "shippingservice": "worker3",
+              "adservice": "worker1",
+              "emailservice": "worker2",
+              "paymentservice": "worker7",
+              "redis-cart": "worker2"
+            },
+            "solverAchievedF": 0.466667,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.096,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.466667,
+            "gap": 0.033333,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:32:00.933102+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.5,
+            "startedAt": "2026-06-11T16:32:00.933122+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 87.2,
+              "polls": 16,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:32:23+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker1",
+              "frontend": "worker5",
+              "cartservice": "worker1",
+              "productcatalogservice": "worker5",
+              "currencyservice": "worker5",
+              "recommendationservice": "worker5",
+              "shippingservice": "worker2",
+              "adservice": "worker5",
+              "emailservice": "worker8",
+              "paymentservice": "worker1",
+              "redis-cart": "worker8"
+            },
+            "solverAchievedF": 0.533333,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.501,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.533333,
+            "gap": 0.033333,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:34:06.457354+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.5,
+            "startedAt": "2026-06-11T16:34:06.457378+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 88.4,
+              "polls": 16,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:34:29+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker7",
+              "frontend": "worker2",
+              "cartservice": "worker2",
+              "productcatalogservice": "worker7",
+              "currencyservice": "worker2",
+              "recommendationservice": "worker7",
+              "shippingservice": "worker2",
+              "adservice": "worker2",
+              "emailservice": "worker4",
+              "paymentservice": "worker7",
+              "redis-cart": "worker2"
+            },
+            "solverAchievedF": 0.466667,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.133,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.466667,
+            "gap": 0.033333,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:36:12.796833+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 0.75,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.75,
+            "startedAt": "2026-06-11T16:36:12.796852+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 88.7,
+              "polls": 16,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:36:36+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker2",
+              "frontend": "worker1",
+              "cartservice": "worker2",
+              "productcatalogservice": "worker4",
+              "currencyservice": "worker1",
+              "recommendationservice": "worker3",
+              "shippingservice": "worker1",
+              "adservice": "worker7",
+              "emailservice": "worker7",
+              "paymentservice": "worker2",
+              "redis-cart": "worker6"
+            },
+            "solverAchievedF": 0.733333,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.099,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.733333,
+            "gap": 0.016667,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:38:20.256904+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.75,
+            "startedAt": "2026-06-11T16:38:20.256916+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 89.7,
+              "polls": 16,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:38:43+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker1",
+              "frontend": "worker4",
+              "cartservice": "worker1",
+              "productcatalogservice": "worker6",
+              "currencyservice": "worker4",
+              "recommendationservice": "worker8",
+              "shippingservice": "worker1",
+              "adservice": "worker5",
+              "emailservice": "worker6",
+              "paymentservice": "worker8",
+              "redis-cart": "worker1"
+            },
+            "solverAchievedF": 0.733333,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.163,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.733333,
+            "gap": 0.016667,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:40:28.074432+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.75,
+            "startedAt": "2026-06-11T16:40:28.074445+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 77.4,
+              "polls": 14,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:40:36+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker7",
+              "frontend": "worker5",
+              "cartservice": "worker5",
+              "productcatalogservice": "worker2",
+              "currencyservice": "worker7",
+              "recommendationservice": "worker3",
+              "shippingservice": "worker7",
+              "adservice": "worker1",
+              "emailservice": "worker2",
+              "paymentservice": "worker2",
+              "redis-cart": "worker5"
+            },
+            "solverAchievedF": 0.733333,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.446,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.733333,
+            "gap": 0.016667,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:42:24.186625+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 1.0,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 1.0,
+            "startedAt": "2026-06-11T16:42:24.186645+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 89.2,
+              "polls": 16,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:42:47+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker2",
+              "frontend": "worker1",
+              "cartservice": "worker8",
+              "productcatalogservice": "worker5",
+              "currencyservice": "worker4",
+              "recommendationservice": "worker3",
+              "shippingservice": "worker4",
+              "adservice": "worker7",
+              "emailservice": "worker1",
+              "paymentservice": "worker7",
+              "redis-cart": "worker6"
+            },
+            "solverAchievedF": 1.0,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.334,
+            "pendingDeployments": [],
+            "liveAchievedF": 1.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:44:31.977619+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 1.0,
+            "startedAt": "2026-06-11T16:44:31.977631+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 102.3,
+              "polls": 18,
+              "windowResets": 3,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:45:05+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker1",
+              "frontend": "worker4",
+              "cartservice": "worker8",
+              "productcatalogservice": "worker3",
+              "currencyservice": "worker6",
+              "recommendationservice": "worker5",
+              "shippingservice": "worker8",
+              "adservice": "worker7",
+              "emailservice": "worker8",
+              "paymentservice": "worker2",
+              "redis-cart": "worker4"
+            },
+            "solverAchievedF": 1.0,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.377,
+            "pendingDeployments": [],
+            "liveAchievedF": 1.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:46:52.959731+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 1.0,
+            "startedAt": "2026-06-11T16:46:52.959743+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 79.6,
+              "polls": 14,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-11T16:47:02+00:00"
+            },
+            "assignment": {
+              "checkoutservice": "worker7",
+              "frontend": "worker5",
+              "cartservice": "worker6",
+              "productcatalogservice": "worker8",
+              "currencyservice": "worker1",
+              "recommendationservice": "worker2",
+              "shippingservice": "worker4",
+              "adservice": "worker2",
+              "emailservice": "worker3",
+              "paymentservice": "worker1",
+              "redis-cart": "worker2"
+            },
+            "solverAchievedF": 1.0,
+            "solverAccepted": true,
+            "schedulingLatencySeconds": 34.737,
+            "pendingDeployments": [],
+            "liveAchievedF": 1.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-11T16:48:51.531428+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      }
+    ],
+    "passed": true
+  },
+  "phaseB": {
+    "antiAffine": {
+      "appliedAt": "2026-06-11T16:51:08.308691+00:00",
+      "settle": {
+        "quiescent": true,
+        "waitedSeconds": 79.6,
+        "polls": 14,
+        "windowResets": 1,
+        "settleSeconds": 60.0,
+        "timeoutSeconds": 300.0,
+        "notReady": [],
+        "restarts": 0,
+        "lastUnhealthyAt": "2026-06-11T16:48:59+00:00"
+      },
+      "services": [
+        "adservice",
+        "cartservice",
+        "checkoutservice",
+        "currencyservice",
+        "emailservice",
+        "frontend",
+        "paymentservice",
+        "productcatalogservice",
+        "recommendationservice",
+        "redis-cart",
+        "shippingservice"
+      ],
+      "pendingDeployments": [],
+      "schedulingLatencySeconds": 52.958,
+      "verification": {
+        "r": 3,
+        "mode": "anti-affine",
+        "passed": true,
+        "services": [
+          {
+            "service": "adservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3",
+              "worker4",
+              "worker6"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "cartservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3",
+              "worker5",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "checkoutservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2",
+              "worker4",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "currencyservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2",
+              "worker5",
+              "worker6"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "emailservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker4",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "frontend",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker2",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "paymentservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2",
+              "worker5",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "productcatalogservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker4",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "recommendationservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker7",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "redis-cart",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2",
+              "worker6",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "shippingservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker5",
+              "worker8"
+            ],
+            "assignedNode": null
+          }
+        ]
+      },
+      "passed": true
+    },
+    "packed": {
+      "appliedAt": "2026-06-11T16:53:15.239201+00:00",
+      "settle": {
+        "quiescent": true,
+        "waitedSeconds": 75.9,
+        "polls": 13,
+        "windowResets": 1,
+        "settleSeconds": 60.0,
+        "timeoutSeconds": 300.0,
+        "notReady": [],
+        "restarts": 0,
+        "lastUnhealthyAt": "2026-06-11T16:51:31+00:00"
+      },
+      "assignment": {
+        "adservice": "worker1",
+        "cartservice": "worker2",
+        "checkoutservice": "worker3",
+        "currencyservice": "worker4",
+        "emailservice": "worker5",
+        "frontend": "worker6",
+        "paymentservice": "worker7",
+        "productcatalogservice": "worker8",
+        "recommendationservice": "worker1",
+        "redis-cart": "worker2",
+        "shippingservice": "worker3"
+      },
+      "packedAssignmentMethod": "round-robin",
+      "achievedF": 0.866667,
+      "pendingDeployments": [],
+      "schedulingLatencySeconds": 43.202,
+      "verification": {
+        "r": 3,
+        "mode": "packed",
+        "passed": true,
+        "services": [
+          {
+            "service": "adservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1"
+            ],
+            "assignedNode": "worker1"
+          },
+          {
+            "service": "cartservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2"
+            ],
+            "assignedNode": "worker2"
+          },
+          {
+            "service": "checkoutservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3"
+            ],
+            "assignedNode": "worker3"
+          },
+          {
+            "service": "currencyservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker4"
+            ],
+            "assignedNode": "worker4"
+          },
+          {
+            "service": "emailservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker5"
+            ],
+            "assignedNode": "worker5"
+          },
+          {
+            "service": "frontend",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker6"
+            ],
+            "assignedNode": "worker6"
+          },
+          {
+            "service": "paymentservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker7"
+            ],
+            "assignedNode": "worker7"
+          },
+          {
+            "service": "productcatalogservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker8"
+            ],
+            "assignedNode": "worker8"
+          },
+          {
+            "service": "recommendationservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1"
+            ],
+            "assignedNode": "worker1"
+          },
+          {
+            "service": "redis-cart",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2"
+            ],
+            "assignedNode": "worker2"
+          },
+          {
+            "service": "shippingservice",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3"
+            ],
+            "assignedNode": "worker3"
+          }
+        ]
+      },
+      "passed": true
+    },
+    "passed": true
+  },
+  "phaseC": {
+    "recordedAt": "2026-06-11T16:53:15.544950+00:00",
+    "appNamespaceRequests": {
+      "cpuMillicores": 3810,
+      "memoryBytes": 3498049536
+    },
+    "allNamespaceRequestsOnWorkers": {
+      "cpuMillicores": 6865,
+      "memoryBytes": 6697734144
+    },
+    "allocatablePerWorker": {
+      "worker1": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker2": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997192192
+      },
+      "worker3": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker4": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker5": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker6": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997179904
+      },
+      "worker7": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker8": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      }
+    },
+    "missingWorkers": [],
+    "headroom": {
+      "cpu": 0.5709,
+      "memory": 0.7905
+    },
+    "headroomFloor": 0.3,
+    "passed": true
+  },
+  "passed": true,
+  "finishedAt": "2026-06-11T16:53:21.465772+00:00",
+  "elapsedSeconds": 2197.3
+}
