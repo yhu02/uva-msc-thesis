@@ -1,0 +1,332 @@
+% Ported from thesis/04-methodology.md — wording unchanged.
+\chapter{Methodology}\label{ch:methodology}
+
+% This chapter substantiates contribution claim 3 (the provenance-gated
+% campaign protocol) and defines the measurement design behind H1–H6.
+
+This chapter defines how the research question of \S\ref{sec:rq} is turned into
+measurements: the three-layer measurement design (\S\ref{sec:three-layer}), the three fault
+classes and the negative findings that shaped their selection (\S\ref{sec:fault-classes}), the
+multi-session campaign protocol that is itself a contribution (\S\ref{sec:campaign}), the
+statistical methods (\S\ref{sec:statistics}), and the pinned cluster environment every claim
+is scoped to (\S\ref{sec:environment}).
+
+\section{Three-layer measurement design}\label{sec:three-layer}
+
+Each experiment is measured at three layers that need not agree --- the study's
+unit of explanation is \emph{which layer moves}:
+
+\begin{enumerate}
+\item \textbf{Aggregate score} --- the probe-based resilience score (the industry-style
+   single number; H1 audits its reliability).
+\item \textbf{Mechanism metrics} --- kernel/network signals: conntrack entries per
+   node, CoreDNS tail latency, TCP retransmits, CPU throttling, east-west
+   inter-service route tails (H2, H4, H5).
+\item \textbf{User-visible routes} --- per-route tail latency and error rate, with a
+   built-in \textbf{dependent-vs-control confound check}: \emph{dependent} routes
+   touch the chaos target (\texttt{productcatalogservice}), \emph{control} routes do
+   not, so a genuine fault-specific effect must show on dependent routes
+   \emph{beyond} the control route's run-level drift (H3, H4).
+\end{enumerate}
+
+The confound-controlled user layer is the difference between ``correlates
+with the run'' and ``caused by the fault path'', and it is load-bearing for
+every user-layer statement in this thesis. The threat it addresses is
+run-level drift: on a small virtualized cluster, entire runs are slower or
+faster than each other for reasons unrelated to the fault --- host load,
+cache state, background reconciliation. Any mechanism metric measured in a
+slow run will correlate with any latency measured in the same slow run, so
+a naive correlation between mechanism and user outcome is uninterpretable.
+The control routes break this degeneracy. Because they ride the same run
+but do not traverse the killed service, they carry the run-level drift and
+nothing else; a genuine propagation from mechanism to user must therefore
+show an association on the dependent routes that is both significant and
+clearly in excess of the control routes' association. The diagnostic also
+works in reverse, and Chapter~\ref{ch:results} uses it that way: when the \emph{control} route
+correlates with the mechanism more strongly than the dependent route does
+(H3: $\rho = 0.29$ on control vs 0.07 on dependent), the association is
+positively identified as a run-level confound rather than merely failing
+significance. A within-run rank correlation --- computed inside each run,
+where run-level drift is constant by construction --- confirms the read.
+
+Each layer is read by a different instrument, and the instruments fail
+independently --- which is itself informative. The aggregate score derives
+from LitmusChaos probe verdicts; the mechanism layer from PromQL samples of
+kernel and infrastructure metrics; the user layer from the route prober's
+active HTTP measurements under Locust traffic. We deliberately \emph{audit} the
+industry-style aggregate score rather than redesigning it: H1's question is
+whether the instrument operators currently have can support the ranking
+task they implicitly use it for, and answering that requires measuring the
+score as-is, with its reliability quantified rather than assumed. The
+layered design also means no single instrument's blind spot is fatal --- a
+property Chapter~\ref{ch:results} exercises three times, when the score turns out noisy
+under churn, saturated under load, and unusable under node drain, while
+the other two layers keep reporting.
+
+\section{Fault classes}\label{sec:fault-classes}
+
+\begin{center}
+\begin{tabular}{p{0.17\textwidth}p{0.3\textwidth}p{0.42\textwidth}}
+\toprule
+\textbf{Class} & \textbf{Fault} & \textbf{What it perturbs} \\
+\midrule
+\textbf{Churn} & \texttt{pod-delete} & Endpoint/identity turnover: EndpointSlice, conntrack, DNS reconvergence \\
+\textbf{Load contention} & sustained 200-user Locust spike (near-no-op hog placeholder) & Genuine resource contention --- the regime hogs cannot create here (Appendix~\ref{app:negative}) \\
+\textbf{Node failure} & \texttt{node-drain} of the target's node & Availability: blast radius and rescheduling \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The three classes were chosen to perturb three distinct subsystems, so that
+``does placement matter?'' gets a per-mechanism answer rather than a pooled
+one. Churn (\texttt{pod-delete}) destroys and recreates a service's only replica:
+the pod's identity, IP, and endpoints turn over, and the cluster's
+networking state --- EndpointSlice membership, conntrack entries, DNS answers
+--- must reconverge. This is the disruption window the Kubernetes
+SIG-Scalability community tracks with its own network-programming-latency
+SLO \citep{k8scommunity-netslo}.
+Load contention drives the application against its resource limits while
+fully available, making latency --- not availability --- the outcome under
+stress. Node failure (\texttt{node-drain}) removes a whole failure domain, making
+availability the outcome and blast radius the natural metric.
+
+The composition of this fault matrix is itself an empirical result, and we
+present the dead-ends as methodological findings because they show that the
+\emph{obvious} contention experiments probe the wrong layer on clusters of this
+class (Appendix~\ref{app:negative} gives the full autopsies). The standard chaos catalog
+offers CPU and memory hog faults as the contention instruments, and all of
+them null out here for documented, mechanistic reasons. \texttt{pod-cpu-hog} is
+capped by the CFS quota at the victim container's own 200m CPU limit: the
+stressor consumes the victim's budget, every other pod is untouched, the
+application stays up, and the resilience score sits at $\approx$ 100. \texttt{node-cpu-hog}
+loads the node, but Kubernetes CPU \emph{requests} guarantee the lightweight
+application pods their shares, so they remain responsive. \texttt{node-memory-hog}
+fails more subtly: its stress helper computes its target against node
+capacity, clamps to allocatable, and on an already-utilized 4 GiB worker
+becomes the kubelet's \emph{first eviction victim} --- it self-evicts before any
+application pod feels pressure (confirmed against the \texttt{litmus-go} source ---
+\href{https://github.com/litmuschaos/litmus-go/blob/master/chaoslib/litmus/node-memory-hog/lib/node-memory-hog.go}{\texttt{calculateMemoryConsumption}}
+applies the percentage to node \emph{capacity}, clamps to allocatable, and ignores
+in-use memory; a
+100\%-consumption probe produced zero MemoryPressure, OOM, or app-pod
+evictions). The consequence is the design above: genuine contention must
+come from \emph{load} --- the 200-user Locust spike, under which the application is
+actually resource-bound --- with the hog fault reduced to a near-no-op
+placeholder so the experiment pipeline's phasing is preserved. Studies that
+report ``no placement effect under CPU hogs'' without this analysis would be
+reporting a property of the fault, not of placement.
+
+A terminological note: the \emph{churn-versus-contention} distinction used
+throughout this thesis is our own framing, not an established taxonomy ---
+our literature search found no peer-reviewed work that classifies
+\texttt{pod-delete} as a churn fault distinct from contention faults (\S\ref{sec:tail-latency}). We
+adopt it because the mechanisms differ categorically: a churn fault
+perturbs \emph{identity and networking state} (endpoints, conntrack, DNS) and
+its user-visible damage is bounded by availability dynamics, while a
+contention fault perturbs \emph{resource budgets} and its damage is latency
+under load. The negative findings above are what the distinction predicts:
+faults marketed as contention instruments that cannot actually create
+contention on this cluster produce null results at every layer.
+
+\section{Campaign design}\label{sec:campaign}
+
+\begin{itemize}
+\item \textbf{Unit of analysis: the session.} One \texttt{run} invocation on one git commit =
+  one independent session. The primary campaign is \textbf{7 sessions (s01--s07)},
+  each all 8 strategies $\times$ $i = 3$ (147 churn iterations total), banked under
+  \texttt{campaign-results/} and archived to \texttt{dist/}.
+\item \textbf{Gating.} Every session must pass \texttt{doctor --strict} (provenance + data
+  quality) before its numbers are used; failed/partial sessions are discarded,
+  not patched.
+\item \textbf{Blocking \& controls.} \texttt{baseline} is a no-fault control; strategy order is
+  fixed within a session; batch/day IDs allow day-level blocking; pre/post
+  snapshots bound run drift.
+\item \textbf{Replication discipline.} Mechanism claims require direction-consistency
+  across sessions (H2: 7/7); user-layer claims require survival across
+  independent batches (H4's did not, and is therefore not claimed).
+\end{itemize}
+
+The session is the campaign's unit of analysis because it is the unit at
+which the dominant noise operates. H1's variance decomposition shows that
+37.6\% of score variance is run-to-run: whole invocations differ from each
+other more than strategies differ within an invocation. Pooling iterations
+across runs as if they were independent would therefore understate the
+uncertainty of every between-strategy comparison. Treating the session as
+the replicate --- and requiring effects to reproduce \emph{across} sessions, not
+merely within one --- is the conservative response.
+
+We state the independence structure plainly. Sessions are independent
+\emph{invocations}: each is a separate \texttt{run} execution, launched at a different
+time, with its own settle phases, its own realized placements, and its own
+draw of environmental conditions. Each session ran on a single framework
+commit throughout, but sessions are not all on \emph{distinct} commits --- s02 and
+s03 share one commit, and s04--s07 share another (Appendix~\ref{app:provenance} lists the
+mapping). Independence is therefore per invocation and day, not per code
+version; what the single-commit rule guarantees is that no session mixes
+code versions internally, which was a real defect of the pre-campaign
+pooled run-set (16 runs across heterogeneous code versions and probe
+counts, retained only as a pilot tier).
+
+Two further design choices bound what the campaign can and cannot absorb.
+Strategy order is fixed within each session, so any slow within-run drift
+loads onto the same strategy positions in every session --- a conservative
+choice that converts a potential random confound into a constant one, at
+the cost of not being able to separate order effects from strategy effects
+within a single session (across sessions, the direction-consistency
+requirement defends against this). And the \texttt{baseline} cell --- placement
+untouched, no fault injected --- runs in every session as a no-fault control,
+bounding what the score and the probers report when nothing is done.
+
+The gate deserves its own paragraph because it is the protocol's teeth.
+\texttt{doctor --strict} is an automated check applied to a finished run before
+any of its numbers may be quoted: it verifies per-iteration data
+completeness, probe verdicts, placement match rates, and taint status, and
+in strict mode additionally the provenance fingerprint --- scenario SHA-256
+hashes against the committed YAML, kube-proxy mode and conntrack settings,
+git commit and dirty flag, and the environment manifest (\S\ref{sec:provenance}). The rule
+attached to it is \emph{discard, not patch}: a session that fails the gate is
+excluded whole, never repaired by dropping its bad iterations and keeping
+the rest, because selective repair is a selection effect on exactly the
+noise H1 measures. The rule has been exercised, not merely stated --- the
+original H4 pilot, whose user-layer effect was the most striking number in
+the study at the time, was discarded for dirty provenance and replaced
+with two clean batches, which is how the study learned that the effect
+does not replicate (\S\ref{sec:h4}).
+
+\section{Statistics}\label{sec:statistics}
+
+\begin{itemize}
+\item \textbf{Variance partition} of the per-iteration score into between-strategy /
+  run-to-run / iteration components; \texttt{ICC\_strategy} with a \textbf{cluster
+  bootstrap} 95\% CI (resampling sessions, preserving within-session
+  correlation).
+\item \textbf{Paired Wilcoxon signed-rank + exact sign tests} across sessions for the
+  focal spread-vs-colocate mechanism contrast (H2).
+\item \textbf{Spearman rank correlations} for mechanism$\rightarrow$outcome (H3) and
+  predictor$\rightarrow$tail (H5), plus \textbf{TOST equivalence testing} to support
+  ``decoupled'' as a positive statistical statement rather than absence of
+  evidence.
+\item \textbf{ART ANOVA} (aligned-rank transform) as a nonparametric factorial helper
+  where interactions are examined (e.g.\ node-drain analyses).
+\item \textbf{Power analysis} for H1: Cohen's $d$ of the focal contrast $\rightarrow$ iterations
+  needed for 80\% power ($\alpha = .05$, two-sided), and the minimum detectable
+  effect at the $n$ actually run.
+\end{itemize}
+
+\textbf{Model and notation.} Let $y_{sri}$ be the aggregate score of
+iteration $i$ of strategy $s$ in session (run) $r$. H1's decomposition uses
+the crossed random-effects model
+\[
+  y_{sri} = \mu + \alpha_s + b_r + \varepsilon_{sri},
+\]
+with $\alpha_s$ the strategy effect (variance $\sigma^2_\alpha$),
+$b_r$ the session effect ($\sigma^2_b$), and $\varepsilon_{sri}$ the
+residual iteration noise ($\sigma^2_\varepsilon$). The quantity H1 reports is the
+intraclass correlation of strategy,
+\[
+  \mathrm{ICC}_{\mathrm{strategy}} = \sigma^2_\alpha \,/\, (\sigma^2_\alpha + \sigma^2_b + \sigma^2_\varepsilon),
+\]
+the fraction of total score variance attributable to which strategy was
+running --- the ceiling on how well \emph{any} ranking procedure based on this
+score can do. The components are estimated from the 147 campaign iterations
+by the committed \texttt{scripts/score\_variance.py}; the campaign estimates are
+$\sigma^2_\alpha : \sigma^2_b : \sigma^2_\varepsilon = 3.3\% : 37.6\% : 59.1\%$
+(\S\ref{sec:h1}).
+
+\textbf{Cluster bootstrap, worked.} A naive bootstrap over the 147 iterations
+would treat them as exchangeable, which they are not --- iterations within a
+session share the session effect $b_r$. The cluster bootstrap
+resamples at the level the dependence lives: draw 7 sessions \emph{with
+replacement} from \{s01\ldots s07\} (a resample might be s02, s02, s04, s05, s05,
+s07, s07), keep every drawn session's iterations intact, recompute
+$\mathrm{ICC}_{\mathrm{strategy}}$ on the resampled data, repeat, and take the 2.5th and
+97.5th percentiles of the resulting distribution as the 95\% CI. This
+preserves within-session correlation exactly and yields the interval
+[0.014, 0.178] reported in \S\ref{sec:h1} --- wide, as expected with 7 clusters, but
+bounded well below the range where score-based ranking would be feasible.
+
+\textbf{Paired tests across sessions (H2).} The focal mechanism contrast is
+evaluated at session level: for each session, the median conntrack flush of
+\texttt{spread} minus that of \texttt{colocate}, giving 7 paired differences. The exact
+sign test asks only for direction (all 7 positive: $p = 2 \times 0.5^7 =
+0.0156$ two-sided); the Wilcoxon signed-rank test adds magnitude ordering
+($W = 0$, $p = 0.0225$). Both are reported because with $n = 7$ the sign test
+is the assumption-free floor and Wilcoxon the more powerful companion.
+
+\textbf{Correlation, equivalence, and the factorial helper.} Associations between
+layers (H3) and between predictor and outcome (H5) use Spearman rank
+correlation, which is invariant to the monotone-but-nonlinear scales these
+metrics live on. For H3, a non-significant correlation alone would be
+absence of evidence; the decoupling claim is therefore additionally
+supported by TOST (two one-sided tests) equivalence testing, which asks
+whether the association is \emph{demonstrably small}, not merely undetected
+\citep{schuirmann1987equivalence,lakens2017equivalence}.
+We import the procedure from biostatistics deliberately: no native
+equivalence-testing precedent exists in the systems-performance venues we
+searched, and the nearest peer-reviewed computer-science precedent for
+affirmatively accepting practical equivalence is the region-of-practical-equivalence
+analysis of Benavoli et al.\
+\citep{benavoli2017time}. TOST
+requires a pre-declared smallest effect size of interest: ours is
+$|\rho| = 0.3$ --- the conventional small-correlation boundary --- fixed in the
+committed analysis code (\texttt{tost\_equivalence\_correlation}, default
+\texttt{sesoi = 0.3}) before the campaign ran, not chosen after seeing the data.
+Where factorial structure is examined (e.g.\ strategy $\times$ phase in the
+node-drain analyses), the aligned-rank-transform ANOVA provides a
+nonparametric interaction test. \textbf{Power analysis} closes the H1 argument:
+from the focal contrast's Cohen's $d = 0.46$, the standard two-sample
+calculation gives $\approx$ 73 iterations per strategy for 80\% power at $\alpha = .05$
+two-sided; inverting it at the $n = 3$ per session actually run gives a
+minimum detectable effect of 2.29 pooled standard deviations --- about 51
+score points, larger than any gap that exists in the data (\S\ref{sec:h1}).
+
+The argument \emph{shape} follows Maricq et al.\ (OSDI 2018) --- quantify the
+environment's variability, then prescribe what repetition can and cannot
+detect --- with the precision note that their CONFIRM uses nonparametric
+CI-width stopping, not formal power analysis. Distribution-first reporting
+follows Hoefler \& Belli (SC 2015): Chapter~\ref{ch:results} reports medians, tails, and
+intervals, not bare means, and the nonparametric toolkit above is the
+default throughout.
+
+\section{Cluster environment}\label{sec:environment}
+
+% Values below are from the archived manifests (dist/*/artifact-manifest.json)
+% — the citable fingerprint. Pin versions; the H2 mechanism is version-sensitive.
+
+\begin{itemize}
+\item \textbf{Cluster}: 5-node kubeadm cluster (1 control plane + 4 workers, 4 GiB RAM
+  each) on Vagrant-managed KVM/libvirt VMs on a single host.
+\item \textbf{Kubernetes v1.28.6} (pinned --- kube-proxy/conntrack behaviour changed
+  materially in v1.31--v1.32, see \S\ref{sec:h2-mechanism}), containerd 1.7.11, Ubuntu 22.04.3 LTS
+  nodes, Calico CNI.
+\item \textbf{kube-proxy mode: \texttt{ipvs}}, conntrack \texttt{maxPerCore} 32768 / \texttt{min} 131072,
+  TCP established timeout 24 h, close-wait 1 h --- all archived per run.
+\item \textbf{Workload}: Online Boutique (Google Cloud microservices-demo), 10 polyglot
+  gRPC microservices + Redis, single replica per service (the regime under
+  study), Locust load generator.
+\end{itemize}
+
+\begin{center}
+\begin{tabular}{lllll}
+\toprule
+\textbf{Node} & \textbf{Role} & \textbf{vCPU} & \textbf{RAM} & \textbf{OS} \\
+\midrule
+control plane ($\times$1) & kubeadm control plane & 2 & 12 GiB & Ubuntu 22.04.3 LTS \\
+worker ($\times$4) & workload nodes & 2 each & 4 GiB each & Ubuntu 22.04.3 LTS \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All five VMs run on a single physical host under KVM/libvirt, which makes
+host-level interference --- other VMs' scheduling, host I/O, host memory
+pressure --- a shared, time-varying influence on every measurement. We treat
+this as a property of the environment to be \emph{absorbed by design} rather
+than eliminated: it is precisely the noise source that surfaces as the
+37.6\% run-to-run variance component in H1, that the session-level campaign
+protocol blocks against (\S\ref{sec:campaign}), and that the dependent-vs-control route
+split controls for within runs (\S\ref{sec:three-layer}). The environment values above are not
+incidental: the H2 mechanism is contingent on the kube-proxy mode (\texttt{ipvs}
+here), the conntrack configuration, and the Kubernetes version, all of
+which are stamped into every archived run's manifest so that each
+mechanism-level claim carries its exact scope (\S\ref{sec:provenance}). What does and does not
+port out of this pinned environment is stated once, in \S\ref{sec:generalizes}'s table.
