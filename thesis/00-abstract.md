@@ -39,9 +39,11 @@ predicts the east-west tail penalty in **two independent batches** (the two
 node-local placements show the two lowest tails of eight both times, ~1.25×
 below the spreading cluster; a continuous correlation did not replicate and
 is not claimed). A protocol-composition probe further grounds the churn
-mechanism: the placement-dependent conntrack flush is the collapse of a
-standing UDP/DNS entry pool ~25× larger under spread, via kube-proxy's
-documented UDP-only cleanup, while TCP entries never flush. Second, under a
+mechanism: TCP entries dominate the conntrack table and drop sharply at the
+kill cycles under both placements (kernel-side teardown), while the clearly
+placement-dependent component is the UDP/DNS entry pool — ~4× larger under
+spread, the traffic class kube-proxy's documented UDP-only cleanup acts on.
+Second, under a
 third fault class, **node failure**, the same co-location that minimizes
 east-west latency maximizes blast radius: draining the node hosting the
 target took all 11 services offline under `colocate` (recovery ≈ 10.3 s)

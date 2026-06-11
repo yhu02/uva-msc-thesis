@@ -56,27 +56,32 @@ reproducible signal in the study.
 Secondary, corroborating only: `colocate` throttles CPU lowest in 6/7
 sessions (the pooled pilot had `best-fit` lower still) — lead with conntrack.
 
-**Mechanism — measured by protocol decomposition.** A dedicated probe
-(per-node `conntrack -L` protocol counts at 5 s intervals through one full
-kill cycle under each placement; §6.3, raw data in `data/conntrack-probe/`)
-resolves the attribution: `spread` sustains a standing pool of ~1,822 **UDP**
-(DNS) conntrack entries (32% of all entries) where `colocate` sustains only
-~72 (2%); the kill cycle collapses the UDP pool by **50–58%** under `spread`
-while **TCP entries never flush — they grow** (+6 to +16%, reconnect churn),
-matching upstream kube-proxy semantics exactly (UDP-only active cleanup;
-kubernetes/kubernetes #48370, #108523, #126130; TCP: #100698, #104098). The
-aggregate flush H2 measures is the UDP share collapsing — a signal that
-exists only under placements whose topology sustains a large standing DNS
-pool. Probe scope: one iteration per placement; quote for composition and
-direction, the seven sessions carry the statistics.
+**Mechanism — protocol composition measured.** A dedicated probe (per-node
+`conntrack -L` protocol counts at 5 s intervals through one full kill cycle
+under each placement; §6.3, raw data + chaos-window timestamps in
+`data/conntrack-probe/`) yields three window-robust composition findings:
+(1) **TCP dominates the table under both placements and drops sharply at
+the kill cycles in both** (spread 5,935 → 4,253, −28%; colocate
+4,973 → 3,937, −21%) — kernel-side teardown of flows traversing the killed
+pod, since kube-proxy never actively flushes TCP (#100698, #104098);
+(2) **the clearly placement-dependent component is UDP (DNS)**: under
+steady load `spread` sustains ~**4×** more UDP entries than `colocate`
+(chaos-window medians 910 vs 224), consistent with cross-node calls driving
+connection churn and DNS re-resolution, and with kube-proxy's documented
+UDP-only cleanup (#48370, #108523, #126130; ipvs mode here) having more to
+clean under spread; (3) with *i* = 1 and a Locust-ramp-contaminated
+baseline, the probe **cannot apportion the campaign's flush percentages**
+between the two paths — both mechanisms are visible; their shares remain
+unquantified. The seven sessions carry the statistics; the probe carries
+composition and event timing.
 
 ![Figure 5.4 — conntrack flush by strategy across sessions](figures/fig-05-h2-conntrack.png)
 
 **Figure 5.4** — conntrack flush % per strategy across the seven sessions
 (spread > colocate in all seven; note `default` flushes as hard as `spread`
 (~42%) while `dependency-aware`/`best-fit` show *negative* flush — entries
-grow during chaos — consistent with the standing-pool mechanism: what flushes
-is the placement-dependent UDP pool, not a fixed per-strategy quantity).
+grow during chaos — consistent with the flush tracking placement-dependent
+state composition rather than a fixed per-strategy quantity).
 
 ## 5.3 H3 — The mechanism is decoupled from the user-visible outcome
 
@@ -161,8 +166,10 @@ intended; its tail ≈ spread's both times).
 
 Caveats: the user layer stays weak (~1.3×, not dependency-specific); batch
 2's launching tree was dirty in non-code files only (deck binary + figure
-PNGs; running code = `e543fbb`); this is **validation of a static
-predictor**, not of the locality concept (§2.1).
+PNGs; running code = `e543fbb`); the aggregate score is **saturated** in
+these load runs (batch 1: all eight strategies scored 100; CIs overlap in
+both batches — H1 again, and the saturation §6.1 discusses); this is
+**validation of a static separator**, not of the locality concept (§2.1).
 
 ![Figure 5.6 — cross-node fraction vs east-west p95](figures/fig-07-h5-fraction-vs-tail.png)
 
@@ -204,7 +211,9 @@ H5's separator. **Recovery time, however, is *not* monotone in blast** —
 intermediate-blast placements produced both the fastest (4.6 s) and slowest
 (33.3 s) recoveries — so the recovery claim is scoped to the
 colocate-vs-spread extremes contrast (10.3 s vs 2.6 s, ~4×), where it
-reproduced across both original batches.
+reproduced across both original batches. (Recovery times are not pooled
+across batches: the gradient run is a distinct batch and reads colocate at
+10.8 s vs 10.3 s in the two-point batches.)
 
 **The trade-off is the finding**: the same co-location that gives the lowest
 east-west tail (H5: ~33–34 ms in both batches) gives a 100% single-drain

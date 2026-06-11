@@ -1,5 +1,7 @@
 # One hostNetwork sampler pod per worker — reads the host's conntrack table
-# via /proc/net/nf_conntrack. Diagnostic only; removed after the probe.
+# via the netlink CLI (`conntrack -L`, installed from conntrack-tools at pod
+# start; /proc/net/nf_conntrack is not compiled into this kernel).
+# Diagnostic only; removed after the probe.
 apiVersion: v1
 kind: Pod
 metadata:

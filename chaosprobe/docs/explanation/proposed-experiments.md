@@ -119,10 +119,10 @@ dependency graph load-bearing.
 
 - **Status: implemented** as `scripts/cross_node_fraction.py` (zero cluster cost) and
   **validated** by an 8-strategy load run — promoted to a finding, **[H5](hypotheses.md#h5--a-graph-derived-metric-predicts-the-east-west-placement-penalty)**.
-- **Result:** across all 8 strategies the cross-node fraction rank-correlates with the
-  during-load east-west p95, **ρ = 0.79** (n = 8, *p* < 0.05) — the intermediate-
-  fraction strategies (`best-fit` 0.13, `random`/`adversarial` ~0.80) filled the
-  gradient the earlier 4-strategy runs lacked.
+- **Result:** across all 8 strategies the cross-node fraction separated node-local
+  from spreading placements in **two independent batches** (batch-1 ρ = 0.79; the
+  continuous correlation collapsed to ρ = 0.25 n.s. in batch 2 — the replicated
+  claim is the two-regime separation, see H5).
 - **Two secondary findings (in H5):** `best-fit` is also node-local (low fraction →
   second-lowest tail — locality is not unique to `colocate`); `dependency-aware` did
   **not** deliver (its fraction is spread-like — the BFS partition did not co-locate
