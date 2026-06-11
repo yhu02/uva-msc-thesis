@@ -24,7 +24,7 @@ spec:
       containers:
         - name: hotel-reserv-rate
           image: deathstarbench/hotel-reservation:0.3.5
-          command: ["./rate"]
+          command: ["/go/bin/rate"]
           ports:
             - containerPort: 8084
           readinessProbe:

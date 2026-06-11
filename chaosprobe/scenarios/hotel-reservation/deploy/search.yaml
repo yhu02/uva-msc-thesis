@@ -24,7 +24,7 @@ spec:
       containers:
         - name: hotel-reserv-search
           image: deathstarbench/hotel-reservation:0.3.5
-          command: ["./search"]
+          command: ["/go/bin/search"]
           ports:
             - containerPort: 8082
           readinessProbe:

@@ -24,7 +24,7 @@ spec:
       containers:
         - name: hotel-reserv-geo
           image: deathstarbench/hotel-reservation:0.3.5
-          command: ["./geo"]
+          command: ["/go/bin/geo"]
           ports:
             - containerPort: 8083
           readinessProbe:
