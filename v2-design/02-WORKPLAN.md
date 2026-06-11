@@ -42,6 +42,12 @@ the M0 hardware decision**.
   implementation** on hand-computed ground-truth graphs; the rejection rule
   fires on target misses; known-optimal cuts recovered on small graphs with
   known answers.
+- **Analytical enumerator validated against live reality at N = 4:** the
+  enumerator's predicted reachable-fraction set for the live 4-worker
+  cluster must match the live achieved-f outcomes within **±0.02** per
+  level. Without this, the N = 6/8 enumerations that feed M0 are an
+  unvalidated model; with it, the analytical N = 6 claim inherits
+  demonstrated fidelity.
 - Quantization report (reachable f per N) delivered to the user for M0.
 
 ## M1b — Engine + cluster + full GO/NO-GO gate at the pinned N (contingent on M0)
@@ -171,7 +177,13 @@ universal-ranking claims).
   decision never lands. Both failure modes are pre-declared, so neither
   blocks a decidable hypothesis.
 - **M1a in weeks 1–2** front-loads the top risk cheaply; its quantization
-  report de-risks the M0 sizing before money is spent.
+  report de-risks the M0 sizing before money is spent. **Named residual
+  risk:** only N = 4 is validated live before procurement — the N = 6
+  reachability feeding the purchase is analytical (fidelity-checked against
+  the live N = 4 results per the M1a exit criterion, but still a model).
+  M1b is the first live confirmation at the pinned N; the
+  nearest-achievable-fraction fallback is the pre-committed mitigation if
+  the model misled the purchase.
 - **M1b solver gate** remains the critical path; the fallback keeps M2 on
   schedule at the cost of a weaker (observed-dose) design. The pre-declared
   de-scope order (second workload, then V2-H6) plus the slack week before

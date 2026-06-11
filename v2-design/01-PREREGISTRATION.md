@@ -77,36 +77,58 @@ two-regime step shape recurs (flat interior, jump at the extremes), that is
 a *distinct* registered outcome: "threshold, not dose-response" — it would
 confirm v1-H5's separator reading and falsify the continuous-dose reading.
 
-### V2-H2 — Intervention: NodeLocal DNSCache collapses spread's during-churn UDP drop
+### V2-H2 — Placement-dependence replicates, and the DNS intervention explains it
 
-**Statement.** With NodeLocal DNSCache enabled, **spread's (f = 1, r = 1)
-own during-churn UDP-conntrack-entry drop shrinks by ≥50 % relative to its
-cache-off drop** — a **within-placement, paired** contrast (cache-on vs
-cache-off, paired across sessions). The denominator is spread's cache-off
-UDP drop, which v1 measured as large (DESIGN §10), so the ratio is
-well-defined.
+**Statement (two-part conjunction — both parts confirmatory).** V2-H2
+deliberately tests **both halves of the v1-H2 claim**: that the
+during-churn UDP-conntrack drop is *placement-dependent*, and that the
+dependence runs through DNS. The round-1 redefinition that moved the
+between-placement contrast out of the family had silently changed H2's
+meaning from placement-dependence to DNS-dependence; this version restores
+it explicitly:
+
+- **(a) Placement-dependence (between-placement, cache-off arms):**
+  spread's (f = 1, r = 1) during-churn UDP-entry drop **exceeds** packed's
+  (f = 0, r = 1), paired per session. This is directional — a paired sign /
+  Wilcoxon comparison of two absolute drops — so it has **no ratio
+  denominator** and is immune to the packed arm's near-zero pool. It is the
+  v1-H2 replication under the first-class prober.
+- **(b) Mechanism intervention (within-spread, paired):** with NodeLocal
+  DNSCache enabled, spread's own UDP drop shrinks by **≥50 %** relative to
+  its cache-off drop. The denominator is spread's cache-off drop, which v1
+  measured as large (DESIGN §10), so the ratio is well-defined.
+
+**Combination rule.** (a) AND (b) — a conjunction, both must pass
+(conservative; no internal correction). V2-H2's single input to the outer
+Holm family is **max(p_a, p_b)**.
 
 **Secondary check (registered, not in family).** The packed (f = 0) arm is
 expected to show **no cache effect**: its UDP pool sits near the noise floor
 (~72–224 entries in the v1 protocol probe — DESIGN §10;
-`thesis/data/conntrack-probe/`), which is precisely why it cannot serve as
-the primary denominator. A material cache effect in the packed arm would be
+`thesis/data/conntrack-probe/`), which is precisely why it cannot serve as a
+ratio denominator. A material cache effect in the packed arm would be
 reported as evidence against the cross-node-DNS account.
 
 **Motivating pilot.** v1-H2 (flush asymmetry, 7/7 sessions) + the protocol
 probe (the placement-dependent component is UDP/DNS; kube-proxy's cleanup is
 deliberately UDP-only); see DESIGN §10 / `hypotheses.md`.
 
-**Test (primary, in family).** Wilcoxon signed-rank on the per-session
-paired shrinkage of spread's UDP drop (cache-on vs cache-off); sessions
-paired by design (same cluster state window, randomized cache order).
+**Test (primary, in family).** (a) Paired Wilcoxon signed-rank on
+per-session (spread − packed) UDP-drop differences, cache-off arms;
+(b) Wilcoxon signed-rank on the per-session paired shrinkage of spread's
+UDP drop (cache-on vs cache-off); sessions paired by design (same cluster
+state window, randomized cache order).
 
-**SESOI / falsified by.** Supported iff the median paired shrinkage is ≥50 %
-with a bootstrap CI excluding 0 % shrinkage. If spread's UDP drop persists
-at >50 % of its cache-off size with the cache on, the UDP/DNS account of
-H2's placement dependence is **wrong** and is reported as falsified.
-TCP-drop behaviour is recorded but carries no registered prediction (v1
-evidence: kernel-side, not placement-mediated).
+**SESOI / falsified by.** (a) falsified if the spread > packed direction
+does not hold (test n.s. at the Holm-adjusted α) — placement-dependence
+failed to replicate; (b) supported iff the median paired shrinkage is ≥50 %
+with a bootstrap CI excluding 0 % — if spread's UDP drop persists at >50 %
+of its cache-off size with the cache on, the UDP/DNS account is **wrong**
+and reported as falsified. Either part failing falsifies V2-H2 as
+registered (the parts are reported separately so a (a)-pass/(b)-fail is
+visible as "placement-dependent but not via DNS"). TCP-drop behaviour is
+recorded but carries no registered prediction (v1 evidence: kernel-side,
+not placement-mediated).
 
 ### V2-H3 — Replication rescue under node-drain
 
@@ -164,15 +186,19 @@ prevent the opposite temptation.
 
 ### V2-H5 — The layered scorecard is reliable, and more reliable than the v1 aggregate
 
-**Statement.** On fresh v2 campaign sessions, each retained layered
-sub-score (availability, mechanism-reconvergence, user-tail) is more
-reliable than the v1 aggregate score computed on the same v2 sessions
-(ICC(sub-score) > ICC(v1 aggregate); v1's own campaign value ICC_old =
-0.033 is the motivating pilot — DESIGN §10), **and** reaches an **absolute
-bar: ICC ≥ 0.5**. Beating ICC_old alone is a near-zero bar (the aggregate is
-already known to be unreliable); the absolute bar is what makes the
-scorecard's reliability a claim about usefulness, not just superiority over
-a broken instrument.
+**Statement.** On fresh v2 campaign sessions, each **required** layered
+sub-score is more reliable than the v1 aggregate score computed on the same
+v2 sessions (ICC(sub-score) > ICC(v1 aggregate); ICC_old as recorded in
+DESIGN §10 is the motivating pilot), **and** reaches an **absolute bar:
+ICC ≥ 0.5**. The sub-score roles are fixed here: **required (confirmatory):
+availability and mechanism-reconvergence** — the two layers v1 showed carry
+signal a score must capture; **exploratory (reported, not confirmatory):
+user-tail** — v1's central finding is precisely that the user layer decouples
+from placement under these fault classes, so its sub-score's reliability is
+informative but not load-bearing for the instrument claim. Beating ICC_old
+alone is a near-zero bar (the aggregate is already known to be unreliable);
+the absolute bar is what makes the scorecard's reliability a claim about
+usefulness, not just superiority over a broken instrument.
 
 **Registered threat — design-informed-by-v1 circularity.** The three
 sub-scores were chosen *because* v1 showed signal in those layers; an
@@ -183,16 +209,24 @@ before any v2 reliability data exists**; (2) reliability is evaluated
 absolute ICC ≥ 0.5 bar applies in addition to the head-to-head comparison.
 
 **Test (primary, in family).** Both instruments computed per session from
-the same v2 raw data; condition-level ICC for each; bootstrap CI on the
-difference ICC_new − ICC_old must exclude zero, **and** each sub-score's
-ICC point estimate must reach ≥ 0.5 with its CI excluding ICC_old.
-Evaluated per sub-score, Holm-corrected **within** V2-H5 across the three
-sub-scores; the scorecard "passes" only if at least the availability and
-mechanism sub-scores individually clear **both** bars.
+the same v2 raw data; condition-level ICC for each; for **each of the two
+required sub-scores**: bootstrap CI on the difference ICC_new − ICC_old must
+exclude zero, **and** the ICC point estimate must reach ≥ 0.5 with its CI
+excluding ICC_old. The two required sub-scores are combined as a
+**conjunction — both must pass** (conservative; no internal multiplicity
+correction needed). V2-H5's single input to the outer four-member Holm
+family is **max(p_availability, p_mechanism)** — the larger of the two
+required sub-scores' p-values, matching the conjunction rule. The user-tail
+sub-score is evaluated identically but reported as exploratory, uncorrected,
+outside both V2-H5's decision rule and the family.
 
-**Falsified by.** Any retained sub-score failing the absolute ICC ≥ 0.5 bar,
-or its reliability CI overlapping or falling below the aggregate's —
-reported as the scorecard failing its own test.
+**Falsified by.** **Either required sub-score** (availability or
+mechanism-reconvergence) failing the absolute ICC ≥ 0.5 bar, or its
+reliability CI overlapping or falling below the aggregate's — reported as
+the scorecard failing its own test. The user-tail sub-score's outcome can
+neither pass nor falsify V2-H5; it is reported alongside. (Pass rule and
+falsification rule are logical complements over the same two-element
+required set.)
 
 ### V2-H6 — Exploratory secondary: iptables-mode direction transfer
 
