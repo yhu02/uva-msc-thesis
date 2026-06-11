@@ -1,0 +1,125 @@
+% =========================================================================
+% main.tex — Overleaf-ready LaTeX port of the UvA MSc thesis manuscript.
+%
+% COMPILE-UNVERIFIED: this scaffold was hand-converted from the canonical
+% Markdown manuscript (thesis/*.md) on a machine with no TeX toolchain.
+% It has NOT been compiled. Expect minor fixups on the first Overleaf
+% compile. See thesis/latex/README.md for import instructions.
+%
+% Source of truth: thesis/00-abstract.md … thesis/09-appendix-provenance.md
+% (wording is governed by chaosprobe/docs/explanation/scope-of-claims.md;
+% no content changes were made in this port).
+% =========================================================================
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\bibliographystyle{plainnat}
+
+% Figures live in thesis/figures/ (one level above this directory);
+% the Overleaf project must contain both thesis/latex/ and thesis/figures/.
+\graphicspath{{../figures/}}
+
+% ----- Author-owned placeholders (TODO: fill in before submission) -----
+\newcommand{\thesistitle}{Measuring the Impact of Chaos in Differing Placement Strategies within Cloud Systems}
+\newcommand{\thesisauthor}{Yvo Hu}
+\newcommand{\thesisdegree}{MSc Thesis, University of Amsterdam}
+\newcommand{\thesissupervisor}{TODO: supervisor name}
+\newcommand{\thesisexaminer}{TODO: second reader / examiner}
+\newcommand{\thesisdate}{TODO: defense date}
+\newcommand{\thesisprogramme}{TODO: programme name (e.g.\ Master Software Engineering)}
+
+\begin{document}
+
+% ----------------------------- Title page -------------------------------
+\begin{titlepage}
+  \centering
+  {\scshape\large University of Amsterdam\par}
+  {\large \thesisprogramme\par}
+  \vspace{3cm}
+  {\huge\bfseries \thesistitle\par}
+  \vspace{1.5cm}
+  {\Large \thesisauthor\par}
+  \vspace{0.5cm}
+  {\large \thesisdegree\par}
+  \vfill
+  \begin{tabular}{ll}
+    Supervisor: & \thesissupervisor \\
+    Examiner:   & \thesisexaminer   \\
+  \end{tabular}
+  \vspace{1cm}
+  {\par\large \thesisdate\par}
+\end{titlepage}
+
+% ------------------------------ Abstract --------------------------------
+\begin{abstract}
+Kubernetes offers multiple placement mechanisms and rich observability, yet
+it remains unclear when pod placement materially affects resilience under
+chaos, and when aggregate resilience scores obscure that effect. This thesis
+presents \textbf{ChaosProbe}, a Kubernetes chaos-evaluation framework that varies
+pod-placement strategies, injects LitmusChaos faults into the Online Boutique
+microservice benchmark, and stores provenance-stamped experiment
+data. Measurement is layered: every outcome is read simultaneously at the
+aggregate-score, kernel/network-mechanism, and user-visible layers. Using
+ChaosProbe, we conduct a bounded empirical study across three fault classes ---
+churn, load contention, and node failure. The primary evidence is a
+seven-session campaign of independent, provenance-gated runs, plus
+replicated load and node-drain batches.
+
+The central finding is a measured latency$\leftrightarrow$availability trade-off: the same
+co-location that minimizes inter-service latency under load maximizes blast
+radius under node failure --- and a single aggregate score sees none of it.
+Beneath that trade-off sits a layered decoupling that recurs across fault
+classes: placement reproducibly moves mechanism-layer signals that do not
+reproducibly reach the user. Under churn, spreading the target's dependents
+flushes far more kernel conntrack state than co-locating them, in 7 of 7
+independent sessions --- yet no stable user-visible advantage follows. The
+aggregate score cannot rank placement strategies under session variance
+(ICC 0.033). Under load, co-located services keep calls node-local and
+hold 1.36--1.39$\times$ lower inter-service tail latency than spread across two
+replicated batches; the user-visible effect did not survive replication and
+is not claimed. A graph-derived cross-node fraction separates node-local from
+spreading placements before any chaos is injected, and that separation
+replicates; a continuous correlation did not and is not claimed. Under node
+failure, draining the node hosting the target took 11 of 11 services offline
+under colocate versus 2 of 11 under spread, and observed blast equaled
+placement-predicted blast for every strategy.
+
+These results show that placement under chaos should not be evaluated with a
+single score alone: resilience conclusions depend on both the fault class and
+the measurement layer. The thesis contributes a reproducible experimental
+framework, a bounded empirical study whose every quoted number traces to an
+archived run, and practical guidance for evaluating placement-sensitive
+resilience claims in Kubernetes.
+\end{abstract}
+
+\tableofcontents
+
+% ------------------------------ Chapters --------------------------------
+\input{chapters/01-introduction}
+\input{chapters/02-related-work}
+\input{chapters/03-chaosprobe}
+\input{chapters/04-methodology}
+\input{chapters/05-results}
+\input{chapters/06-discussion}
+\input{chapters/07-threats}
+\input{chapters/08-conclusion}
+
+% ------------------------------ Appendix --------------------------------
+\appendix
+\input{appendix/a-provenance}
+
+% ---------------------------- Bibliography ------------------------------
+% \nocite{*} prints the full annotated-bibliography source (references.md):
+% entries referenced only by inline \href identifiers still appear.
+\nocite{*}
+\bibliography{references}
+
+\end{document}

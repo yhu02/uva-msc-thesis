@@ -1,0 +1,263 @@
+% Ported from thesis/03-chaosprobe.md — wording unchanged.
+\chapter{The ChaosProbe framework}\label{ch:chaosprobe}
+
+% System chapter. Deep reference: chaosprobe/TECHNICAL.md and
+% chaosprobe/docs/. This chapter substantiates contribution claim 2.
+
+ChaosProbe is the instrument that produces every number in this thesis: a
+Python framework that mutates pod placement as a controlled variable, injects
+LitmusChaos faults into the target application, probes the outcome at three
+measurement layers concurrently, and emits structured, provenance-stamped
+results. This chapter describes its architecture as built (the consolidated
+technical reference lives in the repository alongside the code) and the
+provenance-capture design that Chapter~\ref{ch:methodology}'s campaign protocol depends on. The
+framework is deliberately \emph{evaluation-shaped} rather than
+\emph{optimization-shaped}: unlike the network-aware schedulers of \S\ref{sec:scheduler-lineage}, it does
+not try to find a good placement --- it realizes a chosen placement exactly,
+disturbs it, and measures what happens at each layer.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-01-workflow.png}
+  \caption{\textbf{ChaosProbe experiment workflow} --- placement mutation $\rightarrow$
+    settle $\rightarrow$ load + chaos injection $\rightarrow$ post-chaos probing $\rightarrow$ aggregation $\rightarrow$
+    provenance stamping $\rightarrow$ archive.}
+  \label{fig:workflow}
+\end{figure}
+
+Each experiment iteration follows the pipeline in Figure~\ref{fig:workflow}. The placement
+mutator first realizes the strategy under test and waits for the deployment
+to settle; the load generator and the continuous probers then start, the
+fault is injected and held for the chaos window, and probing continues
+through a post-chaos phase so recovery is captured. The per-iteration data is
+aggregated into a per-strategy summary, stamped with the run's provenance
+manifest, and --- for campaign sessions --- archived as the citable artifact.
+The chaos runner, the load generator, and every continuous prober run in
+parallel during the chaos window; their outputs are joined only after the
+iteration ends, so no prober's sampling cadence depends on another's.
+
+\section{Architecture}\label{sec:architecture}
+
+The implementation is a single Python package whose top-level modules map
+one-to-one onto the responsibilities below: \texttt{placement/} (strategies and
+the mutator), \texttt{chaos/} (the LitmusChaos runner), \texttt{orchestrator/} (phasing,
+readiness, recovery, diagnostics), \texttt{metrics/} and \texttt{collector/} (the probers
+and result collection), \texttt{loadgen/} (Locust), \texttt{storage/} (Neo4j),
+\texttt{output/} (summary generation, charts, reports), and \texttt{commands/} (the CLI
+surface). The description below follows that layout, so each architectural
+claim in this chapter is checkable against a named module.
+
+\textbf{CLI} (\texttt{chaosprobe}). The command-line interface is the framework's only
+entry point, organized around the experiment lifecycle: \texttt{init} installs
+cluster infrastructure (LitmusChaos, Prometheus, Neo4j, the in-cluster
+registry), \texttt{run} executes a strategy $\times$ fault $\times$ iteration matrix, and the
+analysis commands --- \texttt{doctor}, \texttt{stats}, \texttt{power}, \texttt{report}, \texttt{recommend},
+\texttt{summarize}, \texttt{inspect}, \texttt{diff}, \texttt{export} --- consume the resulting
+\texttt{summary.json} without touching the cluster. A \texttt{cluster vagrant} command
+group manages the Vagrant-provisioned local cluster (\S\ref{sec:environment}), and archiving a finished
+run into the citable \texttt{dist/} store is performed by the committed
+\texttt{scripts/archive\_run.py}. Two properties matter methodologically. First,
+\texttt{run} is \textbf{self-healing}: it verifies and reinstalls missing infrastructure
+before each invocation, so experiments are re-entrant and a campaign session
+never silently runs against a half-provisioned cluster. Second, the analysis
+commands are pure functions of the stored output: every statistic in Chapter
+\ref{ch:results} can be recomputed from an archived \texttt{summary.json} without cluster access.
+
+\textbf{Placement mutator \& strategies.} Placement is manipulated at the
+deployment level: the mutator (\texttt{placement/mutator.py}) patches each
+deployment's \texttt{nodeSelector} to pin services to nodes, realizing eight
+strategies defined in \texttt{placement/strategy.py} --- \texttt{baseline} (a no-fault
+control that leaves placement and injects nothing), \texttt{default} (the unmodified
+Kubernetes scheduler), \texttt{colocate} (all services on the target's node),
+\texttt{spread} (services distributed across workers, deterministic per-service
+pinning), \texttt{adversarial} (a worst-fit resource hotspot), \texttt{random} (seeded, so
+reproducible), \texttt{best-fit} (bin-packing onto the fewest nodes), and
+\texttt{dependency-aware} (a BFS partition of the service dependency graph; \S\ref{sec:scheduler-lineage}
+gives each strategy's literature anchor). Because a \texttt{nodeSelector} is a
+request to the scheduler, not a guarantee of the realized state, the mutator
+verifies the outcome: each iteration records per-service
+\textbf{\texttt{placementMatchRates}} --- the fraction of pods that actually landed where
+the strategy intended --- so mismatched iterations are visible to the analysis
+rather than silently polluting it (\S\ref{sec:threats-table}). This deployment-level,
+single-replica design is a scoping decision with consequences the thesis
+returns to repeatedly: it cleanly manipulates \emph{between-service} topology, but
+it structurally excludes multi-replica anti-affinity questions (\S\ref{sec:generalizes}, \S\ref{sec:future-work}).
+
+\textbf{LitmusChaos runner.} Fault injection is delegated to LitmusChaos: the
+runner (\texttt{chaos/runner.py}) saves, triggers, and polls ChaosEngine experiments
+(\texttt{pod-delete}, CPU/memory hogs, \texttt{node-drain}) through the ChaosCenter GraphQL
+API, wrapping each in the settle $\rightarrow$ chaos $\rightarrow$ post phasing that gives the
+probers stable pre- and post-fault baselines. The aggregate resilience
+score of \S\ref{sec:three-layer} is computed from these experiments' probe verdicts ---
+including command probes whose images \texttt{run} builds and pushes to an
+in-cluster registry --- which is why the score's failure modes track the
+probes' own dependencies on cluster health (\S\ref{sec:decoupling}). The runner carries two pieces
+of hardening that campaign-scale operation forced. Injection attempts retry
+with best-attempt quality handling: a transient Litmus failure retries, and
+if no attempt is fully clean the best attempt is kept \emph{and marked}, so the
+data-quality gate (\texttt{doctor}) can taint or exclude the iteration instead of
+the run aborting or the defect passing unnoticed. And destructive faults have
+cleanup guards --- after \texttt{node-drain}, the runner uncordons any node left
+cordoned by a failed experiment teardown, because a leaked cordon would
+silently change the cluster available to every subsequent iteration.
+
+\textbf{Orchestration, readiness gates, and recovery measurement.} Between the
+mutator and the runner sits the orchestrator, which owns the property the
+statistics of Chapter~\ref{ch:methodology} quietly depend on: that every iteration of every
+strategy is measured under the same protocol. A pre-flight module validates
+the scenario and cluster state before each iteration; readiness gates hold
+the iteration until the target pod is running, the application answers
+end-to-end, and a warmup period has passed --- so the pre-chaos baseline is a
+settled system, not a deployment still converging from the previous
+placement mutation. Timing arithmetic derives the probe windows from the
+declared chaos duration, so settle, chaos, and post-chaos phases are
+identically proportioned across strategies and sessions. A recovery watcher
+follows the target deployment's pod lifecycle through the kill cycle,
+recording deletion, scheduled, and ready timestamps --- the source of the
+recovery times quoted in H6 and of the two-phase recovery decomposition
+whose run-to-run instability is itself a finding (\S\ref{sec:l1l3}). When a Litmus
+probe returns an \texttt{Unknown} verdict, a diagnostics module captures the
+cluster state at that moment, which is how the study can assert \emph{why} the
+score is unusable under node drain (\S\ref{sec:h6}) rather than merely observing
+that it is.
+
+\textbf{Probers (cross-layer).} The measurement design of \S\ref{sec:three-layer} is realized by a
+set of continuous probers that run concurrently through every iteration. The
+\emph{Prometheus mechanism prober} samples kernel- and infrastructure-layer
+signals via PromQL: \texttt{conntrack\_entries\_per\_node} (the H2 signal), CoreDNS
+request-duration tails, TCP retransmits, and CPU throttling; kube-proxy's own
+network-programming-latency metric is queried but recorded as uncollected on
+this cluster (\S\ref{sec:threats-table}) --- the framework's \texttt{metricAvailability} map distinguishes
+``not collected'' from ``collected zero'' precisely so such gaps cannot
+manufacture fake values. The \emph{route latency prober} measures the user layer:
+per-route p50/p95/p99 and error rate against the application's HTTP routes,
+with routes classified as fault-\textbf{dependent} (they touch the chaos target)
+or \textbf{control} (they do not) --- the confound-control split that H3 and H4
+rest on. \emph{Redis, disk, and resource probers} track application state, I/O,
+and node/container resource trajectories. Finally, an \emph{EndpointSlice
+snapshotter} records per-service ready-endpoint counts every 15 s through
+the chaos window; its outage troughs are the basis of H6's blast-radius
+metric, which deliberately bypasses both the score and the route layer
+(under a node drain, every Litmus probe returns \texttt{Unknown} and the score is
+unusable --- \S\ref{sec:h6}).
+
+\textbf{Load generation.} User traffic is generated by Locust profiles against
+Online Boutique's user-facing routes: a steady profile (50 users) provides
+background traffic for churn experiments, and a 200-user spike profile
+drives the cluster into the genuine resource contention that the H4/H5
+experiments require --- the regime that, as Appendix~\ref{app:negative} documents, synthetic
+hog faults cannot create on this cluster. The load generator runs in
+parallel with the probers throughout the chaos window, so the route prober
+measures latency under the same traffic the fault perturbs.
+
+\textbf{Storage.} Each run emits structured per-iteration JSON aggregated into a
+per-strategy \texttt{summary.json} (output schema 2.0.0) --- the single artifact all
+analysis consumes --- and writes a \textbf{Neo4j graph} of services, dependency
+edges, and per-iteration pod$\rightarrow$node placements. For most of the study the
+graph is storage; H5 makes it \textbf{analytically load-bearing}: the cross-node
+call fraction --- H5's static predictor --- is computed by joining the graph's
+inter-service edges with the recorded \texttt{podPlacements}, so the prediction
+exists \emph{before any chaos is injected} and depends on the graph being a
+faithful model of the application's call structure. The \texttt{summary.json}
+itself is organized for exactly the analyses Chapter~\ref{ch:results} performs: per
+strategy it carries the per-iteration scores, probe verdicts, recovery
+timings, placement match rates, the per-route latency/error aggregates
+split by dependent-vs-control classification, the mechanism metric
+time-series summaries with their \texttt{metricAvailability} flags, and the
+\texttt{routeViewAggregate} from which the east-west inter-service tails of H4/H5
+are read. Nothing downstream re-queries the cluster; the file is the
+experiment's complete, self-describing record.
+
+\textbf{Analysis commands.} Downstream analysis is split between the CLI and
+committed campaign scripts. \texttt{doctor} is the data-quality gate: it checks
+per-iteration completeness, probe verdicts, and placement match, and in
+\texttt{--strict} mode additionally refuses runs with incomplete provenance (\S\ref{sec:provenance}).
+\texttt{stats} computes pairwise strategy statistics; \texttt{report} renders
+HTML/Markdown reports; \texttt{recommend} summarizes the per-strategy comparison.
+The campaign-level numbers in Chapter~\ref{ch:results} come from dedicated scripts ---
+\texttt{scripts/score\_variance.py} (H1's variance partition, ICC, bootstrap CI,
+power), \texttt{mechanism\_metrics.py} (H2), \texttt{h3\_mechanism\_outcome.py} (H3),
+\texttt{cross\_node\_fraction.py} (H5), \texttt{blast\_radius.py} (H6), and
+\texttt{campaign\_status.py} (session bookkeeping) --- each committed in the
+repository, so every quoted figure names the code path that produced it.
+
+Three design principles cut across these components and are worth stating
+once. First, \textbf{measurement is separated from judgment}: the probers record
+what happened --- including taints, partial data, and \texttt{Unknown} verdicts ---
+and the decision about whether an iteration's data is usable belongs to
+\texttt{doctor}, applied after the fact under explicit, versioned rules. Nothing
+in the collection path drops inconvenient data. Second, \textbf{absence is
+recorded, not interpolated}: the \texttt{metricAvailability} map exists because
+the most dangerous failure mode of a metrics pipeline is a missing query
+that reads as zero; a metric ChaosProbe could not collect is stored as
+uncollected, and the analysis scripts treat it as such. The kube-proxy
+network-programming-latency metric is the live example --- queried, never
+scraped on this cluster, and therefore cited in this thesis only as
+conceptual anchoring for the mechanism, never as data (\S\ref{sec:threats-table}). Third,
+\textbf{every number is regenerable}: the chain from CLI flags to scenario YAML
+to \texttt{summary.json} to analysis script is deterministic given the archived
+inputs, which is what allows Appendix~\ref{app:provenance} to function as a claims$\rightarrow$runs
+mapping rather than a bibliography of irreproducible measurements.
+
+The framework's limitations are part of its honest description. Placement
+is mutated at deployment level with \texttt{nodeSelector}, which is what makes
+the realized placement verifiable, but also what restricts the study to
+between-service topology --- per-service replica anti-affinity is out of
+reach of the current mutator, a boundary that shapes the future-work
+design in \S\ref{sec:future-work}. The probers sample at fixed cadences (EndpointSlice
+snapshots every 15 s), so sub-cadence transients are invisible; H6's
+blast-radius troughs are well above this resolution, but finer-grained
+availability dynamics would need a faster snapshotter. And the framework
+measures one cluster at a time: nothing in the design prevents running the
+same campaign on different infrastructure, but the cross-environment
+comparison itself is future work, not a shipped feature.
+
+\section{Provenance capture}\label{sec:provenance}
+
+Every run is stamped with a manifest (\texttt{artifact-manifest.json}) carrying:
+
+\begin{itemize}
+\item \textbf{scenario SHA-256 hashes} (the exact fault YAML injected),
+\item \textbf{batch/day IDs} and run ID,
+\item \textbf{kube-proxy mode and conntrack settings} (mode, \texttt{maxPerCore}, \texttt{min},
+  TCP timeouts) --- required because the H2 mechanism is version- and
+  mode-sensitive,
+\item \textbf{git commit} (+ dirty flag) of the framework code,
+\item \textbf{environment fingerprint}: Kubernetes server version, container runtime,
+  node OS, CNI hint, namespace, strategy/fault matrix, iteration count.
+\end{itemize}
+
+\texttt{doctor --strict} refuses a run whose provenance is incomplete or whose
+scenario hashes drift; \texttt{scripts/archive\_run.py} banks the run under
+\texttt{chaosprobe/dist/} as the citable artifact (Appendix~\ref{app:provenance}).
+
+Provenance is a first-class feature of the framework, not packaging
+convenience, for three reasons. First, the claims demand it: the H2
+mechanism is sensitive to the Kubernetes version, the kube-proxy mode, and
+the kernel's conntrack configuration (\S\ref{sec:h2-mechanism} --- upstream conntrack handling
+changed materially across v1.31--v1.32), so a conntrack-flush number quoted
+without its environment fingerprint is not interpretable, let alone
+reproducible. The manifest pins exactly the parameters on which the
+mechanism's scope depends.
+
+Second, the study learned the cost of weak provenance empirically. The
+original H4 pilot produced the most striking user-layer number in the study
+--- co-location apparently $\sim$3$\times$ better at the user layer under load --- but the
+run had untracked working-tree changes and incomplete metadata. When it was
+replaced by two \texttt{doctor}-gated $i = 4$ batches, the user-layer effect
+collapsed and only the mechanism-layer effect survived (\S\ref{sec:h4}). Had the dirty
+pilot been quoted, the thesis's headline would have been an artifact of an
+unreproducible run state. The lesson is institutionalized as the campaign
+rule that no number is quoted from a run failing \texttt{doctor --strict}, and as
+the manifest's dirty flag, which makes an uncommitted-code run permanently
+visible as such.
+
+Third, the external advisory review of this work flagged missing raw
+artifacts as a blocker: findings quoted in prose with no bankable evidence
+trail. The archive pipeline answers that structurally rather than
+procedurally --- \texttt{scripts/archive\_run.py} packages each run's \texttt{summary.json},
+per-strategy data, charts, and manifest, with per-file SHA-256 hashes, under
+\texttt{chaosprobe/dist/}, and Appendix~\ref{app:provenance} maps every claim in Chapter~\ref{ch:results} to the
+archives that carry it. The provenance chain is thus verifiable end to end:
+from a number in this document, to a named archive, to hashed data files, to
+the exact scenario YAML and code commit that produced them.
