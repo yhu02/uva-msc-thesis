@@ -1,0 +1,59 @@
+{
+  "workload": "hotel-reservation",
+  "comment": "Static service dependency graph for the M2 solver gate (DESIGN §7: hotelReservation is deployed and solver-gated at M2 before any measured summary.json exists for it). Consumed via chaosprobe.placement.fraction_solver.load_static_topology, which assigns uniform edge weight 1.0; measured route-view weights replace this graph once a hotel-reservation run exists.",
+  "source": {
+    "repo": "https://github.com/delimitrou/DeathStarBench",
+    "commit": "6ecb09706140f8730b5385c08f1386c654c3c526",
+    "evidence": [
+      "hotelReservation/services/frontend/server.go — initSearchClient/initProfileClient/initRecommendationClient/initUserClient/initReservation (srv-* consul names)",
+      "hotelReservation/services/search/server.go — initGeoClient + initRateClient",
+      "hotelReservation/services/profile/server.go, rate/server.go, reservation/server.go — MongoClient + MemcClient",
+      "hotelReservation/services/geo/server.go, user/server.go, recommendation/server.go — MongoClient only",
+      "hotelReservation/config.json — datastore service addresses (mongodb-*, memcached-profile/rate, memcached-reserve)"
+    ],
+    "notes": [
+      "frontend also initializes review/attractions gRPC clients at this commit, but those services are not part of the upstream kubernetes/ deployment and no load endpoint exercises them; they are omitted here, as upstream omits them.",
+      "consul (registry) and jaeger (tracing) receive control-plane/observability traffic from every app service; those star edges are deliberately excluded from the request-path dependency graph, but both deployments are listed in services so the solver can place them.",
+      "Edges are directed [caller, callee]; with 16 uniform-weight edges the fraction quantum is 1/16 = 0.0625, so the pre-registered f targets {0, 0.25, 0.5, 0.75, 1} are exact multiples (4/16, 8/16, 12/16)."
+    ]
+  },
+  "services": [
+    "consul",
+    "frontend",
+    "geo",
+    "jaeger",
+    "memcached-profile",
+    "memcached-rate",
+    "memcached-reserve",
+    "mongodb-geo",
+    "mongodb-profile",
+    "mongodb-rate",
+    "mongodb-recommendation",
+    "mongodb-reservation",
+    "mongodb-user",
+    "profile",
+    "rate",
+    "recommendation",
+    "reservation",
+    "search",
+    "user"
+  ],
+  "edges": [
+    ["frontend", "search"],
+    ["frontend", "profile"],
+    ["frontend", "recommendation"],
+    ["frontend", "user"],
+    ["frontend", "reservation"],
+    ["search", "geo"],
+    ["search", "rate"],
+    ["profile", "mongodb-profile"],
+    ["profile", "memcached-profile"],
+    ["rate", "mongodb-rate"],
+    ["rate", "memcached-rate"],
+    ["reservation", "mongodb-reservation"],
+    ["reservation", "memcached-reserve"],
+    ["recommendation", "mongodb-recommendation"],
+    ["user", "mongodb-user"],
+    ["geo", "mongodb-geo"]
+  ]
+}

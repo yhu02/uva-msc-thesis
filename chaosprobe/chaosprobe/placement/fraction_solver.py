@@ -174,6 +174,70 @@ def load_dependency_graph(summary_path: str) -> Tuple[List[Edge], List[str]]:
     return edges, services
 
 
+def load_static_topology(path: str) -> Tuple[List[Edge], List[str]]:
+    """Load a hand-curated dependency graph from a ``topology.json`` file.
+
+    Static topologies are the M2 solver-gate stand-in for workloads that have
+    no measured ``summary.json`` yet (DESIGN §7: hotelReservation is deployed
+    and solver-gated in the M2 prep window, before any v2 run data exists for
+    it — see ``scenarios/hotel-reservation/topology.json``). Expected shape::
+
+        {
+          "services": ["frontend", "geo", ...],
+          "edges": [["frontend", "search"], ...]
+        }
+
+    Edges are directed ``[src, dst]`` pairs and receive **uniform weight 1.0**
+    (matching v1's uniform-weight measured graphs — see
+    :func:`load_dependency_graph`); any other top-level keys (``workload``,
+    ``source``, ``comment``, ...) are ignored as metadata.
+
+    Returns ``(edges, services)``, both sorted for determinism — the same
+    shape :func:`load_dependency_graph` returns, so ``solve`` /
+    ``enumerate_reachable`` consume either interchangeably.
+
+    Raises ``ValueError`` when the file is structurally unsound: missing or
+    empty ``services``/``edges``, non-string or duplicate service names,
+    malformed edges, self-loops, duplicate edges, or an edge endpoint that is
+    not a declared service.
+    """
+    with open(path) as fh:
+        data = json.load(fh)
+
+    services_raw = data.get("services")
+    if not isinstance(services_raw, list) or not services_raw:
+        raise ValueError(f"{path}: 'services' must be a non-empty list")
+    if not all(isinstance(svc, str) and svc for svc in services_raw):
+        raise ValueError(f"{path}: 'services' entries must be non-empty strings")
+    if len(set(services_raw)) != len(services_raw):
+        raise ValueError(f"{path}: 'services' contains duplicate names")
+
+    edges_raw = data.get("edges")
+    if not isinstance(edges_raw, list) or not edges_raw:
+        raise ValueError(f"{path}: 'edges' must be a non-empty list")
+
+    known = set(services_raw)
+    seen: Set[Tuple[str, str]] = set()
+    for edge in edges_raw:
+        if (
+            not isinstance(edge, list)
+            or len(edge) != 2
+            or not all(isinstance(endpoint, str) and endpoint for endpoint in edge)
+        ):
+            raise ValueError(f"{path}: each edge must be a [src, dst] pair of strings: {edge!r}")
+        src, dst = edge
+        if src == dst:
+            raise ValueError(f"{path}: self-loop edge {src!r} -> {dst!r}")
+        if (src, dst) in seen:
+            raise ValueError(f"{path}: duplicate edge {src!r} -> {dst!r}")
+        if src not in known or dst not in known:
+            raise ValueError(f"{path}: edge {src!r} -> {dst!r} references an undeclared service")
+        seen.add((src, dst))
+
+    edges = sorted((src, dst, 1.0) for src, dst in seen)
+    return edges, sorted(services_raw)
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Achieved fraction (single source of truth, shared with the scripts)
 # ──────────────────────────────────────────────────────────────────────
