@@ -60,7 +60,7 @@ ANNOTATION_PREFIX = "affinity-r"
 
 #: Deployments the engine never touches on discovery: chaos infra plus the
 #: load generator (replicating it would scale the offered load with r).
-_EXCLUDED_DEPLOYMENTS = set(LITMUS_INFRA_DEPLOYMENTS) | {"loadgenerator"}
+EXCLUDED_DEPLOYMENTS = set(LITMUS_INFRA_DEPLOYMENTS) | {"loadgenerator"}
 
 
 @dataclass
@@ -363,7 +363,7 @@ def _discover_services(api: K8sApi, namespace: str) -> List[str]:
     """Application deployments in the namespace (chaos infra + loadgen excluded)."""
     deps = api.apps.list_namespaced_deployment(namespace).items
     return sorted(
-        dep.metadata.name for dep in deps if dep.metadata.name not in _EXCLUDED_DEPLOYMENTS
+        dep.metadata.name for dep in deps if dep.metadata.name not in EXCLUDED_DEPLOYMENTS
     )
 
 
@@ -377,6 +377,7 @@ def apply_placement(
     wait: bool = True,
     timeout: float = 300,
     poll_seconds: float = 3.0,
+    services: Optional[Sequence[str]] = None,
 ) -> ApplyResult:
     """Patch the namespace's deployments to the (r, mode) cell and settle.
 
@@ -384,9 +385,9 @@ def apply_placement(
         api: Kubernetes API pair.
         namespace: Application namespace.
         assignment: ``{service: node}`` for pinned cells (r=1, or r=3
-            packed).  Must be ``None`` for r=3 anti-affine, where every
-            application deployment is discovered and patched with the
-            no-pin anti-affinity constraint.
+            packed).  Must be ``None`` for r=3 anti-affine, where the
+            application deployments are patched with the no-pin
+            anti-affinity constraint.
         r: Replica count, one of :data:`SUPPORTED_REPLICAS`.
         mode: :data:`MODE_PACKED` or :data:`MODE_ANTI_AFFINE`.
         node_names: Schedulable worker names (pin validation / spread arity).
@@ -394,6 +395,11 @@ def apply_placement(
             solve→apply→schedule→verify cycle).
         timeout: Rollout wait deadline in seconds.
         poll_seconds: Rollout poll interval.
+        services: Explicit service set for the r=3 anti-affine cell (the v2
+            session driver passes its own discovered set so a deliberately
+            scaled-to-zero deployment is not resurrected at ``replicas: 3``).
+            ``None`` falls back to namespace discovery; ignored for pinned
+            cells, whose service set is the ``assignment``'s keys.
 
     Returns:
         :class:`ApplyResult` with the patched names, any deployments still
@@ -404,7 +410,10 @@ def apply_placement(
     if r == 3 and mode == MODE_ANTI_AFFINE:
         if assignment is not None:
             raise ValueError("r=3 anti-affine takes no assignment: pass assignment=None")
-        targets = {svc: None for svc in _discover_services(api, namespace)}
+        anti_affine_services = (
+            list(services) if services is not None else _discover_services(api, namespace)
+        )
+        targets = {svc: None for svc in anti_affine_services}
         if not targets:
             raise ValueError(f"no application deployments found in namespace '{namespace}'")
     else:

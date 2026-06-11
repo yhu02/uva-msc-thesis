@@ -374,6 +374,23 @@ def test_apply_placement_anti_affine_discovers_app_deployments():
     assert patch["spec"]["template"]["spec"]["affinity"]["nodeAffinity"] is None
 
 
+def test_apply_placement_anti_affine_explicit_services_skip_discovery():
+    # The v2 session driver passes its own service set; the engine must use
+    # it verbatim instead of re-discovering (and resurrecting) deployments
+    # the caller excluded.
+    api = _api()
+    result = engine.apply_placement(
+        api, "ns", None, 3, engine.MODE_ANTI_AFFINE, WORKERS, wait=False, services=["b", "a"]
+    )
+    assert result.applied == ["a", "b"]
+    api.apps.list_namespaced_deployment.assert_not_called()
+
+
+def test_apply_placement_anti_affine_empty_explicit_services_raise():
+    with pytest.raises(ValueError, match="no application deployments"):
+        engine.apply_placement(_api(), "ns", None, 3, engine.MODE_ANTI_AFFINE, WORKERS, services=[])
+
+
 def test_apply_placement_anti_affine_rejects_an_assignment():
     with pytest.raises(ValueError, match="takes no assignment"):
         engine.apply_placement(_api(), "ns", {"a": "w1"}, 3, engine.MODE_ANTI_AFFINE, WORKERS)

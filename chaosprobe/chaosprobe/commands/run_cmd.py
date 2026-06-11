@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,6 +43,18 @@ from chaosprobe.orchestrator.run_phases import (
     write_run_results,
 )
 from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
+from chaosprobe.orchestrator.v2_session import (
+    V2Condition,
+    V2Session,
+    build_session,
+    discover_services,
+    edges_from_routes,
+    ordered_conditions,
+    parse_levels,
+    parse_workers,
+    session_metadata,
+)
+from chaosprobe.placement import affinity_engine
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import DEFAULT_RUN_STRATEGIES, PlacementStrategy
 from chaosprobe.probes.builder import (
@@ -942,6 +955,195 @@ def _init_overall_results(
     }
 
 
+# ------------------------------------------------------------------
+# v2 complete-block session plumbing (--v2-* flags)
+# ------------------------------------------------------------------
+
+#: Defaults applied when a --v2-levels session is active but the seed flags
+#: are omitted.  Order: matches --seed's 42 convention; solver: matches the
+#: M1b gate's base seed.
+_V2_DEFAULT_ORDER_SEED = 42
+_V2_DEFAULT_SOLVER_SEED = 0
+_V2_DEFAULT_REPLICAS = 1
+_V2_DEFAULT_MODE = affinity_engine.MODE_PACKED
+
+
+@dataclass(frozen=True)
+class V2RunArgs:
+    """Validated --v2-* CLI surface, resolved before the cluster is touched."""
+
+    levels: Tuple[float, ...]
+    conditions: List[V2Condition]
+    order_seed: int
+    solver_seed: int
+    replicas: int
+    mode: str
+    workers: Tuple[str, ...]
+
+
+def _resolve_v2_args(
+    v2_levels: Optional[str],
+    v2_order_seed: Optional[int],
+    v2_solver_seed: Optional[int],
+    v2_replicas: Optional[int],
+    v2_mode: Optional[str],
+    v2_workers: Optional[str],
+    *,
+    strategies_overridden: bool,
+    seeds: Optional[str],
+    scale_replicas: int,
+    experiments: Tuple[str, ...] = (),
+) -> Optional[V2RunArgs]:
+    """Validate the v2 flag combination and build the condition block.
+
+    Returns ``None`` when no ``--v2-levels`` was given (the v1 named-strategy
+    path, untouched).  The v2 surface is mutually exclusive with
+    ``-s/--strategies``, ``--seeds``, and ``--replicas`` — the session owns
+    both the condition axis and the replica count — and a session runs
+    exactly one fault (the pre-registration's session = one fault, one
+    block; the per-level records are keyed by condition, so a multi-fault
+    matrix would silently overwrite the first fault's data).
+    """
+    if v2_levels is None:
+        leftover = [
+            flag
+            for flag, value in (
+                ("--v2-order-seed", v2_order_seed),
+                ("--v2-solver-seed", v2_solver_seed),
+                ("--v2-replicas", v2_replicas),
+                ("--v2-mode", v2_mode),
+                ("--v2-workers", v2_workers),
+            )
+            if value is not None
+        ]
+        if leftover:
+            raise click.ClickException(f"{', '.join(leftover)} require(s) --v2-levels")
+        return None
+
+    if strategies_overridden:
+        raise click.ClickException(
+            "--v2-levels is mutually exclusive with -s/--strategies: a v2 "
+            "session's conditions replace the named-strategy axis"
+        )
+    if seeds:
+        raise click.ClickException(
+            "--v2-levels is mutually exclusive with --seeds (use --v2-solver-seed "
+            "and --v2-order-seed)"
+        )
+    if scale_replicas:
+        raise click.ClickException(
+            "--v2-levels is mutually exclusive with --replicas: the session's "
+            "--v2-replicas owns the replica count"
+        )
+    if not v2_workers:
+        raise click.ClickException(
+            "--v2-levels requires --v2-workers (ordered worker node names; "
+            "solver node index i maps to the i-th name)"
+        )
+    if len(experiments) != 1:
+        raise click.ClickException(
+            f"--v2-levels runs exactly one fault per session (one complete "
+            f"block per fault, per the pre-registered session design) but "
+            f"{len(experiments)} experiment files are selected — pass exactly "
+            f"one -e/--experiment (the default selects "
+            f"{len(experiments)})"
+        )
+
+    try:
+        levels = parse_levels(v2_levels)
+        workers = parse_workers(v2_workers)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    order_seed = v2_order_seed if v2_order_seed is not None else _V2_DEFAULT_ORDER_SEED
+    solver_seed = v2_solver_seed if v2_solver_seed is not None else _V2_DEFAULT_SOLVER_SEED
+    replicas = v2_replicas if v2_replicas is not None else _V2_DEFAULT_REPLICAS
+    mode = v2_mode if v2_mode is not None else _V2_DEFAULT_MODE
+    if replicas not in affinity_engine.SUPPORTED_REPLICAS:
+        raise click.ClickException(
+            f"--v2-replicas must be one of {sorted(affinity_engine.SUPPORTED_REPLICAS)} "
+            f"(r=2 is deliberately unsupported per DESIGN §2.3), got {replicas}"
+        )
+    if mode == affinity_engine.MODE_ANTI_AFFINE and replicas > 1 and len(workers) < replicas:
+        raise click.ClickException(
+            f"--v2-mode anti-affine with --v2-replicas {replicas} needs at least "
+            f"{replicas} workers, got {len(workers)}"
+        )
+
+    return V2RunArgs(
+        levels=levels,
+        conditions=ordered_conditions(levels, order_seed),
+        order_seed=order_seed,
+        solver_seed=solver_seed,
+        replicas=replicas,
+        mode=mode,
+        workers=workers,
+    )
+
+
+def _init_v2_session(
+    args: V2RunArgs,
+    namespace: str,
+    mutator: PlacementMutator,
+    service_routes: Optional[List[Tuple[str, str, str, str, str]]],
+) -> V2Session:
+    """Build the live session: discover services, derive the solver graph,
+    and bind the affinity-engine API.  Raises ``click.ClickException`` when
+    the scenario carries no usable dependency topology."""
+    services = discover_services(mutator)
+    edges = edges_from_routes(service_routes or [], services)
+    try:
+        session = build_session(
+            namespace,
+            levels=args.levels,
+            order_seed=args.order_seed,
+            solver_seed=args.solver_seed,
+            replicas=args.replicas,
+            mode=args.mode,
+            workers=args.workers,
+            edges=edges,
+            services=services,
+            api=affinity_engine.K8sApi.from_cluster(),
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    # Honour the conditions already shown to the user at resolve time (the
+    # block + order are identical: same levels, same order seed).
+    session.conditions = list(args.conditions)
+    click.echo(
+        f"v2 session: complete block of {len(session.conditions)} condition(s) "
+        f"[{', '.join(c.name for c in session.conditions)}] "
+        f"r={session.replicas} mode={session.mode} "
+        f"orderSeed={session.order_seed} solverSeed={session.solver_seed}"
+    )
+    return session
+
+
+def _restore_v2_placements(session: V2Session, namespace: str) -> None:
+    """End-of-run cleanup: clear engine affinity patches back to defaults."""
+    click.echo("Cleanup: restoring v2 affinity placements to default scheduling...")
+    try:
+        affinity_engine.restore(session.api, namespace, wait=False)
+        click.echo("  v2 placements restored.")
+    except Exception as e:
+        click.echo(f"  Warning: v2 restore failed: {e}", err=True)
+
+
+def _strategies_overridden_on_cli() -> bool:
+    """True when -s/--strategies was given explicitly (vs. its default).
+
+    Uses the live Click context, so it must be called from inside the
+    command; returns ``False`` when no context is active (unit tests calling
+    helpers directly).
+    """
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return False
+    from click.core import ParameterSource
+
+    return ctx.get_parameter_source("strategies") == ParameterSource.COMMANDLINE
+
+
 # Holds the open lock file object for the process lifetime so the advisory
 # flock stays held until this process exits. The OS releases it automatically
 # on any exit (clean, crash, kill -9), so no stale-lock cleanup is needed.
@@ -1162,6 +1364,70 @@ def _acquire_run_lock() -> None:
         "experiments, where node-level faults differentiate placements."
     ),
 )
+@click.option(
+    "--v2-levels",
+    default=None,
+    help=(
+        "Comma-separated target cross-node fractions (e.g. '0,0.25,0.5,0.75,1.0'). "
+        "Activates the v2 complete-block session driver: every level becomes one "
+        "condition (solver-targeted placement via the affinity engine) executed "
+        "through the same iteration pipeline as a strategy, visited in a "
+        "randomized order drawn from --v2-order-seed. Mutually exclusive with "
+        "-s/--strategies, --seeds, and --replicas; runs exactly one fault per "
+        "session (pass exactly one -e). A/A pair = two runs with identical "
+        "--v2-* args incl. --v2-solver-seed (identical placements); "
+        "--v2-order-seed may differ."
+    ),
+)
+@click.option(
+    "--v2-order-seed",
+    type=int,
+    default=None,
+    help=(
+        "Seed for the randomized condition order of the complete block "
+        f"(default: {_V2_DEFAULT_ORDER_SEED}). Recorded in summary.json -> "
+        "v2Session.orderSeed/orderApplied."
+    ),
+)
+@click.option(
+    "--v2-solver-seed",
+    type=int,
+    default=None,
+    help=(
+        "Seed for the fraction solver's placements (default: "
+        f"{_V2_DEFAULT_SOLVER_SEED}). Identical-placement A/A session pairs "
+        "share this seed while --v2-order-seed may differ."
+    ),
+)
+@click.option(
+    "--v2-replicas",
+    type=int,
+    default=None,
+    help=(
+        f"Replica count per service, one of {sorted(affinity_engine.SUPPORTED_REPLICAS)} "
+        f"(default: {_V2_DEFAULT_REPLICAS}; r=2 deliberately unsupported per DESIGN §2.3)."
+    ),
+)
+@click.option(
+    "--v2-mode",
+    type=click.Choice([affinity_engine.MODE_PACKED, affinity_engine.MODE_ANTI_AFFINE]),
+    default=None,
+    help=(
+        "Replica packing mode (default: packed). r=1: the two modes are "
+        "physically identical (node pin). r=3 packed: all replicas pinned to "
+        "the solver's node. r=3 anti-affine: required podAntiAffinity, the "
+        "scheduler chooses 3 distinct nodes (no solver pin, no live fraction)."
+    ),
+)
+@click.option(
+    "--v2-workers",
+    default=None,
+    help=(
+        "Ordered comma-separated worker node names; solver node index i maps "
+        "to the i-th name (same convention as scripts/m1b_gate.py --workers). "
+        "Required with --v2-levels."
+    ),
+)
 @neo4j_uri_option
 @neo4j_user_option
 @neo4j_password_option
@@ -1190,6 +1456,12 @@ def run(
     baseline_duration: int,
     batch_id: Optional[str],
     replicas: int,
+    v2_levels: Optional[str],
+    v2_order_seed: Optional[int],
+    v2_solver_seed: Optional[int],
+    v2_replicas: Optional[int],
+    v2_mode: Optional[str],
+    v2_workers: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
@@ -1202,33 +1474,63 @@ def run(
     (including pod recovery metrics), and saves everything to a
     timestamped results directory.
 
+    With --v2-levels the run becomes a v2 complete-block session instead:
+    each target cross-node fraction is one condition (fraction-solver
+    placement realized through the replica-level affinity engine, achieved
+    placement verified from live pods), visited in a randomized order drawn
+    from --v2-order-seed. An A/A pair is two runs with identical --v2-*
+    args including --v2-solver-seed; --v2-order-seed may differ.
+
     \b
     Example:
       chaosprobe run -n online-boutique
       chaosprobe run -n online-boutique -s colocate,spread
       chaosprobe run -n online-boutique -o results/my-run
       chaosprobe run -n online-boutique -i 3  # 3 iterations per strategy
+      chaosprobe run -n online-boutique -i 3 \\
+          -e scenarios/online-boutique/pod-delete.yaml \\
+          --v2-levels 0,0.25,0.5,0.75,1.0 --v2-workers worker1,worker2,worker3
     """
-    strategy_list = [s.strip() for s in strategies.split(",")]
-    valid_strategies = {"baseline", "default"} | {s.value for s in PlacementStrategy}
-    for s in strategy_list:
-        if s not in valid_strategies:
-            click.echo(
-                f"Error: Unknown strategy '{s}'. Valid: {', '.join(sorted(valid_strategies))}",
-                err=True,
-            )
-            sys.exit(1)
+    # ── v2 complete-block session resolution (validated before any mutation) ──
+    v2_args = _resolve_v2_args(
+        v2_levels,
+        v2_order_seed,
+        v2_solver_seed,
+        v2_replicas,
+        v2_mode,
+        v2_workers,
+        strategies_overridden=_strategies_overridden_on_cli(),
+        seeds=seeds,
+        scale_replicas=replicas,
+        experiments=experiment,
+    )
+
+    if v2_args is None:
+        strategy_list = [s.strip() for s in strategies.split(",")]
+        valid_strategies = {"baseline", "default"} | {s.value for s in PlacementStrategy}
+        for s in strategy_list:
+            if s not in valid_strategies:
+                click.echo(
+                    f"Error: Unknown strategy '{s}'. Valid: {', '.join(sorted(valid_strategies))}",
+                    err=True,
+                )
+                sys.exit(1)
+    else:
+        # The complete block in its randomized applied order; never re-sorted
+        # (the recorded order is what licenses Page's L for V2-H1).
+        strategy_list = [c.name for c in v2_args.conditions]
 
     # Serialize against any other active run before touching the cluster — two
     # concurrent runs corrupt each other's placement/rollout/prepull state.
     _acquire_run_lock()
 
-    # Expand `random` into per-seed variants (when --seeds is set), then order
-    # strategies by contention severity so lingering node pressure from heavy
-    # strategies doesn't skew later runs. (--iterations >= 1 is already enforced
-    # by the option's IntRange.)
-    strategy_list = _expand_random_seeds(strategy_list, seeds)
-    strategy_list.sort(key=_strategy_execution_order)
+    if v2_args is None:
+        # Expand `random` into per-seed variants (when --seeds is set), then
+        # order strategies by contention severity so lingering node pressure
+        # from heavy strategies doesn't skew later runs. (--iterations >= 1 is
+        # already enforced by the option's IntRange.)
+        strategy_list = _expand_random_seeds(strategy_list, seeds)
+        strategy_list.sort(key=_strategy_execution_order)
 
     # Create output directory
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -1289,6 +1591,11 @@ def run(
     # Create reusable instances
     mutator = PlacementMutator(namespace)
     metrics_collector = MetricsCollector(namespace)
+
+    # ── v2 session: discover services, derive the solver graph, bind the API ──
+    v2_state: Optional[V2Session] = None
+    if v2_args is not None:
+        v2_state = _init_v2_session(v2_args, namespace, mutator, service_routes)
 
     if replicas:
         click.echo(f"Scaling app deployments to {replicas} replica(s)...")
@@ -1408,6 +1715,7 @@ def run(
             mutator=mutator,
             graph_store=graph_store,
             ts=ts,
+            v2_session=v2_state,
         )
 
         for strat_pos, strategy_name in enumerate(strategy_list, 1):
@@ -1445,6 +1753,10 @@ def run(
 
     # ── Final cleanup: clear placement ──
     click.echo(f"\n{'─' * 60}")
+    if v2_state is not None:
+        # Engine-managed sessions also need replicas/affinity reset, which the
+        # v1 nodeSelector clear below does not touch.
+        _restore_v2_placements(v2_state, namespace)
     click.echo("Cleanup: Clearing placement constraints...")
     try:
         mutator.clear_placement(wait=False)
@@ -1466,6 +1778,11 @@ def run(
     if placement_match:
         overall_results["summary"]["placementMatchRates"] = placement_match
     overall_results["iterations"] = iterations
+    if v2_state is not None:
+        # Everything the A/A comparison and the C1 analysis need: the block,
+        # the applied order + both seeds, the (r, mode, workers) cell, and the
+        # per-level solver/live fractions with acceptance verdicts.
+        overall_results["v2Session"] = session_metadata(v2_state)
 
     write_run_results(
         overall_results,

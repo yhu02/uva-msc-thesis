@@ -66,6 +66,19 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import chaosprobe.placement.fraction_solver as fs
 from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
+
+# The quiescence barrier lives in ``chaosprobe.orchestrator.quiescence`` so
+# the v2 session driver can reuse it; the gate re-exports the original names
+# (tests and callers keep importing them from this script).
+from chaosprobe.orchestrator.quiescence import (
+    DEFAULT_SETTLE_SECONDS,
+    DEFAULT_SETTLE_TIMEOUT,
+    wait_for_quiescence,
+)
+from chaosprobe.orchestrator.quiescence import event_time as _event_time
+from chaosprobe.orchestrator.quiescence import (  # noqa: F401 — re-exported
+    quiescence_snapshot as _quiescence_snapshot,
+)
 from chaosprobe.placement import affinity_engine as engine
 
 #: Artifact schema identifier (bump on breaking shape changes).
@@ -79,16 +92,8 @@ HEADROOM_FLOOR = 0.30
 #: Default pre-registered fraction level grid (DESIGN §2.3, Knob A).
 DEFAULT_LEVELS = (0.0, 0.25, 0.5, 0.75, 1.0)
 
-#: Quiescence barrier defaults: the namespace must stay clean for
-#: ``DEFAULT_SETTLE_SECONDS``, waited for at most ``DEFAULT_SETTLE_TIMEOUT``.
-DEFAULT_SETTLE_SECONDS = 60.0
-DEFAULT_SETTLE_TIMEOUT = 300.0
-
 #: How phase B's packed assignment is built (recorded in the artifact).
 PACKED_ASSIGNMENT_METHOD = "round-robin"
-
-#: Event reason that resets the quiescence window (probe-timeout churn).
-_UNHEALTHY_REASON = "Unhealthy"
 
 #: Event reasons captured into a failure diagnostics snapshot.
 _DIAGNOSTIC_EVENT_REASONS = ("FailedScheduling", "Unhealthy")
@@ -146,137 +151,8 @@ def parse_levels(spec: str) -> Tuple[float, ...]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Quiescence barrier + failure diagnostics
+# Failure diagnostics (the quiescence barrier is imported above)
 # ──────────────────────────────────────────────────────────────────────
-
-
-def _event_time(event: Any) -> Optional[datetime]:
-    """Best-available timestamp of a Kubernetes event, UTC-normalised.
-
-    Prefers ``lastTimestamp``, then ``eventTime``, then the event object's
-    creation timestamp; returns ``None`` when none of them is a datetime.
-    """
-    metadata = getattr(event, "metadata", None)
-    candidates = (
-        getattr(event, "last_timestamp", None),
-        getattr(event, "event_time", None),
-        getattr(metadata, "creation_timestamp", None),
-    )
-    for candidate in candidates:
-        if isinstance(candidate, datetime):
-            return candidate if candidate.tzinfo else candidate.replace(tzinfo=timezone.utc)
-    return None
-
-
-def _quiescence_snapshot(api: engine.K8sApi, namespace: str) -> Dict[str, Any]:
-    """One poll of the barrier's three signals.
-
-    Returns ``notReady`` (deployments not fully rolled out), ``restarts``
-    (the namespace-wide pod restart-count total — any *change* between
-    polls, up or down, is churn), and ``lastUnhealthyAt`` (newest
-    ``Unhealthy`` event timestamp, or ``None``).
-    """
-    not_ready: List[str] = []
-    for dep in api.apps.list_namespaced_deployment(namespace).items:
-        desired = dep.spec.replicas if dep.spec.replicas is not None else 1
-        generation = dep.metadata.generation or 0
-        status = dep.status
-        observed = (status.observed_generation or 0) if status else 0
-        ready = (status.ready_replicas or 0) if status else 0
-        updated = (status.updated_replicas or 0) if status else 0
-        available = (status.available_replicas or 0) if status else 0
-        settled = (
-            observed >= generation
-            and updated >= desired
-            and ready >= desired
-            and available >= desired
-        )
-        if not settled:
-            not_ready.append(dep.metadata.name)
-
-    restarts = 0
-    for pod in api.core.list_namespaced_pod(namespace).items:
-        statuses = (pod.status.container_statuses or []) if pod.status else []
-        restarts += sum(cs.restart_count or 0 for cs in statuses)
-
-    last_unhealthy: Optional[datetime] = None
-    for event in api.core.list_namespaced_event(namespace).items:
-        if event.reason != _UNHEALTHY_REASON:
-            continue
-        stamp = _event_time(event)
-        if stamp is not None and (last_unhealthy is None or stamp > last_unhealthy):
-            last_unhealthy = stamp
-
-    return {"notReady": sorted(not_ready), "restarts": restarts, "lastUnhealthyAt": last_unhealthy}
-
-
-def wait_for_quiescence(
-    api: engine.K8sApi,
-    namespace: str,
-    settle_seconds: float = DEFAULT_SETTLE_SECONDS,
-    timeout: float = DEFAULT_SETTLE_TIMEOUT,
-    poll_seconds: float = 5.0,
-) -> Dict[str, Any]:
-    """Block until the namespace is quiescent, or ``timeout`` elapses.
-
-    Quiescent = one uninterrupted window of ``settle_seconds`` in which
-    every deployment is fully ready, the pod restart-count total does not
-    change, and no new ``Unhealthy`` event is recorded.  The window opens
-    once readiness is reached and **resets** on any churn signal — the
-    cascading 1 s gRPC readiness/liveness probe timeouts observed after an
-    apply are exactly what this barrier lets drain before the next apply.
-
-    On timeout the barrier does **not** abort the gate: the verify step
-    still judges the attempt, and the returned settle record (embedded in
-    the artifact) makes an unsettled start attributable after the fact.
-    """
-    started = time.monotonic()
-    deadline = started + timeout
-    polls = 0
-    resets = 0
-    window_opened: Optional[float] = None
-    window_opened_at: Optional[datetime] = None
-    previous_restarts: Optional[int] = None
-    quiescent = False
-    while True:
-        polls += 1
-        snapshot = _quiescence_snapshot(api, namespace)
-        now = time.monotonic()
-        churned = (
-            bool(snapshot["notReady"])
-            or (previous_restarts is not None and snapshot["restarts"] != previous_restarts)
-            or (
-                window_opened_at is not None
-                and snapshot["lastUnhealthyAt"] is not None
-                and snapshot["lastUnhealthyAt"] >= window_opened_at
-            )
-        )
-        previous_restarts = snapshot["restarts"]
-        if churned:
-            if window_opened is not None:
-                resets += 1
-            window_opened = None
-            window_opened_at = None
-        elif window_opened is None:
-            window_opened = now
-            window_opened_at = datetime.now(timezone.utc)
-        if window_opened is not None and now - window_opened >= settle_seconds:
-            quiescent = True
-            break
-        if now >= deadline:
-            break
-        time.sleep(poll_seconds)
-    return {
-        "quiescent": quiescent,
-        "waitedSeconds": round(time.monotonic() - started, 1),
-        "polls": polls,
-        "windowResets": resets,
-        "settleSeconds": settle_seconds,
-        "timeoutSeconds": timeout,
-        "notReady": snapshot["notReady"],
-        "restarts": snapshot["restarts"],
-        "lastUnhealthyAt": _iso(snapshot["lastUnhealthyAt"]),
-    }
 
 
 def collect_diagnostics(api: engine.K8sApi, namespace: str) -> Dict[str, Any]:
