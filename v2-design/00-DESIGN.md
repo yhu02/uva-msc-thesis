@@ -107,7 +107,7 @@ target given the service dependency graph:
   more than **0.05**; rejected sessions are logged, not silently dropped.
 - *Honest uncertainty.* Whether the solver can hit interior targets at the
   **pinned N = 6 workers** (§7) with ~11 services is unknown — this is the
-  top risk (§9) and the M1 gate. Because the reachable-fraction set is a
+  top risk (§9) and the M1b gate. Because the reachable-fraction set is a
   function of N, the gate **must** run at the pinned N (§9).
 
 **Knob B — replication degree × packing mode.** `r ∈ {1, 3}` replicas per
@@ -119,7 +119,7 @@ exactly the contrast the skipped E1 pilot could not realize, now realizable
 by construction. r = 1 reproduces the v1 regime and anchors comparability.
 **r = 2 is deliberately omitted**: no registered hypothesis, campaign, or
 analysis samples it, so a middle level would inflate the cell count and the
-M1 acceptance burden for zero analytic payload.
+M1b acceptance burden for zero analytic payload.
 
 The eight v1 strategies are retired as experimental conditions. `baseline`
 (no fault) survives as the A/A and calibration control; v1 strategy names may
@@ -246,7 +246,7 @@ reported prominently as the headline result, not suppressed.
   small-cluster external-validity threat (threats table row 2). **Fallback:
   8 workers × 4 GiB** — explicitly noted as a *different design point*: the
   solver's reachable-fraction set is a function of N, so adopting the
-  fallback **requires the M1 solver gate to re-run at N = 8** before
+  fallback **requires the M1b solver gate to re-run at N = 8** before
   anything downstream proceeds. Hardware existence/procurement is the
   user-owned M0 gate ([`02-WORKPLAN.md`](02-WORKPLAN.md)).
 - **Replication arm:** a **second, deliberately different environment** —
@@ -276,7 +276,7 @@ The arithmetic the v1 cluster never had. All request figures marked (m) are
 **to-be-measured-exactly placeholders**; the method is fixed now: sum the
 deployed pods' requests from
 `kubectl get pods -n <ns> -o json` (per-container
-`resources.requests` summed per resource), recorded in the M1/M2 gate
+`resources.requests` summed per resource), recorded in the M1b/M2 gate
 artifacts.
 
 - **Online Boutique at r = 1:** 11 services ≈ 11 app pods; sum of requests
@@ -287,18 +287,30 @@ artifacts.
   6 nodes) ≈ ~2–3 GiB / ~2–3 vCPU (m). The host-side load generator adds
   nothing in-cluster (§4).
 - **Total at the heaviest cell (Online Boutique, r = 3):** ≈ ~8 GiB /
-  ~8 vCPU of requests against **48 GiB total (~42 GiB allocatable after
-  system reservations)** and ≥24 vCPU — the design fits the pinned cluster
-  with **well over 30 % headroom** on both resources even if the measured
-  figures come in 2× above these placeholders.
+  ~8 vCPU of requests. Both resources are netted symmetrically: memory
+  **48 GiB total → ~42 GiB allocatable** after system/kubelet reservations;
+  vCPU **24 total (6 × 4) → ~21 vCPU allocatable** after the same
+  reservations (~0.5 vCPU/node for system daemons + kubelet). Headroom at
+  the heaviest cell: memory ~81 % (8/42), vCPU ~62 % (8/21); at **2× the
+  placeholder requests** (16 GiB / 16 vCPU): memory ~62 %, vCPU ~24 % —
+  so at 2×, **vCPU is the binding resource and the >30 % headroom claim
+  holds only at measured-≈-placeholder levels**. The M1b capacity check
+  therefore verifies the *measured* request sums against allocatable on
+  both resources, and if measured vCPU requests exceed ~1.3× the
+  placeholders, the pinned spec escalates to 6 × 6 vCPU (an M0-flagged
+  contingency), keeping ≥30 % vCPU headroom at the heaviest cell.
 - **Anti-affinity feasibility:** at r = 3 anti-affine, each service's 3
   replicas need **3 schedulable, distinct nodes**; N = 6 satisfies this with
   slack. "r = 3 anti-affine schedulable at the pinned N" is an **explicit
-  M1 exit criterion**, and the capacity-null stopping rule covers
+  M1b exit criterion** (it can only be evaluated on the pinned-N cluster,
+  not in the M1a spike), and the capacity-null stopping rule covers
   anti-affine scheduling failure, not only the f = 0/f = 1 extremes
   (pre-registration, stopping rules).
 - hotelReservation's analogous budget (≈ 15 × r app pods plus its
-  datastores) is computed the same way at deploy and gated at M2.
+  datastores) is computed the same way at deploy and gated at M2. Its
+  r = 3 anti-affine distinct-node requirement is the same 3-of-6-nodes
+  predicate as Online Boutique's and is therefore equally satisfiable at
+  the pinned N = 6 — asserted here, verified at its M2 gate.
 
 ## 8. Explicit non-goals
 
