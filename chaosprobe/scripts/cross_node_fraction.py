@@ -30,32 +30,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import statistics as st
 from typing import Dict, List, Optional, Set, Tuple
 
-_POD_SUFFIX = re.compile(r"-[a-z0-9]+-[a-z0-9]+$")  # name-<replicaset>-<pod-id>
-
-
-def deployment_of(pod_name: str) -> str:
-    """Strip the ReplicaSet hash + pod id from a pod name to get its Deployment."""
-    return _POD_SUFFIX.sub("", pod_name)
-
-
-def edges_from_route_view(route_view: list) -> Set[Tuple[str, str]]:
-    """Inter-service edges (src, dst) parsed from east-west route keys.
-
-    A route key is ``src->dst``, or several comma-joined ``src->dst`` that share a
-    destination (e.g. ``checkoutservice->cartservice,frontend->cartservice``).
-    """
-    edges: Set[Tuple[str, str]] = set()
-    for entry in route_view or []:
-        route = entry.get("route") or ""
-        for part in route.split(","):
-            if "->" in part:
-                src, dst = part.split("->", 1)
-                edges.add((src.strip(), dst.strip()))
-    return edges
+# Shared with the v2/M1a fraction-targeting solver — the package module is the
+# single source of truth for graph extraction and the fraction computation.
+from chaosprobe.placement.fraction_solver import (
+    achieved_fraction,
+    deployment_of,
+    edges_from_route_view,
+    strategies_from_summary,
+)
 
 
 def cross_node_fraction(
@@ -63,15 +48,16 @@ def cross_node_fraction(
 ) -> Optional[float]:
     """Fraction of edges whose endpoints are on different nodes.
 
-    Edges with an endpoint that was not placed (e.g. an unmanaged ``loadgenerator``)
-    are skipped. Returns None when no edge has both endpoints placed.
+    Unweighted view of :func:`chaosprobe.placement.fraction_solver.achieved_fraction`
+    (uniform edge weights). Edges with an endpoint that was not placed (e.g. an
+    unmanaged ``loadgenerator``) are skipped. Returns None when no edge has both
+    endpoints placed.
     """
     dep_to_node: Dict[str, str] = {deployment_of(p): n for p, n in pod_placements.items()}
-    placed = [(a, b) for a, b in edges if a in dep_to_node and b in dep_to_node]
-    if not placed:
+    try:
+        return achieved_fraction(dep_to_node, [(a, b, 1.0) for a, b in edges])
+    except ValueError:
         return None
-    cross = sum(1 for a, b in placed if dep_to_node[a] != dep_to_node[b])
-    return cross / len(placed)
 
 
 def target_scoped_cross_node_fraction(
@@ -130,18 +116,8 @@ def _spearman(pairs: List[Tuple[float, float]]) -> Optional[float]:
     return (sum(a * b for a, b in zip(dx, dy)) / den) if den else None
 
 
-def _strategies(summary: dict) -> Dict[str, dict]:
-    """Strategy name -> strategy dict, flattening single-/multi-fault shapes."""
-    out: Dict[str, dict] = {}
-    if summary.get("strategies"):
-        out.update(summary["strategies"])
-    for fault in (summary.get("faults") or {}).values():
-        out.update((fault or {}).get("strategies") or {})
-    return out
-
-
 def report(summary: dict) -> None:
-    strats = _strategies(summary)
+    strats = strategies_from_summary(summary)
     print("\nCross-node call fraction vs east-west tail (during load)\n")
     print(f"  {'strategy':<18}{'cross-node frac':>16}{'EW median p95 (ms)':>20}")
     pairs: List[Tuple[float, float]] = []

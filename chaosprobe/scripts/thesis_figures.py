@@ -322,7 +322,7 @@ class H5Point:
 def h5_points(summary: Mapping[str, Any]) -> List[H5Point]:
     """Per-strategy (cross-node fraction, during-load east-west median p95)."""
     points: List[H5Point] = []
-    for name, strat in xnf._strategies(dict(summary)).items():
+    for name, strat in xnf.strategies_from_summary(dict(summary)).items():
         rva = ((strat.get("aggregated") or {}).get("routeViewAggregate")) or []
         edges = xnf.edges_from_route_view(rva)
         fracs = [
@@ -419,7 +419,7 @@ def endpoint_trajectories(
     """EndpointSlice total-ready trajectories for the given strategies per run."""
     out: List[ReadyTrajectory] = []
     for run, summary in named:
-        strats = xnf._strategies(dict(summary))
+        strats = xnf.strategies_from_summary(dict(summary))
         for sname in strategies:
             es = ((strats.get(sname) or {}).get("metrics") or {}).get("endpointSlices") or {}
             phases: List[str] = []
