@@ -37,6 +37,7 @@ chapter and a source disagree, the source wins and the chapter is a bug:
 | [`07-threats.md`](07-threats.md) | 7. Threats to validity | Threats table + what-generalizes table (the canonical portability boundary) |
 | [`08-conclusion.md`](08-conclusion.md) | 8. Conclusion & future work | Synthesis + E1/P2/H7 future work |
 | [`09-appendix-provenance.md`](09-appendix-provenance.md) | Appendix A/B | Archived-run provenance table, claims→runs mapping, negative findings |
+| [`10-defense.md`](10-defense.md) | (viva prep, not a chapter) | One-page defense summary + hostile Q&A on the post-correction claims |
 
 ## Status
 

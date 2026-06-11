@@ -95,8 +95,10 @@ application pods their shares, so they remain responsive. `node-memory-hog`
 fails more subtly: its stress helper computes its target against node
 capacity, clamps to allocatable, and on an already-utilized 4 GiB worker
 becomes the kubelet's *first eviction victim* — it self-evicts before any
-application pod feels pressure (confirmed against the `litmus-go` source and
-LitmusChaos [#3397](https://github.com/litmuschaos/litmus/issues/3397); a
+application pod feels pressure (confirmed against the `litmus-go` source —
+[`calculateMemoryConsumption`](https://github.com/litmuschaos/litmus-go/blob/master/chaoslib/litmus/node-memory-hog/lib/node-memory-hog.go)
+applies the percentage to node *capacity*, clamps to allocatable, and ignores
+in-use memory; a
 100%-consumption probe produced zero MemoryPressure, OOM, or app-pod
 evictions). The consequence is the design above: genuine contention must
 come from *load* — the 200-user Locust spike, under which the application is
@@ -244,7 +246,19 @@ correlation, which is invariant to the monotone-but-nonlinear scales these
 metrics live on. For H3, a non-significant correlation alone would be
 absence of evidence; the decoupling claim is therefore additionally
 supported by TOST (two one-sided tests) equivalence testing, which asks
-whether the association is *demonstrably small*, not merely undetected.
+whether the association is *demonstrably small*, not merely undetected
+([Schuirmann 1987](https://doi.org/10.1007/BF01068419);
+[Lakens 2017](https://journals.sagepub.com/doi/10.1177/1948550617697177)).
+We import the procedure from biostatistics deliberately: no native
+equivalence-testing precedent exists in the systems-performance venues we
+searched, and the nearest peer-reviewed computer-science precedent for
+affirmatively accepting practical equivalence is the region-of-practical-
+equivalence analysis of Benavoli et al.
+([JMLR 18(77), 2017](https://jmlr.org/papers/v18/16-305.html)). TOST
+requires a pre-declared smallest effect size of interest: ours is
+|ρ| = 0.3 — the conventional small-correlation boundary — fixed in the
+committed analysis code (`tost_equivalence_correlation`, default
+`sesoi = 0.3`) before the campaign ran, not chosen after seeing the data.
 Where factorial structure is examined (e.g. strategy × phase in the
 node-drain analyses), the aligned-rank-transform ANOVA provides a
 nonparametric interaction test. **Power analysis** closes the H1 argument:

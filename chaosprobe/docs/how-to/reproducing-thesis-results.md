@@ -41,7 +41,9 @@ CFS-capped at the container's CPU limit, so CPU *requests* keep the light app
 pods responsive (smoke test: `colocate` and `default` both scored 100 despite
 ~3× throttling). `node-memory-hog` cannot induce node pressure either — the
 stress helper is the kubelet's first eviction victim and self-evicts before the
-app is touched (verified vs litmus-go source + issue #3397; see the scenario's
+app is touched (verified against the litmus-go source — `calculateMemoryConsumption` applies
+the percentage to node *capacity*, clamps to allocatable, and ignores in-use
+memory; see the scenario's
 header). Both hog faults are **negative results, retained but not used** as the
 contention experiment. Genuine contention needs real cross-pod competition that
 cgroup requests do not isolate — i.e. real *load*: under a sustained 200-user

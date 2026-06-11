@@ -11,7 +11,8 @@
 #     allocatable (NOT free memory), and on an already-utilized node the stress
 #     helper is the kubelet's first eviction victim, so it self-relieves before
 #     the app is touched (verified by a 100% probe: zero MemoryPressure / OOM /
-#     eviction; cf. litmus issue #3397).
+#     eviction; per litmus-go calculateMemoryConsumption: % of capacity,
+#     clamped to allocatable, no free-memory accounting).
 #
 # Genuine contention needs cross-pod competition that cgroup requests do NOT
 # isolate — i.e. real LOAD. Under a sustained 200-user Locust spike the app pods

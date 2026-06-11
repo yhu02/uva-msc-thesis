@@ -69,7 +69,10 @@ under each placement; §6.3, raw data + chaos-window timestamps in
 (1) **TCP dominates the table under both placements and drops sharply at
 the kill cycles in both** (spread 5,935 → 4,253, −28%; colocate
 4,973 → 3,937, −21%) — kernel-side teardown of flows traversing the killed
-pod, since kube-proxy never actively flushes TCP (#100698, #104098);
+pod: kube-proxy has no TCP conntrack-deletion path (#100698, #104098;
+verified across the ≤v1.31 exec cleaner and ≥v1.32 netlink reconciler), and
+close-state conntrack timeouts (10–120 s; §6.3) expire torn-down flows
+within the cycle;
 (2) **the clearly placement-dependent component is UDP (DNS)**: under
 steady load `spread` sustains ~**4×** more UDP entries than `colocate`
 (chaos-window medians 910 vs 224), consistent with cross-node calls driving
