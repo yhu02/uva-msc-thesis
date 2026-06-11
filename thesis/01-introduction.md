@@ -96,6 +96,8 @@ and one for the instrument itself:
   placement strategies at all, given session-level variance, at any feasible
   iteration count? (Answered by H1, §5.1.)
 
+In crosswalk form: SQ1 → H2/H3, SQ2 → H4/H5, SQ3 → H6, SQ4 → H1.
+
 SQ4 is logically prior to the others: if the standard instrument could rank
 placements reliably, the layered measurement design would be a refinement.
 Because it cannot (in this regime), the layered design is what produces the
@@ -118,19 +120,22 @@ explicitly through every claim (Chapter 7).
 
 ## 1.3 Contributions
 
-The thesis makes four explicit claims, in decreasing order of novelty:
+The thesis makes four explicit claims. The claims are ordered by decreasing
+novelty; claim 1 itself bundles three findings of differing novelty, stated
+separately so each is a one-line falsifiable target:
 
-1. **Novel empirical contribution.** A *layered decoupling* result that holds
-   across two fault classes — under both single-replica churn and load
-   contention, placement reproducibly moves a mechanism-layer signal
-   (conntrack flush under churn, H2; east-west inter-service tail under load,
-   H4) that does **not** reproducibly reach the user-visible layer (H3, H4) —
-   together with a *measured latency↔availability trade-off pair* (H5 + H6:
-   the same co-location property that minimizes east-west tail latency
-   maximizes node-failure blast radius and recovery time) and a
-   *score-reliability critique* (H1: the aggregate resilience score cannot
-   rank placement strategies under session variance; ICC 0.033, between-
-   strategy variance 3.3% of total).
+1. **Novel empirical contribution** — three findings:
+   - **1a — layered decoupling.** Under both single-replica churn and load
+     contention, placement reproducibly moves a mechanism-layer signal
+     (conntrack flush 38.5% vs 2.7%, H2; east-west tail 1.36–1.39×, H4) that
+     does **not** reproducibly reach the user-visible layer (H3, H4).
+   - **1b — measured trade-off pair.** The same co-location property that
+     minimizes east-west tail latency (H5) maximizes node-failure blast
+     radius and recovery time (11/11 vs 2/11 services offline; ≈10.3 s vs
+     ≈2.6 s, H6).
+   - **1c — score-reliability critique.** The aggregate resilience score
+     cannot rank placement strategies under session variance (ICC 0.033;
+     between-strategy variance 3.3% of total, H1).
 
 2. **Engineering contribution.** **ChaosProbe**: a placement-aware
    chaos-evaluation framework — a placement mutator with eight strategies, a

@@ -27,16 +27,14 @@ sign to the latency face: the co-location that minimizes the east-west tail
 two lowest tails of eight in both batches, joint *p* ≈ 0.0013) maximizes
 blast radius and recovery time
 (11/11 services offline and ≈10.3 s recovery vs 2/11 and ≈2.6 s; H6). The
-aggregate score, finally, obscures placement effects in every regime tested:
-too noisy to rank under churn, uniformly saturated under load, and unusable
-under drain.
+aggregate score, finally, obscures placement effects in every regime tested,
+for the three regime-specific reasons diagnosed in §6.1.
 
 The four contributions of §1.3 carry this answer, each within the boundary
 drawn in Chapter 7. The layered-decoupling result, the trade-off pair, and
 the score critique (claim 1) are statements about a single-replica
-deployment on one small virtualized v1.28.6/ipvs cluster — directions and
-layer structure, not absolute values, and never "spread is worse" or a best
-strategy. ChaosProbe (claim 2) and the provenance-gated campaign protocol
+deployment on one small virtualized v1.28.6/ipvs cluster — bounded per
+§7.2's table, and never "spread is worse" or a best strategy. ChaosProbe (claim 2) and the provenance-gated campaign protocol
 (claim 3) are the portable parts: any cluster and workload can rerun this
 design, and every number quoted here traces to an archived, hash-stamped run
 (Appendix A). The negative findings (claim 4) bound which fault classes can

@@ -1017,9 +1017,13 @@ def fig07_fraction_vs_tail(points: Sequence[H5Point], out_dir: str) -> str:
         )
     ax.set_xlabel("Cross-node call fraction (realised placement)")
     ax.set_ylabel("During-load east-west median p95 (ms)")
+    # The title states the *claimed* result (the replicated two-regime
+    # separation, §5.5), not the retracted continuous correlation. The batch-2
+    # "ρ 0.25 n.s." is a literal mirroring §5.5: this renderer loads batch 1
+    # only, so there is no batch-2 data to compute it from.
     ax.set_title(
-        f"H5 — co-location removes the east-west tail penalty under load\n"
-        f"(Spearman ρ = {rho:.2f}, {_fmt_p(p)}, n={n} strategies; "
+        f"H5 — node-local placements hold the two lowest east-west tails\n"
+        f"(replicated 2 batches; continuous ρ {rho:.2f} ({_fmt_p(p)}, n={n}) → 0.25 n.s.; "
         "square markers = node-local)"
     )
     fig.tight_layout()
@@ -1108,6 +1112,29 @@ def fig08_trough_timeline(
 # ── figure 9: the capstone trade-off ─────────────────────────────────────────
 
 
+def fig09_label_groups(both: Sequence[H5Point], gap_frac: float = 0.12) -> List[List[H5Point]]:
+    """Group plotted points that crowd together on the latency (x) axis.
+
+    ``adversarial`` and ``spread`` share the 2/11 blast point at almost the
+    same east-west tail, and the rest of the spreading cluster sits within a
+    couple of ms of them, so per-point label offsets overprint into a smear.
+    Points within ``gap_frac`` of the x-span of each other are chained into
+    one cluster, mirroring fig-07's crowded-cluster treatment; the renderer
+    stacks each crowded cluster's labels beside it with leader lines.
+    """
+    ordered = sorted(both, key=lambda p: (p.ew_p95, p.strategy))
+    xs = [pt.ew_p95 for pt in ordered]
+    span = (max(xs) - min(xs)) if len(xs) > 1 else 0.0
+    gap = gap_frac * span if span > 0 else 1.0
+    clusters: List[List[H5Point]] = []
+    for pt in ordered:
+        if clusters and pt.ew_p95 - clusters[-1][-1].ew_p95 <= gap:
+            clusters[-1].append(pt)
+        else:
+            clusters.append([pt])
+    return clusters
+
+
 def fig09_tradeoff(h5: Sequence[H5Point], blast: Mapping[str, H6Blast], out_dir: str) -> str:
     """Same placements on two axes: during-load tail (x) vs drain blast (y)."""
     fig, ax = plt.subplots(figsize=(7.0, 4.8))
@@ -1125,18 +1152,51 @@ def fig09_tradeoff(h5: Sequence[H5Point], blast: Mapping[str, H6Blast], out_dir:
             linewidth=0.8,
             zorder=4,
         )
-        ax.annotate(
-            f"{pt.strategy}\n({b.blast}/{b.measured} services down)",
-            xy=(pt.ew_p95, b.blast),
-            xytext=(10, -4),
-            textcoords="offset points",
-            fontsize=8.5,
-        )
+    xs_all = [pt.ew_p95 for pt in both]
+    ys_all = [blast[pt.strategy].blast for pt in both]
+    x_span = (max(xs_all) - min(xs_all)) if len(xs_all) > 1 else 1.0
+    step = max(0.12 * (max(ys_all) - min(ys_all)), 0.8) if len(ys_all) > 1 else 1.0
+    for group in fig09_label_groups(both):
+        if len(group) == 1:
+            pt = group[0]
+            b = blast[pt.strategy]
+            ax.annotate(
+                f"{pt.strategy}\n({b.blast}/{b.measured} services down)",
+                xy=(pt.ew_p95, b.blast),
+                xytext=(10, -4),
+                textcoords="offset points",
+                fontsize=8.5,
+            )
+            continue
+        # Crowded cluster (the spreading strategies, incl. the co-located
+        # adversarial + spread 2/11 point): stack the labels beside the
+        # cluster with leader lines, as fig-07 does (W7). The column is
+        # biased slightly upward (and clamped to the data range) so it
+        # clears the singleton labels to its left.
+        ranked = sorted(group, key=lambda p: (-blast[p.strategy].blast, p.ew_p95, p.strategy))
+        x_label = min(p.ew_p95 for p in group) - 0.10 * x_span
+        center = st.mean(blast[p.strategy].blast for p in group)
+        y0 = center + step * (len(ranked) - 1) / 2 + 0.35 * step
+        y0 -= max(0.0, y0 - (max(ys_all) + 0.5 * step))
+        for k, pt in enumerate(ranked):
+            b = blast[pt.strategy]
+            ax.annotate(
+                f"{pt.strategy}\n({b.blast}/{b.measured} services down)",
+                xy=(pt.ew_p95, b.blast),
+                xytext=(x_label, y0 - k * step),
+                textcoords="data",
+                fontsize=8.3,
+                ha="right",
+                va="center",
+                arrowprops={"arrowstyle": "-", "color": "#AAAAAA", "lw": 0.6, "shrinkB": 6},
+            )
     if len(both) >= 2:
         xs = [pt.ew_p95 for pt in both]
         ys = [blast[pt.strategy].blast for pt in both]
         ax.plot(xs, ys, "--", color="#AAAAAA", linewidth=1.0, zorder=2)
-    # Strategies measured under load but not yet under drain: rug marks.
+    # Strategies measured under load that have no drain arm (e.g. `default`,
+    # the load-only scheduler control): rug marks. With the completed gradient
+    # run, all six placing strategies carry measured blast values above.
     for pt in pending:
         ax.plot(pt.ew_p95, 0, marker="|", color=PALETTE.get(pt.strategy, "#888888"), markersize=12)
     if pending:
@@ -1144,7 +1204,7 @@ def fig09_tradeoff(h5: Sequence[H5Point], blast: Mapping[str, H6Blast], out_dir:
         ax.text(
             0.5,
             0.105,
-            f"rug marks: load-measured strategies awaiting drain data ({names})",
+            f"rug marks ({names}): load-measured only — no drain arm",
             transform=ax.transAxes,
             ha="center",
             fontsize=7.6,
