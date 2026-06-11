@@ -581,6 +581,22 @@ def _save_partial_results(overall_results: Dict[str, Any], results_dir: Path) ->
         )
 
 
+def _cleanup_conntrack_samplers(core_api: Any) -> None:
+    """Remove the per-worker conntrack sampler pods at the end of the run.
+
+    Sampler pods persist across iterations (``ensure_samplers`` is
+    idempotent, so each iteration adopts them instead of paying the
+    image-pull + ``apk add`` cost again) and are torn down once here.
+    ``cleanup_sampler_pods`` is best-effort by contract, so this can never
+    fail the run.
+    """
+    from chaosprobe.metrics.conntrack import cleanup_sampler_pods
+
+    removed = cleanup_sampler_pods(core_api)
+    if removed:
+        click.echo(f"  Removed {removed} conntrack sampler pod(s).")
+
+
 def _print_run_banner(
     namespace: str,
     experiment_file: Path,
@@ -595,6 +611,7 @@ def _print_run_banner(
     measure_disk: bool,
     measure_resources: bool,
     measure_prometheus: bool,
+    measure_conntrack: bool,
     prometheus_url: Tuple[str, ...],
     collect_logs: bool,
     baseline_duration: int,
@@ -621,6 +638,8 @@ def _print_run_banner(
     if measure_prometheus:
         prom_display = ", ".join(prometheus_url) if prometheus_url else "(auto-discover)"
         click.echo(f"  Prometheus: Querying cluster Prometheus at {prom_display}")
+    if measure_conntrack:
+        click.echo("  Conntrack:  Sampling per-node protocol-labeled conntrack counts")
     if collect_logs:
         click.echo("  Logs:       Collecting container logs from target deployment")
     if baseline_duration > 0:
@@ -1105,6 +1124,16 @@ def _acquire_run_lock() -> None:
     help="Prometheus server URL(s); repeat for multiple instances (auto-discovered if omitted)",
 )
 @click.option(
+    "--measure-conntrack/--no-measure-conntrack",
+    "measure_conntrack",
+    default=True,
+    show_default=True,
+    help=(
+        "Sample per-node protocol-labeled conntrack entry counts during each "
+        "experiment (privileged hostNetwork sampler pod per worker)"
+    ),
+)
+@click.option(
     "--baseline-duration",
     type=int,
     default=0,
@@ -1156,6 +1185,7 @@ def run(
     measure_resources: bool,
     collect_logs: bool,
     measure_prometheus: bool,
+    measure_conntrack: bool,
     prometheus_url: Tuple[str, ...],
     baseline_duration: int,
     batch_id: Optional[str],
@@ -1278,6 +1308,7 @@ def run(
         measure_disk=measure_disk,
         measure_resources=measure_resources,
         measure_prometheus=measure_prometheus,
+        measure_conntrack=measure_conntrack,
         prometheus_url=prometheus_url,
         collect_logs=collect_logs,
         baseline_duration=baseline_duration,
@@ -1357,6 +1388,7 @@ def run(
             measure_disk=measure_disk,
             measure_resources=measure_resources,
             measure_prometheus=measure_prometheus,
+            measure_conntrack=measure_conntrack,
             prometheus_url=prometheus_url,
             collect_logs=collect_logs,
             load_profile=load_profile,
@@ -1419,6 +1451,9 @@ def run(
         click.echo("  Placement cleared.")
     except Exception as e:
         click.echo(f"  Warning: cleanup failed: {e}")
+
+    if measure_conntrack:
+        _cleanup_conntrack_samplers(core_api)
 
     # ── Write overall summary ──
     overall_results["summary"] = {

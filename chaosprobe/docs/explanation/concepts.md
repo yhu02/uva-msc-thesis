@@ -115,7 +115,8 @@ ChaosProbe CLI (cli.py + commands/)
       ├── Chaos Runner — ChaosCenter GraphQL API (save, trigger, poll)
       ├── Result Collector — ChaosResult CRDs
       ├── Metrics Collection — RecoveryWatcher, continuous probers (latency,
-      │     throughput, resources, Prometheus), anomaly labels, cascade timeline
+      │     throughput, resources, Prometheus, per-node protocol-labeled
+      │     conntrack), anomaly labels, cascade timeline
       ├── Storage — Neo4j graph store (topology, runs, metrics, time-series)
       ├── Graph Analysis — blast radius, topology comparison, colocation impact
       └── Output — visualization, ML export, comparison engine
