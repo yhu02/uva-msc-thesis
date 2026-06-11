@@ -5,9 +5,10 @@
 pilot-only. Every number traces to an archived run via Appendix A
 (09-appendix-provenance.md). Wording per scope-of-claims.md. -->
 
-**Figure 5.1 (stub): the fault-class × measurement-layer core matrix** —
-which layer moves under churn / load / node failure, and whether it reaches
-the user. `TODO(author): 3×3 matrix figure; this is the thesis-in-one-picture.`
+![Figure 5.1 — the fault-class × measurement-layer core matrix](figures/fig-02-core-matrix.png)
+
+**Figure 5.1** — the fault-class × measurement-layer core matrix: which layer
+moves under churn / load / node failure, and whether it reaches the user.
 
 ## 5.1 H1 — The aggregate score cannot rank placement strategies
 
@@ -32,10 +33,13 @@ Scope (per §2.1): this is "cannot **rank placement strategies under session
 variance**" — MicroRes's 0.86–0.90 *binary* classification accuracy is a
 different task and is not contradicted.
 
-**Figure 5.2 (stub): per-strategy score distributions across sessions**
-(overlapping spreads, means clustered 64–74). **Figure 5.3 (stub): ICC
-trajectory across sessions 1→7** (0.222 → 0.033 as run-to-run variance
-accrues). `TODO(author): generate from scripts/score_variance.py output.`
+![Figure 5.2 — per-strategy score distributions](figures/fig-03-h1-score-distributions.png)
+
+![Figure 5.3 — ICC trajectory across sessions](figures/fig-04-h1-icc-trajectory.png)
+
+**Figure 5.2** — per-strategy score distributions across the seven sessions
+(overlapping spreads, means clustered 64–74). **Figure 5.3** — ICC trajectory
+as sessions accumulate, 0.222 → 0.033 (run-to-run variance accrues with k).
 
 ## 5.2 H2 — Placement reproducibly moves a kernel/network reconvergence signature
 
@@ -52,14 +56,27 @@ reproducible signal in the study.
 Secondary, corroborating only: `colocate` throttles CPU lowest in 6/7
 sessions (the pooled pilot had `best-fit` lower still) — lead with conntrack.
 
-Mechanism attribution carries a **protocol-scoping caveat** (§6.3):
-kube-proxy's *active* conntrack flush on endpoint churn is **UDP-only**
-upstream; Online Boutique's east-west traffic is gRPC/TCP, so the measured
-flush must be attributed to kernel-side TCP teardown on pod-IP removal plus
-the UDP/DNS flush path — not to kube-proxy alone.
+**Mechanism — measured by protocol decomposition.** A dedicated probe
+(per-node `conntrack -L` protocol counts at 5 s intervals through one full
+kill cycle under each placement; §6.3, raw data in `data/conntrack-probe/`)
+resolves the attribution: `spread` sustains a standing pool of ~1,822 **UDP**
+(DNS) conntrack entries (32% of all entries) where `colocate` sustains only
+~72 (2%); the kill cycle collapses the UDP pool by **50–58%** under `spread`
+while **TCP entries never flush — they grow** (+6 to +16%, reconnect churn),
+matching upstream kube-proxy semantics exactly (UDP-only active cleanup;
+kubernetes/kubernetes #48370, #108523, #126130; TCP: #100698, #104098). The
+aggregate flush H2 measures is the UDP share collapsing — a signal that
+exists only under placements whose topology sustains a large standing DNS
+pool. Probe scope: one iteration per placement; quote for composition and
+direction, the seven sessions carry the statistics.
 
-**Figure 5.4 (stub): per-session spread-vs-colocate conntrack flush %**
-(paired lines, 7 sessions). `TODO(author): from scripts/mechanism_metrics.py.`
+![Figure 5.4 — conntrack flush by strategy across sessions](figures/fig-05-h2-conntrack.png)
+
+**Figure 5.4** — conntrack flush % per strategy across the seven sessions
+(spread > colocate in all seven; note `default` flushes as hard as `spread`
+(~42%) while `dependency-aware`/`best-fit` show *negative* flush — entries
+grow during chaos — consistent with the standing-pool mechanism: what flushes
+is the placement-dependent UDP pool, not a fixed per-strategy quantity).
 
 ## 5.3 H3 — The mechanism is decoupled from the user-visible outcome
 
@@ -83,8 +100,11 @@ No statistics needed for the headline table: `dependency-aware` has the
 (1.4%); `spread` flushes 9× more than `colocate` yet they tie on user-visible
 error (8.0% vs 8.9%).
 
-**Figure 5.5 (stub): mechanism-vs-outcome scatter** (dependent vs control
-routes, per strategy-cell). `TODO(author): from scripts/h3_mechanism_outcome.py.`
+![Figure 5.5 — mechanism vs outcome, dependent and control routes](figures/fig-06-h3-scatter.png)
+
+**Figure 5.5** — mechanism-vs-outcome scatter (dependent vs control routes
+per strategy-cell): the flush correlates with the route that does *not*
+depend on the killed service.
 
 ## 5.4 H4 — Under load contention, placement moves the mechanism, not (reproducibly) the user
 
@@ -102,40 +122,53 @@ routes, per strategy-cell). `TODO(author): from scripts/h3_mechanism_outcome.py.
 **No user-visible placement effect is claimed under load.** The finding
 matches the churn result: layered decoupling holds across both fault classes.
 
-## 5.5 H5 — A graph-derived metric predicts the east-west placement penalty
+## 5.5 H5 — A graph-derived metric separates node-local from spreading placements
 
-**Result — supported, coarsely.** Across all 8 strategies under a 200-user
-spike (*i* = 4), the **cross-node call fraction** (computed pre-chaos from
-the dependency graph + actual `podPlacements`) rank-correlates with the
-during-load median east-west p95: **Spearman ρ = 0.79 (n = 8, *p* < 0.05;
-critical ρ ≈ 0.74)**.
+**Result — the two-regime separation replicates across two independent
+batches; a continuous law does not.** Across all 8 strategies under a
+200-user spike (*i* = 4 per batch):
 
-| strategy | cross-node frac | east-west p95 (ms) |
-|---|---|---|
-| **colocate** | 0.00 | **33.9** |
-| **best-fit** | 0.13 | **35.3** |
-| dependency-aware | 0.73 | 42.6 |
-| spread | 0.73 | 43.5 |
-| baseline | 0.70 | 43.5 |
-| adversarial | 0.80 | 43.5 |
-| default | 0.78 | 45.5 |
-| random | 0.80 | 43.9 |
+| strategy | frac (batch 1) | EW p95 (batch 1) | frac (batch 2) | EW p95 (batch 2) |
+|---|---|---|---|---|
+| **colocate** | 0.00 | **33.9** | 0.00 | **33.2** |
+| **best-fit** | 0.13 | **35.3** | 0.00 | **35.7** |
+| dependency-aware | 0.73 | 42.6 | 0.73 | 43.8 |
+| spread | 0.73 | 43.5 | 0.73 | 44.2 |
+| baseline | 0.70 | 43.5 | 0.78 | 41.7 |
+| adversarial | 0.80 | 43.5 | 0.80 | 42.0 |
+| default | 0.78 | 45.5 | 0.82 | 41.6 |
+| random | 0.80 | 43.9 | 0.80 | 42.8 |
+
+In **both** batches the two node-local placements (cross-node fraction ≈ 0)
+occupy the two lowest east-west tails of eight — per-batch null probability
+1/28 ≈ 0.036, jointly ≈ 0.0013 — at ~**1.25×** below the spreading cluster
+(~34.6 vs ~43.5 ms medians in batch 1; ~34.5 vs ~42.4 ms in batch 2). The
+fraction, computed pre-chaos from the dependency graph + actual
+`podPlacements`, captures that separation.
+
+The *continuous* correlation did **not** replicate: batch 1's Spearman
+ρ = 0.79 (n = 8, carried by `best-fit`'s intermediate 0.13 point) collapsed
+to **ρ = 0.25 (n.s.)** in batch 2, where `best-fit` packed fully (fraction
+0.00) and the spreading cluster showed no internal trend. We therefore claim
+H5 as a **replicated two-regime separator**, not a smooth predictor — and
+quote ρ = 0.79 only alongside ρ = 0.25.
 
 Secondary findings: locality is **not unique to `colocate`** (`best-fit`'s
-bin-packing also lands a low fraction and the second-lowest tail — any
-node-packing placement gets the benefit); **`dependency-aware` did not
-deliver** (fraction 0.73 is spread-like — the BFS partition did not co-locate
-communicating services as intended; its tail ≈ spread's).
+bin-packing lands node-local in both batches — any node-packing placement
+gets the benefit); **`dependency-aware` did not deliver** (fraction 0.73 in
+both batches — the BFS partition did not co-locate communicating services as
+intended; its tail ≈ spread's both times).
 
-Caveats: the correlation is carried by the two **node-local** placements
-sitting below the six **spreading** ones (clustered 0.70–0.80 / 42–46 ms with
-no clean within-cluster trend) — a coarse separator, not a smooth law; the
-user layer stays weak (~1.3×, not dependency-specific); single batch; this is
-**validation of a static predictor**, not of the locality concept (§2.1).
+Caveats: the user layer stays weak (~1.3×, not dependency-specific); batch
+2's launching tree was dirty in non-code files only (deck binary + figure
+PNGs; running code = `e543fbb`); this is **validation of a static
+predictor**, not of the locality concept (§2.1).
 
-**Figure 5.6 (stub): cross-node fraction vs east-west p95 scatter** (8
-strategies, the two node-local points below the spreading cluster).
-`TODO(author): from scripts/cross_node_fraction.py.`
+![Figure 5.6 — cross-node fraction vs east-west p95](figures/fig-07-h5-fraction-vs-tail.png)
+
+**Figure 5.6** — cross-node fraction vs during-load east-west p95 (batch 1;
+square markers = the node-local pair). Batch 2 reproduces the separation with
+`best-fit` at fraction 0.00; see the table above.
 
 ## 5.6 H6 — Co-location is a latency/availability trade-off
 
@@ -150,31 +183,52 @@ strategies, the two node-local points below the spreading cluster).
 Observed blast equals placement-predicted blast in every iteration, measured
 from EndpointSlice outage troughs (15 s sampling) — not the score, which is
 unusable here (a drain leaves every Litmus probe `Unknown`; H1 again).
-Recovery scales with concentration too: 11 evicted pods contend to reschedule
-at once vs 2.
+
+**Gradient extension (6 placing strategies × *i* = 3, doctor-clean).**
+The full gradient run confirms the relationship is exact across the
+intermediate placements: **observed blast equals the placement-predicted
+blast for every strategy** —
+
+| strategy | services on drained node | blast (observed) | recovery (mean) |
+|---|---|---|---|
+| colocate | 11 | **11** | 10.8 s |
+| random | 4 | **4** | 4.6 s |
+| dependency-aware | 3 | **3** | 33.3 s |
+| best-fit | 3 | **3** | 9.7 s |
+| spread | 2 | **2** | 2.6 s |
+| adversarial | 2 | **2** | 33.1 s |
+
+Spearman(predicted, observed) = **1.0** (n = 6): per-node concentration
+predicts the availability consequence exactly, the availability analogue of
+H5's separator. **Recovery time, however, is *not* monotone in blast** —
+intermediate-blast placements produced both the fastest (4.6 s) and slowest
+(33.3 s) recoveries — so the recovery claim is scoped to the
+colocate-vs-spread extremes contrast (10.3 s vs 2.6 s, ~4×), where it
+reproduced across both original batches.
 
 **The trade-off is the finding**: the same co-location that gives the lowest
-east-west tail (H5: 33.9 ms) gives a 100% single-drain outage; `spread` is
-the mirror. One graph property, two opposing measured consequences. Framing
-per scope-of-claims: this is the **quantification of a known qualitative
-trade-off** (cf. AWS cell-based-architecture blast-radius guidance), not its
-discovery; the prediction is near-definitional — the empirical content is
-that it materializes under real chaos, reproduces, and drives a measured
-recovery penalty.
+east-west tail (H5: ~33–34 ms in both batches) gives a 100% single-drain
+outage; `spread` is the mirror. One graph property, two opposing measured
+consequences. Framing per scope-of-claims: this is the **quantification of a
+known qualitative trade-off** (cf. AWS cell-based-architecture blast-radius
+guidance), not its discovery; the prediction is near-definitional — the
+empirical content is that it materializes under real chaos with no partial
+survival, holds across the full strategy gradient, and drives a measured
+recovery penalty at the extremes.
 
-Caveats: two-point contrast (the extremes), single-replica, single cluster.
+Caveats: single-replica, single cluster; recovery non-monotonicity above.
 
-> **[gradient run results: 6 strategies × node-drain — in flight]** — the
-> intermediate-concentration placements (`best-fit`, `dependency-aware`,
-> `adversarial`, `random`) to test whether blast radius scales continuously
-> with per-node concentration (the availability analogue of H5's predictor).
-> `TODO(author): insert results + doctor verdict + archive ID when banked.`
+![Figure 5.7 — EndpointSlice ready-count trough through the drain](figures/fig-08-h6-trough-timeline.png)
 
-**Figure 5.7 (stub): EndpointSlice ready-count trough timeline through the
-drain** (colocate vs spread). **Figure 5.8 (stub): THE trade-off figure** —
-per-strategy cross-node fraction on one axis, east-west p95 (H5) and
-node-drain blast radius (H6) as opposing gradients. `TODO(author): figure
-5.8 is the headline figure of the thesis.`
+**Figure 5.7** — EndpointSlice ready-count trajectory through the drain
+(colocate vs spread; the i = 3 batch catches the trough that a fixed-offset
+snapshot missed — the motivation for the 15 s trough sampler).
+
+![Figure 5.8 — the latency↔availability trade-off](figures/fig-09-tradeoff.png)
+
+**Figure 5.8** — the headline figure: the same placements plotted on the
+east-west latency axis (H5) and the node-drain blast-radius axis (H6),
+opposing gradients of co-location.
 
 ## 5.7 Per-claim evidence table
 
@@ -184,5 +238,6 @@ node-drain blast radius (H6) as opposing gradients. `TODO(author): figure
 | H2: conntrack flush, spread > colocate | s01–s07 | sign test (7/7, p = 0.0156); Wilcoxon (W = 0, p = 0.0225) | 5.4 | same 7 archives |
 | H3: mechanism ⟂ dependent-route outcome | s01–s07, 49 cells | Spearman dep 0.07 vs ctrl 0.29*; TOST equivalence | 5.5 | same 7 archives |
 | H4: east-west replicates, user layer does not | 2 × *i* = 4 load batches | ratio replication (1.36–1.39×); dep-vs-ctrl collapse | — | run-20260607-193053, run-20260607-221822 |
-| H5: cross-node fraction predicts east-west tail | 8 strategies × *i* = 4 | Spearman ρ = 0.79, n = 8 | 5.6, 5.8 | run-20260608-070638 |
-| H6: blast radius + recovery trade-off | 2 node-drain batches | predicted = observed blast, every iteration; recovery contrast | 5.7, 5.8 | `results/20260608-194746`, `results/20260608-205147` (on disk; archive pending) |
+| H2 mechanism: UDP-pool decomposition | 2 × *i* = 1 probe runs + 5 s protocol samples | composition: UDP −50–58% vs TCP growth under spread | — | run-20260610-200013, run-20260610-201131; `data/conntrack-probe/` |
+| H5: cross-node fraction separates node-local from spreading | 2 × (8 strategies × *i* = 4) | lowest-2-of-8 ranks in both batches (joint ≈ 0.0013); ρ = 0.79 → 0.25 | 5.6, 5.8 | run-20260608-070638, run-20260610-202426 |
+| H6: blast radius + recovery trade-off | 2 node-drain batches + 6-strategy gradient | predicted = observed blast every iteration; gradient ρ = 1.0 (n = 6); recovery contrast at extremes | 5.7, 5.8 | run-20260608-194827, run-20260608-205229, run-20260610-172430 |

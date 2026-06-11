@@ -40,12 +40,12 @@ chapter and a source disagree, the source wins and the chapter is a bug:
 
 | Section | Status |
 |---|---|
-| Abstract | **Drafted** (adapted from hypotheses.md; review wording) |
+| Abstract | **Final draft** — all results incl. probe, H5 two-batch verdict, H6 gradient |
 | Introduction | **Drafted** — full prose (problem, sub-questions, contributions, outline) |
 | Related work | **Drafted** — full prose around the positioning quadrant + lineages |
-| ChaosProbe (system) | **Drafted** — full prose; workflow figure (3.1) pending from figures pipeline |
+| ChaosProbe (system) | **Drafted** — full prose; workflow figure = `figures/fig-01-workflow.png` |
 | Methodology | **Drafted** — full prose incl. formal model, cluster bootstrap, node-spec table |
-| Results | **Mostly drafted** — final numbers + tables in place; figures TODO; H6 gradient run pending |
+| Results | **Final draft** — all data banked (campaign, probe, H5 batch 2, H6 gradient); figures wired |
 | Discussion | **Drafted** — full prose (decoupling, trade-off, H2 attribution, L1–L3, implications) |
 | Threats to validity | **Drafted** — tables + validity-vocabulary framing prose |
 | Conclusion & future work | **Drafted** — synthesis + prioritized future work |

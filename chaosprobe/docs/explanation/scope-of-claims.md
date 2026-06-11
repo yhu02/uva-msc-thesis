@@ -31,18 +31,24 @@ the user.
   capture (H2).
 - **Mechanism and user-visible layers can decouple** — a placement effect at the
   mechanism layer did not, in this single-replica regime, reach the user (H3).
-- **A graph-derived metric predicts the east-west placement penalty** — across 8
-  placements, the cross-node call fraction (computable from the dependency graph +
-  placement, before any chaos) rank-correlates with the during-load east-west tail
-  (ρ = 0.79, n = 8). Coarse (it mainly separates node-local placements from spreading
-  ones) and single-batch, but it makes the dependency graph analytically load-bearing
-  (H5).
+- **A graph-derived metric separates node-local from spreading placements,
+  and that separation predicts the east-west penalty** — across 8 placements in
+  **two independent batches**, placements with cross-node call fraction ≈ 0
+  (`colocate`, `best-fit`) occupy the two lowest east-west tails of 8 both
+  times (~1.25× below the spreading cluster; joint null probability ≈ 0.0013).
+  The fraction is computable from the dependency graph + placement before any
+  chaos — it makes the dependency graph analytically load-bearing (H5). It is
+  a **two-regime separator, not a continuous law**: the batch-1 Spearman
+  ρ = 0.79 collapsed to ρ = 0.25 in batch 2 — never quote 0.79 alone.
 - **Co-location is a measured latency/availability trade-off** — the same
   co-location that lowers the east-west tail (H5) raises node-failure blast radius
   and recovery time: under a node drain, `colocate` lost all 11 services (100%
   outage, ~10.3 s target recovery) vs `spread`'s 2 of 11 (~2.6 s), reproduced
   across two doctor-clean batches and measured from EndpointSlice outage troughs,
-  not the score (H6). Two-point contrast (the extremes), single-replica — the
+  not the score (H6). The 6-strategy gradient run extends this: observed blast
+  equals placement-predicted blast for every strategy (11, 4, 3, 3, 2, 2;
+  Spearman ρ = 1.0, n = 6) — though recovery time is *not* monotone in blast
+  (claim it only for the colocate-vs-spread extremes). Single-replica — the
   quantification of a known qualitative trade-off, not its discovery.
 
 ## What is bounded or preliminary (weaken — never state flatly)
