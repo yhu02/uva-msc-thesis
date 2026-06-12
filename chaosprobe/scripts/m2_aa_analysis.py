@@ -9,6 +9,13 @@ registered.  Any statistically significant A/A finding is reported as
 doctor gates / taint rules / instrumentation, rerun the block; the halt
 criterion lives in §Stopping rules 2).
 
+This module is also the **shared per-iteration extraction library** for
+the supplementary A/A analysis: ``scripts/aa_block.py`` imports
+:func:`extract_iteration`, :func:`load_condition_outcomes` and the taint
+plumbing from here, so the canonical and supplementary numbers are
+computed by one extraction and can never drift apart (the M2 report's
+"analysis consolidation" item).
+
 What it does
 ------------
 1. **Discovery + pairing.** Loads every ``<results-dir>/*/summary.json``
@@ -19,10 +26,13 @@ What it does
    excluded from pairing).  Levels a pair does not share, and levels whose
    condition was not accepted at apply time (``perLevel[].accepted`` false:
    rejected, drifted, or never executed), are excluded with a warning —
-   never silently included or dropped.
+   never silently included or dropped.  Metric values come from the raw
+   per-condition files (``<run>/<condition>.json``), reduced one file at a
+   time to per-iteration scalars (the files are 20–100 MB).
 2. **Per-pair deltas + null tests.** Per pair, per accepted f-level, per
-   registered metric the A-vs-B delta is computed; per metric the
-   level-paired samples go through Wilcoxon signed-rank (>= 5 paired
+   registered metric the A-vs-B delta is computed at the registered unit
+   (the session-condition median over untainted iterations); per metric
+   the level-paired samples go through Wilcoxon signed-rank (>= 5 paired
    levels) or the exact sign test (< 5).  Any p < alpha is an A/A
    finding.  *Power note (registered 5-level grid):* the most extreme
    exact two-sided p on 5 paired levels is 0.0625 (> 0.05), so an
@@ -65,26 +75,45 @@ What it does
    pairs) — the numbers the M2 power analysis and the SESOI
    finalization consume.
 
-Registered delta metrics
-------------------------
-- ``ew_p95_during_ms`` — during-chaos east-west tail latency: mean over
-  inter-service (``a->b``) routes of
-  ``aggregated.routeViewAggregate[].latencyProber.during-chaos.meanP95_ms``
-  (the same canonical field ``scripts/contention_routes.py`` reads).
-- ``conntrack_flush_pct`` — the v1 mechanism definition
-  (``scripts/mechanism_metrics.py``): ``(pre_mean - during_mean) /
-  pre_mean * 100`` on the Prometheus phase aggregate
-  ``conntrack_entries_per_node``.
-- ``udp_conntrack_drop_pct`` — the same pre-vs-during drop computed on
-  per-node UDP entry counts from ``metrics.conntrackProtocolSamples``
-  (where present; the per-protocol prober is newer than some runs).
-- ``score`` — ``aggregated.meanResilienceScore_healthyOnly`` (falling
-  back to ``meanResilienceScore``), with per-iteration scores filtered
-  the same way the aggregate is (ERROR verdicts out; tainted iterations
-  out unless every valid iteration is tainted) feeding the
-  between-iteration variance component.  The raw ``perIterationScores``
-  list is NOT used: it includes the fabricated 0.0 scores of ERROR
-  iterations, which are not valid resilience measurements.
+Registered delta metrics (D4 consolidation)
+-------------------------------------------
+The metric forms implement freeze decision **D4** of the M2 report
+(``v2-design/M2-AA-REPORT.md`` §Freeze decisions, §Instrumentation gaps):
+one canonical A/A extraction whose forms match the registered tests —
+the supplementary (median-over-routes, pre-chaos, taint-excluded)
+operationalization won D4, and V2-H2 is registered on **absolute** UDP
+drops, not the pct ratio (the prereg disclaims ratio denominators: the
+packed arm's near-zero pool makes them ill-defined).
+
+- ``ew_p95_pre_ms`` — the V2-H1 east-west outcome (D4 winner): per
+  iteration, the **median over inter-service (``a->b``) routes** of the
+  route p95 in the **pre-chaos** window, read from the raw iteration's
+  ``metrics.latency.phases``.  Routes containing ``loadgenerator->`` are
+  excluded (DESIGN §4: the host-side load generator is excluded from
+  edge accounting by construction).
+- ``udp_conntrack_drop_entries`` — V2-H2's registered **absolute** UDP
+  conntrack drop: per iteration, cluster UDP entries (per-node phase
+  mean of ``metrics.conntrackProtocolSamples`` counts, summed over
+  nodes) pre-chaos minus during-chaos.
+- ``conntrack_flush_pct`` — the v1 mechanism definition, kept as v1
+  context: per iteration, ``(pre_mean - during_mean) / pre_mean * 100``
+  on the iteration's Prometheus phase aggregate
+  ``conntrack_entries_per_node`` (the same definition
+  ``scripts/mechanism_metrics.py`` computes as M1, now per iteration so
+  taint exclusion applies).
+- ``score`` — the v1 aggregate resilience score: per-iteration
+  ``resilienceScore`` with ERROR-verdict iterations excluded (their
+  fabricated 0.0 is not a valid resilience measurement).
+
+Every metric's session-condition value is the **median over untainted
+iterations** — the registered unit ("session medians as the unit").
+Tainted iterations (``taintReasons`` recorded in ``summary.json``'s
+``v2Session.perLevel[].perIteration`` plus ``preChaosTaintReasons`` in
+the raw iteration records) are excluded from EVERY metric — the
+prereg's "no result is ever quoted from a tainted iteration" rule,
+which the pre-D4 script applied to ``score`` only (M2-AA-REPORT.md
+§Verdict).  Excluded iterations keep a ``None`` row so per-iteration
+pairing alignment is preserved.
 
 ``liveAchievedF`` is not delta-tested: it is the exact-equality
 pipeline check (4) above.
@@ -110,13 +139,16 @@ import os
 import statistics as st
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from chaosprobe.metrics.statistics import icc_bootstrap, sign_test, wilcoxon_signed_rank
 
 #: Analysis-output schema identifier (bump on breaking shape changes).
-SCHEMA = "chaosprobe/m2-aa-analysis/v1"
+#: v2: D4 consolidation — per-iteration extraction, taint exclusion on
+#: every metric, ``ew_p95_pre_ms`` + ``udp_conntrack_drop_entries`` forms.
+SCHEMA = "chaosprobe/m2-aa-analysis/v2"
 
 #: Pre-registered minimum number of A/A session pairs (§A/A calibration).
 REGISTERED_MIN_PAIRS = 3
@@ -128,8 +160,28 @@ DEFAULT_ALPHA = 0.05
 #: meaningless; the exact sign test is used instead.
 WILCOXON_MIN_LEVELS = 5
 
-#: Registered A/A delta metrics (liveAchievedF is the separate identity check).
-METRICS = ("ew_p95_during_ms", "conntrack_flush_pct", "udp_conntrack_drop_pct", "score")
+#: Registered A/A delta metrics (liveAchievedF is the separate identity
+#: check).  Forms per D4 — see the module docstring.
+METRICS = ("ew_p95_pre_ms", "udp_conntrack_drop_entries", "conntrack_flush_pct", "score")
+
+#: Every per-iteration outcome :func:`extract_iteration` produces.  The
+#: canonical analysis tests :data:`METRICS`; the supplementary analysis
+#: (``scripts/aa_block.py``) consumes the broader set for its variance
+#: outcomes and noise bands.
+ITERATION_OUTCOMES = (
+    "ew_p95_pre_ms",
+    "ew_p95_during_ms",
+    "udp_conntrack_drop_entries",
+    "udp_conntrack_drop_pct",
+    "conntrack_flush_pct",
+    "es_trough_depth_pods",
+    "es_zero_services",
+    "trough_duration_s",
+    "user_err_during",
+    "loadgen_err",
+    "udp_preslope_epm",
+    "score",
+)
 
 #: Documented method string embedded in the JSON output (spec: document it).
 VARIANCE_METHOD = (
@@ -138,8 +190,8 @@ VARIANCE_METHOD = (
     "population variance of pair-level cell grand means (designed f-level effects are "
     "absorbed here), betweenSessionWithinPair = mean over pair-level cells of the "
     "population variance of session means, betweenIteration = mean within-session "
-    "population variance; metrics without per-iteration data contribute no iteration "
-    "component"
+    "population variance; per-iteration values are the taint-excluded extraction of "
+    "the raw per-condition files (D4)"
 )
 
 
@@ -184,15 +236,23 @@ class PairKey:
 
 @dataclass
 class LevelObs:
-    """One f-level of one session: identity fields + metric values."""
+    """One f-level of one session: identity fields + metric values.
+
+    ``values`` holds the registered unit — the session-condition median
+    over untainted iterations — per metric; ``iteration_values`` the
+    per-iteration rows behind it (``None`` rows are taint-excluded
+    iterations, kept so pairing alignment is preserved).
+    """
 
     condition: str
     target_f: float
     live_achieved_f: Optional[float]
     accepted: bool
     rejection_reasons: List[str]
-    values: Dict[str, Optional[float]]
-    score_iterations: List[float]
+    values: Dict[str, Optional[float]] = field(
+        default_factory=lambda: {metric: None for metric in METRICS}
+    )
+    iteration_values: Dict[str, List[Optional[float]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -204,6 +264,8 @@ class Session:
     timestamp: Optional[str]
     key: PairKey
     levels: Dict[str, LevelObs]
+    tainted: Set[Tuple[str, Any]] = field(default_factory=set)
+    taints: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -217,108 +279,246 @@ class Pair:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Metric extraction (canonical field paths — see module docstring)
+# Per-iteration outcome extraction (the D4 canonical extraction; shared
+# with scripts/aa_block.py)
 # ──────────────────────────────────────────────────────────────────────
 
 
-def east_west_during_p95(strategy: Dict[str, Any]) -> Optional[float]:
-    """Mean during-chaos p95 (ms) over the east-west (``a->b``) routes.
+def is_east_west(route: str) -> bool:
+    """An inter-service edge group (every member ``a->b``), load generator excluded."""
+    parts = route.split(",")
+    return all("->" in p for p in parts) and not any(
+        p.strip().startswith("loadgenerator->") for p in parts
+    )
 
-    Reads ``aggregated.routeViewAggregate[].latencyProber.during-chaos
-    .meanP95_ms`` — the same canonical per-route field
-    ``scripts/contention_routes.py`` reads for the v1 contention analysis.
+
+def is_user_route(route: str) -> bool:
+    """A user-facing probe route: no edge arrow, health-check endpoint excluded."""
+    return "->" not in route and route != "/_healthz"
+
+
+def east_west_p95(latency: Dict[str, Any], phase: str) -> Optional[float]:
+    """Median across east-west routes of the route p95 in one phase, or None.
+
+    The D4-winning V2-H1 operationalization (median over routes — robust
+    to single-route excursions; see v2-design/M2-AA-REPORT.md D4).
     """
-    rva = ((strategy.get("aggregated") or {}).get("routeViewAggregate")) or []
-    values: List[float] = []
-    for entry in rva:
-        route = entry.get("route") or ""
-        if "->" not in route:
+    routes = (((latency or {}).get("phases") or {}).get(phase) or {}).get("routes") or {}
+    vals = [
+        v["p95_ms"]
+        for k, v in routes.items()
+        if is_east_west(k) and isinstance(v, dict) and isinstance(v.get("p95_ms"), (int, float))
+    ]
+    return st.median(vals) if vals else None
+
+
+def user_error_rate(latency: Dict[str, Any], phase: str) -> Optional[float]:
+    """errorCount / (sampleCount + errorCount) over user routes in one phase."""
+    routes = (((latency or {}).get("phases") or {}).get(phase) or {}).get("routes") or {}
+    err = n = 0
+    for k, v in routes.items():
+        if not (is_user_route(k) and isinstance(v, dict)):
             continue
-        p95 = (((entry.get("latencyProber") or {}).get("during-chaos")) or {}).get("meanP95_ms")
-        if p95 is not None:
-            values.append(float(p95))
-    return st.mean(values) if values else None
+        e = v.get("errorCount") or 0
+        s = v.get("sampleCount") or 0
+        err += e
+        n += e + s
+    return err / n if n else None
 
 
-def _phase_mean(strategy: Dict[str, Any], metric: str, phase: str) -> Optional[float]:
-    """Mean of a Prometheus phase-aggregate metric (mechanism_metrics.py path)."""
-    phases = ((strategy.get("metrics") or {}).get("prometheus") or {}).get("phases") or {}
+def udp_cluster_phase_mean(samples: List[Dict[str, Any]], phase: str) -> Optional[float]:
+    """Cluster UDP entries in a phase: per-node mean count, summed over nodes."""
+    per_node: Dict[str, List[float]] = {}
+    for smp in samples or []:
+        if smp.get("proto") == "udp" and smp.get("phase") == phase:
+            per_node.setdefault(smp["node"], []).append(float(smp["count"]))
+    if not per_node:
+        return None
+    return sum(st.mean(v) for v in per_node.values())
+
+
+def udp_pre_slope(samples: List[Dict[str, Any]]) -> Optional[float]:
+    """Pre-chaos cluster UDP slope (entries/min): per-node OLS slope, summed."""
+    per_node: Dict[str, List[Tuple[float, float]]] = {}
+    for smp in samples or []:
+        if smp.get("proto") == "udp" and smp.get("phase") == "pre-chaos" and smp.get("ts"):
+            t = datetime.fromisoformat(smp["ts"]).timestamp()
+            per_node.setdefault(smp["node"], []).append((t, float(smp["count"])))
+    slopes = []
+    for pts in per_node.values():
+        if len(pts) < 2:
+            continue
+        pts.sort()
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        mx, my = st.mean(xs), st.mean(ys)
+        sxx = sum((x - mx) ** 2 for x in xs)
+        if sxx == 0:
+            continue
+        slopes.append(sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx)
+    return sum(slopes) * 60.0 if slopes else None  # per-second -> per-minute
+
+
+def es_trough(
+    endpoint_slices: Dict[str, Any], app_services: Sequence[str]
+) -> Tuple[Optional[float], Optional[float]]:
+    """(trough depth in pods, services driven to zero) from the duringChaos snapshot."""
+    pre = ((endpoint_slices or {}).get("preChaos") or {}).get("services") or {}
+    dur = ((endpoint_slices or {}).get("duringChaos") or {}).get("services") or {}
+    if not pre or not dur:
+        return None, None
+    depth = 0
+    zeroed = 0
+    measured = 0
+    for svc in app_services:
+        p = (pre.get(svc) or {}).get("ready")
+        q = (dur.get(svc) or {}).get("ready")
+        if not isinstance(p, int) or not isinstance(q, int):
+            continue
+        measured += 1
+        depth += max(0, p - q)
+        if p > 0 and q == 0:
+            zeroed += 1
+    if not measured:
+        return None, None
+    return float(depth), float(zeroed)
+
+
+def _iteration_phase_mean(metrics: Dict[str, Any], metric: str, phase: str) -> Optional[float]:
+    """Mean of a Prometheus phase-aggregate metric inside one raw iteration."""
+    phases = ((metrics or {}).get("prometheus") or {}).get("phases") or {}
     entry = ((phases.get(phase) or {}).get("metrics") or {}).get(metric)
     return entry.get("mean") if isinstance(entry, dict) else None
 
 
-def conntrack_flush_pct(strategy: Dict[str, Any]) -> Optional[float]:
-    """Conntrack flush percentage per the v1 mechanism definition.
+def iteration_conntrack_flush_pct(metrics: Dict[str, Any]) -> Optional[float]:
+    """Conntrack flush percentage per the v1 mechanism definition, per iteration.
 
     ``(pre_mean - during_mean) / pre_mean * 100`` of
-    ``conntrack_entries_per_node`` (positive = entries flushed), exactly as
-    ``scripts/mechanism_metrics.py`` computes M1.
+    ``conntrack_entries_per_node`` (positive = entries flushed), the same
+    definition ``scripts/mechanism_metrics.py`` computes as M1 — applied
+    to one iteration's Prometheus phase aggregates so tainted iterations
+    can be excluded (D4).
     """
-    pre = _phase_mean(strategy, "conntrack_entries_per_node", "pre-chaos")
-    during = _phase_mean(strategy, "conntrack_entries_per_node", "during-chaos")
+    pre = _iteration_phase_mean(metrics, "conntrack_entries_per_node", "pre-chaos")
+    during = _iteration_phase_mean(metrics, "conntrack_entries_per_node", "during-chaos")
     if pre and during is not None:
         return (pre - during) / pre * 100.0
     return None
 
 
-def udp_conntrack_drop_pct(strategy: Dict[str, Any]) -> Optional[float]:
-    """Per-protocol UDP drop percentage from ``metrics.conntrackProtocolSamples``.
+def extract_iteration(
+    it: Dict[str, Any], app_services: Sequence[str]
+) -> Dict[str, Optional[float]]:
+    """Reduce one raw iteration record to the registered scalar outcomes.
 
-    The v1 flush definition applied to the per-node UDP entry counts the
-    protocol prober samples: ``(pre_mean - during_mean) / pre_mean * 100``
-    over the ``proto == "udp"`` sample counts in each phase.  ``None`` when
-    the prober was absent or either phase has no UDP samples.
+    The single shared extraction (D4): the canonical metrics plus the
+    supplementary variance outcomes ``scripts/aa_block.py`` reports.
     """
-    samples = ((strategy.get("metrics") or {}).get("conntrackProtocolSamples")) or []
-    by_phase: Dict[str, List[float]] = {"pre-chaos": [], "during-chaos": []}
-    for sample in samples:
-        if sample.get("proto") != "udp":
+    m = it.get("metrics") or {}
+    latency = m.get("latency") or {}
+    samples = m.get("conntrackProtocolSamples") or []
+    udp_pre = udp_cluster_phase_mean(samples, "pre-chaos")
+    udp_dur = udp_cluster_phase_mean(samples, "during-chaos")
+    udp_drop = (udp_pre - udp_dur) if (udp_pre is not None and udp_dur is not None) else None
+    udp_drop_pct = (
+        100.0 * udp_drop / udp_pre if (udp_drop is not None and udp_pre and udp_pre > 0) else None
+    )
+    depth, zeroed = es_trough(m.get("endpointSlices") or {}, app_services)
+    rec = ((m.get("recovery") or {}).get("summary")) or {}
+    mean_rec = rec.get("meanRecovery_ms")
+    lg = (it.get("loadGeneration") or {}).get("stats") or m.get("loadGeneration") or {}
+    score = it.get("resilienceScore")
+    # An ERROR verdict fabricates a 0.0 score — not a valid measurement.
+    score_valid = isinstance(score, (int, float)) and it.get("verdict") != "ERROR"
+    return {
+        "ew_p95_pre_ms": east_west_p95(latency, "pre-chaos"),
+        "ew_p95_during_ms": east_west_p95(latency, "during-chaos"),
+        "udp_conntrack_drop_entries": udp_drop,
+        "udp_conntrack_drop_pct": udp_drop_pct,
+        "conntrack_flush_pct": iteration_conntrack_flush_pct(m),
+        "es_trough_depth_pods": depth,
+        "es_zero_services": zeroed,
+        "trough_duration_s": mean_rec / 1000.0 if isinstance(mean_rec, (int, float)) else None,
+        "user_err_during": user_error_rate(latency, "during-chaos"),
+        "loadgen_err": (
+            lg.get("errorRate") if isinstance(lg.get("errorRate"), (int, float)) else None
+        ),
+        "udp_preslope_epm": udp_pre_slope(samples),
+        "score": float(score) if score_valid else None,
+    }
+
+
+def summary_tainted_iterations(
+    per_level: Sequence[Dict[str, Any]],
+) -> Tuple[Set[Tuple[str, Any]], List[str]]:
+    """Tainted ``(condition, iteration)`` pairs recorded in the session summary.
+
+    Reads ``v2Session.perLevel[].perIteration[].taintReasons`` — the
+    engine-side taint channel; the raw files' ``preChaosTaintReasons``
+    are folded in later by :func:`load_condition_outcomes`.
+    """
+    tainted: Set[Tuple[str, Any]] = set()
+    taints: List[str] = []
+    for lvl in per_level:
+        cond = lvl.get("condition")
+        if not cond:
             continue
-        phase = sample.get("phase")
-        if phase in by_phase:
-            by_phase[phase].append(float(sample["count"]))
-    pre, during = by_phase["pre-chaos"], by_phase["during-chaos"]
-    if pre and during and st.mean(pre) > 0:
-        pre_mean = st.mean(pre)
-        return (pre_mean - st.mean(during)) / pre_mean * 100.0
-    return None
+        for pi in lvl.get("perIteration") or []:
+            for reason in pi.get("taintReasons") or []:
+                taints.append(f"{cond} it{pi.get('iteration')}: {reason}")
+                tainted.add((cond, pi.get("iteration")))
+    return tainted, taints
 
 
-def aggregate_score(strategy: Dict[str, Any]) -> Optional[float]:
-    """The healthy-only aggregate resilience score (valid-mean fallback).
+def load_condition_outcomes(
+    session_dir: str,
+    condition: str,
+    tainted: Set[Tuple[str, Any]],
+    taints: List[str],
+) -> Optional[Dict[str, List[Optional[float]]]]:
+    """Per-iteration outcome rows for one condition's raw ``<condition>.json``.
 
-    ``aggregated.meanResilienceScore_healthyOnly`` excludes both ERROR
-    iterations and tainted (pre-chaos-degraded) iterations — the estimand
-    the pre-registration's "no result from a tainted iteration" rule
-    implies.  Older summaries without the healthy-only field fall back to
-    ``meanResilienceScore`` (ERROR-excluded only).
+    Returns ``{outcome: [value-or-None per iteration]}`` for every
+    :data:`ITERATION_OUTCOMES` key, or ``None`` when the raw file is
+    missing (the caller decides how loudly to complain).  Iterations
+    carrying ``preChaosTaintReasons`` are added to ``tainted`` /
+    ``taints`` in place; every tainted iteration contributes a ``None``
+    row for every outcome — the registered "never quoted" exclusion,
+    with index alignment preserved so paired tests drop the pair.
+    Raw files are 20–100 MB: one is loaded at a time and freed before
+    the next.
     """
-    aggregated = strategy.get("aggregated") or {}
-    score = aggregated.get("meanResilienceScore_healthyOnly")
-    if score is None:
-        score = aggregated.get("meanResilienceScore")
-    return float(score) if score is not None else None
+    path = os.path.join(session_dir, f"{condition}.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path) as fh:
+        raw = json.load(fh)
+    app_services = sorted(((raw.get("placement") or {}).get("assignments")) or {})
+    per_outcome: Dict[str, List[Optional[float]]] = {key: [] for key in ITERATION_OUTCOMES}
+    for idx, it in enumerate(raw.get("iterations") or [], start=1):
+        iteration = it.get("iteration", idx)
+        if it.get("preChaosTaintReasons"):
+            taints.extend(
+                f"{condition} it{iteration}: pre-chaos {reason}"
+                for reason in it["preChaosTaintReasons"]
+            )
+            tainted.add((condition, iteration))
+        if (condition, iteration) in tainted:
+            for key in ITERATION_OUTCOMES:
+                per_outcome[key].append(None)
+            continue
+        row = extract_iteration(it, app_services)
+        for key in ITERATION_OUTCOMES:
+            per_outcome[key].append(row[key])
+    del raw  # one raw file in memory at a time
+    return per_outcome
 
 
-def healthy_score_iterations(strategy: Dict[str, Any]) -> List[float]:
-    """Per-iteration scores filtered exactly like the aggregate estimand.
-
-    Mirrors ``aggregate_iterations``: ERROR-verdict iterations are
-    excluded (their fabricated 0.0 is not a valid resilience
-    measurement), then tainted iterations are excluded unless every valid
-    iteration is tainted (the aggregation's healthy-or-valid fallback).
-    The raw ``aggregated.perIterationScores`` list is deliberately NOT
-    used — it includes the ERROR scores.
-    """
-    records = strategy.get("iterations") or []
-    valid = [
-        record
-        for record in records
-        if record.get("verdict") != "ERROR" and record.get("resilienceScore") is not None
-    ]
-    healthy = [record for record in valid if record.get("preChaosHealthy", True)]
-    chosen = healthy if healthy else valid
-    return [float(record["resilienceScore"]) for record in chosen]
+def _median_or_none(values: Sequence[Optional[float]]) -> Optional[float]:
+    """Median of the non-None, non-NaN entries; None for an empty sample."""
+    clean = [float(v) for v in values if isinstance(v, (int, float)) and not math.isnan(float(v))]
+    return st.median(clean) if clean else None
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -327,7 +527,12 @@ def healthy_score_iterations(strategy: Dict[str, Any]) -> List[float]:
 
 
 def parse_session(run: str, summary: Dict[str, Any], warnings: List[str]) -> Optional[Session]:
-    """Reduce one summary.json to a :class:`Session`, or ``None`` (warned)."""
+    """Reduce one summary.json to a :class:`Session`, or ``None`` (warned).
+
+    Metric values are NOT filled in here — they come from the raw
+    per-condition files via :func:`load_session_outcomes` (so the 60+ MB
+    summary dict can be freed before any raw file is opened).
+    """
     v2 = summary.get("v2Session")
     if not isinstance(v2, dict):
         warnings.append(f"{run}: no v2Session block — not a v2 session summary, skipped")
@@ -341,10 +546,8 @@ def parse_session(run: str, summary: Dict[str, Any], warnings: List[str]) -> Opt
                 f"{run}: {len(fault_names)} fault blocks — analyzing '{fault_names[0]}' only"
             )
         fault = fault_names[0]
-        strategies = (faults[fault] or {}).get("strategies") or {}
     else:
         fault = ""
-        strategies = summary.get("strategies") or {}
 
     try:
         key = PairKey(
@@ -359,25 +562,19 @@ def parse_session(run: str, summary: Dict[str, Any], warnings: List[str]) -> Opt
         warnings.append(f"{run}: malformed v2Session cell fields ({exc!r}) — skipped")
         return None
 
+    per_level = v2.get("perLevel") or []
+    tainted, taints = summary_tainted_iterations(per_level)
     levels: Dict[str, LevelObs] = {}
-    for record in v2.get("perLevel") or []:
+    for record in per_level:
         condition = record.get("condition")
         if not condition:
             continue
-        strategy = strategies.get(condition) or {}
         levels[condition] = LevelObs(
             condition=condition,
             target_f=float(record.get("targetF") or 0.0),
             live_achieved_f=record.get("liveAchievedF"),
             accepted=bool(record.get("accepted", True)),
             rejection_reasons=[str(reason) for reason in record.get("rejectionReasons") or []],
-            values={
-                "ew_p95_during_ms": east_west_during_p95(strategy),
-                "conntrack_flush_pct": conntrack_flush_pct(strategy),
-                "udp_conntrack_drop_pct": udp_conntrack_drop_pct(strategy),
-                "score": aggregate_score(strategy),
-            },
-            score_iterations=healthy_score_iterations(strategy),
         )
     return Session(
         run=run,
@@ -385,7 +582,31 @@ def parse_session(run: str, summary: Dict[str, Any], warnings: List[str]) -> Opt
         timestamp=summary.get("timestamp"),
         key=key,
         levels=levels,
+        tainted=tainted,
+        taints=taints,
     )
+
+
+def load_session_outcomes(session: Session, session_dir: str, warnings: List[str]) -> None:
+    """Fill every level's metric values from the raw per-condition files.
+
+    Per level: load ``<session_dir>/<condition>.json``, reduce it to
+    taint-excluded per-iteration outcome rows (:func:`load_condition_outcomes`),
+    and set the registered-unit values — the median over untainted
+    iterations per metric.  A missing raw file leaves the level's values
+    ``None`` with a warning (never silently zeroed).
+    """
+    for condition, obs in session.levels.items():
+        per_outcome = load_condition_outcomes(
+            session_dir, condition, session.tainted, session.taints
+        )
+        if per_outcome is None:
+            warnings.append(
+                f"{session.run}: raw {condition}.json missing — level carries no metric values"
+            )
+            continue
+        obs.iteration_values = per_outcome
+        obs.values = {metric: _median_or_none(per_outcome[metric]) for metric in METRICS}
 
 
 def discover_sessions(results_dir: str) -> Tuple[List[Session], List[str]]:
@@ -393,7 +614,8 @@ def discover_sessions(results_dir: str) -> Tuple[List[Session], List[str]]:
     sessions: List[Session] = []
     warnings: List[str] = []
     for path in sorted(glob.glob(os.path.join(results_dir, "*", "summary.json"))):
-        run = os.path.basename(os.path.dirname(path))
+        run_dir = os.path.dirname(path)
+        run = os.path.basename(run_dir)
         try:
             with open(path) as fh:
                 summary = json.load(fh)
@@ -401,7 +623,9 @@ def discover_sessions(results_dir: str) -> Tuple[List[Session], List[str]]:
             warnings.append(f"{run}: unreadable summary.json ({exc}) — skipped")
             continue
         session = parse_session(run, summary, warnings)
+        del summary  # free the 60+ MB summary before touching the raw files
         if session is not None:
+            load_session_outcomes(session, run_dir, warnings)
             sessions.append(session)
     return sessions, warnings
 
@@ -613,13 +837,19 @@ def cross_pair_tests(
 def _cell_values(metric: str, obs: LevelObs) -> List[float]:
     """The per-iteration values one session-level contributes for one metric.
 
-    ``score`` uses the healthy-filtered per-iteration scores when present
-    (that is what makes the between-iteration component estimable); every
-    other metric — and a score without per-iteration records — contributes
-    its single session-level value.
+    The untainted per-iteration values (that is what makes the
+    between-iteration component estimable); a level without per-iteration
+    data (raw file missing) contributes its single session-level value
+    when present.  NaN values (legacy/foreign raw files) are dropped like
+    ``None`` — one NaN would silently null the whole decomposition.
     """
-    if metric == "score" and obs.score_iterations:
-        return list(obs.score_iterations)
+    values = [
+        float(v)
+        for v in obs.iteration_values.get(metric, [])
+        if isinstance(v, (int, float)) and not math.isnan(float(v))
+    ]
+    if values:
+        return values
     value = obs.values.get(metric)
     return [value] if value is not None else []
 
@@ -737,6 +967,9 @@ def analyze(results_dir: str, alpha: float) -> Dict[str, Any]:
             for session in sessions
         ],
         "warnings": warnings,
+        "taintedIterations": [
+            f"{session.run}: {taint}" for session in sessions for taint in session.taints
+        ],
         "pairs": pair_records,
         "crossPairTests": cross_pair_out,
         "findings": findings,
@@ -769,6 +1002,13 @@ def print_report(result: Dict[str, Any]) -> None:
         for warning in result["warnings"]:
             print(f"  WARNING: {warning}")
 
+    print("\n=== Tainted iterations (excluded from every metric, D4) ===")
+    if result["taintedIterations"]:
+        for taint in result["taintedIterations"]:
+            print(f"  TAINTED (excluded): {taint}")
+    else:
+        print("  (none)")
+
     print(f"\n=== A/A pairs ({len(result['pairs'])}) ===")
     if not result["pairs"]:
         print("  (no pairs)")
@@ -785,7 +1025,7 @@ def print_report(result: Dict[str, Any]) -> None:
             entry = record["metrics"][metric]
             verdict = "FINDING" if entry["finding"] else "ok"
             print(
-                f"    {metric:<24} n={entry['nLevelsTested']} "
+                f"    {metric:<28} n={entry['nLevelsTested']} "
                 f"method={entry['method'] or '-'} p={_fmt(entry['p'], 4)}  {verdict}"
             )
 
@@ -794,7 +1034,7 @@ def print_report(result: Dict[str, Any]) -> None:
         entry = result["crossPairTests"][metric]
         verdict = "FINDING" if entry["finding"] else "ok"
         print(
-            f"  {metric:<24} n={entry['nPairs']} "
+            f"  {metric:<28} n={entry['nPairs']} "
             f"method={entry['method'] or '-'} p={_fmt(entry['p'], 4)}  {verdict}"
         )
 
@@ -812,23 +1052,23 @@ def print_report(result: Dict[str, Any]) -> None:
 
     print("\n=== Variance components (per metric; see varianceMethod in JSON) ===")
     header = (
-        f"  {'metric':<24}{'between-pair-level':>20}{'between-session':>17}"
+        f"  {'metric':<28}{'between-pair-level':>20}{'between-session':>17}"
         f"{'between-iter':>14}{'ICC':>8}"
     )
     print(header)
     for metric in METRICS:
         comp = result["varianceComponents"][metric]
         print(
-            f"  {metric:<24}{_fmt(comp['betweenPairLevel']):>20}"
+            f"  {metric:<28}{_fmt(comp['betweenPairLevel']):>20}"
             f"{_fmt(comp['betweenSessionWithinPair']):>17}"
             f"{_fmt(comp['betweenIteration']):>14}{_fmt(comp['icc']):>8}"
         )
 
     print("\n=== Noise band (within-pair between-session SD, per metric per level) ===")
-    print(f"  {'metric':<24}{'level':>8}{'SD':>12}{'mean|d|':>12}{'pairs':>7}")
+    print(f"  {'metric':<28}{'level':>8}{'SD':>12}{'mean|d|':>12}{'pairs':>7}")
     for row in result["noiseBand"]:
         print(
-            f"  {row['metric']:<24}{row['targetF']:>8.2f}{row['withinPairSessionSD']:>12.4f}"
+            f"  {row['metric']:<28}{row['targetF']:>8.2f}{row['withinPairSessionSD']:>12.4f}"
             f"{row['meanAbsDelta']:>12.4f}{row['nPairs']:>7}"
         )
 
@@ -844,12 +1084,14 @@ def build_parser() -> argparse.ArgumentParser:
     """The CLI surface (also exercised by tests)."""
     parser = argparse.ArgumentParser(
         description=(
-            "M2 A/A calibration analysis (pre-registration §A/A, amended in #261): "
+            "M2 A/A calibration analysis (pre-registration §A/A, amended in #261; "
+            "metric forms per the D4 consolidation, v2-design/M2-AA-REPORT.md): "
             "pairs identical-cell v2 sessions, computes per-level per-metric deltas "
-            "with Wilcoxon/sign null tests (any p < alpha => 'A/A FINDING — "
-            "investigate'), checks liveAchievedF exact identity within pairs, and "
-            "emits the variance-component decomposition + noise band table the M2 "
-            "power analysis and SESOI finalization consume."
+            "at the registered unit (session-condition medians over untainted "
+            "iterations) with Wilcoxon/sign null tests (any p < alpha => 'A/A "
+            "FINDING — investigate'), checks liveAchievedF exact identity within "
+            "pairs, and emits the variance-component decomposition + noise band "
+            "table the M2 power analysis and SESOI finalization consume."
         ),
     )
     parser.add_argument(
