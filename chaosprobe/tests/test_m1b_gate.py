@@ -987,3 +987,42 @@ def test_main_rejects_summary_without_edges(monkeypatch, tmp_path):
     path.write_text(json.dumps({"strategies": {}}))
     with pytest.raises(SystemExit, match="no inter-service edges"):
         gate.main(["--summary", str(path), "--workers", "w1,w2"])
+
+
+def test_parser_requires_exactly_one_graph_source(tmp_path):
+    with pytest.raises(SystemExit):
+        gate.build_parser().parse_args(["--workers", "w1,w2"])
+    with pytest.raises(SystemExit):
+        gate.build_parser().parse_args(
+            ["--summary", "s.json", "--topology", "t.json", "--workers", "w1,w2"]
+        )
+
+
+def test_main_rejects_topology_without_edges(tmp_path):
+    """The strict loader rejects an empty edge list before the gate's own check."""
+    path = tmp_path / "empty-topology.json"
+    path.write_text(json.dumps({"services": ["a"], "edges": []}))
+    with pytest.raises(ValueError, match="'edges' must be a non-empty list"):
+        gate.main(["--topology", str(path), "--workers", "w1,w2"])
+
+
+def test_main_loads_static_topology(monkeypatch, tmp_path):
+    """--topology routes through load_static_topology and into the gate run."""
+    path = tmp_path / "topology.json"
+    path.write_text(json.dumps({"services": ["a", "b"], "edges": [["a", "b"]]}))
+    seen = {}
+
+    def fake_from_cluster():
+        raise RuntimeError("stop-after-graph-load")
+
+    monkeypatch.setattr(gate.engine.K8sApi, "from_cluster", staticmethod(fake_from_cluster))
+    real_load = gate.fs.load_static_topology
+
+    def spy_load(p):
+        seen["path"] = p
+        return real_load(p)
+
+    monkeypatch.setattr(gate.fs, "load_static_topology", spy_load)
+    with pytest.raises(RuntimeError, match="stop-after-graph-load"):
+        gate.main(["--topology", str(path), "--workers", "w1,w2"])
+    assert seen["path"] == str(path)
