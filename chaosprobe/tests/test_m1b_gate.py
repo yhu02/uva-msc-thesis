@@ -186,9 +186,53 @@ def test_run_attempt_passes_settle_knobs_from_config(monkeypatch):
 
 
 def test_run_attempt_seed_advances_per_attempt(monkeypatch):
+    """Attempt N starts its sweep at base + (N-1)*SWEEP: attempts never overlap."""
     _, _, solve, _, _ = _wire_attempt(monkeypatch, {"a": ["w1"], "b": ["w2"], "c": ["w2"]})
     gate.run_attempt(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.5, 4, _cfg(seed=10))
-    assert solve.call_args.kwargs["seed"] == 13  # base 10 + attempt 4 - 1
+    assert solve.call_args.kwargs["seed"] == 10 + 3 * gate.SOLVER_SEED_SWEEP
+    # accepted on the first sweep seed -> exactly one solve call
+    assert solve.call_count == 1
+
+
+def test_seed_sweep_returns_first_accepted_and_seeds_tried():
+    calls = []
+
+    def fake_solve(edges, services, n_nodes, level, seed):
+        calls.append(seed)
+        achieved = 0.0625 if seed < 102 else 0.0
+        return _solution({"a": 0}, achieved, level)
+
+    real_solve = gate.fs.solve
+    gate.fs.solve = fake_solve
+    try:
+        solution, tried = gate.solve_with_seed_sweep([("a", "b", 1.0)], ["a", "b"], 8, 0.0, 100)
+    finally:
+        gate.fs.solve = real_solve
+    assert solution.accepted and solution.achieved_f == 0.0
+    assert tried == [100, 101, 102] and calls == tried
+
+
+def test_seed_sweep_exhausted_returns_best_gap():
+    gaps = {200: 0.0625, 201: 0.125, 202: 0.0625, 203: 0.1875, 204: 0.0625}
+
+    def fake_solve(edges, services, n_nodes, level, seed):
+        return _solution({"a": 0}, gaps[seed], level)
+
+    real_solve = gate.fs.solve
+    gate.fs.solve = fake_solve
+    try:
+        solution, tried = gate.solve_with_seed_sweep([("a", "b", 1.0)], ["a", "b"], 8, 0.0, 200)
+    finally:
+        gate.fs.solve = real_solve
+    assert not solution.accepted
+    assert solution.achieved_f == 0.0625  # best gap among the sweep
+    assert tried == [200, 201, 202, 203, 204]
+
+
+def test_run_attempt_records_seeds_tried(monkeypatch):
+    _, _, _, _, _ = _wire_attempt(monkeypatch, {"a": ["w1"], "b": ["w2"], "c": ["w2"]})
+    record = gate.run_attempt(MagicMock(), "ns", EDGES, SERVICES, WORKERS, 0.5, 1, _cfg(seed=0))
+    assert record["solverSeedsTried"] == [0]
 
 
 # ── Phase A: the per-level state machine ──────────────────────────────
