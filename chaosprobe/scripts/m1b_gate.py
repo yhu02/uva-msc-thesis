@@ -547,10 +547,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("-n", "--namespace", default="online-boutique", help="app namespace")
-    parser.add_argument(
+    graph_source = parser.add_mutually_exclusive_group(required=True)
+    graph_source.add_argument(
         "--summary",
-        required=True,
         help="summary.json supplying the weighted dependency graph (the enumerator's graph)",
+    )
+    graph_source.add_argument(
+        "--topology",
+        help=(
+            "static topology.json supplying the dependency graph (uniform weights; "
+            "the M2 stand-in for workloads with no measured summary — DESIGN §7, "
+            "e.g. scenarios/hotel-reservation/topology.json)"
+        ),
     )
     parser.add_argument(
         "--workers",
@@ -625,9 +633,13 @@ def main(argv: List[str] | None = None) -> int:
         settle_seconds=args.settle_seconds,
         settle_timeout=args.settle_timeout,
     )
-    edges, services = fs.load_dependency_graph(args.summary)
+    graph_path = args.summary or args.topology
+    if args.summary:
+        edges, services = fs.load_dependency_graph(args.summary)
+    else:
+        edges, services = fs.load_static_topology(args.topology)
     if not edges:
-        raise SystemExit(f"no inter-service edges found in {args.summary}")
+        raise SystemExit(f"no inter-service edges found in {graph_path}")
 
     api = engine.K8sApi.from_cluster()
     artifact: Dict[str, Any] = {
@@ -636,6 +648,7 @@ def main(argv: List[str] | None = None) -> int:
         "namespace": args.namespace,
         "workers": workers,
         "summary": args.summary,
+        "topology": args.topology,
         "config": {
             "levels": list(levels),
             "tolerance": cfg.tolerance,
