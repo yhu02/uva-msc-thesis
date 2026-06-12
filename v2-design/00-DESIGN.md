@@ -183,9 +183,12 @@ second workload) if M1 overruns.
   solver controls and contributes no in-cluster pod. The window protocol is
   fixed: the pre-chaos baseline window **starts only after the load ramp
   completes plus a 60 s settle**. A pre-registered validity check —
-  UDP-entry slope ≈ 0 over the pre-window, with the threshold tied to the
-  A/A noise band (finalized at M2) — taints any iteration whose pre-window
-  contains a ramp transient. This closes the exact contamination path the
+  **per-f-level pre-window UDP-slope bands** derived from the M2 A/A block
+  (redefined at the M2 freeze from the original "slope ≈ 0" absolute
+  threshold, which the A/A block showed is unworkable: the pre-window pool
+  carries placement-coupled transients — pre-registration §M2 freeze
+  amendments, D3) — taints any iteration whose pre-window slope falls
+  outside its level's band. This closes the exact contamination path the
   v1 probe documented.
 - **EndpointSlice trough sampler retained** (15 s cadence) — the H6
   blast-radius instrument, unchanged; it is the availability-face DV.
@@ -238,7 +241,10 @@ overlapping bootstrap-CI regions, "the frontier contains ≥2 non-dominated
 placements" is nearly self-confirming — the noisier the data, the more
 non-dominated points appear. The frontier is therefore a **registered figure
 with a reporting protocol**: dominance is declared only with margins
-δ_latency / δ_blast tied to the A/A noise band (finalized at M2), and the
+δ_latency / δ_blast tied to the A/A noise band (finalized at the M2 freeze:
+δ_latency = 4.4 ms, δ_blast = 1.0 pod trough depth + 0.302 user-route error
+rate, floored at the A/A 95 % noise band — pre-registration §M2 freeze
+amendments, V2-H4), and the
 non-dominated set is reported under those margins (pre-registration, V2-H4).
 A single placement dominating all others by ≥ δ on both faces would be
 reported prominently as the headline result, not suppressed.

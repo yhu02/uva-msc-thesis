@@ -1,13 +1,17 @@
 # ChaosProbe v2 — pre-registration (DRAFT, not yet frozen)
 
-> **Status: DRAFT.** This document becomes binding only when frozen by commit
-> hash at the end of Month 2 (after A/A calibration and power analysis — see
-> [`02-WORKPLAN.md`](02-WORKPLAN.md)). Until that freeze, hypotheses, SESOIs,
-> and n's may be revised; **after** it, any deviation is reported as a
-> deviation. No campaign data informing these hypotheses may be collected
-> before the freeze. The build has not started; placeholders marked **TBD**
-> or **finalized at M2** are filled from M2's A/A variance estimates before
-> freezing.
+> **Status: DRAFT — freeze imminent.** This document becomes binding only
+> when frozen by commit hash at the end of Month 2 (after A/A calibration and
+> power analysis — see [`02-WORKPLAN.md`](02-WORKPLAN.md)). Until that
+> freeze, hypotheses, SESOIs, and n's may be revised; **after** it, any
+> deviation is reported as a deviation. No campaign data informing these
+> hypotheses may be collected before the freeze.
+> **M2 freeze amendments applied 2026-06-12** (decisions D1–D7,
+> [`M2-AA-REPORT.md`](M2-AA-REPORT.md); see §M2 freeze amendments): every
+> **TBD** / **finalized at M2** placeholder is now filled from the M2 A/A
+> variance estimates and power analysis. The freeze waits only on the **D7
+> hotelReservation live-gate result line** (§Workloads) and the freeze
+> commit + DOI deposit.
 
 Design context, knobs, and instrumentation: [`00-DESIGN.md`](00-DESIGN.md).
 All v1 references (H1–H6) are to archived, `doctor --strict`-clean runs
@@ -52,7 +56,21 @@ which is exactly the design Page's L requires.
 **Test (primary, in family).** Page's trend test across the ordered f levels
 (session medians as units, one observation per level per session). Spearman
 over designed levels is the sensitivity check (non-confirmatory). n sessions
-per level: **TBD from M2 power analysis** (≥2 minimum, §Session design).
+per level: **8** — every C1 session is a complete block visiting all 5
+levels, so this is 8 C1 sessions (filled at M2 — D5: Page's L is saturated,
+power 0.89–0.92 at the Holm-worst α already at n = 4 under both variance
+scenarios; [`M2-AA-REPORT.md`](M2-AA-REPORT.md)).
+
+**Outcome operationalization (pinned at the M2 freeze — D4).** "Median
+east-west p95" is computed as: per iteration, the **median over
+inter-service routes of the route p95**, with **loadgenerator→ routes
+excluded**; window = **pre-chaos**; the unit entering Page's test is the
+**session-condition median** of those per-iteration values (one value per
+f-level per session). The canonical extraction is
+`scripts/m2_aa_analysis.py` (v2 schema, #275); campaign analyses use the
+same code path. (The alternative mean-over-routes / during-chaos form was
+rejected at M2 because its A/A band alone exceeds the SESOI span —
+[`M2-AA-REPORT.md`](M2-AA-REPORT.md) D4.)
 
 **Fallback path (pre-registered now).** If the M1b solver gate forces the
 nearest-achievable-fraction design (DESIGN §9), the regressor becomes
@@ -61,12 +79,19 @@ fixed here: **primary = linear mixed-effects model** with achieved-f as a
 continuous fixed effect and session as a random effect (test on the
 achieved-f slope); **secondary (nonparametric) = Jonckheere–Terpstra** over
 the ordered achievable levels. The switch, if taken, is recorded before
-freeze.
+freeze. **Recorded before freeze: the switch is NOT taken** — the M1b
+solver gate **passed** (all 5 levels within ±0.05, 3/3 consecutive
+attempts; [`m1b-gate-artifact.json`](m1b-gate-artifact.json), run at the
+adopted 8 × 4 GiB fallback cluster per Stopping rule 1's re-run provision).
+The designed-level dose design and Page's test stand.
 
 **SESOI.** A monotone trend with a total effect of **≥15 % increase in
 east-west p95 from f = 0 to f = 1**. Derivation: the bar is set **between
-the A/A noise band** (placeholder; finalized at M2 — the SESOI must exceed
-it) **and v1's measured ~25 % two-regime separation** (DESIGN §10), so that
+the A/A noise band — measured at M2 as 11.2 % of the pre-chaos level (p95
+paired |Δmedian| 4.44 ms on a 39.5 ms level), which the 15 % SESOI (a
+5.93 ms span) exceeds, satisfying the registered SESOI-exceeds-band
+requirement under the D4 operationalization — and v1's measured ~25 %
+two-regime separation** (DESIGN §10), so that
 an effect at the v1 magnitude clears it with margin while anything inside
 instrument noise cannot. A statistically detectable but <15 % trend is
 reported as below the SESOI, not as support.
@@ -115,14 +140,19 @@ deliberately UDP-only); see DESIGN §10 / `hypotheses.md`.
 
 **Test (primary, in family).** (a) Paired Wilcoxon signed-rank on
 per-session (spread − packed) UDP-drop differences, cache-off arms;
-(b) Wilcoxon signed-rank on the per-session paired shrinkage of spread's
-UDP drop (cache-on vs cache-off); sessions paired by design (same cluster
+(b) **one-sided Wilcoxon signed-rank of the per-session paired shrinkage of
+spread's UDP drop (cache-on vs cache-off) against the 50 % bar** (pinned at
+the M2 freeze — D6: the stricter of the two candidate forms, and the one
+the M2 power analysis was run on; the shrinkage median and its bootstrap CI
+are still reported, descriptively); sessions paired by design (same cluster
 state window, randomized cache order).
 
 **SESOI / falsified by.** (a) falsified if the spread > packed direction
 does not hold (test n.s. at the Holm-adjusted α) — placement-dependence
-failed to replicate; (b) supported iff the median paired shrinkage is ≥50 %
-with a bootstrap CI excluding 0 % — if spread's UDP drop persists at >50 %
+failed to replicate; (b) supported iff the one-sided Wilcoxon rejects
+"shrinkage ≤ 50 %" at the Holm-adjusted α (decision rule amended at the M2
+freeze to the stricter test form — D6; the draft's median-with-CI wording is
+quoted in §M2 freeze amendments) — if spread's UDP drop persists at >50 %
 of its cache-off size with the cache on, the UDP/DNS account is **wrong**
 and reported as falsified. Either part failing falsifies V2-H2 as
 registered (the parts are reported separately so a (a)-pass/(b)-fail is
@@ -147,13 +177,26 @@ anti-affine}; the registered effect is the **interaction term**, evaluated
 on **two co-primary outcomes — EndpointSlice trough depth × duration, and
 user-route error rate — combined as both-must-pass (conjunction; see
 §Confirmatory family)**. Margin (for the anti-affine r = 3 vs r = 1
-contrast): **TBD at freeze**, set from A/A variance, no smaller than the A/A
-95 % noise band.
+contrast), set from A/A variance per the registered "no smaller than the
+A/A 95 % noise band" rule (filled at the M2 freeze): **trough depth
+1.0 pod; user-route error rate 0.302** — the per-outcome A/A 95 % noise
+bands (p95 of paired |Δmedian|, taint-excluded) from the 2026-06-12 A/A
+block ([`M2-AA-REPORT.md`](M2-AA-REPORT.md)). Caveat recorded with the
+fill: the A/A between-session sd is measured *within same-solver-seed
+pairs*; cross-seed between-session variance may be larger, so the margin
+is not set tighter than the band.
+
+**Packed-cell semantics (M1b carry-over, folded in at the M2 freeze).**
+The packed mode is **per-service replica packing** — each service's
+replicas on exactly one node — with **services round-robin distributed
+across nodes** (capacity-feasible), not all services on a single node, as
+implemented and verified in the M1b gate.
 
 **Packing control (instrument check, TOST).** The packed r = 3 ≈ r = 1
 control is registered as a **TOST equivalence test**: packed r = 3 must fall
-**within the A/A-derived equivalence band of r = 1** (band finalized at M2,
-same band as the rescue margin). Falling **outside the band in either
+**within the A/A-derived equivalence band of r = 1** (band finalized at the
+M2 freeze: the same per-outcome bands as the rescue margin — 1.0 pod trough
+depth, 0.302 user-route error rate). Falling **outside the band in either
 direction** flags the instrument (the engine does not pack as specified —
 an instrument failure triggering the validity checks, not a finding). A bare
 "packed r3 < r1" inequality is *not* used: near-equal arms differ by noise
@@ -178,7 +221,13 @@ east-west tail (latency face) vs blast radius/recovery (availability face)
 with cluster-bootstrap CIs. **Dominance is declared only with margins**:
 placement A dominates B iff A is better than B by **≥ δ_latency on the
 latency face AND ≥ δ_blast on the availability face**, with δ values tied to
-the A/A noise band (**finalized at M2**). The non-dominated set under those
+the A/A noise band — finalized at the M2 freeze: **δ_latency = 4.4 ms** (the
+pre-chaos east-west-p95 A/A p95 band, matching the pre-chaos window pinned
+by D4) and **δ_blast = 1.0 pod trough depth and 0.302 user-route error
+rate** (the availability-face bands; [`M2-AA-REPORT.md`](M2-AA-REPORT.md)).
+The δs adopt V2-H3's floor convention — **no smaller than the A/A 95 %
+noise band** (an amendment: the draft tied δ to the band without any floor
+rule — §M2 freeze amendments). The non-dominated set under those
 margins is reported, with the margins stated alongside the figure. A single
 placement dominating all others by ≥ δ on both faces would be reported
 prominently as the headline result, not suppressed — this protocol exists to
@@ -253,13 +302,23 @@ Before **any** between-condition comparison: **≥3 identical-placement
 session pairs** (same f, r, mode, fault; nothing varied) are run and pushed
 through the full analysis pipeline as if they were A/B comparisons.
 
+**Block-design instantiation (recorded at the M2 freeze).** A/A sessions
+are **complete blocks** — each visits all 5 f-levels — not single-cell
+sessions; within a pair the **solver seed is shared** (identical
+placements, verified by exact `liveAchievedF` and assignment identity)
+while the **order seed varies** (order effects randomize out). Both choices
+go beyond the original "nothing varied" wording and are recorded as
+amendments (§M2 freeze amendments). The 2026-06-12 block
+([`M2-AA-REPORT.md`](M2-AA-REPORT.md)) ran 3 such pairs (6 sessions), all
+`doctor --strict` clean.
+
 **What the A/A block can and cannot do (registered honestly).** Its two
 achievable functions are:
 
 1. **Variance-component estimation** — within- and between-session variance
    feed the M2 power analysis (per-cell n), the SESOI noise bands (V2-H1),
    the V2-H3 margin and TOST equivalence band, V2-H4's δ dominance margins,
-   and the pre-window UDP-slope taint threshold (§Session design).
+   and the per-f-level pre-window UDP-slope bands (§Session design; D3).
 2. **Qualitative pipeline sanity check** — the full pipeline runs end-to-end
    on null data and its outputs are inspected.
 
@@ -271,11 +330,36 @@ independent tests gives a 95 % Clopper–Pearson upper bound of
 **60+ A/A tests**, far beyond what 3 session pairs (FPR resolution
 {0, 1/3, 2/3, 1}) can deliver. A handful of A/A pairs cannot certify any α.
 
-**Rule (replaces the dropped FPR gate).** **Any statistically significant
-A/A finding triggers investigation and a fix-then-rerun**: the cause is
-diagnosed, the `doctor` gates / taint rules / instrumentation are fixed, and
-the A/A block is repeated before any comparison runs. The halt criterion is
-in §Stopping rules.
+**Rule (replaces the dropped FPR gate; scope pinned at the M2 freeze —
+D1).** **A statistically significant finding in a REGISTERED-UNIT A/A test
+triggers investigation and a fix-then-rerun**: the cause is diagnosed, the
+`doctor` gates / taint rules / instrumentation are fixed, and the A/A block
+is repeated before any comparison runs. The registered-unit tests are the
+**per-pair Wilcoxon on session-condition values** (one value per f-level
+per session, n = 5 levels per pair) and the **cross-pair drift test**.
+Supplementary iteration-level tests are run and reported as **sensitivity
+checks only — they are NOT rule triggers**: the iteration-level pairing is
+maximally sensitive to between-session variance, which the registered
+session-as-unit analyses absorb by design and which the variance components
+already carry into every margin. The halt criterion is in §Stopping rules.
+
+**Attainability floor (disclosed with the rule).** At this block size the
+registered-unit tests are floor-limited near α: on 5 untied paired levels
+the per-pair test's attainability floor is p ≈ 0.0591 (exact sign floor
+0.0625); the tied-|Δ| pathway can still reject at p = 0.0369 (five
+same-sign equal-magnitude deltas under the tie-corrected approximation);
+the n = 3 cross-pair sign test's floor is 0.25. A registered-unit PASS at
+this block size is therefore partly by construction for continuous
+metrics; sensitivity to subtler defects lives in the supplementary
+iteration-level checks, which are reported alongside.
+
+**2026-06-12 A/A block outcome (recorded).** No significant
+registered-unit finding on any delta metric. One supplementary
+iteration-level finding (pair 1, during-chaos east-west p95, p = 0.007 — a
+constant ~0.3–3.5 ms session-level offset; n.s. at the registered unit,
+p = 0.28) was investigated and dispositioned as **between-session
+variance, not a pipeline defect — no fix, no rerun** (D1; F1 in
+[`M2-AA-REPORT.md`](M2-AA-REPORT.md)).
 
 ## Session design
 
@@ -290,23 +374,80 @@ in §Stopping rules.
 - **Load generator (binding, from DESIGN §4):** Locust runs **host-side**,
   excluded by construction from cross-node-fraction edge accounting and
   per-node conntrack aggregation. The pre-chaos baseline window starts only
-  **after the load ramp completes + 60 s settle**. Validity check: the
-  pre-window UDP-entry slope must be ≈ 0 (threshold tied to the A/A noise
-  band, **finalized at M2**); iterations violating it are tainted.
-- **≥2 sessions per cell minimum**; actual n per cell **TBD from the M2
-  power analysis** against each SESOI — placeholders here are deliberately
-  not numbers, to avoid anchoring before the A/A variance is known.
+  **after the load ramp completes + 60 s settle**. Validity check
+  (**redefined at the M2 freeze — D3**; the draft's "slope ≈ 0" wording is
+  quoted in §M2 freeze amendments): the A/A block showed the pre-window UDP
+  pool carries **placement-coupled transients**, so an absolute ≈ 0
+  threshold is unworkable — per-level slopes run ≈ +140 to +870 entries/min
+  at f-025/f-050 and ≈ −6600 to −8800 entries/min at f-075/f-100 (decay
+  after re-placement), consistently across all 6 A/A sessions. The
+  registered check is therefore **per-f-level slope bands**: an iteration
+  is **tainted when its pre-window UDP-entry slope falls outside its
+  f-level's A/A band**, the bands sourced from the 2026-06-12 A/A block
+  artifact ([`M2-AA-REPORT.md`](M2-AA-REPORT.md), F2).
+- **n = 8 sessions per cell** (filled at the M2 freeze — D5, from the M2
+  power analysis, [`M2-AA-REPORT.md`](M2-AA-REPORT.md)): the one-sided
+  Wilcoxon attainability floor at the Holm-worst α (0.0125) is n = 7, plus
+  1 margin; the V2-H3 interaction MDE at 8/cell (~0.8 pods trough depth /
+  ~0.26 error rate) sits inside the registered noise-band margins; V2-H1 is
+  saturated (power ≥ 0.89 at n = 4). Known limitation (recorded): V2-H2(b)
+  at a true shrinkage of 60 % would need n = 11; n = 8 powers the 70–80 %
+  planning case.
 - **Gating:** every session must pass `doctor --strict`; sessions whose
   achieved fraction misses target by >0.05 are rejected (logged, counted,
-  reported). No result is ever quoted from a rejected or tainted session.
+  reported). **Taint semantics (pinned at the M2 freeze — D2; the draft's
+  "tainted session" wording is quoted in §M2 freeze amendments): tainted
+  ITERATIONS are excluded from every metric** — their rows are preserved as
+  `None` so pairing structure is kept — and a **SESSION is excluded only
+  when every iteration of any one of its conditions is tainted**. No result
+  is ever quoted from a rejected session or from a tainted iteration.
+- **Registered taint rules (enumerated at the M2 freeze — D3, so they carry
+  registered-rule weight).** An iteration is tainted by any of the
+  operational gates implemented in the pipeline: `app_ready_timeout` (the
+  proactive functional readiness gate timed out), `pre_chaos_errors_high`
+  (>10 % pre-chaos probe errors), `pre_chaos_latency_degraded` (pre-chaos
+  p95 AND mean above threshold; skipped by design under an active load
+  profile), `iteration_exception` (the iteration crashed),
+  `unknown_probes_after_retries` (unknown-dominated chaos verdict after
+  retries) — plus the per-condition placement-validity gates
+  `placement_verification_failed` and `fraction_target_missed` (achieved f
+  off target by >0.05), and the per-f-level pre-window UDP-slope band check
+  above (D3).
 - **Versioning:** each campaign is archived (raw `summary.json`s + collector
   raws + manifests + commit hash) and deposited with a DOI before its results
   are analyzed for writing.
 
+## Workloads (added at the M2 freeze)
+
+- **online-boutique (primary):** M1b solver gate **PASS** at the adopted
+  N = 8 × 4 GiB fallback cluster — all 5 f-levels within ±0.05, 3/3
+  consecutive attempts, ≥30 % capacity headroom, r = 3 anti-affine and
+  packed both schedulable ([`m1b-gate-artifact.json`](m1b-gate-artifact.json),
+  [`M1B-REPORT.md`](M1B-REPORT.md)).
+- **hotelReservation (second workload):** decided before freeze in two
+  steps. Static gate (recorded): solver gate on the static upstream-derived
+  graph, in-memory — every f-target hit exactly through the seed sweep
+  (1/16 quanta); capacity check from declared manifest requests, PASS at
+  N = 8 × 4 GiB; live deploy availability check 2026-06-11. Per **D7**, the
+  full M1b-protocol **live** solve → apply → schedule → verify gate is
+  additionally run before the freeze; its verdict:
+  **[D7 LIVE GATE RESULT — filled before freeze]**
+- De-scope order under overrun: §Stopping rules, rule 5.
+
 ## Stopping / abandon rules
 
 1. **Solver gate (M1b) — decidable terms.** An **"attempt"** is one full
-   solve → apply → schedule → verify cycle starting from a clean app deploy.
+   solve → apply → schedule → verify cycle **starting from a restored
+   (unpinned) state** — not a full app redeploy (amended per the M1b
+   carry-over: the scheduling decision under test is identical, and a full
+   redeploy per attempt would triple gate duration for no informational
+   gain; the artifact records the protocol as `attemptProtocol`; the
+   draft's "clean app deploy" wording is quoted in §M2 freeze amendments).
+   Within an attempt the solver runs a **sweep of up to 5 distinct seeds**
+   (stepped so consecutive attempts never re-try each other's seeds); the
+   **first solver-accepted solution is applied**, with a best-gap fallback,
+   and the attempt is **judged on live pods only** (`liveAchievedF`); the
+   seeds tried are recorded in the artifact (`solverSeedsTried`, #276).
    The gate passes a level when **3 consecutive attempts at that f-level**
    each land within ±0.05 of target; the counter is **per f-level and resets
    on a miss** at that level. The gate outcome is recorded by a **committed
@@ -316,10 +457,14 @@ in §Stopping rules.
    the 8 × 4 GiB fallback cluster is adopted. **No-go** → the pre-committed
    nearest-achievable-fraction fallback (achieved-f as regressor; V2-H1
    switches to its pre-registered mixed-model / Jonckheere–Terpstra tests).
-   The switch is recorded here before freeze.
-2. **A/A gate (M2).** Any statistically significant A/A finding →
-   investigate, fix, rerun the A/A block (see §A/A). **Halt criterion: a
-   second statistically significant A/A finding after a fix** — the campaign
+   The switch is recorded here before freeze. **Outcome (recorded): the
+   fallback cluster was adopted at M0, the gate ran at N = 8 per this
+   rule's re-run provision, and it PASSED** (§Workloads); the no-go
+   fallback is not taken.
+2. **A/A gate (M2).** Any statistically significant **registered-unit** A/A
+   finding (scope pinned at the M2 freeze — D1; see §A/A) → investigate,
+   fix, rerun the A/A block. **Halt criterion: a second statistically
+   significant registered-unit A/A finding after a fix** — the campaign
    is **halted** and the instrumentation redesigned; no comparative claims
    are made from the existing pipeline.
 3. **Capacity null — decidable predicate.** The rule fires at a cell when
@@ -342,6 +487,121 @@ in §Stopping rules.
 5. **De-scope order under M1 overrun (pre-declared).** First drop the
    second workload (hotelReservation), then the iptables arm (V2-H6).
    Recorded as deviations.
+
+## M2 freeze amendments (2026-06-12)
+
+All amendments below were decided **before the freeze and before any
+comparative campaign data exists** (the only v2 data collected is the A/A
+calibration block itself, which the prereg always designated as the source
+of these fill-ins). Decision IDs D1–D7 refer to
+[`M2-AA-REPORT.md`](M2-AA-REPORT.md) §Freeze decisions, accepted by the
+user 2026-06-12; the M1b carry-overs were pre-announced in
+[`M1B-REPORT.md`](M1B-REPORT.md) §Pre-freeze amendments. Each amendment is
+also applied to the body text above, so the document reads consistently.
+
+1. **(D1) A/A significant-finding rule scoped to registered-unit tests.**
+   The draft rule said "any statistically significant A/A finding" without
+   pinning which tests count. Now scoped: **registered-unit tests only**
+   (per-pair Wilcoxon on session-condition values + cross-pair drift);
+   supplementary iteration-level tests are reported sensitivity checks, not
+   rule triggers. Rationale: iteration-level pairing is maximally sensitive
+   to between-session variance, which the registered session-as-unit
+   analyses absorb by design. The registered-unit attainability floors are
+   disclosed in §A/A (untied n = 5 floor p ≈ 0.0591 / exact 0.0625;
+   tied-|Δ| pathway p = 0.0369; cross-pair n = 3 floor 0.25). The
+   2026-06-12 block's F1 (iteration-level p = 0.007) is recorded as
+   between-session variance — no fix, no rerun. Applied in §A/A and
+   §Stopping rules 2.
+2. **(D2) Taint semantics pinned.** Old wording (§Session design): "No
+   result is ever quoted from a rejected or tainted session." Replaced:
+   **tainted iterations are excluded from every metric** (`None` rows
+   preserve pairing); a **session is excluded only when every iteration of
+   any one condition is tainted**. This registers the v1-inherited pipeline
+   convention the analysis code implements. Consequence recorded: A/A
+   session 6's f-100 untainted sibling iterations are **kept** (the
+   iteration-level gates as implemented are trusted; the M2 variance table
+   uses this), rather than excluding all of s6 f-100.
+3. **(D3) Pre-window UDP-slope validity check redefined.** Old wording
+   (§Session design): "the pre-window UDP-entry slope must be ≈ 0
+   (threshold tied to the A/A noise band, finalized at M2); iterations
+   violating it are tainted." Replaced by **per-f-level slope bands** from
+   the 2026-06-12 A/A block artifact: the pre-window UDP pool carries
+   placement-coupled transients (~+140 to +870 entries/min at f-025/f-050;
+   ~−6600 to −8800 at f-075/f-100), so an absolute ≈ 0 threshold would
+   taint most interior/high-f iterations (F2). An iteration is tainted when
+   its pre-window slope falls outside its level's A/A band. The operational
+   taint gates are also now **enumerated as registered taint rules**
+   (§Session design) so they carry registered-rule weight in D2-style
+   decisions. The old "absolute threshold finalized at M2" framing is
+   removed everywhere (incl. §A/A function 1 and DESIGN §4 — propagated).
+4. **(D4) V2-H1 outcome operationalization pinned.** Per-iteration
+   **median over inter-service routes of route p95** (loadgenerator→
+   routes excluded), **pre-chaos window**, **session-condition median** as
+   the unit; canonical extraction `scripts/m2_aa_analysis.py` (v2 schema,
+   #275). SESOI check recorded: 15 % of the pre-chaos level (39.5 ms →
+   5.93 ms span) vs the A/A p95 band of 11.2 % — the SESOI exceeds the
+   band, as the SESOI derivation requires. The rejected mean-over-routes /
+   during-chaos form fails that requirement (its f-025 band alone exceeds
+   the SESOI span).
+5. **(D5) Per-cell n = 8 sessions.** Fills V2-H1's "n TBD" and §Session
+   design's "n per cell TBD". Basis (M2 power analysis): Wilcoxon
+   attainability floor 7 at the Holm-worst α + 1 margin; V2-H3 MDE ≈ the
+   noise-band margin at 8/cell; V2-H1 saturated at n = 4. Limitation
+   recorded: V2-H2(b) at 60 % true shrinkage would need n = 11.
+6. **(D6) V2-H2(b) decision rule pinned to the stricter form.** Old wording
+   (V2-H2 SESOI/falsified-by): "(b) supported iff the median paired
+   shrinkage is ≥50 % with a bootstrap CI excluding 0 %". Replaced:
+   **one-sided Wilcoxon of the per-session paired shrinkage against the
+   50 % bar** (the form the power analysis was run on; strictly more
+   conservative). The median + bootstrap CI remain reported descriptively.
+   The falsification substance (UDP/DNS account wrong if the drop persists
+   at >50 % with the cache on) is unchanged.
+7. **(D7) hotelReservation gate run live.** The static gate (in-memory
+   seed-sweep solver gate on the static topology; declared-requests
+   capacity math; live deploy availability check) is recorded in
+   §Workloads, and the M1b-protocol **live** gate is run before the freeze
+   rather than accepting the static gate alone as "decided". Its verdict
+   line in §Workloads is the **only remaining placeholder** in this
+   document.
+8. **(V2-H3 TBDs) Margin and TOST band filled:** rescue margin = max A/A
+   95 % noise band per outcome — **trough depth 1.0 pod, user-route error
+   rate 0.302**; TOST equivalence band = the same bands. Same-seed-pair
+   caveat recorded (margin not set tighter than the band).
+9. **(V2-H4 TBDs + floor rule) δs filled and floor convention adopted:**
+   δ_latency = **4.4 ms** (pre-chaos EW-p95 A/A p95 band, matching D4's
+   window), δ_blast = **1.0 pod + 0.302 error rate**. Amendment proper: the
+   draft tied the δs to the A/A noise band but had **no floor rule**; the
+   δs now adopt V2-H3's "no smaller than the A/A 95 % noise band"
+   convention.
+10. **(M1b carry-over) "Attempt" definition.** Old wording (§Stopping
+    rules 1): "one full solve → apply → schedule → verify cycle starting
+    from a clean app deploy". Replaced: **from a restored (unpinned)
+    state** — the scheduling decision under test is identical and a full
+    redeploy per attempt would triple gate duration for no informational
+    gain (`attemptProtocol` in the artifact). Additionally, per #276,
+    attempts solve through a **≤5-distinct-seed sweep** (consecutive
+    attempts never re-try each other's seeds), the first accepted solution
+    is applied, and attempts are judged on **live pods only**.
+11. **(M1b carry-over) Packed-cell semantics.** Packed mode = per-service
+    replica packing with services round-robin distributed
+    (capacity-feasible), as implemented and verified — recorded in V2-H3.
+12. **(Block design) A/A instantiation recorded.** A/A sessions are
+    complete blocks (all 5 f-levels); within a pair the solver seed is
+    shared and the order seed varies — beyond the draft's "same f, r,
+    mode, fault; nothing varied" wording (§A/A).
+13. **(M1b outcome) Solver-gate result and fallback disposition recorded.**
+    The gate ran at the adopted N = 8 fallback cluster per Stopping rule
+    1's re-run provision and PASSED; V2-H1's
+    nearest-achievable-fraction fallback switch is **not taken** (recorded
+    in V2-H1 and §Stopping rules 1).
+
+**REMAINING-OPEN (the complete list):**
+
+- **§Workloads: "[D7 LIVE GATE RESULT — filled before freeze]"** — the
+  hotelReservation live M1b-protocol gate is in flight at amendment time;
+  its verdict is filled before the freeze commit. This is the only
+  unfilled placeholder; every other TBD / "finalized at M2" marker in the
+  draft is resolved above.
 
 ## Deviations policy
 
