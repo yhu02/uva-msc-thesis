@@ -221,6 +221,45 @@ def collect_diagnostics(api: engine.K8sApi, namespace: str) -> Dict[str, Any]:
 # ──────────────────────────────────────────────────────────────────────
 
 
+#: Distinct solver seeds tried per attempt before applying (first accepted
+#: solution wins; best-gap fallback when none is accepted).  The solver's
+#: own ``restarts=8`` are *within-seed* restarts; tree-shaped graphs (the
+#: hotelReservation static topology) need a between-seed sweep too — the
+#: same documented remedy the topology unit test uses (a single seed can
+#: stall in a 1/16 local optimum at f=0).  Solves are in-memory and cheap;
+#: a live apply of a solver-rejected assignment can never pass the gate.
+SOLVER_SEED_SWEEP = 5
+
+
+def solve_with_seed_sweep(
+    edges: List[fs.Edge],
+    services: List[str],
+    n_nodes: int,
+    level: float,
+    base_seed: int,
+    sweep: int = SOLVER_SEED_SWEEP,
+) -> Tuple[fs.Solution, List[int]]:
+    """Solve at ``level``, sweeping up to ``sweep`` seeds from ``base_seed``.
+
+    Returns the first *accepted* solution (pre-registered ±0.05 rule), or —
+    when every seed misses — the best-gap solution, plus the list of seeds
+    actually tried.  Seeds step by :data:`SOLVER_SEED_SWEEP` so consecutive
+    attempts never re-try each other's seeds.
+    """
+    best: Optional[fs.Solution] = None
+    tried: List[int] = []
+    for offset in range(sweep):
+        seed = base_seed + offset
+        tried.append(seed)
+        solution = fs.solve(edges, services, n_nodes, level, seed=seed)
+        if best is None or abs(solution.achieved_f - level) < abs(best.achieved_f - level):
+            best = solution
+        if solution.accepted:
+            return solution, tried
+    assert best is not None  # sweep >= 1 always sets it
+    return best, tried
+
+
 def run_attempt(
     api: engine.K8sApi,
     namespace: str,
@@ -242,11 +281,18 @@ def run_attempt(
     record["settle"] = wait_for_quiescence(
         api, namespace, settle_seconds=cfg.settle_seconds, timeout=cfg.settle_timeout
     )
-    solution = fs.solve(edges, services, len(workers), level, seed=cfg.seed + attempt_no - 1)
+    solution, seeds_tried = solve_with_seed_sweep(
+        edges,
+        services,
+        len(workers),
+        level,
+        base_seed=cfg.seed + (attempt_no - 1) * SOLVER_SEED_SWEEP,
+    )
     assignment = {svc: workers[idx] for svc, idx in solution.assignment.items()}
     record["assignment"] = assignment
     record["solverAchievedF"] = round(solution.achieved_f, 6)
     record["solverAccepted"] = solution.accepted
+    record["solverSeedsTried"] = seeds_tried
 
     applied = engine.apply_placement(
         api, namespace, assignment, 1, engine.MODE_PACKED, workers, timeout=cfg.timeout
