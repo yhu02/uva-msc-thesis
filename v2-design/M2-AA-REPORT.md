@@ -255,10 +255,10 @@ The H3 margin should not be set tighter than the band on this account.
 
 | Criterion | Status |
 |---|---|
-| A/A block clean (no unexplained significant findings) | ✅ registered-unit tests all n.s.; F1 explained, disposition pending D1 |
+| A/A block clean (no unexplained significant findings) | ✅ registered-unit tests all n.s.; F1 explained, accepted (D1, no rerun) |
 | Prober round-trips into `summary.json`; smoke `doctor --strict` passes | ✅ (all 6 sessions; prober data first-class) |
-| hotelReservation measured + capacity check + solver gate decided | ◑ static gate decided (in-memory, exact); live M1b-style gate not run — D7 |
-| All TBDs resolved | ⏳ values proposed above (incl. V2-H4 δ); pending D1–D7 |
-| Power analyses against each SESOI | ✅ this report (H1 re-run needed if D4 changes the extraction) |
-| PREREG wording amendments (M1b carry-overs + D1–D4 scoping + block-design instantiation) | ⏳ at freeze |
+| hotelReservation measured + capacity check + solver gate decided | ✅ D7 resolved: live M1b-protocol gate **PASS** (2026-06-13, `m1b-gate-artifact-hotel.json`) — 5/5 f-levels 3/3, r=3 anti-affine+packed 19/19, capacity 48%/69%. (First two live runs failed f=0 on a solver search-reliability defect, fixed by the collapsed warm-start; PASS is on the fixed solver.) |
+| All TBDs resolved | ✅ D1–D7 decided (all per recommendation, 2026-06-12); every TBD filled in the prereg M2-amendments |
+| Power analyses against each SESOI | ✅ this report (H1 under the D4-selected supplementary extraction) |
+| PREREG wording amendments (M1b carry-overs + D1–D4 scoping + block-design instantiation) | ✅ landed in the prereg M2 freeze-amendments section |
 | Pre-registration frozen by commit hash + DOI-deposited | ⏳ blocked on D1–D7 |

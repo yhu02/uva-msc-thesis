@@ -9,9 +9,9 @@
 > **M2 freeze amendments applied 2026-06-12** (decisions D1–D7,
 > [`M2-AA-REPORT.md`](M2-AA-REPORT.md); see §M2 freeze amendments): every
 > **TBD** / **finalized at M2** placeholder is now filled from the M2 A/A
-> variance estimates and power analysis. The freeze waits only on the **D7
-> hotelReservation live-gate result line** (§Workloads) and the freeze
-> commit + DOI deposit.
+> variance estimates and power analysis, including the **D7 hotelReservation
+> live-gate result** (PASS, 2026-06-13; §Workloads). The freeze waits only
+> on the freeze commit + DOI deposit.
 
 Design context, knobs, and instrumentation: [`00-DESIGN.md`](00-DESIGN.md).
 All v1 references (H1–H6) are to archived, `doctor --strict`-clean runs
@@ -429,9 +429,23 @@ variance, not a pipeline defect — no fix, no rerun** (D1; F1 in
   graph, in-memory — every f-target hit exactly through the seed sweep
   (1/16 quanta); capacity check from declared manifest requests, PASS at
   N = 8 × 4 GiB; live deploy availability check 2026-06-11. Per **D7**, the
-  full M1b-protocol **live** solve → apply → schedule → verify gate is
-  additionally run before the freeze; its verdict:
-  **[D7 LIVE GATE RESULT — filled before freeze]**
+  full M1b-protocol **live** solve → apply → schedule → verify gate was
+  additionally run before the freeze; its verdict: **PASS** (2026-06-13,
+  [`m1b-gate-artifact-hotel.json`](m1b-gate-artifact-hotel.json), schema
+  v2). All 5 f-levels accepted **3/3 on the first three attempts**
+  (live-pod fraction exactly on target); r = 3 anti-affine 19/19 services
+  on distinct nodes (50.0 s) and r = 3 packed 19/19 (54.6 s); capacity
+  headroom 48 % CPU / 69 % memory (≥ 30 % floor). **Instrument-defect
+  transparency** (mirroring the online-boutique gate's two pre-pass
+  failures): the first two live runs FAILED f = 0.00 (best streak 1/3 in 6
+  attempts) — the solver reached the f = 0 optimum from only ~22 % of seeds
+  on this 19-service / 16-edge **tree** topology, so the 3-consecutive rule
+  could not converge there. Diagnosed offline as a local-minimum trap
+  (collapsing to one node requires cut-increasing intermediate moves) and
+  fixed with a deterministic collapsed warm-start (the closed-form f = 0
+  optimum) in the solver — f = 0 hit-rate 22 % → 100 %, capacity paths
+  unchanged, online-boutique M1a reachability preserved. The PASS above is
+  the live gate on the fixed solver.
 - De-scope order under overrun: §Stopping rules, rule 5.
 
 ## Stopping / abandon rules
@@ -556,13 +570,19 @@ also applied to the body text above, so the document reads consistently.
    conservative). The median + bootstrap CI remain reported descriptively.
    The falsification substance (UDP/DNS account wrong if the drop persists
    at >50 % with the cache on) is unchanged.
-7. **(D7) hotelReservation gate run live.** The static gate (in-memory
-   seed-sweep solver gate on the static topology; declared-requests
-   capacity math; live deploy availability check) is recorded in
-   §Workloads, and the M1b-protocol **live** gate is run before the freeze
-   rather than accepting the static gate alone as "decided". Its verdict
-   line in §Workloads is the **only remaining placeholder** in this
-   document.
+7. **(D7) hotelReservation gate run live — PASS.** The static gate
+   (in-memory seed-sweep solver gate on the static topology;
+   declared-requests capacity math; live deploy availability check) is
+   recorded in §Workloads, and the M1b-protocol **live** gate was run
+   before the freeze rather than accepting the static gate alone as
+   "decided". Verdict: **PASS** (2026-06-13,
+   [`m1b-gate-artifact-hotel.json`](m1b-gate-artifact-hotel.json)) — all 5
+   f-levels 3/3 first-attempt, r = 3 anti-affine + packed both 19/19,
+   capacity 48 % / 69 % headroom. Recorded with instrument-defect
+   transparency: the first two live runs failed f = 0 on a solver
+   search-reliability defect (≈22 % seed hit-rate on the tree topology),
+   fixed by a collapsed warm-start (f = 0 → 100 %); the PASS is on the
+   fixed solver. No placeholders remain.
 8. **(V2-H3 TBDs) Margin and TOST band filled:** rescue margin = max A/A
    95 % noise band per outcome — **trough depth 1.0 pod, user-route error
    rate 0.302**; TOST equivalence band = the same bands. Same-seed-pair
@@ -597,11 +617,10 @@ also applied to the body text above, so the document reads consistently.
 
 **REMAINING-OPEN (the complete list):**
 
-- **§Workloads: "[D7 LIVE GATE RESULT — filled before freeze]"** — the
-  hotelReservation live M1b-protocol gate is in flight at amendment time;
-  its verdict is filled before the freeze commit. This is the only
-  unfilled placeholder; every other TBD / "finalized at M2" marker in the
-  draft is resolved above.
+- **None.** Every TBD / "finalized at M2" marker in the draft is resolved
+  above, and the D7 hotelReservation live-gate result (§Workloads) is
+  filled (PASS, 2026-06-13). The freeze waits only on the freeze commit +
+  DOI deposit — mechanics, not open questions.
 
 ## Deviations policy
 
