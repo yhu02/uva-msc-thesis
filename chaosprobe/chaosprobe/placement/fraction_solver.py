@@ -530,6 +530,38 @@ def solve(
     best: Tuple[float, Dict[str, int], List[float], int, int, int] | None = None
     best_restart = 0
     restart_gaps: List[float] = []
+    warm_start_gap: float | None = None
+
+    # Deterministic warm-start (no-capacity case only): the fully-collapsed
+    # assignment — every service on node 0 — is the closed-form optimum for
+    # target_f = 0 on a connected graph (every edge intra-node => cut 0) and a
+    # strong start for low targets.  Random / heaviest-first restarts reach it
+    # only unreliably: collapsing from a spread start requires migrating every
+    # service through cut-*increasing* single-moves, a local-minimum trap (the
+    # hotelReservation tree topology hit f=0 from only ~22 % of seeds, so the
+    # live M1b gate's 3-consecutive rule never converged there).  Seeded as a
+    # candidate alongside the restarts; local search refines it toward the
+    # target.  With capacity, all-on-one-node may be infeasible, so the
+    # warm-start is skipped and the capacity-aware greedy restarts own it.
+    if capacity is None and total_weight > 0:
+        warm_assignment = {svc: 0 for svc in services}
+        warm_loads = [0.0] * n_nodes
+        warm_cross, warm_passes, warm_moves = _local_search(
+            warm_assignment,
+            warm_loads,
+            adj,
+            total_weight,
+            0.0,
+            n_nodes,
+            target_f,
+            capacity,
+            node_capacity,
+            max_local_search_passes,
+        )
+        warm_start_gap = abs(warm_cross / total_weight - target_f)
+        best = (warm_start_gap, warm_assignment, warm_loads, 0, warm_passes, warm_moves)
+        best_restart = -1  # sentinel: the collapsed warm-start won, not a restart
+
     for restart in range(restarts):
         order = heaviest_first if restart == 0 else rng.sample(list(services), len(services))
         assignment, loads, violations = _greedy_assign(
@@ -570,6 +602,7 @@ def solve(
         "localSearchPasses": passes,
         "localSearchMoves": moves,
         "capacityViolations": violations,
+        "warmStartGap": round(warm_start_gap, 6) if warm_start_gap is not None else None,
     }
     if capacity is not None:
         trace["nodeLoads"] = [round(load, 6) for load in loads]

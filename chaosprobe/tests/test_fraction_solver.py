@@ -735,3 +735,43 @@ def test_independent_impl_anchored_on_hand_computed_values():
     assert independent_fraction({"a": 0, "b": 1, "c": 1}, edges) == pytest.approx(0.25)
     assert independent_fraction({"a": 0, "b": 0, "c": 0}, edges) == 0.0
     assert independent_fraction({"a": 0, "b": 1, "c": 2}, edges) == 1.0
+
+
+# ── collapsed warm-start (f=0 reliability on tree-shaped graphs) ───────
+
+# A 6-service star: one hub, five leaves -> 5 edges, all incident on the hub.
+# Reaching f=0 (everything on one node) from a spread start needs every leaf
+# to migrate through a cut-increasing single move, the local-minimum trap the
+# warm-start exists to bypass.
+_STAR = [("hub", f"leaf{i}", 1.0) for i in range(5)]
+_STAR_SERVICES = ["hub", *(f"leaf{i}" for i in range(5))]
+
+
+def test_warm_start_makes_f0_reliable_across_seeds():
+    # Without the collapsed warm-start this star hit f=0 from only some seeds;
+    # the closed-form optimum must now be found from every seed.
+    for seed in range(20):
+        sol = fs.solve(_STAR, _STAR_SERVICES, 8, 0.0, seed=seed)
+        assert sol.accepted, f"seed {seed} missed f=0"
+        assert sol.achieved_f == 0.0
+
+
+def test_warm_start_gap_recorded_in_trace_no_capacity():
+    sol = fs.solve(_STAR, _STAR_SERVICES, 8, 0.0, seed=0)
+    assert sol.trace["warmStartGap"] == 0.0
+    assert sol.trace["bestRestart"] == -1  # the warm-start won, not a restart
+
+
+def test_warm_start_skipped_under_capacity():
+    capacity = {svc: 1.0 for svc in _STAR_SERVICES}
+    sol = fs.solve(_STAR, _STAR_SERVICES, 8, 0.0, capacity=capacity, seed=0, node_capacity=2.0)
+    assert sol.trace["warmStartGap"] is None  # warm-start does not run with capacity
+    assert sol.trace["bestRestart"] >= 0
+
+
+def test_warm_start_local_search_still_reaches_high_target():
+    # The warm candidate is collapsed-then-local-searched, so it refines all
+    # the way to f=1 (splitting every edge out) — accepted, gap recorded.
+    sol = fs.solve(_STAR, _STAR_SERVICES, 8, 1.0, seed=0)
+    assert sol.accepted and sol.achieved_f == 1.0
+    assert sol.trace["warmStartGap"] is not None
