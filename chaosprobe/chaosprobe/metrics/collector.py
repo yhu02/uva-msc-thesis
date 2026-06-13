@@ -50,6 +50,7 @@ class MetricsCollector:
         conntrack_data: Optional[Dict[str, Any]] = None,
         endpoint_slices_pre: Optional[Dict[str, Any]] = None,
         endpoint_slices_during: Optional[Dict[str, Any]] = None,
+        endpoint_slice_timeseries_data: Optional[Dict[str, Any]] = None,
         collect_logs: bool = False,
     ) -> Dict[str, Any]:
         """Collect all available metrics for a deployment during an experiment.
@@ -91,6 +92,17 @@ class MetricsCollector:
                                  whose endpoints drop to zero during a node drain
                                  but reschedule back before post-chaos. If None,
                                  the key is omitted.
+            endpoint_slice_timeseries_data: Pre-collected full EndpointSlice time
+                                 series from EndpointSliceTimeSeriesProber
+                                 (``{"samples": [...], "meta": {...}}``). Surfaced
+                                 as the additive top-level key
+                                 ``endpointSliceTimeSeries`` (parallel to
+                                 ``conntrackProtocolSamples``). Unlike the
+                                 ``endpointSlices`` pre/during/post snapshots,
+                                 this retains every 15s sample across the whole
+                                 window so the trough's *duration* — not just its
+                                 depth — is recoverable. If None, the key is
+                                 omitted so "not collected" never reads as zero.
             collect_logs: If True, collect container logs from target pods.
 
         Returns:
@@ -178,6 +190,16 @@ class MetricsCollector:
             # aligns samples with windows by timestamp.
             result["conntrackProtocolSamples"] = conntrack_data.get("samples") or []
             result["conntrackProtocolMeta"] = conntrack_data.get("meta") or {}
+
+        if endpoint_slice_timeseries_data is not None:
+            # Additive full time series ({ts, phase, services}), parallel to
+            # conntrackProtocolSamples — distinct from the pre/during/post
+            # ``endpointSlices`` snapshots, which are left untouched so
+            # blast_radius.py and the frozen A/A data keep their shape.
+            result["endpointSliceTimeSeries"] = {
+                "samples": endpoint_slice_timeseries_data.get("samples") or [],
+                "meta": endpoint_slice_timeseries_data.get("meta") or {},
+            }
 
         endpoint_slices_post = self.snapshot_endpoint_slices()
         if (

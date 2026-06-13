@@ -4,6 +4,7 @@ import importlib.util
 import json
 import math
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "m2_aa_analysis.py"
@@ -329,6 +330,89 @@ def test_es_trough():
     assert zeroed == 1.0  # b driven 1 -> 0; c was already 0 pre-chaos
     assert aa.es_trough({}, ["a"]) == (None, None)
     assert aa.es_trough(slices, ["missing"]) == (None, None)  # nothing measured
+
+
+def _ts_sample(offset_s, phase, ready, svc="a"):
+    """One EndpointSlice time-series sample at base + offset_s seconds."""
+    base = datetime(2026, 6, 12, 12, 0, 0, tzinfo=timezone.utc)
+    ts = (base + timedelta(seconds=offset_s)).isoformat()
+    return {"ts": ts, "phase": phase, "services": {svc: {"ready": ready}}}
+
+
+def test_es_trough_duration_real_drops_and_recovers():
+    series = {
+        "samples": [
+            _ts_sample(0, "pre-chaos", 3),
+            _ts_sample(15, "during-chaos", 0),  # drop start
+            _ts_sample(30, "during-chaos", 0),
+            _ts_sample(45, "post-chaos", 3),  # recovered to baseline
+        ]
+    }
+    # drop at t=15, recover at t=45 -> 30s duration.
+    assert aa.es_trough_duration_real(series, ["a"]) == 30.0
+
+
+def test_es_trough_duration_real_never_drops_is_zero():
+    series = {
+        "samples": [
+            _ts_sample(0, "pre-chaos", 3),
+            _ts_sample(15, "during-chaos", 3),
+            _ts_sample(30, "post-chaos", 4),  # above baseline, still no drop
+        ]
+    }
+    assert aa.es_trough_duration_real(series, ["a"]) == 0.0
+
+
+def test_es_trough_duration_real_never_recovers_is_window_lower_bound():
+    series = {
+        "samples": [
+            _ts_sample(0, "pre-chaos", 3),
+            _ts_sample(15, "during-chaos", 1),  # drop start
+            _ts_sample(30, "during-chaos", 0),
+            _ts_sample(45, "post-chaos", 2),  # still below baseline at window end
+        ]
+    }
+    # drop at t=15, window ends at t=45 still degraded -> 30s lower bound.
+    assert aa.es_trough_duration_real(series, ["a"]) == 30.0
+
+
+def test_es_trough_duration_real_absent_or_unmeasurable_is_none():
+    assert aa.es_trough_duration_real({}, ["a"]) is None
+    assert aa.es_trough_duration_real({"samples": []}, ["a"]) is None
+    # No pre-chaos baseline -> not measurable from the series.
+    only_during = {"samples": [_ts_sample(15, "during-chaos", 0)]}
+    assert aa.es_trough_duration_real(only_during, ["a"]) is None
+    # App service absent from every sample -> no usable signal.
+    series = {"samples": [_ts_sample(0, "pre-chaos", 3)]}
+    assert aa.es_trough_duration_real(series, ["missing"]) is None
+
+
+def test_es_trough_duration_real_skips_bad_samples():
+    series = {
+        "samples": [
+            {"phase": "pre-chaos", "services": {"a": {"ready": 3}}},  # no ts -> skipped
+            {"ts": "not-a-timestamp", "phase": "pre-chaos", "services": {"a": {"ready": 3}}},
+            _ts_sample(0, "pre-chaos", 3),
+            _ts_sample(15, "during-chaos", 0),
+            _ts_sample(30, "post-chaos", 3),
+        ]
+    }
+    assert aa.es_trough_duration_real(series, ["a"]) == 15.0
+
+
+def test_extract_iteration_uses_real_duration_when_series_present():
+    it = _raw_iter(1, score=10.0)
+    it["metrics"]["recovery"] = {"summary": {"meanRecovery_ms": 9000}}  # proxy = 9.0s
+    it["metrics"]["endpointSliceTimeSeries"] = {
+        "samples": [
+            _ts_sample(0, "pre-chaos", 2, svc="svc-a"),
+            _ts_sample(15, "during-chaos", 0, svc="svc-a"),
+            _ts_sample(30, "post-chaos", 2, svc="svc-a"),
+        ]
+    }
+    row = aa.extract_iteration(it, ["svc-a"])
+    assert row["trough_duration_s"] == 9.0  # proxy retained
+    assert row["trough_duration_real_s"] == 15.0  # real series duration added
 
 
 def test_iteration_conntrack_flush_pct():

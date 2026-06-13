@@ -177,6 +177,7 @@ ITERATION_OUTCOMES = (
     "es_trough_depth_pods",
     "es_zero_services",
     "trough_duration_s",
+    "trough_duration_real_s",
     "user_err_during",
     "loadgen_err",
     "udp_preslope_epm",
@@ -359,6 +360,97 @@ def udp_pre_slope(samples: List[Dict[str, Any]]) -> Optional[float]:
     return sum(slopes) * 60.0 if slopes else None  # per-second -> per-minute
 
 
+def _series_total_ready(sample: Dict[str, Any], app_services: Sequence[str]) -> Optional[int]:
+    """Total ready endpoints across *app_services* in one time-series sample.
+
+    Returns ``None`` when none of the app services have an integer ``ready``
+    count in this sample (so a sample carrying no usable signal is skipped
+    rather than treated as a zero-ready trough).
+    """
+    services = (sample or {}).get("services") or {}
+    total = 0
+    measured = False
+    for svc in app_services:
+        ready = (services.get(svc) or {}).get("ready")
+        if isinstance(ready, int):
+            measured = True
+            total += ready
+    return total if measured else None
+
+
+def es_trough_duration_real(
+    endpoint_slice_timeseries: Dict[str, Any], app_services: Sequence[str]
+) -> Optional[float]:
+    """Real trough DURATION (seconds) from the EndpointSlice time series, or None.
+
+    This is the V2-H3 instrument the M2 report asked for — the duration of
+    the availability trough measured directly from the 15s-cadence
+    EndpointSlice samples (``metrics.endpointSliceTimeSeries``), replacing
+    the mean-pod-recovery *proxy* (``trough_duration_s``) wherever the
+    series is present.
+
+    Definition (chosen for this PR; documented in the PR body):
+
+    - **baseline** = total ready endpoints (summed over *app_services*) in
+      the **last pre-chaos sample** — the healthy level the trough is
+      measured against.
+    - **drop start** = the first sample at or after the baseline sample
+      whose total ready is **strictly below baseline**.
+    - **recovery** = the first sample after drop start whose total ready is
+      **back at or above baseline**.
+    - **duration** = ``recovery.ts - dropStart.ts`` (wall-clock span in
+      seconds).
+
+    Edge cases:
+
+    - *Never drops* (ready never falls below baseline after the baseline
+      sample) -> ``0.0`` (a real, measured zero-duration trough).
+    - *Never recovers* (drops but never returns to baseline within the
+      sampled window) -> ``lastSample.ts - dropStart.ts`` (the observed
+      lower bound on the duration; the window ended still degraded).
+    - *No pre-chaos baseline*, *no usable samples*, or *no app-service
+      signal* -> ``None`` (not measurable -> the caller falls back to the
+      proxy).
+    """
+    samples = (endpoint_slice_timeseries or {}).get("samples") or []
+    # (timestamp_epoch, total_ready, phase) for samples with a usable signal.
+    points: List[Tuple[float, int, str]] = []
+    for smp in samples:
+        ts = smp.get("ts")
+        total = _series_total_ready(smp, app_services)
+        if ts is None or total is None:
+            continue
+        try:
+            epoch = datetime.fromisoformat(ts).timestamp()
+        except (TypeError, ValueError):
+            continue
+        points.append((epoch, total, str(smp.get("phase") or "")))
+    if not points:
+        return None
+    points.sort(key=lambda p: p[0])
+
+    # Baseline = the last pre-chaos sample's total ready.  Without a
+    # pre-chaos sample there is no healthy reference, so duration is not
+    # measurable from the series (fall back to the proxy).
+    pre = [p for p in points if p[2] == "pre-chaos"]
+    if not pre:
+        return None
+    baseline = pre[-1][1]
+    baseline_ts = pre[-1][0]
+
+    after = [p for p in points if p[0] >= baseline_ts]
+    drop_start: Optional[float] = None
+    for epoch, total, _phase in after:
+        if drop_start is None:
+            if total < baseline:
+                drop_start = epoch
+        elif total >= baseline:
+            return epoch - drop_start
+    if drop_start is None:
+        return 0.0  # never dropped below baseline
+    return after[-1][0] - drop_start  # dropped but never recovered in-window
+
+
 def es_trough(
     endpoint_slices: Dict[str, Any], app_services: Sequence[str]
 ) -> Tuple[Optional[float], Optional[float]]:
@@ -425,6 +517,10 @@ def extract_iteration(
         100.0 * udp_drop / udp_pre if (udp_drop is not None and udp_pre and udp_pre > 0) else None
     )
     depth, zeroed = es_trough(m.get("endpointSlices") or {}, app_services)
+    # Real trough DURATION from the 15s EndpointSlice time series when the
+    # sampler produced one (V2-H3 instrument); None when the series is
+    # absent (e.g. frozen M2 A/A data), so the proxy below is used instead.
+    duration_real = es_trough_duration_real(m.get("endpointSliceTimeSeries") or {}, app_services)
     rec = ((m.get("recovery") or {}).get("summary")) or {}
     mean_rec = rec.get("meanRecovery_ms")
     lg = (it.get("loadGeneration") or {}).get("stats") or m.get("loadGeneration") or {}
@@ -440,6 +536,7 @@ def extract_iteration(
         "es_trough_depth_pods": depth,
         "es_zero_services": zeroed,
         "trough_duration_s": mean_rec / 1000.0 if isinstance(mean_rec, (int, float)) else None,
+        "trough_duration_real_s": duration_real,
         "user_err_during": user_error_rate(latency, "during-chaos"),
         "loadgen_err": (
             lg.get("errorRate") if isinstance(lg.get("errorRate"), (int, float)) else None

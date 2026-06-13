@@ -105,6 +105,11 @@ OUTCOMES: List[Tuple[str, str, str]] = [
     ("es_trough_depth_pods", "EndpointSlice trough depth (V2-H3)", "pods"),
     ("es_zero_services", "services driven to 0 ready (blast radius)", "services"),
     ("trough_duration_s", "trough duration proxy = mean pod recovery (V2-H3)", "s"),
+    (
+        "trough_duration_real_s",
+        "trough duration from EndpointSlice time series (V2-H3; None pre-sampler)",
+        "s",
+    ),
     ("user_err_during", "user-route error rate, during-chaos (V2-H3/H4)", "rate"),
     ("loadgen_err", "Locust whole-iteration error rate (context)", "rate"),
     ("udp_preslope_epm", "pre-window UDP-entry slope (taint feed)", "entries/min"),

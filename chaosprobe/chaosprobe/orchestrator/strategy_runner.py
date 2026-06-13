@@ -981,6 +981,7 @@ def _run_single_iteration(
         conntrack_data=prober_results.get("conntrack"),
         endpoint_slices_pre=endpoint_slices_pre,
         endpoint_slices_during=during_state.get("snapshot"),
+        endpoint_slice_timeseries_data=prober_results.get("endpointSlices"),
         collect_logs=ctx.collect_logs,
     )
 
