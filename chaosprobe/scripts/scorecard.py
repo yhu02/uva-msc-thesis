@@ -50,7 +50,8 @@ Reliability evaluation (frozen §V2-H5)
 Across a set of **campaign** sessions (NOT the A/A pairs): condition-level
 ICC for each sub-score AND for the v1 aggregate ``score`` (ICC_old), using
 :func:`chaosprobe.metrics.statistics.icc_bootstrap` on cells
-``{(session-condition, session): [per-iteration sub-score values]}`` — the
+``{(session-condition, session): [session-condition median]}`` (one
+single-element cell per condition×session, per D-2026-06-13-01) — the
 "strategy" role is the session-condition whose sub-score should reproduce,
 the "run" role is the session (the test-retest replicate). For each
 **required** sub-score (availability, mechanism): the bootstrap CI on
@@ -644,6 +645,12 @@ def evaluate_subscore(
     icc_sub = condition_icc(sub_cells, confidence, n_resamples, seed)
     icc_v1 = condition_icc(v1_cells, confidence, n_resamples, seed)
     n_conditions = icc_sub["n_strategies"]
+    # A condition observed in <2 sessions has no test-retest replicate to
+    # disagree, so it inflates ICC toward 1.0 (a degenerate, silently
+    # optimistic reliability). The frozen C1 design guarantees >=2 sessions
+    # per condition; surfacing any thin-replication condition makes an
+    # off-nominal inflation visible instead of silent.
+    thin_replication = _thin_replication_conditions(sub_cells)
     evaluable = (
         n_conditions >= MIN_CONDITIONS and icc_sub["icc"] is not None and icc_v1["icc"] is not None
     )
@@ -673,7 +680,20 @@ def evaluate_subscore(
         "ciExcludesV1": ci_excludes_v1,
         "pass": passed,
         "pValue": p_value,
+        "thinReplicationConditions": thin_replication,
     }
+
+
+def _thin_replication_conditions(cells: Dict[Tuple[str, str], List[float]]) -> List[str]:
+    """Conditions with <2 contributing sessions (no test-retest replicate).
+
+    Each such condition makes the ICC degenerate toward 1.0; returned sorted
+    so the report/JSON can flag the off-nominal inflation explicitly.
+    """
+    sessions_per_condition: Dict[str, int] = {}
+    for condition, _session in cells:
+        sessions_per_condition[condition] = sessions_per_condition.get(condition, 0) + 1
+    return sorted(c for c, n in sessions_per_condition.items() if n < 2)
 
 
 def _cell_median(values: Sequence[Optional[float]]) -> Optional[float]:
@@ -862,6 +882,12 @@ def print_report(result: Dict[str, Any]) -> None:
             f"{('Y' if row['ciExcludesV1'] else 'N'):>8}"
             f"{('Y' if excl else 'N'):>10}{_fmt(row['pValue']):>9}  {verdict}{tag}"
         )
+        thin = row.get("thinReplicationConditions") or []
+        if thin:
+            print(
+                f"    ! thin replication — {len(thin)} condition(s) with <2 sessions "
+                f"inflate this ICC toward 1.0: {', '.join(thin)}"
+            )
 
     decision = result["decision"]
     print("\n=== V2-H5 decision (required conjunction; user-tail excluded) ===")

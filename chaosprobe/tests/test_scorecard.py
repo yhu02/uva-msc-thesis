@@ -913,3 +913,43 @@ def test_build_parser_defaults():
     assert args.confidence == 0.95
     assert args.n_resamples == 2000
     assert args.seed == 42
+
+
+def test_thin_replication_conditions_flags_single_session_conditions():
+    cells = {
+        ("f-000", "s1"): [80.0],
+        ("f-000", "s2"): [82.0],  # f-000 has 2 sessions -> ok
+        ("f-050", "s1"): [60.0],  # f-050 has only 1 session -> flagged
+        ("f-100", "s3"): [40.0],  # f-100 has only 1 session -> flagged
+    }
+    assert sc._thin_replication_conditions(cells) == ["f-050", "f-100"]
+
+
+def test_thin_replication_empty_when_all_conditions_replicated():
+    cells = {
+        ("f-000", "s1"): [80.0],
+        ("f-000", "s2"): [82.0],
+        ("f-050", "s1"): [60.0],
+        ("f-050", "s2"): [61.0],
+    }
+    assert sc._thin_replication_conditions(cells) == []
+
+
+def test_evaluate_subscore_reports_thin_replication():
+    # one session per condition -> every condition is thin
+    sub = {("f-000", "s1"): [80.0], ("f-050", "s1"): [60.0], ("f-100", "s1"): [40.0]}
+    v1 = {("f-000", "s1"): [70.0], ("f-050", "s1"): [55.0], ("f-100", "s1"): [35.0]}
+    row = sc.evaluate_subscore("availability", sub, v1, 0.95, 200, 42)
+    assert row["thinReplicationConditions"] == ["f-000", "f-050", "f-100"]
+
+
+def test_report_renders_thin_replication_warning(tmp_path, capsys):
+    # Build a real result, then mark one subscore row thin -> inline warning.
+    _reliable_session(tmp_path, "20260101-000000", "2026-01-01T00:00:00+00:00")
+    _reliable_session(tmp_path, "20260102-000000", "2026-01-02T00:00:00+00:00")
+    result = sc.analyze(str(tmp_path), n_resamples=200, seed=1)
+    result["subscores"][0]["thinReplicationConditions"] = ["f-050", "f-100"]
+    sc.print_report(result)
+    out = capsys.readouterr().out
+    assert "thin replication" in out
+    assert "f-050, f-100" in out
