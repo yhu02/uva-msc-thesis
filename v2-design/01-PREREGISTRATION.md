@@ -1,17 +1,22 @@
-# ChaosProbe v2 — pre-registration (DRAFT, not yet frozen)
+# ChaosProbe v2 — pre-registration (FROZEN 2026-06-13)
 
-> **Status: DRAFT — freeze imminent.** This document becomes binding only
-> when frozen by commit hash at the end of Month 2 (after A/A calibration and
-> power analysis — see [`02-WORKPLAN.md`](02-WORKPLAN.md)). Until that
-> freeze, hypotheses, SESOIs, and n's may be revised; **after** it, any
-> deviation is reported as a deviation. No campaign data informing these
-> hypotheses may be collected before the freeze.
-> **M2 freeze amendments applied 2026-06-12** (decisions D1–D7,
-> [`M2-AA-REPORT.md`](M2-AA-REPORT.md); see §M2 freeze amendments): every
-> **TBD** / **finalized at M2** placeholder is now filled from the M2 A/A
-> variance estimates and power analysis, including the **D7 hotelReservation
-> live-gate result** (PASS, 2026-06-13; §Workloads). The freeze waits only
-> on the freeze commit + DOI deposit.
+> **Status: FROZEN 2026-06-13** at git tag **`v2-prereg-freeze`** (this
+> commit). The document is now **binding**: hypotheses, SESOIs, per-cell n,
+> outcome operationalizations, and the analysis code are fixed. From this
+> point, **any** deviation (changed n, dropped/added cell, modified test,
+> revised threshold) is logged in [`DEVIATIONS.md`](DEVIATIONS.md) with date,
+> reason, and whether it was decided blind to outcome data (§Deviations
+> policy). **No campaign (C1–C3) data informing these hypotheses has been
+> collected before this freeze** — only the M2 A/A calibration block (null
+> data, same-placement pairs) and the M1a/M1b solver-gate spikes, none of
+> which test a registered hypothesis.
+> Incorporated: the **M2 freeze amendments** (decisions D1–D7, applied
+> 2026-06-12; see §M2 freeze amendments) filling every **TBD** /
+> **finalized at M2** placeholder from the M2 A/A variance estimates and
+> power analysis ([`M2-AA-REPORT.md`](M2-AA-REPORT.md)), and the **D7
+> hotelReservation live-gate result** (PASS, 2026-06-13; §Workloads). The
+> exact frozen state, raw A/A data, and gate artifacts are archived under
+> the DOI recorded in [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md).
 
 Design context, knobs, and instrumentation: [`00-DESIGN.md`](00-DESIGN.md).
 All v1 references (H1–H6) are to archived, `doctor --strict`-clean runs
