@@ -195,3 +195,17 @@ def test_endpointslice_collection_failure_degrades_to_warning(capsys):
 
     assert "endpointSlices" not in results
     assert "failed to collect EndpointSlice time series" in capsys.readouterr().err
+
+
+def test_window_prober_keys_cover_all_phase_samplers():
+    """Every cross-phase prober create_and_start_probers returns (all keys
+    except the non-windowed ``watcher``) must be in the strategy runner's
+    _WINDOW_PROBER_KEYS, or its pre/post-chaos window is silently skipped
+    when it is the only enabled prober (the endpointSlices bug)."""
+    from chaosprobe.orchestrator import strategy_runner
+
+    probers, _, _, _ = _create()
+    returned = set(probers) - {"watcher"}
+    missing = returned - set(strategy_runner._WINDOW_PROBER_KEYS)
+    assert not missing, f"prober keys missing from _WINDOW_PROBER_KEYS: {missing}"
+    assert "endpointSlices" in strategy_runner._WINDOW_PROBER_KEYS
