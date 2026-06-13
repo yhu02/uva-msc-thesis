@@ -1,0 +1,1394 @@
+{
+  "schema": "chaosprobe/m1b-gate-artifact/v2",
+  "startedAt": "2026-06-13T05:48:38.915281+00:00",
+  "namespace": "hotel-reservation",
+  "workers": [
+    "worker1",
+    "worker2",
+    "worker3",
+    "worker4",
+    "worker5",
+    "worker6",
+    "worker7",
+    "worker8"
+  ],
+  "summary": null,
+  "topology": "scenarios/hotel-reservation/topology.json",
+  "config": {
+    "levels": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "consecutive": 3,
+    "maxAttempts": 6,
+    "seed": 0,
+    "timeoutSeconds": 300.0,
+    "settleSeconds": 60.0,
+    "settleTimeoutSeconds": 300.0,
+    "attemptProtocol": "restore-to-default,quiesce,solve,apply(r=1),schedule,verify-live"
+  },
+  "phaseA": {
+    "tolerance": 0.05,
+    "nNodes": 8,
+    "levels": [
+      {
+        "target": 0.0,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.0,
+            "startedAt": "2026-06-13T05:48:38.915330+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 60.9,
+              "polls": 13,
+              "windowResets": 0,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 1,
+              "lastUnhealthyAt": null
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker1",
+              "geo": "worker1",
+              "jaeger": "worker1",
+              "memcached-profile": "worker1",
+              "memcached-rate": "worker1",
+              "memcached-reserve": "worker1",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker1",
+              "mongodb-rate": "worker1",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.0,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              0
+            ],
+            "schedulingLatencySeconds": 44.769,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T05:50:24.925151+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.0,
+            "startedAt": "2026-06-13T05:50:24.925167+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 85.4,
+              "polls": 17,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T05:50:02+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker1",
+              "geo": "worker1",
+              "jaeger": "worker1",
+              "memcached-profile": "worker1",
+              "memcached-rate": "worker1",
+              "memcached-reserve": "worker1",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker1",
+              "mongodb-rate": "worker1",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.0,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              5
+            ],
+            "schedulingLatencySeconds": 28.752,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T05:52:26.910108+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.0,
+            "startedAt": "2026-06-13T05:52:26.910192+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 64.5,
+              "polls": 13,
+              "windowResets": 0,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T05:52:20+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker1",
+              "geo": "worker1",
+              "jaeger": "worker1",
+              "memcached-profile": "worker1",
+              "memcached-rate": "worker1",
+              "memcached-reserve": "worker1",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker1",
+              "mongodb-rate": "worker1",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.0,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              10
+            ],
+            "schedulingLatencySeconds": 45.701,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T05:54:25.336938+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 0.25,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.25,
+            "startedAt": "2026-06-13T05:54:25.336956+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 81.7,
+              "polls": 16,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 1,
+              "lastUnhealthyAt": "2026-06-13T05:53:57+00:00"
+            },
+            "assignment": {
+              "frontend": "worker7",
+              "profile": "worker7",
+              "rate": "worker7",
+              "reservation": "worker1",
+              "search": "worker7",
+              "geo": "worker7",
+              "recommendation": "worker5",
+              "user": "worker7",
+              "memcached-profile": "worker7",
+              "memcached-rate": "worker7",
+              "memcached-reserve": "worker8",
+              "mongodb-geo": "worker7",
+              "mongodb-profile": "worker7",
+              "mongodb-rate": "worker7",
+              "mongodb-recommendation": "worker7",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker7",
+              "consul": "worker5",
+              "jaeger": "worker8"
+            },
+            "solverAchievedF": 0.25,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              0
+            ],
+            "schedulingLatencySeconds": 34.473,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.25,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T05:56:29.375929+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.25,
+            "startedAt": "2026-06-13T05:56:29.375942+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 88.3,
+              "polls": 17,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 2,
+              "lastUnhealthyAt": "2026-06-13T05:56:40+00:00"
+            },
+            "assignment": {
+              "frontend": "worker5",
+              "profile": "worker5",
+              "rate": "worker6",
+              "reservation": "worker1",
+              "search": "worker6",
+              "geo": "worker6",
+              "recommendation": "worker5",
+              "user": "worker5",
+              "memcached-profile": "worker5",
+              "memcached-rate": "worker6",
+              "memcached-reserve": "worker4",
+              "mongodb-geo": "worker6",
+              "mongodb-profile": "worker5",
+              "mongodb-rate": "worker6",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker5",
+              "consul": "worker3",
+              "jaeger": "worker2"
+            },
+            "solverAchievedF": 0.25,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              5
+            ],
+            "schedulingLatencySeconds": 42.075,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.25,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T05:58:47.236078+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.25,
+            "startedAt": "2026-06-13T05:58:47.236092+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 83.8,
+              "polls": 16,
+              "windowResets": 2,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T05:59:07+00:00"
+            },
+            "assignment": {
+              "frontend": "worker1",
+              "profile": "worker1",
+              "rate": "worker7",
+              "reservation": "worker8",
+              "search": "worker1",
+              "geo": "worker1",
+              "recommendation": "worker1",
+              "user": "worker1",
+              "memcached-profile": "worker1",
+              "memcached-rate": "worker7",
+              "memcached-reserve": "worker4",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker1",
+              "mongodb-rate": "worker7",
+              "mongodb-recommendation": "worker8",
+              "mongodb-reservation": "worker8",
+              "mongodb-user": "worker1",
+              "consul": "worker8",
+              "jaeger": "worker5"
+            },
+            "solverAchievedF": 0.25,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              10
+            ],
+            "schedulingLatencySeconds": 39.018,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.25,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:00:58.098571+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 0.5,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.5,
+            "startedAt": "2026-06-13T06:00:58.098589+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 85.4,
+              "polls": 16,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:00:41+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker1",
+              "memcached-reserve": "worker1",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker1",
+              "mongodb-rate": "worker1",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.5,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              0
+            ],
+            "schedulingLatencySeconds": 38.621,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.5,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:03:09.564106+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.5,
+            "startedAt": "2026-06-13T06:03:09.564133+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 87.1,
+              "polls": 16,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 1,
+              "lastUnhealthyAt": "2026-06-13T06:02:53+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker1",
+              "memcached-reserve": "worker1",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker1",
+              "mongodb-rate": "worker1",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.5,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              5
+            ],
+            "schedulingLatencySeconds": 45.743,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.5,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:05:29.775268+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.5,
+            "startedAt": "2026-06-13T06:05:29.775282+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 88.5,
+              "polls": 16,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:05:19+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker1",
+              "memcached-reserve": "worker1",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker1",
+              "mongodb-rate": "worker1",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.5,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              10
+            ],
+            "schedulingLatencySeconds": 38.733,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.5,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:07:44.698581+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 0.75,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 0.75,
+            "startedAt": "2026-06-13T06:07:44.698601+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 82.7,
+              "polls": 15,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:08:03+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker2",
+              "memcached-reserve": "worker2",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker2",
+              "mongodb-rate": "worker2",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.75,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              0
+            ],
+            "schedulingLatencySeconds": 38.466,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.75,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:09:52.947791+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 0.75,
+            "startedAt": "2026-06-13T06:09:52.947804+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 90.4,
+              "polls": 16,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:09:36+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker2",
+              "memcached-reserve": "worker2",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker2",
+              "mongodb-rate": "worker2",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.75,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              5
+            ],
+            "schedulingLatencySeconds": 38.186,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.75,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:12:08.714596+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 0.75,
+            "startedAt": "2026-06-13T06:12:08.714609+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 84.5,
+              "polls": 15,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:12:20+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker2",
+              "memcached-reserve": "worker2",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker2",
+              "mongodb-rate": "worker2",
+              "mongodb-recommendation": "worker1",
+              "mongodb-reservation": "worker1",
+              "mongodb-user": "worker1",
+              "profile": "worker1",
+              "rate": "worker1",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 0.75,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              10
+            ],
+            "schedulingLatencySeconds": 38.929,
+            "pendingDeployments": [],
+            "liveAchievedF": 0.75,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:14:19.558551+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      },
+      {
+        "target": 1.0,
+        "passed": true,
+        "attempts": [
+          {
+            "attempt": 1,
+            "target": 1.0,
+            "startedAt": "2026-06-13T06:14:19.558568+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 86.0,
+              "polls": 15,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:14:07+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker2",
+              "memcached-reserve": "worker2",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker2",
+              "mongodb-rate": "worker2",
+              "mongodb-recommendation": "worker2",
+              "mongodb-reservation": "worker2",
+              "mongodb-user": "worker2",
+              "profile": "worker1",
+              "rate": "worker3",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 1.0,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              0
+            ],
+            "schedulingLatencySeconds": 38.408,
+            "pendingDeployments": [],
+            "liveAchievedF": 1.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:16:31.177771+00:00",
+            "consecutiveAfter": 1
+          },
+          {
+            "attempt": 2,
+            "target": 1.0,
+            "startedAt": "2026-06-13T06:16:31.177784+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 86.4,
+              "polls": 15,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:16:45+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker2",
+              "memcached-reserve": "worker2",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker2",
+              "mongodb-rate": "worker2",
+              "mongodb-recommendation": "worker2",
+              "mongodb-reservation": "worker2",
+              "mongodb-user": "worker2",
+              "profile": "worker1",
+              "rate": "worker3",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 1.0,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              5
+            ],
+            "schedulingLatencySeconds": 40.297,
+            "pendingDeployments": [],
+            "liveAchievedF": 1.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:18:45.392170+00:00",
+            "consecutiveAfter": 2
+          },
+          {
+            "attempt": 3,
+            "target": 1.0,
+            "startedAt": "2026-06-13T06:18:45.392236+00:00",
+            "settle": {
+              "quiescent": true,
+              "waitedSeconds": 87.7,
+              "polls": 15,
+              "windowResets": 1,
+              "settleSeconds": 60.0,
+              "timeoutSeconds": 300.0,
+              "notReady": [],
+              "restarts": 0,
+              "lastUnhealthyAt": "2026-06-13T06:18:51+00:00"
+            },
+            "assignment": {
+              "consul": "worker1",
+              "frontend": "worker2",
+              "geo": "worker2",
+              "jaeger": "worker1",
+              "memcached-profile": "worker2",
+              "memcached-rate": "worker2",
+              "memcached-reserve": "worker2",
+              "mongodb-geo": "worker1",
+              "mongodb-profile": "worker2",
+              "mongodb-rate": "worker2",
+              "mongodb-recommendation": "worker2",
+              "mongodb-reservation": "worker2",
+              "mongodb-user": "worker2",
+              "profile": "worker1",
+              "rate": "worker3",
+              "recommendation": "worker1",
+              "reservation": "worker1",
+              "search": "worker1",
+              "user": "worker1"
+            },
+            "solverAchievedF": 1.0,
+            "solverAccepted": true,
+            "solverSeedsTried": [
+              10
+            ],
+            "schedulingLatencySeconds": 29.455,
+            "pendingDeployments": [],
+            "liveAchievedF": 1.0,
+            "gap": 0.0,
+            "inTolerance": true,
+            "finishedAt": "2026-06-13T06:20:49.820039+00:00",
+            "consecutiveAfter": 3
+          }
+        ],
+        "totalAttempts": 3,
+        "bestConsecutive": 3,
+        "requiredConsecutive": 3,
+        "maxAttempts": 6
+      }
+    ],
+    "passed": true
+  },
+  "phaseB": {
+    "antiAffine": {
+      "appliedAt": "2026-06-13T06:22:51.306682+00:00",
+      "settle": {
+        "quiescent": true,
+        "waitedSeconds": 64.0,
+        "polls": 11,
+        "windowResets": 0,
+        "settleSeconds": 60.0,
+        "timeoutSeconds": 300.0,
+        "notReady": [],
+        "restarts": 0,
+        "lastUnhealthyAt": "2026-06-13T06:20:42+00:00"
+      },
+      "services": [
+        "consul",
+        "frontend",
+        "geo",
+        "jaeger",
+        "memcached-profile",
+        "memcached-rate",
+        "memcached-reserve",
+        "mongodb-geo",
+        "mongodb-profile",
+        "mongodb-rate",
+        "mongodb-recommendation",
+        "mongodb-reservation",
+        "mongodb-user",
+        "profile",
+        "rate",
+        "recommendation",
+        "reservation",
+        "search",
+        "user"
+      ],
+      "pendingDeployments": [],
+      "schedulingLatencySeconds": 50.013,
+      "verification": {
+        "r": 3,
+        "mode": "anti-affine",
+        "passed": true,
+        "services": [
+          {
+            "service": "consul",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker2",
+              "worker3"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "frontend",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker2",
+              "worker4"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "geo",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3",
+              "worker5",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "jaeger",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker2",
+              "worker6"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "memcached-profile",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3",
+              "worker7",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "memcached-rate",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3",
+              "worker5",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "memcached-reserve",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker5",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "mongodb-geo",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2",
+              "worker5",
+              "worker6"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "mongodb-profile",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker4",
+              "worker5",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "mongodb-rate",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker3",
+              "worker4"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "mongodb-recommendation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2",
+              "worker5",
+              "worker6"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "mongodb-reservation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker4",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "mongodb-user",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker3",
+              "worker6"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "profile",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker4",
+              "worker5",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "rate",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker4",
+              "worker8"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "recommendation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker2",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "reservation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2",
+              "worker3",
+              "worker5"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "search",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker3",
+              "worker7"
+            ],
+            "assignedNode": null
+          },
+          {
+            "service": "user",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1",
+              "worker3",
+              "worker5"
+            ],
+            "assignedNode": null
+          }
+        ]
+      },
+      "passed": true
+    },
+    "packed": {
+      "appliedAt": "2026-06-13T06:25:16.870378+00:00",
+      "settle": {
+        "quiescent": true,
+        "waitedSeconds": 81.7,
+        "polls": 13,
+        "windowResets": 1,
+        "settleSeconds": 60.0,
+        "timeoutSeconds": 300.0,
+        "notReady": [],
+        "restarts": 0,
+        "lastUnhealthyAt": "2026-06-13T06:23:00+00:00"
+      },
+      "assignment": {
+        "consul": "worker1",
+        "frontend": "worker2",
+        "geo": "worker3",
+        "jaeger": "worker4",
+        "memcached-profile": "worker5",
+        "memcached-rate": "worker6",
+        "memcached-reserve": "worker7",
+        "mongodb-geo": "worker8",
+        "mongodb-profile": "worker1",
+        "mongodb-rate": "worker2",
+        "mongodb-recommendation": "worker3",
+        "mongodb-reservation": "worker4",
+        "mongodb-user": "worker5",
+        "profile": "worker6",
+        "rate": "worker7",
+        "recommendation": "worker8",
+        "reservation": "worker1",
+        "search": "worker2",
+        "user": "worker3"
+      },
+      "packedAssignmentMethod": "round-robin",
+      "achievedF": 0.9375,
+      "pendingDeployments": [],
+      "schedulingLatencySeconds": 54.598,
+      "verification": {
+        "r": 3,
+        "mode": "packed",
+        "passed": true,
+        "services": [
+          {
+            "service": "consul",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1"
+            ],
+            "assignedNode": "worker1"
+          },
+          {
+            "service": "frontend",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2"
+            ],
+            "assignedNode": "worker2"
+          },
+          {
+            "service": "geo",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3"
+            ],
+            "assignedNode": "worker3"
+          },
+          {
+            "service": "jaeger",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker4"
+            ],
+            "assignedNode": "worker4"
+          },
+          {
+            "service": "memcached-profile",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker5"
+            ],
+            "assignedNode": "worker5"
+          },
+          {
+            "service": "memcached-rate",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker6"
+            ],
+            "assignedNode": "worker6"
+          },
+          {
+            "service": "memcached-reserve",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker7"
+            ],
+            "assignedNode": "worker7"
+          },
+          {
+            "service": "mongodb-geo",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker8"
+            ],
+            "assignedNode": "worker8"
+          },
+          {
+            "service": "mongodb-profile",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1"
+            ],
+            "assignedNode": "worker1"
+          },
+          {
+            "service": "mongodb-rate",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2"
+            ],
+            "assignedNode": "worker2"
+          },
+          {
+            "service": "mongodb-recommendation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3"
+            ],
+            "assignedNode": "worker3"
+          },
+          {
+            "service": "mongodb-reservation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker4"
+            ],
+            "assignedNode": "worker4"
+          },
+          {
+            "service": "mongodb-user",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker5"
+            ],
+            "assignedNode": "worker5"
+          },
+          {
+            "service": "profile",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker6"
+            ],
+            "assignedNode": "worker6"
+          },
+          {
+            "service": "rate",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker7"
+            ],
+            "assignedNode": "worker7"
+          },
+          {
+            "service": "recommendation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker8"
+            ],
+            "assignedNode": "worker8"
+          },
+          {
+            "service": "reservation",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker1"
+            ],
+            "assignedNode": "worker1"
+          },
+          {
+            "service": "search",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker2"
+            ],
+            "assignedNode": "worker2"
+          },
+          {
+            "service": "user",
+            "ok": true,
+            "reason": "",
+            "readyReplicas": 3,
+            "nodes": [
+              "worker3"
+            ],
+            "assignedNode": "worker3"
+          }
+        ]
+      },
+      "passed": true
+    },
+    "passed": true
+  },
+  "phaseC": {
+    "recordedAt": "2026-06-13T06:25:17.202809+00:00",
+    "appNamespaceRequests": {
+      "cpuMillicores": 4050,
+      "memoryBytes": 5435817984
+    },
+    "allNamespaceRequestsOnWorkers": {
+      "cpuMillicores": 8375,
+      "memoryBytes": 9801519104
+    },
+    "allocatablePerWorker": {
+      "worker1": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker2": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997192192
+      },
+      "worker3": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker4": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997192192
+      },
+      "worker5": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker6": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      },
+      "worker7": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997179904
+      },
+      "worker8": {
+        "cpuMillicores": 2000,
+        "memoryBytes": 3997184000
+      }
+    },
+    "missingWorkers": [],
+    "headroom": {
+      "cpu": 0.4766,
+      "memory": 0.6935
+    },
+    "headroomFloor": 0.3,
+    "passed": true
+  },
+  "passed": true,
+  "finishedAt": "2026-06-13T06:25:27.465235+00:00",
+  "elapsedSeconds": 2208.7
+}

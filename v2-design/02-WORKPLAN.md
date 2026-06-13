@@ -82,7 +82,9 @@ hard deliverables against v1 velocity.)
   the solver hits every target f ∈ {0, 0.25, 0.5, 0.75, 1.0} within ±0.05
   on the live cluster for Online Boutique — **3 consecutive attempts per
   f-level**, where an *attempt* is one full solve→apply→schedule→verify
-  cycle from a clean app deploy and the per-level counter resets on a miss;
+  cycle from a restored (unpinned) state (amended from "clean app deploy"
+  per M1B-REPORT §Pre-freeze amendments / pre-registration §M2 freeze
+  amendments) and the per-level counter resets on a miss;
   outcome recorded by the committed verification artifact (solver log +
   achieved-f table checked by a `doctor` rule). The gate **must** run at
   the pinned N because the reachable-fraction set is N-dependent (and
@@ -109,19 +111,24 @@ the pinned N).
 **A/A block:** ≥3 identical-placement session pairs through the full
 pipeline. Functions (per the pre-registration): **variance-component
 estimation** (feeding the power analysis, SESOI noise bands, V2-H3
-margin/TOST band, V2-H4 δ margins, UDP-slope taint threshold) and a
+margin/TOST band, V2-H4 δ margins, and the UDP-slope taint check —
+redefined at the freeze to per-f-level slope bands, pre-registration §M2
+freeze amendments D3) and a
 **qualitative pipeline sanity check**. **No numeric FPR gate** — bounding a
 0.05 FPR would need on the order of 60+ A/A tests (see pre-registration
 arithmetic). **Any statistically significant A/A finding → investigate,
-fix, rerun the A/A block.**
+fix, rerun the A/A block** (scoped at the freeze to registered-unit tests —
+pre-registration §M2 freeze amendments D1).
 
 **Freeze:** run power analyses against each SESOI; fill every **TBD**
 (per-cell n, V2-H3 margin and equivalence band, V2-H1 noise band, V2-H4 δ,
-UDP-slope threshold). **V2-H5's sub-score definitions are frozen at the M2
+the per-f-level UDP-slope bands — pre-registration §M2 freeze amendments,
+2026-06-12). **V2-H5's sub-score definitions are frozen at the M2
 commit, before any v2 reliability data exists.**
 
 **Exit criteria:** A/A block clean (no unexplained significant findings;
-**halt rule: a second significant A/A finding after a fix** → halt and
+**halt rule: a second significant A/A finding after a fix** — registered-unit
+scope per pre-registration amendment D1 → halt and
 redesign instrumentation); prober round-trips into `summary.json` and
 `doctor --strict` passes on a smoke session; hotelReservation service/edge
 count measured, capacity check passed, and its solver gate decided (or the
