@@ -274,6 +274,11 @@ required sub-scores' p-values, matching the conjunction rule. The user-tail
 sub-score is evaluated identically but reported as exploratory, uncorrected,
 outside both V2-H5's decision rule and the family.
 
+Sub-score aggregation formulas were specified post-freeze on 2026-06-13, blind
+to all campaign data — see [`DEVIATIONS.md`](DEVIATIONS.md) entry
+D-2026-06-13-01; the constituent signals and the evaluation rule above are
+unchanged from the freeze.
+
 **Falsified by.** **Either required sub-score** (availability or
 mechanism-reconvergence) failing the absolute ICC ≥ 0.5 bar, or its
 reliability CI overlapping or falling below the aggregate's — reported as
