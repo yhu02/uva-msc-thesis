@@ -28,6 +28,7 @@ def create_and_start_probers(
     measure_prometheus: bool,
     measure_conntrack: bool,
     prometheus_url: Tuple[str, ...],
+    measure_endpoint_slices: bool = True,
     http_routes: Any = None,
     service_routes: Any = None,
     expected_chaos_duration: float | None = None,
@@ -38,6 +39,7 @@ def create_and_start_probers(
     None for disabled probers).
     """
     from chaosprobe.metrics.conntrack import ConntrackProtocolProber
+    from chaosprobe.metrics.endpointslice_sampler import EndpointSliceTimeSeriesProber
     from chaosprobe.metrics.latency import ContinuousLatencyProber
     from chaosprobe.metrics.prometheus import ContinuousPrometheusProber
     from chaosprobe.metrics.recovery import RecoveryWatcher
@@ -74,11 +76,21 @@ def create_and_start_probers(
         else None
     )
     conntrack_prober = ConntrackProtocolProber(namespace) if measure_conntrack else None
+    endpoint_slice_prober = (
+        EndpointSliceTimeSeriesProber(namespace) if measure_endpoint_slices else None
+    )
 
     # Propagate expected chaos duration to all probers so the base class
     # can cap "during-chaos" phase labeling (previously only latency had this).
     if expected_chaos_duration is not None:
-        for p in (redis_prober, disk_prober, resource_prober, prometheus_prober, conntrack_prober):
+        for p in (
+            redis_prober,
+            disk_prober,
+            resource_prober,
+            prometheus_prober,
+            conntrack_prober,
+            endpoint_slice_prober,
+        ):
             if p is not None:
                 p._expected_chaos_duration = expected_chaos_duration
 
@@ -92,6 +104,7 @@ def create_and_start_probers(
             ("resource utilization probing", resource_prober),
             ("Prometheus metrics collection", prometheus_prober),
             ("conntrack protocol sampling", conntrack_prober),
+            ("EndpointSlice time-series sampling", endpoint_slice_prober),
         ]
         if p is not None
     ]
@@ -114,6 +127,7 @@ def create_and_start_probers(
         "resource": resource_prober,
         "prometheus": prometheus_prober,
         "conntrack": conntrack_prober,
+        "endpointSlices": endpoint_slice_prober,
     }
 
 
@@ -143,6 +157,7 @@ def stop_and_collect_probers(
             probers.get("resource"),
             probers.get("prometheus"),
             probers.get("conntrack"),
+            probers.get("endpointSlices"),
             probers.get("watcher"),
         ]
         if p is not None
@@ -250,6 +265,23 @@ def stop_and_collect_probers(
                 error_breakdown["conntrack"] = meta["probeErrors"]
         except Exception as e:
             click.echo(f"    Warning: failed to collect conntrack data: {e}", err=True)
+
+    # EndpointSlice time series
+    if probers.get("endpointSlices"):
+        try:
+            data = probers["endpointSlices"].result()
+            results["endpointSlices"] = data
+            meta = data.get("meta", {})
+            if meta.get("available"):
+                click.echo(
+                    f"    EndpointSlices: {len(data.get('samples', []))} time-series samples"
+                )
+            else:
+                click.echo(f"    EndpointSlices: {meta.get('reason', 'unavailable')}")
+            if meta.get("probeErrors", 0) > 0:
+                error_breakdown["endpointSlices"] = meta["probeErrors"]
+        except Exception as e:
+            click.echo(f"    Warning: failed to collect EndpointSlice time series: {e}", err=True)
 
     # Recovery watcher
     if probers.get("watcher"):

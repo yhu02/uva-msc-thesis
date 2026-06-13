@@ -62,6 +62,21 @@ logger = logging.getLogger(__name__)
 # per-sample namespace list call is negligible.
 _DURING_SAMPLE_INTERVAL_S = 15
 
+#: Prober keys whose presence requires the pre/post-chaos sampling windows
+#: to run. Every prober that samples across phases (each of these needs the
+#: pre-chaos baseline and the post-chaos recovery tail) MUST be listed, or
+#: its window is silently skipped when it is the only enabled prober. Keep
+#: in sync with the keys returned by ``probers.create_and_start_probers``.
+_WINDOW_PROBER_KEYS: Tuple[str, ...] = (
+    "latency",
+    "redis",
+    "disk",
+    "resource",
+    "prometheus",
+    "conntrack",
+    "endpointSlices",
+)
+
 
 def _total_ready_endpoints(snapshot: Optional[Dict[str, Any]]) -> int:
     """Total ready endpoints across all services in an EndpointSlice snapshot.
@@ -614,8 +629,7 @@ def _apply_placement(
 
         nodes_used = set(assignment.assignments.values())
         click.echo(
-            f"    Placed {len(assignment.assignments)} deployments "
-            f"across {len(nodes_used)} node(s)"
+            f"    Placed {len(assignment.assignments)} deployments across {len(nodes_used)} node(s)"
         )
         for node in sorted(nodes_used):
             count = sum(1 for n in assignment.assignments.values() if n == node)
@@ -849,9 +863,7 @@ def _run_single_iteration(
     # window.  pre_chaos_window still defers to --baseline-duration
     # when explicitly set, since baseline collection has its own knob.
     pre_chaos_window = ctx.baseline_duration if ctx.baseline_duration > 0 else ctx.settle_time
-    has_probers = any(
-        probers.get(k) for k in ("latency", "redis", "disk", "resource", "prometheus", "conntrack")
-    )
+    has_probers = any(probers.get(k) for k in _WINDOW_PROBER_KEYS)
     post_chaos_window = ctx.settle_time
 
     iter_locust_runner = None
@@ -981,6 +993,7 @@ def _run_single_iteration(
         conntrack_data=prober_results.get("conntrack"),
         endpoint_slices_pre=endpoint_slices_pre,
         endpoint_slices_during=during_state.get("snapshot"),
+        endpoint_slice_timeseries_data=prober_results.get("endpointSlices"),
         collect_logs=ctx.collect_logs,
     )
 
@@ -1427,8 +1440,7 @@ def _run_iterations(
                         )
                     except Exception as exc:
                         click.echo(
-                            f"    Neo4j reconnect failed after K8s outage — "
-                            f"disabling sync: {exc}",
+                            f"    Neo4j reconnect failed after K8s outage — disabling sync: {exc}",
                             err=True,
                         )
                         ctx.graph_store = None
@@ -1660,7 +1672,7 @@ def _sync_neo4j(ctx: RunContext, output_data: Dict[str, Any]) -> bool:
                 # absent so future iterations don't try either, and
                 # return failure for this sync.
                 click.echo(
-                    f"    Neo4j unreachable — disabling sync for this run: " f"{ctor_exc}",
+                    f"    Neo4j unreachable — disabling sync for this run: {ctor_exc}",
                     err=True,
                 )
                 ctx.graph_store = None
