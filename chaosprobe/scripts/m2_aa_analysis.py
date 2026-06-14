@@ -164,6 +164,28 @@ WILCOXON_MIN_LEVELS = 5
 #: check).  Forms per D4 — see the module docstring.
 METRICS = ("ew_p95_pre_ms", "udp_conntrack_drop_entries", "conntrack_flush_pct", "score")
 
+#: Frozen D3 per-f-level pre-window UDP-slope taint bands (entries/min),
+#: derived from the 2026-06-12 M2 A/A block (deviation D-2026-06-14-01 in
+#: v2-design/DEVIATIONS.md).  Each band is ``round(mean ± 3·SD)`` of the
+#: untainted per-iteration ``udp_preslope_epm`` at that f-level, pooled over
+#: the 6 A/A sessions, where SD is the population SD of the A/A reference
+#: iterations.  An iteration is tainted when its pre-window UDP-entry slope
+#: falls OUTSIDE its f-level's band — the registered D3 taint rule
+#: (§Session design).  ``scripts/d3_slope_bands.py`` recomputes these from
+#: ``results/v2-aa/`` and a parity test asserts they still match.  Applied to
+#: C1 analysis ONLY (opt-in: ``load_condition_outcomes(..., slope_band_taint=
+#: True)``); never retro-applied to the A/A block it was derived from.
+D3_UDP_SLOPE_BANDS_EPM: Dict[str, Tuple[int, int]] = {
+    "f-000": (-81, 56),
+    "f-025": (-358, 1022),
+    "f-050": (414, 1084),
+    "f-075": (-11211, -3867),
+    "f-100": (-8766, -5519),
+}
+
+#: Taint reason recorded when an iteration's pre-window UDP slope is out of band.
+SLOPE_BAND_TAINT_REASON = "udp_preslope_out_of_band"
+
 #: Every per-iteration outcome :func:`extract_iteration` produces.  The
 #: canonical analysis tests :data:`METRICS`; the supplementary analysis
 #: (``scripts/aa_block.py``) consumes the broader set for its variance
@@ -358,6 +380,23 @@ def udp_pre_slope(samples: List[Dict[str, Any]]) -> Optional[float]:
             continue
         slopes.append(sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx)
     return sum(slopes) * 60.0 if slopes else None  # per-second -> per-minute
+
+
+def udp_preslope_out_of_band(slope: Optional[float], condition: str) -> bool:
+    """True when ``slope`` (entries/min) is outside ``condition``'s D3 band.
+
+    The registered D3 pre-window UDP-slope validity check: an iteration whose
+    pre-chaos UDP-entry slope leaves its f-level's A/A-derived band
+    (:data:`D3_UDP_SLOPE_BANDS_EPM`) is tainted.  Returns ``False`` when the
+    slope is missing/NaN (no signal to gate on) or the condition has no
+    registered band (only the five C1 f-levels do), so unknown conditions and
+    slope-less iterations are never tainted on this rule's account.
+    """
+    band = D3_UDP_SLOPE_BANDS_EPM.get(condition)
+    if band is None or not isinstance(slope, (int, float)) or math.isnan(float(slope)):
+        return False
+    lo, hi = band
+    return slope < lo or slope > hi
 
 
 def _series_total_ready(sample: Dict[str, Any], app_services: Sequence[str]) -> Optional[int]:
@@ -573,6 +612,7 @@ def load_condition_outcomes(
     condition: str,
     tainted: Set[Tuple[str, Any]],
     taints: List[str],
+    slope_band_taint: bool = False,
 ) -> Optional[Dict[str, List[Optional[float]]]]:
     """Per-iteration outcome rows for one condition's raw ``<condition>.json``.
 
@@ -585,6 +625,12 @@ def load_condition_outcomes(
     with index alignment preserved so paired tests drop the pair.
     Raw files are 20–100 MB: one is loaded at a time and freed before
     the next.
+
+    When ``slope_band_taint`` is set (C1 analysis only — the M2 A/A block
+    that defined the bands is never gated by them), an iteration whose
+    pre-window UDP slope leaves its f-level's frozen D3 band
+    (:func:`udp_preslope_out_of_band`) is tainted in addition to the
+    pipeline's recorded taints.
     """
     path = os.path.join(session_dir, f"{condition}.json")
     if not os.path.isfile(path):
@@ -606,6 +652,12 @@ def load_condition_outcomes(
                 per_outcome[key].append(None)
             continue
         row = extract_iteration(it, app_services)
+        if slope_band_taint and udp_preslope_out_of_band(row["udp_preslope_epm"], condition):
+            taints.append(f"{condition} it{iteration}: {SLOPE_BAND_TAINT_REASON}")
+            tainted.add((condition, iteration))
+            for key in ITERATION_OUTCOMES:
+                per_outcome[key].append(None)
+            continue
         for key in ITERATION_OUTCOMES:
             per_outcome[key].append(row[key])
     del raw  # one raw file in memory at a time
