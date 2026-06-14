@@ -953,3 +953,59 @@ def test_report_renders_thin_replication_warning(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "thin replication" in out
     assert "f-050, f-100" in out
+
+
+def _slope_iter(n, slope_epm):
+    """Iteration carrying a one-node pre-chaos UDP slope of exactly slope_epm."""
+    return {
+        "iteration": n,
+        "verdict": "PASS",
+        "metrics": {
+            "conntrackProtocolSamples": [
+                {
+                    "node": "w1",
+                    "proto": "udp",
+                    "count": 1000.0,
+                    "phase": "pre-chaos",
+                    "ts": "2026-01-01T00:00:00+00:00",
+                },
+                {
+                    "node": "w1",
+                    "proto": "udp",
+                    "count": 1000.0 + slope_epm,
+                    "phase": "pre-chaos",
+                    "ts": "2026-01-01T00:01:00+00:00",
+                },
+            ]
+        },
+    }
+
+
+def test_load_condition_subscores_d3_slope_band_gate(tmp_path):
+    # f-050 band is [414, 1084]: it1 slope 700 (in-band), it2 slope 5000 (out).
+    _write_session(
+        tmp_path,
+        "s1",
+        {"f-050": [_slope_iter(1, 700), _slope_iter(2, 5000)]},
+        timestamp="2026-01-01T00:00:00+00:00",
+    )
+    run_dir = str(tmp_path / "s1")
+
+    # Gate OFF (default loader): the out-of-band iteration is NOT slope-tainted.
+    off_tainted: set = set()
+    sc.load_condition_subscores(run_dir, "f-050", off_tainted, [])
+    assert ("f-050", 2) not in off_tainted
+
+    # Gate ON (the C1 path): the out-of-band iteration is tainted -> None rows.
+    tainted: set = set()
+    taints: list = []
+    obs = sc.load_condition_subscores(run_dir, "f-050", tainted, taints, slope_band_taint=True)
+    assert ("f-050", 2) in tainted
+    assert any("udp_preslope_out_of_band" in t for t in taints)
+    assert obs.v1_score[1] is None  # tainted iteration -> None v1 row
+
+
+def test_cli_slope_band_flag_default_on_and_disable():
+    parser = sc.build_parser()
+    assert parser.parse_args([]).slope_band_taint is True
+    assert parser.parse_args(["--no-slope-band-taint"]).slope_band_taint is False
