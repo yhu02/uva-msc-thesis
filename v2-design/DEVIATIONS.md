@@ -93,3 +93,55 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   EndpointSlice time series, falling back to the conntrack UDP series). When no
   window can be sourced, the affected duration / reconvergence loss is `None`,
   propagating to a `None` sub-score.
+
+### D-2026-06-14-01 — D3 per-f-level UDP-slope taint band edges specified
+
+- **date:** 2026-06-14
+- **what:** the M2 freeze (D3) registered the pre-window UDP-slope validity check
+  as **per-f-level slope bands sourced from the 2026-06-12 A/A block** but did not
+  pin the band-edge *rule* (how wide each band is). It is specified here as
+  **`round(mean ± 3·SD)`** of the untainted per-iteration `udp_preslope_epm` at
+  each f-level, pooled over the 6 A/A sessions, where SD is the **population SD**
+  of that A/A reference set (`round` = Python round-half-to-even; no frozen edge
+  sits on a half-integer). The reference set applies the same exclusions the
+  canonical M2 path does — not-accepted conditions dropped, then per-iteration
+  taint exclusion (every A/A condition was accepted, so this does not move the
+  values; it keeps the audit script faithful to the canonical exclusion). No
+  registered hypothesis statement, falsification rule, SESOI, n, or the D3
+  decision itself changes — only the previously unspecified band-edge formula is
+  fixed.
+- **why:** the prereg cited the A/A slope ranges (≈ +140 to +870 entries/min at
+  f-025/f-050, ≈ −6600 to −8800 at f-075/f-100) and said the bands come "from the
+  A/A block artifact," but the exact edge rule was left open (task #11). A `3·SD`
+  control limit taints essentially none of the A/A null (0/0/0/1/0 of n≈18 per
+  level) while keeping a real margin beyond the observed envelope, so normal
+  placement-coupled transients pass on C1 and only genuine anomalies (e.g. the
+  s6 f-100 wedge, far outside the band) are caught. Rejected alternatives:
+  empirical `[min,max]` (zero margin → over-taints C1); `median ± k·MAD` (the
+  skewed f-025 distribution self-taints 6/18); `[p2.5, p97.5]` (drops 5% of the
+  null by construction).
+- **blind?:** YES — derived only from the M2 A/A null (same-placement) block,
+  with **no access to any C1 outcome**; the rule was fixed before C1 analysis.
+  (C1-online-boutique data exists but was not consulted for this; the band feeds
+  C1's taint gate, so deriving it from C1 would be circular.)
+- **decision ID:** ties to freeze decision **D3** (pre-registration §Session
+  design, §M2 freeze amendments) — the edge-rule completion of the registered
+  per-f-level-band check.
+- **frozen bands (entries/min):** an iteration is tainted (reason
+  `udp_preslope_out_of_band`) when its pre-window UDP-entry slope falls outside
+  its f-level's band.
+
+  | f-level | band |
+  |---|---|
+  | f-000 | [−81, 56] |
+  | f-025 | [−358, 1022] |
+  | f-050 | [414, 1084] |
+  | f-075 | [−11211, −3867] |
+  | f-100 | [−8766, −5519] |
+
+  The values are frozen in `chaosprobe/scripts/m2_aa_analysis.py`
+  (`D3_UDP_SLOPE_BANDS_EPM`) and applied via
+  `load_condition_outcomes(..., slope_band_taint=True)` — **C1 analysis only**;
+  the A/A block that defined them is never gated by them.
+  `chaosprobe/scripts/d3_slope_bands.py` re-derives them from `results/v2-aa/`
+  (a parity test asserts the committed constants still match the raw data).

@@ -320,6 +320,73 @@ def test_udp_pre_slope():
     assert aa.udp_pre_slope([]) is None
 
 
+def _slope_iter(n, slope_epm, *, base=1000.0):
+    """A raw iteration whose pre-window UDP slope is exactly ``slope_epm``.
+
+    One node, two pre-chaos samples 60 s apart: count rises from ``base`` to
+    ``base + slope_epm``, so :func:`udp_pre_slope` returns ``slope_epm``.
+    """
+    return {
+        "iteration": n,
+        "verdict": "PASS",
+        "metrics": {
+            "conntrackProtocolSamples": [
+                {
+                    "node": "w1",
+                    "proto": "udp",
+                    "count": base,
+                    "phase": "pre-chaos",
+                    "ts": "2026-01-01T00:00:00+00:00",
+                },
+                {
+                    "node": "w1",
+                    "proto": "udp",
+                    "count": base + slope_epm,
+                    "phase": "pre-chaos",
+                    "ts": "2026-01-01T00:01:00+00:00",
+                },
+            ]
+        },
+    }
+
+
+def test_udp_preslope_out_of_band():
+    # f-025 band is [-358, 1022]: inside, below, above.
+    assert aa.udp_preslope_out_of_band(500.0, "f-025") is False
+    assert aa.udp_preslope_out_of_band(-358, "f-025") is False  # edge is inclusive
+    assert aa.udp_preslope_out_of_band(1022, "f-025") is False
+    assert aa.udp_preslope_out_of_band(-400.0, "f-025") is True
+    assert aa.udp_preslope_out_of_band(2000.0, "f-025") is True
+    # No signal to gate on / unknown condition -> never tainted on this rule.
+    assert aa.udp_preslope_out_of_band(None, "f-025") is False
+    assert aa.udp_preslope_out_of_band(float("nan"), "f-025") is False
+    assert aa.udp_preslope_out_of_band(999999.0, "f-999") is False
+
+
+def test_load_condition_outcomes_slope_band_taint(tmp_path):
+    # f-050 band is [414, 1084]. it1 in-band, it2 above-band, it3 below-band.
+    iterations = [_slope_iter(1, 700.0), _slope_iter(2, 5000.0), _slope_iter(3, -100.0)]
+    _write_run(tmp_path, "run", _summary([("f-050", 0.5, 0.5)]), {"f-050": iterations})
+
+    # Default OFF: the M2 path is unchanged — no slope taint, all rows kept.
+    out_off = aa.load_condition_outcomes(str(tmp_path / "run"), "f-050", set(), [])
+    assert out_off is not None
+    assert out_off["udp_preslope_epm"] == [700.0, 5000.0, -100.0]
+
+    # ON (C1 path): the two out-of-band iterations are tainted -> None rows.
+    tainted, taints = set(), []
+    out_on = aa.load_condition_outcomes(
+        str(tmp_path / "run"), "f-050", tainted, taints, slope_band_taint=True
+    )
+    assert out_on is not None
+    assert out_on["udp_preslope_epm"] == [700.0, None, None]
+    assert tainted == {("f-050", 2), ("f-050", 3)}
+    assert taints == [
+        "f-050 it2: udp_preslope_out_of_band",
+        "f-050 it3: udp_preslope_out_of_band",
+    ]
+
+
 def test_es_trough():
     slices = {
         "preChaos": {"services": {"a": {"ready": 2}, "b": {"ready": 1}, "c": {"ready": 0}}},
