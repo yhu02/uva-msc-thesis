@@ -120,17 +120,20 @@ def test_incomplete_block_excluded_with_warning(tmp_path):
     assert any("incomplete V2-H1 block" in w and "f-100" in w for w in out["warnings"])
 
 
-def test_d3_gate_excludes_out_of_band_iteration(tmp_path):
+def test_d3_slope_band_taint_optional_default_off(tmp_path):
     # f-025 band is [-358, 1022]: it1 slope 200 (in-band, ew 42), it2 slope 5000
-    # (out of band, ew 9999). With the D3 gate ON, it2 is tainted -> the level
-    # median is 42, not (42+9999)/2.
+    # (out of band, ew 9999). f-025 is index 1.
     level_iters = {cond: [_iter(1, 40 + 2 * i)] for i, cond in enumerate(_ALL)}
     level_iters["f-025"] = [_iter(1, 42, slope_epm=200), _iter(2, 9999, slope_epm=5000)]
     _write_session(tmp_path, "s1", level_iters)
-    blocks, _ = h1.collect_blocks(str(tmp_path))
-    # f-025 is index 1; its block value is the median over untainted iterations
-    # = 42 (the out-of-band 9999 iteration was dropped by the D3 gate).
-    assert blocks == [[40.0, 42.0, 44.0, 46.0, 48.0]]
+    # Default (D-2026-06-14-02): slope-taint OFF -> both iters kept -> f-025
+    # value is median(42, 9999) = 5020.5.
+    blocks_off, _ = h1.collect_blocks(str(tmp_path))
+    assert blocks_off == [[40.0, 5020.5, 44.0, 46.0, 48.0]]
+    # Opt-in (--slope-band-taint): the out-of-band 9999 iteration is dropped ->
+    # f-025 value is 42.
+    blocks_on, _ = h1.collect_blocks(str(tmp_path), slope_band_taint=True)
+    assert blocks_on == [[40.0, 42.0, 44.0, 46.0, 48.0]]
 
 
 def test_sesoi_effect_below_and_undefined():
@@ -163,3 +166,15 @@ def test_main_smoke_and_json_output(tmp_path, capsys):
     assert "incomplete V2-H1 block" in printed  # the warning-print path
     written = json.loads(out_json.read_text())
     assert written["outcome"] == "ew_p95_pre_ms" and written["nCompleteBlocks"] == 2
+    assert written["slopeBandTaint"] is False  # default off (D-2026-06-14-02)
+    assert "OFF (D-2026-06-14-02)" in printed
+
+
+def test_main_slope_band_taint_sensitivity_mode(tmp_path, capsys):
+    for k, name in enumerate(("s1", "s2")):
+        _increasing_session(tmp_path, name, base=40 + k)
+    out_json = tmp_path / "h1_sens.json"
+    rc = h1.main(["--results-dir", str(tmp_path), "--slope-band-taint", "--json", str(out_json)])
+    assert rc == 0
+    assert "ON (D3 sensitivity)" in capsys.readouterr().out
+    assert json.loads(out_json.read_text())["slopeBandTaint"] is True

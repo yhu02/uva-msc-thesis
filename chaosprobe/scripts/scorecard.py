@@ -768,14 +768,17 @@ def analyze(
     confidence: float = 0.95,
     n_resamples: int = 2000,
     seed: Optional[int] = 42,
-    slope_band_taint: bool = True,
+    slope_band_taint: bool = False,
 ) -> Dict[str, Any]:
     """The full V2-H5 scorecard reliability analysis as one JSON-ready dict.
 
-    ``slope_band_taint`` defaults ON: this is the C1 campaign tool, so the
-    frozen D3 pre-window UDP-slope gate (DEVIATIONS.md D-2026-06-14-01) applies.
-    Disable it (``--no-slope-band-taint``) only to analyze the A/A block, which
-    must never be gated by the bands it defined.
+    ``slope_band_taint`` defaults OFF (deviation D-2026-06-14-02): the C1
+    diagnosis showed the frozen D3 UDP-slope band (D-2026-06-14-01) does not
+    generalize from the A/A block to the C1 per-level re-placement regime — it
+    taints every f-025/f-050 iteration — while the latency baseline at those
+    levels is the cleanest, and the UDP/DNS conntrack pool is not a validity
+    precondition for the scorecard's outcomes.  ``--slope-band-taint`` re-applies
+    it for the sensitivity report.
     """
     conditions, warnings, taints = collect_conditions(
         results_dir, slope_band_taint=slope_band_taint
@@ -960,9 +963,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--slope-band-taint",
         dest="slope_band_taint",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="apply the frozen D3 pre-window UDP-slope taint gate (default on; "
-        "use --no-slope-band-taint to analyze the A/A block, which it must not gate)",
+        default=False,
+        help="apply the frozen D3 pre-window UDP-slope taint gate (default OFF per "
+        "deviation D-2026-06-14-02; --slope-band-taint re-applies it for the sensitivity run)",
     )
     return parser
 

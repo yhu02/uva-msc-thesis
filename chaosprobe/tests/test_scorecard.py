@@ -1005,7 +1005,8 @@ def test_load_condition_subscores_d3_slope_band_gate(tmp_path):
     assert obs.v1_score[1] is None  # tainted iteration -> None v1 row
 
 
-def test_cli_slope_band_flag_default_on_and_disable():
+def test_cli_slope_band_flag_default_off_and_enable():
+    # Default OFF per deviation D-2026-06-14-02; --slope-band-taint re-applies it.
     parser = sc.build_parser()
-    assert parser.parse_args([]).slope_band_taint is True
-    assert parser.parse_args(["--no-slope-band-taint"]).slope_band_taint is False
+    assert parser.parse_args([]).slope_band_taint is False
+    assert parser.parse_args(["--slope-band-taint"]).slope_band_taint is True

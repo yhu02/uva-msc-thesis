@@ -9,9 +9,16 @@ entering Page's test is the **session-condition median** of the D4-pinned
 outcome `ew_p95_pre_ms` (per iteration, median over inter-service routes of the
 route p95, loadgen→ excluded, pre-chaos window) over the session's untainted
 iterations.  Extraction reuses the canonical
-:func:`m2_aa_analysis.load_condition_outcomes` with the frozen **D3 UDP-slope
-taint gate enabled** (`slope_band_taint=True`; DEVIATIONS.md D-2026-06-14-01) —
-this is C1 analysis, so the gate applies.
+:func:`m2_aa_analysis.load_condition_outcomes`.
+
+**D3 UDP-slope taint is OFF by default here (deviation D-2026-06-14-02,
+DEVIATIONS.md).**  Diagnosis of C1 showed the frozen D3 band (D-2026-06-14-01,
+derived from the low-churn A/A block) does not generalize to C1's per-level
+re-placement regime — it taints every f-025/f-050 iteration — while the
+east-west latency baseline at those levels is in fact the *cleanest* of all
+levels.  The pre-window UDP/DNS conntrack pool is not a validity precondition
+for this TCP/gRPC latency outcome, so the slope-taint is removed from V2-H1.
+``--slope-band-taint`` re-enables it for the sensitivity report.
 
 Alongside the test it reports the registered **SESOI** effect size: the % change
 in the per-level grand-median east-west p95 from f = 0 to f = 1 (the bar is a
@@ -24,7 +31,7 @@ not computed here.
 Usage::
 
     uv run python scripts/c1_h1_trend.py --results-dir results/c1-online-boutique
-    uv run python scripts/c1_h1_trend.py --results-dir results/c1-online-boutique --json h1.json
+    uv run python scripts/c1_h1_trend.py --results-dir results/c1-online-boutique --slope-band-taint
 """
 
 from __future__ import annotations
@@ -64,7 +71,9 @@ SESOI_PCT = 15.0
 OUTCOME = "ew_p95_pre_ms"
 
 
-def collect_blocks(results_dir: str) -> Tuple[List[List[float]], List[str]]:
+def collect_blocks(
+    results_dir: str, slope_band_taint: bool = False
+) -> Tuple[List[List[float]], List[str]]:
     """Per-session complete ordered blocks of the V2-H1 outcome.
 
     Returns ``(blocks, warnings)``.  ``blocks`` has one entry per session that
@@ -75,6 +84,9 @@ def collect_blocks(results_dir: str) -> Tuple[List[List[float]], List[str]]:
     no untainted iteration, are dropped (and noted).  The effect size
     (:func:`sesoi_effect`) is computed from these same blocks, so the test and
     the reported effect describe one cohort.
+
+    ``slope_band_taint`` (default ``False`` — deviation D-2026-06-14-02) adds
+    the frozen D3 UDP-slope taint; left off for the primary V2-H1 analysis.
     """
     sessions, warnings = discover_sessions(results_dir)
     blocks: List[List[float]] = []
@@ -87,7 +99,7 @@ def collect_blocks(results_dir: str) -> Tuple[List[List[float]], List[str]]:
                 row[cond] = None
                 continue
             per_outcome = load_condition_outcomes(
-                run_dir, cond, session.tainted, session.taints, slope_band_taint=True
+                run_dir, cond, session.tainted, session.taints, slope_band_taint=slope_band_taint
             )
             row[cond] = None if per_outcome is None else _median_or_none(per_outcome[OUTCOME])
         if all(row[cond] is not None for cond, _ in LEVELS):
@@ -128,12 +140,17 @@ def sesoi_effect(blocks: List[List[float]]) -> Dict[str, object]:
     }
 
 
-def analyze(results_dir: str) -> Dict[str, object]:
-    """The full V2-H1 dose-response analysis as one JSON-ready dict."""
-    blocks, warnings = collect_blocks(results_dir)
+def analyze(results_dir: str, slope_band_taint: bool = False) -> Dict[str, object]:
+    """The full V2-H1 dose-response analysis as one JSON-ready dict.
+
+    ``slope_band_taint`` defaults OFF (deviation D-2026-06-14-02); set it for
+    the sensitivity run that re-applies the frozen D3 UDP-slope taint.
+    """
+    blocks, warnings = collect_blocks(results_dir, slope_band_taint=slope_band_taint)
     page = page_trend_test(blocks)
     return {
         "outcome": OUTCOME,
+        "slopeBandTaint": slope_band_taint,
         "nCompleteBlocks": len(blocks),
         "levels": [f for _, f in LEVELS],
         "pageTrendTest": page,
@@ -147,6 +164,8 @@ def print_report(result: Dict[str, object]) -> None:
     sesoi = result["sesoi"]
     print("V2-H1 — dose-response of the east-west tail (Page's L trend test)")
     print(f"  outcome:           {result['outcome']} (median east-west p95, pre-chaos)")
+    taint = "ON (D3 sensitivity)" if result.get("slopeBandTaint") else "OFF (D-2026-06-14-02)"
+    print(f"  D3 slope-taint:    {taint}")
     print(f"  complete blocks:   {result['nCompleteBlocks']} sessions")
     print(
         f"  Page's L:          L={page['l_statistic']}  z={page['z']}  "
@@ -173,8 +192,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="directory of <run>/summary.json C1 sessions",
     )
     parser.add_argument("--json", help="optional: write the analysis dict to this path")
+    parser.add_argument(
+        "--slope-band-taint",
+        dest="slope_band_taint",
+        action="store_true",
+        help="re-apply the frozen D3 UDP-slope taint (off by default per "
+        "deviation D-2026-06-14-02; use for the sensitivity run)",
+    )
     args = parser.parse_args(argv)
-    result = analyze(args.results_dir)
+    result = analyze(args.results_dir, slope_band_taint=args.slope_band_taint)
     print_report(result)
     if args.json:
         with open(args.json, "w") as fh:
