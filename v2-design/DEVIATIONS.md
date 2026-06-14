@@ -145,3 +145,44 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   the A/A block that defined them is never gated by them.
   `chaosprobe/scripts/d3_slope_bands.py` re-derives them from `results/v2-aa/`
   (a parity test asserts the committed constants still match the raw data).
+
+### D-2026-06-14-02 — D3 UDP-slope taint removed from the C1 V2-H1 / V2-H5 analyses
+
+- **date:** 2026-06-14
+- **what:** the frozen D3 pre-window UDP-slope taint (D-2026-06-14-01) is **not
+  applied** to the C1 V2-H1 (`scripts/c1_h1_trend.py`) and V2-H5
+  (`scripts/scorecard.py`) analyses — both now default `slope_band_taint=False`,
+  with `--slope-band-taint` retained for a sensitivity run. The band/constants
+  are unchanged; only their application to these two analyses is withdrawn. No
+  hypothesis statement, SESOI, n, or other taint gate changes.
+- **why:** applied to the real C1 online-boutique data, the D3 band taints
+  **24/24 iterations at both f-025 and f-050** (zero complete blocks → Page's L
+  and the scorecard cannot run). Diagnosis (read-only) established:
+  1. **Not an instrument artifact** — pre-chaos UDP sampling is identical
+     between the A/A block and C1 (≈88–96 samples, ~60 s window, 8 nodes).
+  2. **A structural regime difference** — A/A's interior-level (f-025/f-050)
+     pre-window UDP pool was small and *growing* (band positive there); C1
+     re-places per f-level, so its pre-window catches a large post-re-placement
+     DNS/UDP conntrack burst *draining* at every non-zero level (slope ≈ −9000).
+     The A/A-derived band does not describe the C1 regime — the exact
+     "placement-coupled transient" instability the M2 report pre-flagged (F2).
+  3. **The taint discards the cleanest data** — the V2-H1 latency baseline
+     (`ew_p95_pre_ms`) at the tainted levels is the *most* stable of all levels
+     (f-050 CV ≈ 2 %, f-025 ≈ 12 %; the *passing* f-075 is the noisiest at
+     ≈ 18 %). The east-west p95 is TCP/gRPC latency; the pre-window UDP pool is
+     DNS conntrack and is not a validity precondition for it.
+- **blind?:** **NO** — decided after observing that the registered gate tainted
+  the interior levels on C1. The justification rests on objective, documentable
+  facts (identical sampling; latency baseline cleanest at the tainted levels;
+  the gated signal is a different protocol from the outcome) and on the M2 F2
+  pre-flag, not on the hypothesis outcome. **Reported transparently both ways:**
+  the primary V2-H1/V2-H5 results run with the slope-taint OFF; the
+  slope-taint-ON result (unrunnable for V2-H1) is reported as the limitation.
+- **decision ID:** ties to **D3** and to D-2026-06-14-01 (the band whose
+  application is withdrawn here).
+- **scope:** the withdrawal is limited to the C1 V2-H1 / V2-H5 latency-side
+  analyses. The slope-taint remains applicable where the UDP/DNS conntrack pool
+  *is* the measurement (V2-H2, the conntrack-mechanism hypothesis, C3). The
+  forward fix — lengthening the post-(re)placement settle so the pre-chaos
+  window starts after the conntrack burst drains — is recorded for C2/C3 as a
+  protocol change, not applied retroactively to C1.

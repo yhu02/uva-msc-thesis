@@ -16,11 +16,12 @@ host-side Locust.
   session's `runMetadata.git.commit`, `dirty: false`). All 8 sessions share
   this commit.
 - **Analysis-code commit:** the analysis is run on **current `main` at or after
-  `7d6943e`** (PR #282), which adds the frozen D3 UDP-slope taint gate. The
-  D3 gate is applied at **analysis** time (`slope_band_taint=True`), not at
-  collection — so the data commit predates it by design (deviation
-  **D-2026-06-14-01**, [`DEVIATIONS.md`](DEVIATIONS.md), derived blind to this
-  campaign).
+  `7d6943e`** (PR #282), which adds the frozen D3 UDP-slope taint gate (a
+  post-collection analysis step, so the data commit predates it by design;
+  deviation **D-2026-06-14-01**, derived blind to this campaign). The D3
+  slope-taint is **OFF** for the V2-H1 / V2-H5 analyses of this campaign per
+  deviation **D-2026-06-14-02** (it did not generalize from the A/A block to
+  C1's per-level re-placement regime; see [`DEVIATIONS.md`](DEVIATIONS.md)).
 - **Pre-registration reference:** git tag `v2-prereg-freeze`
   (commit `20097c1`); the freeze deposit is [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md).
 - **Cluster fingerprint** (per session `runMetadata`): k8s v1.28.6,
