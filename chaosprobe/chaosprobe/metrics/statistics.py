@@ -897,3 +897,90 @@ def art_anova(data: Sequence[Tuple[object, object, float]]) -> Dict[str, object]
     base["factor_b"] = _two_factor_f(_ranked(_aligned("b")))["factor_b"]
     base["interaction"] = _two_factor_f(_ranked(_aligned("ab")))["interaction"]
     return base
+
+
+def page_trend_test(blocks: Sequence[Sequence[float]]) -> Dict[str, object]:
+    """Page's L trend test for a predicted monotone ordering across treatments.
+
+    Page's L tests the ordered alternative that ``k`` related treatments rise in
+    a *predicted* order across ``n`` blocks — for V2-H1, the C1 east-west p95
+    across the ordered cross-node-fraction levels, one value per level per
+    session.  Each ``blocks[i]`` is one block's ``k`` values **already in the
+    predicted-increasing order** (f = 0 → 1).  Within each block the values are
+    ranked 1..k (1 = smallest; average ranks for ties), ``R_j`` is the rank sum
+    of treatment ``j`` over blocks, and ``L = Σ_j j·R_j``.  A large ``L`` (high
+    ranks on later-ordered treatments) supports the increasing trend; the
+    one-sided p-value is the upper tail of the normal approximation
+    ``Z = (L − E[L]) / sqrt(Var[L])`` with ``E[L] = n·k·(k+1)²/4``.  ``Var[L]``
+    is the **tie-corrected** within-block-permutation variance (it reduces to
+    the textbook ``n·k²·(k+1)·(k²−1)/144`` when no block has ties), consistent
+    with the tie handling in :func:`mann_whitney_u` /
+    :func:`wilcoxon_signed_rank`.
+
+    Args:
+        blocks: ``n`` blocks, each a sequence of ``k`` values in the predicted
+            increasing order. Every block must have the same length ``k``.
+
+    Returns:
+        Dict with ``l_statistic``, ``z``, ``p_one_sided`` (increasing
+        alternative), ``rank_sums`` (``R_j`` in predicted order), ``n_blocks``,
+        and ``k``. ``z``/``p_one_sided`` are ``None`` when no trend is defined
+        (no blocks, ``k < 2``) or there is no null variability (every block
+        fully tied); ``l_statistic`` is still reported in the fully-tied case.
+
+    Raises:
+        ValueError: if the blocks differ in length.
+    """
+    n = len(blocks)
+    k = len(blocks[0]) if n else 0
+    if any(len(b) != k for b in blocks):
+        raise ValueError("page_trend_test requires equal-length blocks")
+    if n == 0 or k < 2:
+        return {
+            "l_statistic": None,
+            "z": None,
+            "p_one_sided": None,
+            "rank_sums": [],
+            "n_blocks": n,
+            "k": k,
+        }
+    half = (k + 1) / 2.0
+    rank_sums = [0.0] * k
+    # Σ_i Σ_m (assigned-rank − (k+1)/2)² — the tie-aware within-block rank
+    # spread (an all-tied block contributes 0; a 1..k block contributes the
+    # full k(k²−1)/12).
+    block_spread = 0.0
+    for block in blocks:
+        ranks = _rank_with_ties(list(block))
+        for j in range(k):
+            rank_sums[j] += ranks[j]
+        block_spread += sum((r - half) ** 2 for r in ranks)
+    l_stat = sum((j + 1) * rank_sums[j] for j in range(k))
+    mean_l = n * k * (k + 1) ** 2 / 4.0
+    # Var[L] under H0: within each block the ranks are a random permutation of
+    # that block's (possibly tied, average) rank values, so for the linear
+    # statistic L = Σ_j j·R_j, Var[L] = (S_c/(k−1))·Σ_i S_{a,i} with
+    # S_c = Σ_j (j−(k+1)/2)² the predicted-score spread and S_{a,i} the block's
+    # assigned-rank spread.  This is the tie-corrected form (matching
+    # ``mann_whitney_u`` / ``wilcoxon_signed_rank`` above); it reduces exactly to
+    # the textbook n·k²·(k+1)·(k²−1)/144 when no block has ties.
+    s_c = sum((j + 1 - half) ** 2 for j in range(k))
+    var_l = s_c * block_spread / (k - 1)
+    if var_l <= 0:  # every block fully tied -> no null variability -> z undefined
+        return {
+            "l_statistic": round(l_stat, 2),
+            "z": None,
+            "p_one_sided": None,
+            "rank_sums": [round(r, 2) for r in rank_sums],
+            "n_blocks": n,
+            "k": k,
+        }
+    z = (l_stat - mean_l) / math.sqrt(var_l)
+    return {
+        "l_statistic": round(l_stat, 2),
+        "z": round(z, 3),
+        "p_one_sided": round(_standard_normal_sf(z), 4),
+        "rank_sums": [round(r, 2) for r in rank_sums],
+        "n_blocks": n,
+        "k": k,
+    }

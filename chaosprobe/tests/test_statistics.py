@@ -13,6 +13,7 @@ from chaosprobe.metrics.statistics import (
     bootstrap_ci,
     icc_bootstrap,
     mann_whitney_u,
+    page_trend_test,
     pairwise_comparisons,
     sign_test,
     tost_equivalence_correlation,
@@ -415,3 +416,51 @@ class TestArtAnova:
         data = [(1, "s", 0.1), (1, "c", 0.2), (3, "s", 0.9), (3, "c", 0.3)]
         out = art_anova(data)
         assert out["interaction"]["f"] is None
+
+
+class TestPageTrendTest:
+    def test_perfect_increasing_hand_computed(self):
+        # 3 blocks, each [1,2,3] -> within-block ranks [1,2,3]; R=[3,6,9].
+        # L = 1*3 + 2*6 + 3*9 = 42; E[L]=3*3*16/4=36; Var=3*9*4*8/144=6;
+        # z = (42-36)/sqrt(6) = 2.449; p = SF(2.449) = 0.0072.
+        out = page_trend_test([[1, 2, 3], [1, 2, 3], [1, 2, 3]])
+        assert out["l_statistic"] == 42.0
+        assert out["rank_sums"] == [3.0, 6.0, 9.0]
+        assert out["z"] == 2.449
+        assert out["p_one_sided"] == 0.0072
+        assert out["n_blocks"] == 3 and out["k"] == 3
+
+    def test_ties_use_average_ranks_with_tie_corrected_variance(self):
+        # block2 all-equal -> ranks [2,2,2] (spread 0); block1 [1,2,3] (spread 2).
+        # R=[3,4,5]; L=26; E[L]=24; S_c=2; Var=(S_c/(k-1))*Σspread=(2/2)*2=2;
+        # z=(26-24)/sqrt(2)=1.414 (the tie correction shrinks Var from the
+        # no-tie 4 to 2 — the constant block carries no null variability).
+        out = page_trend_test([[1, 2, 3], [5, 5, 5]])
+        assert out["l_statistic"] == 26.0
+        assert out["rank_sums"] == [3.0, 4.0, 5.0]
+        assert out["z"] == 1.414
+        assert out["p_one_sided"] == round(0.5 * math.erfc(1.41421356 / math.sqrt(2)), 4)
+
+    def test_all_tied_blocks_have_no_null_variability(self):
+        # Every block constant -> no within-block spread -> Var[L]=0 -> z/p None,
+        # but L is still reported.
+        out = page_trend_test([[5, 5, 5], [7, 7, 7]])
+        assert out["z"] is None and out["p_one_sided"] is None
+        assert out["l_statistic"] is not None and out["k"] == 3
+
+    def test_decreasing_trend_large_one_sided_p(self):
+        # each block [3,2,1] -> ranks [3,2,1]; R=[9,6,3]; L=30 < E[L]=36 -> z<0.
+        out = page_trend_test([[3, 2, 1], [3, 2, 1], [3, 2, 1]])
+        assert out["l_statistic"] == 30.0
+        assert out["z"] == -2.449
+        assert out["p_one_sided"] > 0.99
+
+    def test_empty_and_too_few_treatments_are_none(self):
+        empty = page_trend_test([])
+        assert empty["l_statistic"] is None and empty["n_blocks"] == 0 and empty["k"] == 0
+        single = page_trend_test([[1.0], [2.0]])  # k < 2 -> no trend defined
+        assert single["l_statistic"] is None and single["k"] == 1
+
+    def test_unequal_block_lengths_raise(self):
+        with pytest.raises(ValueError):
+            page_trend_test([[1, 2], [1, 2, 3]])
