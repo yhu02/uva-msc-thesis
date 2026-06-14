@@ -4,8 +4,9 @@
 [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) FROZEN, 2026-06-13).
 Resolve the exact commit with `git rev-parse v2-prereg-freeze`.
 
-**DOI:** _[pending — minted on Zenodo deposit; see “Depositing” below. Update
-this line and the prereg header with the DOI once published.]_
+**DOI:** [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)
+(published 2026-06-14 on Zenodo; "continues" concept
+[10.5281/zenodo.20639145](https://doi.org/10.5281/zenodo.20639145)).
 
 This manifest pins, by SHA-256, the exact frozen state archived for the
 pre-registration. The committed files are reproducible from the git tag; the

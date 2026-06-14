@@ -7,8 +7,9 @@ cross-node-fraction levels `f ∈ {0, 0.25, 0.5, 0.75, 1.0}` in randomized order
 from a recorded seed, `r = 1`, churn (`pod-delete` on productcatalogservice) +
 host-side Locust.
 
-**DOI:** _[pending — minted on Zenodo deposit; see "Depositing" below. Update
-this line once published.]_
+**DOI:** [10.5281/zenodo.20690737](https://doi.org/10.5281/zenodo.20690737)
+(published 2026-06-14 on Zenodo; "continues" concept
+[10.5281/zenodo.20639145](https://doi.org/10.5281/zenodo.20639145)).
 
 **Provenance.**
 - **Data-collection commit:** `2ec934f` (the M3-prep tip; recorded in every
