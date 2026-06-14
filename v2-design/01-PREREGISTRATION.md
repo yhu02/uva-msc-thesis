@@ -15,8 +15,9 @@
 > **finalized at M2** placeholder from the M2 A/A variance estimates and
 > power analysis ([`M2-AA-REPORT.md`](M2-AA-REPORT.md)), and the **D7
 > hotelReservation live-gate result** (PASS, 2026-06-13; §Workloads). The
-> exact frozen state, raw A/A data, and gate artifacts are archived under
-> the DOI recorded in [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md).
+> exact frozen state, raw A/A data, and gate artifacts are archived under DOI
+> [**10.5281/zenodo.20690836**](https://doi.org/10.5281/zenodo.20690836)
+> (published 2026-06-14; manifest [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md)).
 
 Design context, knobs, and instrumentation: [`00-DESIGN.md`](00-DESIGN.md).
 All v1 references (H1–H6) are to archived, `doctor --strict`-clean runs
