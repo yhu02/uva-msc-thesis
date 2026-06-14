@@ -98,10 +98,13 @@ if _SCRIPTS_DIR not in sys.path:  # pragma: no cover - `python scripts/x.py` add
 
 from h3_mechanism_outcome import _ctrl, _dep  # noqa: E402  (sys.path bootstrap above)
 from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
+    SLOPE_BAND_TAINT_REASON,
     es_trough,
     es_trough_duration_real,
     parse_session,
     udp_cluster_phase_mean,
+    udp_pre_slope,
+    udp_preslope_out_of_band,
     user_error_rate,
 )
 
@@ -433,6 +436,7 @@ def load_condition_subscores(
     condition: str,
     tainted: set,
     taints: List[str],
+    slope_band_taint: bool = False,
 ) -> Optional[ConditionObs]:
     """Per-iteration sub-score + v1-score rows for one condition's raw file.
 
@@ -440,6 +444,12 @@ def load_condition_subscores(
     ``<condition>.json``, folds ``preChaosTaintReasons`` into ``tainted`` in
     place, and emits a ``None`` row for every tainted iteration (the registered
     "never quoted" exclusion).  ``None`` when the raw file is missing.
+
+    When ``slope_band_taint`` is set (C1 analysis — see :func:`analyze`), an
+    iteration whose pre-window UDP slope leaves its f-level's frozen D3 band
+    (:func:`m2_aa_analysis.udp_preslope_out_of_band`) is tainted too, exactly as
+    the canonical loader does; the A/A block that defined the bands is never
+    gated by them.
     """
     path = os.path.join(session_dir, f"{condition}.json")
     if not os.path.isfile(path):
@@ -461,6 +471,16 @@ def load_condition_subscores(
                 obs.subscores[key].append(None)
             obs.v1_score.append(None)
             continue
+        metrics = it.get("metrics") or {}
+        if slope_band_taint and udp_preslope_out_of_band(
+            udp_pre_slope(metrics.get("conntrackProtocolSamples") or []), condition
+        ):
+            taints.append(f"{condition} it{iteration}: {SLOPE_BAND_TAINT_REASON}")
+            tainted.add((condition, iteration))
+            for key in SUBSCORES:
+                obs.subscores[key].append(None)
+            obs.v1_score.append(None)
+            continue
         row = iteration_subscores(it, app_services)
         for key in SUBSCORES:
             obs.subscores[key].append(row[key])
@@ -473,6 +493,7 @@ def load_condition_subscores(
 
 def collect_conditions(
     results_dir: str,
+    slope_band_taint: bool = False,
 ) -> Tuple[List[ConditionObs], List[str], List[str]]:
     """Every campaign session-condition's per-iteration sub-scores.
 
@@ -510,7 +531,9 @@ def collect_conditions(
                     f"({', '.join(level.rejection_reasons) or 'rejected'}) — excluded"
                 )
                 continue
-            obs = load_condition_subscores(run_dir, condition, tainted, taints)
+            obs = load_condition_subscores(
+                run_dir, condition, tainted, taints, slope_band_taint=slope_band_taint
+            )
             if obs is None:
                 warnings.append(
                     f"{run}: raw {condition}.json missing — condition carries no sub-scores"
@@ -745,9 +768,18 @@ def analyze(
     confidence: float = 0.95,
     n_resamples: int = 2000,
     seed: Optional[int] = 42,
+    slope_band_taint: bool = True,
 ) -> Dict[str, Any]:
-    """The full V2-H5 scorecard reliability analysis as one JSON-ready dict."""
-    conditions, warnings, taints = collect_conditions(results_dir)
+    """The full V2-H5 scorecard reliability analysis as one JSON-ready dict.
+
+    ``slope_band_taint`` defaults ON: this is the C1 campaign tool, so the
+    frozen D3 pre-window UDP-slope gate (DEVIATIONS.md D-2026-06-14-01) applies.
+    Disable it (``--no-slope-band-taint``) only to analyze the A/A block, which
+    must never be gated by the bands it defined.
+    """
+    conditions, warnings, taints = collect_conditions(
+        results_dir, slope_band_taint=slope_band_taint
+    )
 
     # v1 aggregate ICC over all measurable cells (ICC_old comparator).
     v1_all = _metric_cells_v1(conditions)
@@ -924,6 +956,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--n-resamples", type=int, default=2000, help="bootstrap resamples (default 2000)"
     )
     parser.add_argument("--seed", type=int, default=42, help="bootstrap RNG seed (default 42)")
+    parser.add_argument(
+        "--slope-band-taint",
+        dest="slope_band_taint",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="apply the frozen D3 pre-window UDP-slope taint gate (default on; "
+        "use --no-slope-band-taint to analyze the A/A block, which it must not gate)",
+    )
     return parser
 
 
@@ -935,6 +975,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         confidence=args.confidence,
         n_resamples=args.n_resamples,
         seed=args.seed,
+        slope_band_taint=args.slope_band_taint,
     )
     print_report(result)
     if args.json:
