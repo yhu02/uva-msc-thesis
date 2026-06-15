@@ -5,6 +5,8 @@ port-forward processes used to reach in-cluster services (Prometheus,
 Neo4j, ChaosCenter, frontend) from the local machine.
 """
 
+import os
+import signal
 import socket
 import subprocess
 import threading
@@ -61,8 +63,32 @@ def free_local_port(local_port: int) -> int:
     created it; the next run, seeing the local port still open, would otherwise
     **reuse that stale forward** (whose pod may be gone) instead of starting a
     fresh one.  Killing the orphan first guarantees each run gets a forward to a
-    live pod.  Returns the number of processes killed.
+    live pod.  SIGTERM is sent first; any process still alive after a short grace
+    is SIGKILLed.  Returns the number of orphans **confirmed gone**.
     """
+    pids = _orphan_pids(local_port)
+    if not pids:
+        return 0
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    time.sleep(1)  # grace period for graceful exit + listener release
+    still_alive = _orphan_pids(local_port)
+    for pid in still_alive:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    if still_alive:
+        time.sleep(0.5)
+    gone = _orphan_pids(local_port)
+    return len([p for p in pids if p not in gone])
+
+
+def _orphan_pids(local_port: int) -> List[int]:
+    """PIDs of ``kubectl port-forward`` processes bound to *local_port*."""
     try:
         out = subprocess.run(
             ["pgrep", "-f", f"port-forward.* {local_port}:"],
@@ -71,18 +97,8 @@ def free_local_port(local_port: int) -> int:
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
-        return 0
-    pids: List[int] = [int(p) for p in out.stdout.split() if p.strip().isdigit()]
-    killed = 0
-    for pid in pids:
-        try:
-            subprocess.run(["kill", str(pid)], timeout=5)
-            killed += 1
-        except (OSError, subprocess.SubprocessError):
-            pass
-    if killed:
-        time.sleep(1)  # let the listener release before a fresh start binds it
-    return killed
+        return []
+    return [int(p) for p in out.stdout.split() if p.strip().isdigit()]
 
 
 def ensure_load_target(svc: str, ns: str, local_port: int, url: str) -> bool:

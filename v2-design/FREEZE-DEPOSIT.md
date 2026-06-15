@@ -78,7 +78,8 @@ The committed state is pushed and tagged. The raw-data tarball is staged at:
 To publish:
 
 1. Create a new Zenodo deposit (or a new version under the existing v1
-   concept DOI 10.5281/zenodo.20639146 if you want them linked).
+   **concept** DOI 10.5281/zenodo.20639145 — the version-independent concept,
+   not the v1 version record 10.5281/zenodo.20639146 — if you want them linked).
 2. Upload: the raw-data tarball **and** a clone/export of the repo at the
    `v2-prereg-freeze` tag (or just link the GitHub release of that tag —
    Zenodo–GitHub integration archives a tagged release automatically).
