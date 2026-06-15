@@ -186,3 +186,34 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   forward fix — lengthening the post-(re)placement settle so the pre-chaos
   window starts after the conntrack burst drains — is recorded for C2/C3 as a
   protocol change, not applied retroactively to C1.
+
+### D-2026-06-15-01 — V2-H3 trough-depth operationalized as a fraction
+
+- **date:** 2026-06-15
+- **what:** the V2-H3 EndpointSlice trough-depth co-primary is computed as a
+  **fraction of app ready-endpoints lost** (`(baseline − min during/post) /
+  baseline`, over the app services in the 15s series, infra excluded), not as
+  an absolute pod count. The registered **1.0-pod** rescue margin / TOST band is
+  expressed as a fraction by dividing by the r=1 app baseline (1.0 pod ÷ r=1
+  ready ≈ 0.09 for online-boutique; computed per-analysis as
+  `1.0 / median(r1 baseline ready)`). The hypothesis statement, the test (ART
+  interaction), the n, and the error-rate co-primary (0.302) are unchanged.
+- **why:** absolute pod depth **scales with the replica count** — when its node
+  is drained, r=1 loses 1 pod, r=3 packed loses all 3 — so the registered
+  *packed ≈ r1* TOST equivalence control (the 1.0-pod band was measured at r=1)
+  cannot hold in pod units (packed structurally differs from r1 by the replica
+  count, not by any rescue). The fraction is **r-invariant** (r1 ≈ packed ≈
+  full-loss; anti-affine ≪) so the control becomes meaningful while the rescue
+  contrast is preserved. Verified on the (instrument-invalid) first C2 campaign:
+  absolute depth r1 8 / packed 17 / anti 1.5 (scales with r) vs fractional
+  r1 0.57 / packed 0.63 / anti 0.04 (packed ≈ r1, anti rescues).
+- **blind?:** the choice rests on a **structural/mechanical** property of
+  absolute pod depth (it scales with r by construction), not on the V2-H3
+  verdict; the first C2 campaign whose depth values illustrate it is being
+  **discarded and re-run** (its error co-primary was invalid — port-forward bug,
+  PR #288/#289), so no hypothesis outcome from valid data informed this. The
+  fractional margin and verdict are insensitive to the exact band (the observed
+  rescue ≈ 0.5 dwarfs the ≈ 0.09 margin).
+- **decision ID:** ties to **V2-H3** (pre-registration §V2-H3); the trough-depth
+  margin was registered as "1.0 pod" — this fixes its operationalization for the
+  r-varying node-drain design.
