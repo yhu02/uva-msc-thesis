@@ -9,7 +9,9 @@ import socket
 import subprocess
 import threading
 import time
-from typing import Any, Dict, Optional
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Optional
 
 # Module-level state — tracks all active port-forward processes.
 # Mutated from both the main thread and the background monitor thread,
@@ -30,6 +32,57 @@ def check_port(host: str, port: int) -> bool:
             return True
         except (ConnectionRefusedError, OSError):
             return False
+
+
+def http_reachable(url: str, timeout: float = 5.0) -> bool:
+    """True when an HTTP GET to *url* gets any HTTP response from the server.
+
+    Unlike :func:`check_port` (which only confirms the local listener accepts a
+    TCP connection), this proves the forward actually reaches a live backend: a
+    ``kubectl port-forward`` whose target pod was rescheduled (e.g. by a
+    node-drain) keeps its listener open but **resets the connection** on real
+    data — that shows up here as a failure, not a false "reachable".  An HTTP
+    error *status* (4xx/5xx) still means the tunnel reached the server, so it
+    counts as reachable.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        return True  # reached the server; the app returned an error status
+    except Exception:
+        return False  # connection reset / refused / timeout: the tunnel is dead
+
+
+def free_local_port(local_port: int) -> int:
+    """Kill orphaned ``kubectl port-forward`` processes bound to *local_port*.
+
+    A forward started with ``start_new_session=True`` survives the run that
+    created it; the next run, seeing the local port still open, would otherwise
+    **reuse that stale forward** (whose pod may be gone) instead of starting a
+    fresh one.  Killing the orphan first guarantees each run gets a forward to a
+    live pod.  Returns the number of processes killed.
+    """
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", f"port-forward.* {local_port}:"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    pids: List[int] = [int(p) for p in out.stdout.split() if p.strip().isdigit()]
+    killed = 0
+    for pid in pids:
+        try:
+            subprocess.run(["kill", str(pid)], timeout=5)
+            killed += 1
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if killed:
+        time.sleep(1)  # let the listener release before a fresh start binds it
+    return killed
 
 
 def start(svc: str, ns: str, ports: list[str]):
