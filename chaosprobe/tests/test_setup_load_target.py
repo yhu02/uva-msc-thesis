@@ -16,19 +16,19 @@ def test_no_load_profile_returns_none():
 
 
 @patch("chaosprobe.orchestrator.run_phases.pf")
-def test_load_profile_frees_port_then_verifies_http(mock_pf):
-    # The fix: free the orphan, establish fresh, verify via HTTP probe.
-    mock_pf.http_reachable.return_value = True
+def test_load_profile_uses_http_verified_helper(mock_pf):
+    # The fix: route through the shared HTTP-verified heal helper.
+    mock_pf.ensure_load_target.return_value = True
     url, port = _setup_load_target("online-boutique", "steady", None)
     assert url == f"http://localhost:{LOAD_TARGET_LOCAL_PORT}"
-    mock_pf.free_local_port.assert_called_once_with(LOAD_TARGET_LOCAL_PORT)
-    mock_pf.ensure.assert_called_once()
-    mock_pf.http_reachable.assert_called_once_with(f"{url}/")
+    mock_pf.ensure_load_target.assert_called_once_with(
+        "frontend", "online-boutique", LOAD_TARGET_LOCAL_PORT, f"{url}/"
+    )
 
 
 @patch("chaosprobe.orchestrator.run_phases.pf")
-def test_load_profile_warns_when_http_unreachable(mock_pf, capsys):
-    mock_pf.http_reachable.return_value = False
+def test_load_profile_warns_when_unreachable(mock_pf, capsys):
+    mock_pf.ensure_load_target.return_value = False
     url, _ = _setup_load_target("online-boutique", "steady", None)
     assert url == f"http://localhost:{LOAD_TARGET_LOCAL_PORT}"  # returned for --target-url advice
     assert "not reachable" in capsys.readouterr().err
