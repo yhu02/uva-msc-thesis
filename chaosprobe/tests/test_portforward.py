@@ -77,3 +77,40 @@ class TestFreeLocalPort:
         pgrep = MagicMock(stdout="111\n")
         mock_run.side_effect = [pgrep, OSError("kill failed")]
         assert portforward.free_local_port(8089) == 0  # kill raised -> not counted
+
+
+class TestEnsureLoadTarget:
+    @patch("chaosprobe.orchestrator.portforward.http_reachable")
+    @patch("chaosprobe.orchestrator.portforward.free_local_port")
+    @patch("chaosprobe.orchestrator.portforward.ensure")
+    def test_reachable_skips_heal(self, mock_ensure, mock_free, mock_http):
+        # Live tunnel: probe passes -> no kill/restart.
+        mock_http.return_value = True
+        assert (
+            portforward.ensure_load_target("frontend", "ns", 8089, "http://localhost:8089/") is True
+        )
+        mock_free.assert_not_called()
+        mock_ensure.assert_not_called()
+
+    @patch("chaosprobe.orchestrator.portforward.http_reachable")
+    @patch("chaosprobe.orchestrator.portforward.free_local_port")
+    @patch("chaosprobe.orchestrator.portforward.ensure")
+    def test_stale_tunnel_is_healed(self, mock_ensure, mock_free, mock_http):
+        # Stale on first probe (the bug case), reachable after one heal.
+        mock_http.side_effect = [False, True]
+        assert (
+            portforward.ensure_load_target("frontend", "ns", 8089, "http://localhost:8089/") is True
+        )
+        mock_free.assert_called_once_with(8089)
+        mock_ensure.assert_called_once()
+
+    @patch("chaosprobe.orchestrator.portforward.http_reachable")
+    @patch("chaosprobe.orchestrator.portforward.free_local_port")
+    @patch("chaosprobe.orchestrator.portforward.ensure")
+    def test_never_reachable_returns_false_after_two_heals(self, mock_ensure, mock_free, mock_http):
+        mock_http.return_value = False
+        assert (
+            portforward.ensure_load_target("frontend", "ns", 8089, "http://localhost:8089/")
+            is False
+        )
+        assert mock_free.call_count == 2  # two heal attempts

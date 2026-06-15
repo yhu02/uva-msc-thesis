@@ -422,15 +422,12 @@ def _setup_load_target(
         return target_url, local_port
     if load_profile:
         target_url = f"http://localhost:{local_port}"
-        # Always establish a FRESH forward to a live pod.  A prior run's forward
-        # survives (start_new_session=True) and, after a node-drain reschedules
-        # the frontend pod, resets every connection while its local listener
-        # stays open — invisible to check_port, which is why the C2 campaign saw
-        # 100% connection-reset.  Kill any orphan on the port, start fresh, and
-        # verify with a real HTTP probe (not just a TCP port check).
-        pf.free_local_port(local_port)
-        pf.ensure(load_service, namespace, [f"{local_port}:80"], "localhost", local_port)
-        if pf.http_reachable(f"{target_url}/"):
+        # Establish a forward that actually reaches a live pod (HTTP-verified,
+        # killing any stale orphan first).  A prior run's forward survives
+        # (start_new_session=True) and, after a node-drain reschedules the
+        # frontend pod, resets every connection while its listener stays open —
+        # invisible to check_port.  Same helper the per-iteration re-ensure uses.
+        if pf.ensure_load_target(load_service, namespace, local_port, f"{target_url}/"):
             click.echo(f"  Load target: {target_url}")
         else:
             click.echo(

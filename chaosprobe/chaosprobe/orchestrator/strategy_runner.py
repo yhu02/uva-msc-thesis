@@ -868,15 +868,17 @@ def _run_single_iteration(
 
     iter_locust_runner = None
     if ctx.load_profile:
-        # Re-ensure load-target port-forward is alive (placement changes may
-        # have restarted the target pod, killing the kubectl tunnel).
+        # Re-ensure the load-target tunnel reaches a LIVE pod: placement changes
+        # / node-drains may have rescheduled the target pod, leaving the forward
+        # process alive and its listener open but resetting on real data.  A
+        # bare ensure() (poll + check_port) can't see that, so HTTP-verify and
+        # heal via the shared helper — same path as preflight setup.
         if ctx.frontend_pf_port and ctx.target_url and "localhost" in ctx.target_url:
-            pf.ensure(
+            pf.ensure_load_target(
                 ctx.load_service,
                 ctx.namespace,
-                [f"{ctx.frontend_pf_port}:80"],
-                "localhost",
                 ctx.frontend_pf_port,
+                f"{ctx.target_url}/",
             )
         base_profile = LoadProfile.from_name(ctx.load_profile)
         # Compute Locust run duration to span the full experiment window:

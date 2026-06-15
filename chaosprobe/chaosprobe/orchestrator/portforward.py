@@ -85,6 +85,29 @@ def free_local_port(local_port: int) -> int:
     return killed
 
 
+def ensure_load_target(svc: str, ns: str, local_port: int, url: str) -> bool:
+    """Establish/repair a port-forward that actually reaches a live pod.
+
+    The HTTP-verified replacement for a bare :func:`ensure` on the load target.
+    Probes *url* first (cheap); only when the tunnel does **not** reach a live
+    backend does it kill any orphan on the port and start a fresh forward,
+    re-probing (up to two heal attempts).  This catches the stale-but-alive
+    tunnel — process up, TCP listener open, but the target pod rescheduled (e.g.
+    by a node-drain) so every real request resets — that :func:`ensure` /
+    :func:`check_port` cannot see.  Used by both the preflight setup and the
+    per-iteration re-ensure, so mid-session pod reschedules heal too.  Returns
+    ``True`` when the tunnel reaches a live backend.
+    """
+    if http_reachable(url):
+        return True
+    for _ in range(2):
+        free_local_port(local_port)
+        ensure(svc, ns, [f"{local_port}:80"], "localhost", local_port)
+        if http_reachable(url):
+            return True
+    return False
+
+
 def start(svc: str, ns: str, ports: list[str]):
     """Start a kubectl port-forward in the background and track it.
 
