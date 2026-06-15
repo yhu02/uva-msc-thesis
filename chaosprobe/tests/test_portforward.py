@@ -1,5 +1,6 @@
 """Tests for orchestrator.portforward helpers."""
 
+import signal
 from unittest.mock import MagicMock, patch
 
 from chaosprobe.orchestrator import portforward
@@ -52,31 +53,35 @@ class TestHttpReachable:
 
 class TestFreeLocalPort:
     @patch("chaosprobe.orchestrator.portforward.time.sleep", lambda *_: None)
-    @patch("subprocess.run")
-    def test_kills_orphans_on_port(self, mock_run):
-        # pgrep returns two pids; both get killed.
-        pgrep = MagicMock(stdout="111\n222\n")
-        mock_run.side_effect = [pgrep, MagicMock(), MagicMock()]
+    @patch("chaosprobe.orchestrator.portforward.os.kill")
+    @patch("chaosprobe.orchestrator.portforward._orphan_pids")
+    def test_sigterm_kills_orphans_confirmed_gone(self, mock_pids, mock_kill):
+        # found [111,222]; both gone after SIGTERM -> 2 confirmed killed, no SIGKILL.
+        mock_pids.side_effect = [[111, 222], [], []]
         assert portforward.free_local_port(8089) == 2
-        assert mock_run.call_count == 3  # 1 pgrep + 2 kills
+        assert mock_kill.call_count == 2  # SIGTERM x2, no SIGKILL
 
-    @patch("subprocess.run")
-    def test_no_orphans_returns_zero(self, mock_run):
-        mock_run.return_value = MagicMock(stdout="")
-        assert portforward.free_local_port(8089) == 0
-        assert mock_run.call_count == 1  # only the pgrep
-
-    @patch("subprocess.run")
-    def test_pgrep_failure_returns_zero(self, mock_run):
-        mock_run.side_effect = OSError("pgrep missing")
+    @patch("chaosprobe.orchestrator.portforward._orphan_pids", return_value=[])
+    def test_no_orphans_returns_zero(self, _mock_pids):
         assert portforward.free_local_port(8089) == 0
 
     @patch("chaosprobe.orchestrator.portforward.time.sleep", lambda *_: None)
-    @patch("subprocess.run")
-    def test_kill_failure_is_tolerated(self, mock_run):
-        pgrep = MagicMock(stdout="111\n")
-        mock_run.side_effect = [pgrep, OSError("kill failed")]
-        assert portforward.free_local_port(8089) == 0  # kill raised -> not counted
+    @patch("chaosprobe.orchestrator.portforward.os.kill")
+    @patch("chaosprobe.orchestrator.portforward._orphan_pids")
+    def test_escalates_to_sigkill_when_sigterm_survives(self, mock_pids, mock_kill):
+        # found [111]; survives SIGTERM (still alive), then gone after SIGKILL.
+        mock_pids.side_effect = [[111], [111], []]
+        assert portforward.free_local_port(8089) == 1
+        # SIGTERM then SIGKILL on the survivor.
+        assert [c.args[1] for c in mock_kill.call_args_list] == [signal.SIGTERM, signal.SIGKILL]
+
+    @patch("chaosprobe.orchestrator.portforward.time.sleep", lambda *_: None)
+    @patch("chaosprobe.orchestrator.portforward.os.kill", side_effect=ProcessLookupError())
+    @patch("chaosprobe.orchestrator.portforward._orphan_pids")
+    def test_kill_errors_tolerated_and_survivor_not_counted(self, mock_pids, _mock_kill):
+        # kill raises but the orphan is still present at the end -> 0 confirmed gone.
+        mock_pids.side_effect = [[111], [111], [111]]
+        assert portforward.free_local_port(8089) == 0
 
 
 class TestEnsureLoadTarget:
@@ -114,3 +119,14 @@ class TestEnsureLoadTarget:
             is False
         )
         assert mock_free.call_count == 2  # two heal attempts
+
+
+class TestOrphanPids:
+    @patch("subprocess.run")
+    def test_parses_pgrep_pids(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="111\n222\nbad\n")
+        assert portforward._orphan_pids(8089) == [111, 222]
+
+    @patch("subprocess.run", side_effect=OSError("pgrep missing"))
+    def test_pgrep_failure_returns_empty(self, _mock_run):
+        assert portforward._orphan_pids(8089) == []
