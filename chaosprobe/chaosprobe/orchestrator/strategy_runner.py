@@ -129,12 +129,21 @@ def _swap_to_trivial_fault(scenario: Dict[str, Any]) -> None:
 def _extract_http_routes(
     scenario: Dict[str, Any],
     namespace: str,
+    fallback_service: Optional[str] = None,
 ) -> List[tuple]:
     """Extract HTTP routes from scenario httpProbes for latency measurement.
 
     Parses the experiment's httpProbe definitions and returns a list of
     ``(service, path, description, method)`` tuples suitable for
     ``ContinuousLatencyProber``.
+
+    When the scenario defines no httpProbes (e.g. ``node-drain``, which omits
+    litmus probes because they would evaluate on the very node being drained and
+    return Unknown), fall back to a single user-facing route ``GET /`` on
+    *fallback_service* (the load-target frontend).  This route is measured by the
+    in-cluster ``ContinuousLatencyProber`` — NOT a litmus probe — so it does not
+    reintroduce the Unknown-verdict problem, and it makes the registered
+    user-route ``user_err_during`` outcome available for V2-H3 under node-drain.
     """
     from urllib.parse import urlparse
 
@@ -169,6 +178,8 @@ def _extract_http_routes(
 
                 routes.append((service, path, name, method))
 
+    if not routes and fallback_service:
+        routes.append((fallback_service, "/", "user-home", "GET"))
     return routes
 
 
@@ -252,7 +263,7 @@ def _build_iteration_routes(
     log, keeping every user-defined scenario probe intact while bounding
     the per-tick ``kubectl exec`` cost.
     """
-    north_south = _extract_http_routes(scenario, ctx.namespace)
+    north_south = _extract_http_routes(scenario, ctx.namespace, ctx.load_service)
 
     try:
         dependency_routes = ctx.mutator.get_service_dependency_routes()
