@@ -55,6 +55,14 @@ TOLERANCE = fs.TARGET_TOLERANCE
 #: Default per-apply rollout timeout (matches the M1b gate's default).
 DEFAULT_ROLLOUT_TIMEOUT = 300.0
 
+#: Pinned-cell assignment strategies. The V2-H1 dose-response sweep needs the
+#: fraction solver (it *is* the f knob); V2-H3 uses the capacity-feasible
+#: round-robin packing registered in the pre-registration (§V2-H3 packed-cell
+#: semantics) — f is irrelevant to the replication-rescue design.
+PACKED_ASSIGNMENT_SOLVER = "solver"
+PACKED_ASSIGNMENT_ROUND_ROBIN = "round-robin"
+PACKED_ASSIGNMENTS = (PACKED_ASSIGNMENT_SOLVER, PACKED_ASSIGNMENT_ROUND_ROBIN)
+
 
 @dataclass(frozen=True)
 class V2Condition:
@@ -87,6 +95,7 @@ class V2Session:
     settle_seconds: float = quiescence.DEFAULT_SETTLE_SECONDS
     settle_timeout: float = quiescence.DEFAULT_SETTLE_TIMEOUT
     rollout_timeout: float = DEFAULT_ROLLOUT_TIMEOUT
+    packed_assignment: str = PACKED_ASSIGNMENT_SOLVER
     per_level: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
@@ -230,6 +239,7 @@ def build_session(
     settle_seconds: float = quiescence.DEFAULT_SETTLE_SECONDS,
     settle_timeout: float = quiescence.DEFAULT_SETTLE_TIMEOUT,
     rollout_timeout: float = DEFAULT_ROLLOUT_TIMEOUT,
+    packed_assignment: str = PACKED_ASSIGNMENT_SOLVER,
 ) -> V2Session:
     """Validate the (r, mode, workers, graph) combination and build the session."""
     if replicas not in engine.SUPPORTED_REPLICAS:
@@ -238,6 +248,10 @@ def build_session(
         )
     if mode not in engine.MODES:
         raise ValueError(f"--v2-mode must be one of {engine.MODES}, got '{mode}'")
+    if packed_assignment not in PACKED_ASSIGNMENTS:
+        raise ValueError(
+            f"packed_assignment must be one of {PACKED_ASSIGNMENTS}, got '{packed_assignment}'"
+        )
     if mode == engine.MODE_ANTI_AFFINE and replicas > 1 and len(workers) < replicas:
         raise ValueError(
             f"anti-affine r={replicas} needs >= {replicas} distinct workers, got {len(workers)}"
@@ -264,6 +278,7 @@ def build_session(
         settle_seconds=settle_seconds,
         settle_timeout=settle_timeout,
         rollout_timeout=rollout_timeout,
+        packed_assignment=packed_assignment,
     )
 
 
@@ -325,7 +340,22 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
     record["settle"] = settle
 
     assignment: Optional[Dict[str, str]] = None
-    if session.pinned:
+    round_robin = session.packed_assignment == PACKED_ASSIGNMENT_ROUND_ROBIN
+    if session.pinned and round_robin:
+        # V2-H3 packed-cell semantics: capacity-feasible round-robin packing,
+        # independent of the condition's f (the replication design does not
+        # vary the cross-node fraction). The achieved f is recorded for the
+        # record but is NOT a target to be hit, so it never rejects the cell.
+        assignment = engine.packed_round_robin(session.services, session.workers)
+        record["packedAssignmentMethod"] = PACKED_ASSIGNMENT_ROUND_ROBIN
+        record["solverAchievedF"] = round(fs.achieved_fraction(assignment, session.edges), 6)
+        record["solverAccepted"] = None
+        click.echo(
+            f"    Round-robin packing: {len(assignment)} services over "
+            f"{len(session.workers)} workers (achieved "
+            f"f={record['solverAchievedF']:.4f}, not gated on target)"
+        )
+    elif session.pinned:
         solution = fs.solve(
             session.edges,
             session.services,
@@ -334,6 +364,7 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
             seed=session.solver_seed,
         )
         assignment = {svc: session.workers[idx] for svc, idx in solution.assignment.items()}
+        record["packedAssignmentMethod"] = PACKED_ASSIGNMENT_SOLVER
         record["solverAchievedF"] = round(solution.achieved_f, 6)
         record["solverAccepted"] = solution.accepted
         click.echo(
@@ -381,9 +412,13 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
             live_f = fs.achieved_fraction(
                 {svc: nodes[0] for svc, nodes in live.items()}, session.edges
             )
-            record["gap"] = round(abs(live_f - condition.target_f), 6)
-            if abs(live_f - condition.target_f) > TOLERANCE:
-                reasons.append("fraction_target_missed")
+            # The round-robin packing has no f target (V2-H3 does not vary the
+            # cross-node fraction), so its live f is recorded but never gated;
+            # acceptance rests on verify_placement / live_fraction_unverifiable.
+            if not round_robin:
+                record["gap"] = round(abs(live_f - condition.target_f), 6)
+                if abs(live_f - condition.target_f) > TOLERANCE:
+                    reasons.append("fraction_target_missed")
     record["liveAchievedF"] = round(live_f, 6) if live_f is not None else None
 
     record["accepted"] = not reasons
@@ -533,6 +568,7 @@ def session_metadata(session: V2Session) -> Dict[str, Any]:
         "solverSeed": session.solver_seed,
         "replicas": session.replicas,
         "mode": session.mode,
+        "packedAssignment": session.packed_assignment,
         "workers": list(session.workers),
         "tolerance": TOLERANCE,
         "perLevel": per_level,

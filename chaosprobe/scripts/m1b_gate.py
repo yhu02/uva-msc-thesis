@@ -397,10 +397,11 @@ def packed_assignment(services: Sequence[str], workers: Sequence[str]) -> Dict[s
     per-node service count (⌈S/W⌉), needs no live capacity reads, and
     :func:`engine.verify_placement` still proves the packing (each
     service's replicas on exactly its pinned node) from live pods.
+
+    Thin wrapper over :func:`affinity_engine.packed_round_robin` — the single
+    source the live session orchestrator (V2-H3) shares with this gate.
     """
-    if not workers:
-        raise ValueError("workers must be a non-empty list of worker node names")
-    return {svc: workers[i % len(workers)] for i, svc in enumerate(sorted(services))}
+    return engine.packed_round_robin(services, workers)
 
 
 def run_phase_b(

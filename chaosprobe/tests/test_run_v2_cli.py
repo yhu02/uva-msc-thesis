@@ -40,6 +40,7 @@ def _resolve(**overrides):
         v2_replicas=None,
         v2_mode=None,
         v2_workers=WORKERS,
+        v2_packed_assignment=None,
         strategies_overridden=False,
         seeds=None,
         scale_replicas=0,
@@ -53,6 +54,7 @@ def _resolve(**overrides):
         kwargs["v2_replicas"],
         kwargs["v2_mode"],
         kwargs["v2_workers"],
+        kwargs["v2_packed_assignment"],
         strategies_overridden=kwargs["strategies_overridden"],
         seeds=kwargs["seeds"],
         scale_replicas=kwargs["scale_replicas"],
@@ -72,6 +74,7 @@ class TestResolveV2Args:
             ("--v2-replicas", {"v2_replicas": 3}),
             ("--v2-mode", {"v2_mode": "packed"}),
             ("--v2-workers", {"v2_workers": WORKERS}),
+            ("--v2-packed-assignment", {"v2_packed_assignment": "round-robin"}),
         ],
     )
     def test_v2_flags_without_levels_raise(self, flag, overrides):
@@ -128,6 +131,16 @@ class TestResolveV2Args:
         assert args.mode == affinity_engine.MODE_PACKED
         assert args.levels == (0.0, 0.25, 0.5, 0.75, 1.0)
         assert args.workers == ("w1", "w2", "w3")
+        assert args.packed_assignment == run_cmd._V2_DEFAULT_PACKED_ASSIGNMENT
+
+    def test_round_robin_packing_resolves(self):
+        args = _resolve(v2_packed_assignment="round-robin")
+        assert args is not None
+        assert args.packed_assignment == "round-robin"
+
+    def test_invalid_packed_assignment_raises(self):
+        with pytest.raises(click.ClickException, match="--v2-packed-assignment must be one of"):
+            _resolve(v2_packed_assignment="bin-packing")
 
     def test_conditions_match_order_seed(self):
         args = _resolve(v2_order_seed=7)

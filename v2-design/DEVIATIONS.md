@@ -217,3 +217,49 @@ pre-registration's §M2 freeze amendments. This file is for changes made
 - **decision ID:** ties to **V2-H3** (pre-registration §V2-H3); the trough-depth
   margin was registered as "1.0 pod" — this fixes its operationalization for the
   r-varying node-drain design.
+
+### D-2026-06-16-01 — V2-H3 packed cells use the registered round-robin assignment (orchestrator wiring fixed)
+
+- **date:** 2026-06-16
+- **what:** the live run orchestrator (`orchestrator/v2_session.apply_condition`)
+  now builds the **pinned** V2-H3 cells (r = 1 and r = 3 packed) from the
+  capacity-feasible **round-robin** packed assignment registered in the
+  pre-registration (§V2-H3 packed-cell semantics) and verified at the M1b gate,
+  instead of the **fraction solver's f-targeted** assignment it had been using.
+  A `--v2-packed-assignment {solver,round-robin}` knob selects this (default
+  `solver`, so the C1 / V2-H1 dose-response sweep is untouched — there the
+  solver *is* the f knob); the C2 / V2-H3 campaign passes `round-robin`. All
+  three V2-H3 cells (r1, r3-packed, r3-anti) now share the same round-robin
+  service→node base, so only the replica structure differs. The hypothesis
+  statement, the test (ART interaction), the co-primary outcomes, the margins,
+  and the n are unchanged. Also: `scripts/c2_h3_anova.py` now **excludes
+  rejected / fully-tainted sessions** per the registered taint rule
+  ("No result is ever quoted from a rejected session"), which the driver had
+  not been enforcing.
+- **why:** the orchestrator used `fs.solve(target_f)` for *both* r = 1 and r = 3
+  packed. At the C2 condition's f = 0.50 the solver colocates the 11 services
+  onto ~2 nodes; ×3 replicas = 33 pods on 2 nodes — **unschedulable** on the
+  8×(2 CPU / 4 GiB) cluster. **All 8** r3-packed sessions of the first valid
+  C2 campaign (`results/c2-rerun2`) were placement-rejected (`accepted = false`,
+  `placement_verification_failed`, `v2_condition_rejected`): currency /
+  recommendation / payment never reached ready, and in 4/8 the user route was
+  already 100 % erroring **pre-chaos**. The driver, not honoring the
+  registered no-rejected-session rule, quoted all 8 anyway, producing a spurious
+  "packed worse than r = 1" error result (0.71 vs 0.24). This is exactly the
+  "unschedulable by construction" f = 0 assignment that PR #267 replaced with the
+  round-robin `packed_assignment` for the M1b gate — but that fix had landed only
+  in the gate script (`scripts/m1b_gate.py`), never in the live orchestrator. The
+  fix restores the **registered** packed semantics; it is a wiring correction, not
+  a new design choice. (The single round-robin implementation now lives in
+  `affinity_engine.packed_round_robin`; the gate delegates to it.)
+- **blind?:** the fix rests on a **structural/mechanical infeasibility** (33 pods
+  cannot pack onto 2 nodes; established from placement-rejection metadata and the
+  M1b feasibility gate), not on any V2-H3 verdict — the `c2-rerun2` r3-packed cell
+  carries **no valid measurement** to be biased by, and is being **discarded and
+  re-run** on the fixed instrument. The r = 1 baseline moving to round-robin (so
+  service placement is held constant across the interaction's cells) was decided
+  before the re-run produced any outcome.
+- **decision ID:** ties to **V2-H3** (pre-registration §V2-H3 packed-cell
+  semantics + §taint) and to the **M1b** feasibility gate (`packedAssignmentMethod
+  = round-robin`, verified 11/11 schedulable). Implemented in
+  `fix/v2-h3-round-robin-packed`.

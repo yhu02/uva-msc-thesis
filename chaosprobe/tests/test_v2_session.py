@@ -253,6 +253,17 @@ class TestBuildSession:
         assert session.condition("f-050") == v2.V2Condition("f-050", 0.5)
         assert session.condition("nope") is None
 
+    def test_defaults_to_solver_packing(self):
+        assert self._build().packed_assignment == v2.PACKED_ASSIGNMENT_SOLVER
+
+    def test_accepts_round_robin_packing(self):
+        session = self._build(packed_assignment=v2.PACKED_ASSIGNMENT_ROUND_ROBIN)
+        assert session.packed_assignment == v2.PACKED_ASSIGNMENT_ROUND_ROBIN
+
+    def test_unsupported_packed_assignment_raises(self):
+        with pytest.raises(ValueError, match="packed_assignment must be one of"):
+            self._build(packed_assignment="bin-packing")
+
 
 # ── apply_condition: call shapes + sequencing per (r, mode) cell ─────
 
@@ -426,6 +437,57 @@ class TestApplyConditionPinned:
         # FAIL only when checks exist and fail; VerificationResult above says
         # passed=True, so the condition is judged on the live fraction.
         assert session.per_level["f-050"]["accepted"] is True
+
+
+class TestApplyConditionRoundRobinPacked:
+    """V2-H3 packed-cell semantics: capacity-feasible round-robin, f-independent."""
+
+    def test_round_robin_bypasses_solver_and_f_gate(self, monkeypatch):
+        session = _session(
+            replicas=3, mode=MODE_PACKED, packed_assignment=v2.PACKED_ASSIGNMENT_ROUND_ROBIN
+        )
+        _, _, solve, apply_mock, verify, live_nodes = _wire_engine(
+            monkeypatch,
+            solution=_solution({"a": 0}, achieved=0.0, target=0.5),  # must be ignored
+            verification=VerificationResult(r=3, mode=MODE_PACKED, passed=True, services=[]),
+            live={"a": ["w1"], "b": ["w2"], "c": ["w3"]},  # live f = 1.0 ≠ target 0.5
+        )
+        v2.apply_condition(session, v2.V2Condition("f-050", 0.5))
+        # The fraction solver is never consulted — round-robin owns the pins.
+        solve.assert_not_called()
+        # sorted(a,b,c) → w1,w2,w3 (i mod W).
+        assert apply_mock.call_args.args[2:6] == (
+            {"a": "w1", "b": "w2", "c": "w3"},
+            3,
+            MODE_PACKED,
+            list(WORKERS),
+        )
+        record = session.per_level["f-050"]
+        assert record["packedAssignmentMethod"] == v2.PACKED_ASSIGNMENT_ROUND_ROBIN
+        assert record["solverAccepted"] is None
+        assert record["solverAchievedF"] == 1.0  # achieved f of the round-robin
+        # f is irrelevant to V2-H3: no gap is recorded and the off-target live
+        # fraction never rejects the cell.
+        assert "gap" not in record
+        assert record["accepted"] is True
+        assert record["rejectionReasons"] == []
+
+    def test_round_robin_still_rejects_unverifiable_packing(self, monkeypatch):
+        # A genuine packing failure (a service split across nodes / gone) is
+        # still caught — acceptance rests on verify_placement, not on f.
+        session = _session(
+            replicas=3, mode=MODE_PACKED, packed_assignment=v2.PACKED_ASSIGNMENT_ROUND_ROBIN
+        )
+        _wire_engine(
+            monkeypatch,
+            solution=_solution({"a": 0}, achieved=0.0, target=0.5),
+            verification=VerificationResult(r=3, mode=MODE_PACKED, passed=True, services=[]),
+            live={"a": ["w1"], "b": [], "c": ["w1", "w2"]},  # b gone, c split
+        )
+        v2.apply_condition(session, v2.V2Condition("f-050", 0.5))
+        record = session.per_level["f-050"]
+        assert record["accepted"] is False
+        assert record["rejectionReasons"] == ["live_fraction_unverifiable:b,c"]
 
 
 class TestApplyConditionPartialRecord:
@@ -663,6 +725,7 @@ class TestSessionMetadata:
         assert meta["solverSeed"] == 7
         assert meta["replicas"] == 1
         assert meta["mode"] == MODE_PACKED
+        assert meta["packedAssignment"] == v2.PACKED_ASSIGNMENT_SOLVER
         assert meta["workers"] == list(WORKERS)
         assert meta["tolerance"] == v2.TOLERANCE
         assert meta["perLevel"][0] is executed

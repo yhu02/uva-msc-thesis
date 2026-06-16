@@ -55,11 +55,27 @@ def _latency(err_rate):
     return {"phases": {"during-chaos": {"routes": {"/": {"errorCount": e, "sampleCount": s}}}}}
 
 
-def _write_session(d, name, replicas, mode, pre, during, err_rate):
+def _v2(replicas, mode, *, accepted=True, taints=None):
+    """A v2Session block with one accepted (by default) node-drain condition."""
+    return {
+        "replicas": replicas,
+        "mode": mode,
+        "perLevel": [
+            {
+                "condition": "f-050",
+                "accepted": accepted,
+                "rejectionReasons": [] if accepted else ["placement_verification_failed"],
+                "perIteration": [{"iteration": 1, "taintReasons": taints or []}],
+            }
+        ],
+    }
+
+
+def _write_session(d, name, replicas, mode, pre, during, err_rate, *, v2=None):
     run = Path(d) / name
     run.mkdir(parents=True)
     (run / "summary.json").write_text(
-        json.dumps({"runId": name, "v2Session": {"replicas": replicas, "mode": mode}})
+        json.dumps({"runId": name, "v2Session": v2 or _v2(replicas, mode)})
     )
     (run / "f-050.json").write_text(
         json.dumps(
@@ -157,14 +173,36 @@ def test_collect_skips_non_v2_and_missing_condition(tmp_path):
     (tmp_path / "nonv2").mkdir()
     (tmp_path / "nonv2" / "summary.json").write_text(json.dumps({"runId": "x"}))
     (tmp_path / "nocond").mkdir()
-    (tmp_path / "nocond" / "summary.json").write_text(
-        json.dumps({"v2Session": {"replicas": 1, "mode": "packed"}})
-    )
+    (tmp_path / "nocond" / "summary.json").write_text(json.dumps({"v2Session": _v2(1, "packed")}))
     sessions, warnings = c2.collect_sessions(str(tmp_path))
     assert sessions == []
     assert any("not a v2" in w for w in warnings) and any(
         "no condition file" in w for w in warnings
     )
+
+
+def test_collect_excludes_rejected_and_tainted(tmp_path):
+    # A rejected placement (accepted=False) and a fully-tainted session are
+    # both excluded per the registered "no result from a rejected session" rule.
+    _write_session(tmp_path, "rej", 3, "packed", 6, 0, 1.0, v2=_v2(3, "packed", accepted=False))
+    _write_session(
+        tmp_path,
+        "tainted",
+        1,
+        "packed",
+        2,
+        1,
+        0.4,
+        v2=_v2(1, "packed", taints=["v2_condition_rejected"]),
+    )
+    # A v2 session carrying no perLevel record at all is also excluded.
+    _write_session(tmp_path, "norec", 3, "packed", 6, 0, 1.0, v2={"replicas": 3, "mode": "packed"})
+    _write_session(tmp_path, "ok", 1, "packed", 2, 1, 0.4)  # accepted, untainted
+    sessions, warnings = c2.collect_sessions(str(tmp_path))
+    assert [s.run for s in sessions] == ["ok"]
+    assert any("rej" in w and "excluded" in w for w in warnings)
+    assert any("tainted" in w and "excluded" in w for w in warnings)
+    assert any("norec" in w and "no perLevel record" in w for w in warnings)
 
 
 def test_main_smoke(tmp_path, capsys):
