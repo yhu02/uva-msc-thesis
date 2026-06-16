@@ -497,18 +497,26 @@ def annotate_iteration(
     Taints when (a) the condition itself was rejected at apply time, or
     (b) a pinned iteration's live fraction is unverifiable or misses the
     target by more than the pre-registered tolerance.
+
+    The target-drift check is skipped for the round-robin packed assignment
+    (V2-H3): that design does not target a cross-node fraction, so the live f
+    it achieves (≈0.87, not the condition's nominal target) is not a drift —
+    this mirrors the acceptance gate in :func:`apply_condition`. The
+    unverifiable check (each service's replicas on exactly one node) still
+    applies — it is a packing-integrity check, not an f-target check.
     """
     record = session.per_level.get(condition_name_)
     if record is None:
         return  # placement step never ran (errored before apply) — nothing to judge
     live_f = iteration_live_fraction(session, iteration_result.get("podPlacements") or {})
+    round_robin = session.packed_assignment == PACKED_ASSIGNMENT_ROUND_ROBIN
     reasons: List[str] = []
     if not record["accepted"]:
         reasons.append("v2_condition_rejected")
     if session.pinned:
         if live_f is None:
             reasons.append("v2_live_fraction_unverifiable")
-        elif abs(live_f - record["targetF"]) > TOLERANCE:
+        elif not round_robin and abs(live_f - record["targetF"]) > TOLERANCE:
             reasons.append("v2_live_fraction_drifted")
     record["perIteration"].append(
         {
