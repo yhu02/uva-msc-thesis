@@ -108,6 +108,22 @@ def test_build_patch_r3_packed_pins_all_replicas_to_one_node():
     assert patch["metadata"]["annotations"][MANAGED_ANNOTATION] == "affinity-r3-packed"
 
 
+def test_packed_round_robin_distributes_services_across_workers():
+    # sorted service i → worker i mod W: services spread, not stacked.
+    assignment = engine.packed_round_robin(["c", "a", "b", "d"], ["w1", "w2"])
+    assert assignment == {"a": "w1", "b": "w2", "c": "w1", "d": "w2"}
+    # per-node service count is balanced at ⌈S/W⌉ — never all on one node.
+    per_node = {}
+    for node in assignment.values():
+        per_node[node] = per_node.get(node, 0) + 1
+    assert max(per_node.values()) == 2
+
+
+def test_packed_round_robin_rejects_no_workers():
+    with pytest.raises(ValueError, match="non-empty list of worker"):
+        engine.packed_round_robin(["a"], [])
+
+
 def test_build_patch_r3_anti_affine_spreads_with_no_pin():
     patch = engine.build_patch("cartservice", None, 3, engine.MODE_ANTI_AFFINE, WORKERS)
     spec = patch["spec"]

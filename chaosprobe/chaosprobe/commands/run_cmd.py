@@ -44,6 +44,9 @@ from chaosprobe.orchestrator.run_phases import (
 )
 from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
 from chaosprobe.orchestrator.v2_session import (
+    PACKED_ASSIGNMENT_ROUND_ROBIN,
+    PACKED_ASSIGNMENT_SOLVER,
+    PACKED_ASSIGNMENTS,
     V2Condition,
     V2Session,
     build_session,
@@ -966,6 +969,9 @@ _V2_DEFAULT_ORDER_SEED = 42
 _V2_DEFAULT_SOLVER_SEED = 0
 _V2_DEFAULT_REPLICAS = 1
 _V2_DEFAULT_MODE = affinity_engine.MODE_PACKED
+#: Default pinned-cell assignment: the fraction solver (the V2-H1 dose-response
+#: sweep is the f knob). V2-H3 passes --v2-packed-assignment round-robin.
+_V2_DEFAULT_PACKED_ASSIGNMENT = PACKED_ASSIGNMENT_SOLVER
 
 
 @dataclass(frozen=True)
@@ -979,6 +985,7 @@ class V2RunArgs:
     replicas: int
     mode: str
     workers: Tuple[str, ...]
+    packed_assignment: str
 
 
 def _resolve_v2_args(
@@ -988,6 +995,7 @@ def _resolve_v2_args(
     v2_replicas: Optional[int],
     v2_mode: Optional[str],
     v2_workers: Optional[str],
+    v2_packed_assignment: Optional[str],
     *,
     strategies_overridden: bool,
     seeds: Optional[str],
@@ -1013,6 +1021,7 @@ def _resolve_v2_args(
                 ("--v2-replicas", v2_replicas),
                 ("--v2-mode", v2_mode),
                 ("--v2-workers", v2_workers),
+                ("--v2-packed-assignment", v2_packed_assignment),
             )
             if value is not None
         ]
@@ -1059,6 +1068,14 @@ def _resolve_v2_args(
     solver_seed = v2_solver_seed if v2_solver_seed is not None else _V2_DEFAULT_SOLVER_SEED
     replicas = v2_replicas if v2_replicas is not None else _V2_DEFAULT_REPLICAS
     mode = v2_mode if v2_mode is not None else _V2_DEFAULT_MODE
+    packed_assignment = (
+        v2_packed_assignment if v2_packed_assignment is not None else _V2_DEFAULT_PACKED_ASSIGNMENT
+    )
+    if packed_assignment not in PACKED_ASSIGNMENTS:
+        raise click.ClickException(
+            f"--v2-packed-assignment must be one of {PACKED_ASSIGNMENTS}, "
+            f"got '{packed_assignment}'"
+        )
     if replicas not in affinity_engine.SUPPORTED_REPLICAS:
         raise click.ClickException(
             f"--v2-replicas must be one of {sorted(affinity_engine.SUPPORTED_REPLICAS)} "
@@ -1078,6 +1095,7 @@ def _resolve_v2_args(
         replicas=replicas,
         mode=mode,
         workers=workers,
+        packed_assignment=packed_assignment,
     )
 
 
@@ -1101,6 +1119,7 @@ def _init_v2_session(
             replicas=args.replicas,
             mode=args.mode,
             workers=args.workers,
+            packed_assignment=args.packed_assignment,
             edges=edges,
             services=services,
             api=affinity_engine.K8sApi.from_cluster(),
@@ -1114,6 +1133,7 @@ def _init_v2_session(
         f"v2 session: complete block of {len(session.conditions)} condition(s) "
         f"[{', '.join(c.name for c in session.conditions)}] "
         f"r={session.replicas} mode={session.mode} "
+        f"packing={session.packed_assignment} "
         f"orderSeed={session.order_seed} solverSeed={session.solver_seed}"
     )
     return session
@@ -1428,6 +1448,19 @@ def _acquire_run_lock() -> None:
         "Required with --v2-levels."
     ),
 )
+@click.option(
+    "--v2-packed-assignment",
+    type=click.Choice(list(PACKED_ASSIGNMENTS)),
+    default=None,
+    help=(
+        f"Pinned-cell (r=1 / r=3 packed) assignment (default: "
+        f"{_V2_DEFAULT_PACKED_ASSIGNMENT}). '{PACKED_ASSIGNMENT_SOLVER}' uses the "
+        f"fraction solver to hit the condition's target f (the V2-H1 dose-response "
+        f"sweep). '{PACKED_ASSIGNMENT_ROUND_ROBIN}' uses the capacity-feasible "
+        f"per-service round-robin packing (V2-H3 replication-rescue; f-independent, "
+        f"matches the M1b-verified packed semantics)."
+    ),
+)
 @neo4j_uri_option
 @neo4j_user_option
 @neo4j_password_option
@@ -1462,6 +1495,7 @@ def run(
     v2_replicas: Optional[int],
     v2_mode: Optional[str],
     v2_workers: Optional[str],
+    v2_packed_assignment: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
@@ -1499,6 +1533,7 @@ def run(
         v2_replicas,
         v2_mode,
         v2_workers,
+        v2_packed_assignment,
         strategies_overridden=_strategies_overridden_on_cli(),
         seeds=seeds,
         scale_replicas=replicas,

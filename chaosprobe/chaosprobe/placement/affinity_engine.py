@@ -148,6 +148,29 @@ def _is_pinned(r: int, mode: str) -> bool:
     return r == 1 or mode == MODE_PACKED
 
 
+def packed_round_robin(services: Sequence[str], workers: Sequence[str]) -> Dict[str, str]:
+    """Capacity-feasible packed assignment: sorted service *i* → worker *i mod W*.
+
+    The C2 / V2-H3 **per-service** packing semantics — every service's replicas
+    co-scheduled on ONE node — with services distributed ACROSS nodes, *not*
+    all services stacked on one node.  The fraction solver's f = 0 assignment
+    (which the V2-H1 dose-response sweep needs, but V2-H3 does not) satisfies a
+    low cut fraction by stacking services on a single worker, which at r = 3
+    needs ~3× the whole app's requests on one node — unschedulable by
+    arithmetic on this cluster's 4 GiB workers.  Round-robin minimises the
+    per-node service count (⌈S/W⌉), needs no live capacity reads, and
+    :func:`verify_placement` still proves the packing (each service's replicas
+    on exactly its pinned node) from live pods.
+
+    This is the single source for the round-robin packing registered in the
+    pre-registration (§V2-H3 packed-cell semantics) and verified by the M1b
+    gate; the gate and the live session orchestrator both call it.
+    """
+    if not workers:
+        raise ValueError("workers must be a non-empty list of worker node names")
+    return {svc: workers[i % len(workers)] for i, svc in enumerate(sorted(services))}
+
+
 def build_patch(
     service: str,
     node_name: Optional[str],

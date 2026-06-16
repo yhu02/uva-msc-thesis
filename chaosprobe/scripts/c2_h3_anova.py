@@ -56,7 +56,7 @@ import os
 import random
 import statistics as st
 import sys
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from chaosprobe.metrics.statistics import art_anova, mann_whitney_u
 
@@ -154,6 +154,30 @@ class Session:
         self.error = error  # user_err_during
 
 
+def _rejection_reason(v2: Dict[str, Any]) -> Optional[str]:
+    """Why this v2 session must be excluded, or ``None`` when it is usable.
+
+    Enforces the registered taint rule (pre-registration §taint): no result is
+    quoted from a **rejected** condition (its placement failed live
+    verification — e.g. an infeasible packing leaving deployments Pending) or
+    from a condition whose **every** iteration is tainted. A node-drain session
+    carries one condition; its record lives in ``v2.perLevel``.
+    """
+    per_level = v2.get("perLevel") or []
+    if not per_level:
+        return "no perLevel record"
+    reasons: List[str] = []
+    for rec in per_level:
+        if not rec.get("accepted", False):
+            rej = rec.get("rejectionReasons") or ["not accepted"]
+            reasons.append(f"{rec.get('condition', '?')}:{','.join(rej)}")
+            continue
+        iters = rec.get("perIteration") or []
+        if iters and all(it.get("taintReasons") for it in iters):
+            reasons.append(f"{rec.get('condition', '?')}:all-iterations-tainted")
+    return "; ".join(reasons) if reasons else None
+
+
 def collect_sessions(results_dir: str) -> Tuple[List[Session], List[str]]:
     """Every C2 session's cell + co-primary outcomes (top-level condition metrics)."""
     sessions: List[Session] = []
@@ -167,6 +191,12 @@ def collect_sessions(results_dir: str) -> Tuple[List[Session], List[str]]:
         replicas, mode = v2.get("replicas"), v2.get("mode")
         if replicas is None or mode is None:
             warnings.append(f"{run}: not a v2 node-drain session — skipped")
+            continue
+        rejected = _rejection_reason(v2)
+        if rejected is not None:
+            # Registered taint rule (pre-registration §taint): "No result is
+            # ever quoted from a rejected session or from a tainted iteration."
+            warnings.append(f"{run}: rejected/tainted placement ({rejected}) — excluded")
             continue
         cond = _condition_file(session_dir)
         if cond is None:

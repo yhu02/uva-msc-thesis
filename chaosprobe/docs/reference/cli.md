@@ -70,6 +70,7 @@ matrix does not combine with v2 sessions).
 | `--v2-replicas <1\|3>` | 1 | Replicas per service (r = 2 deliberately unsupported per DESIGN §2.3). |
 | `--v2-mode <packed\|anti-affine>` | packed | Replica packing mode; at r = 1 the modes are physically identical, at r = 3 `anti-affine` lets the scheduler pick 3 distinct nodes (no solver pin, no live fraction). |
 | `--v2-workers <list>` | — | Ordered worker node names; solver node index *i* maps to the *i*-th name (required with `--v2-levels`). |
+| `--v2-packed-assignment <solver\|round-robin>` | solver | Pinned-cell (r = 1 / r = 3 packed) assignment. `solver` targets the condition's f via the fraction solver (the V2-H1 dose-response sweep). `round-robin` uses the capacity-feasible per-service round-robin packing (V2-H3 replication-rescue; f-independent, matches the M1b-verified packed semantics — each service's replicas on one node, services spread across nodes). |
 
 **A/A pairs.** An A/A pair is simply two runs with identical `--v2-*`
 arguments *including* `--v2-solver-seed` (identical placements per level);
