@@ -504,6 +504,17 @@ def annotate_iteration(
     this mirrors the acceptance gate in :func:`apply_condition`. The
     unverifiable check (each service's replicas on exactly one node) still
     applies — it is a packing-integrity check, not an f-target check.
+
+    The per-iteration record's ``taintReasons`` carries the **complete** taint
+    for the iteration: the pre-chaos taints the strategy runner already set on
+    ``iteration_result`` (``app_ready_timeout``, ``iteration_exception``,
+    ``pre_chaos_errors_high`` …) folded together with the v2-placement reasons
+    judged here.  This is the only per-iteration taint channel persisted for a
+    node-drain session (its ``<condition>.json`` flattens metrics to the top
+    level and leaves ``iterations`` empty), so a downstream analysis that reads
+    ``perIteration[].taintReasons`` (``scripts/c2_h3_anova.py``) sees every
+    tainted iteration — honouring the registered "no result is ever quoted
+    from a tainted iteration" rule for both channels, not just the v2 one.
     """
     record = session.per_level.get(condition_name_)
     if record is None:
@@ -518,15 +529,23 @@ def annotate_iteration(
             reasons.append("v2_live_fraction_unverifiable")
         elif not round_robin and abs(live_f - record["targetF"]) > TOLERANCE:
             reasons.append("v2_live_fraction_drifted")
+    # Pre-chaos taints the strategy runner set before this hook ran (the
+    # non-v2 channel) are recorded too — deduped, prior reasons first — so the
+    # persisted perIteration record is the complete taint for the iteration.
+    prior_reasons = list(iteration_result.get("preChaosTaintReasons") or [])
+    for reason in iteration_result.get("taintReasons") or []:
+        if reason not in prior_reasons:
+            prior_reasons.append(reason)
+    all_reasons = prior_reasons + [r for r in reasons if r not in prior_reasons]
     record["perIteration"].append(
         {
             "iteration": iteration_result.get("iteration"),
             "liveAchievedF": round(live_f, 6) if live_f is not None else None,
-            "taintReasons": reasons,
+            "taintReasons": all_reasons,
         }
     )
     if not reasons:
-        return
+        return  # nothing new to propagate back into iteration_result
     click.echo(
         f"    WARNING: v2 rejection rule tainted iteration "
         f"{iteration_result.get('iteration')} of {condition_name_}: {'; '.join(reasons)}",
