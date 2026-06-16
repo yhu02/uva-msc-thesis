@@ -656,6 +656,34 @@ class TestAnnotateIteration:
         assert ir["tainted"] is True
         assert ir["taintReasons"] == ["v2_live_fraction_drifted"]
 
+    def test_round_robin_off_target_live_fraction_is_not_drift(self):
+        # V2-H3 round-robin packing achieves an f far from the condition's
+        # nominal target by design — that is not a drift, so no taint.
+        session = _session(packed_assignment=v2.PACKED_ASSIGNMENT_ROUND_ROBIN)
+        record = _accepted_record(session, target=0.0, name="f-000")
+        ir = {
+            "iteration": 1,
+            "preChaosHealthy": True,
+            "preChaosTaintReasons": [],
+            "podPlacements": {"a-1a-p1": "w1", "b-2b-p1": "w2", "c-3c-p1": "w3"},  # f = 1.0
+        }
+        v2.annotate_iteration(session, "f-000", ir)
+        assert record["perIteration"][0]["liveAchievedF"] == 1.0
+        assert record["perIteration"][0]["taintReasons"] == []
+        assert ir["preChaosHealthy"] is True
+        assert "tainted" not in ir
+
+    def test_round_robin_still_taints_unverifiable_packing(self):
+        # The packing-integrity check (each service's replicas on one node) is
+        # NOT an f-target check, so it still applies under round-robin.
+        session = _session(packed_assignment=v2.PACKED_ASSIGNMENT_ROUND_ROBIN)
+        record = _accepted_record(session)
+        ir = {"iteration": 1, "preChaosHealthy": True, "podPlacements": {}}
+        v2.annotate_iteration(session, "f-050", ir)
+        assert record["perIteration"][0]["liveAchievedF"] is None
+        assert ir["preChaosTaintReasons"] == ["v2_live_fraction_unverifiable"]
+        assert ir["tainted"] is True
+
     def test_rejected_condition_taints_every_iteration(self):
         session = _session()
         _accepted_record(session, accepted=False, reasons=["fraction_target_missed"])
