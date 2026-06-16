@@ -684,6 +684,56 @@ class TestAnnotateIteration:
         assert ir["preChaosTaintReasons"] == ["v2_live_fraction_unverifiable"]
         assert ir["tainted"] is True
 
+    def test_prechaos_taint_is_folded_into_perIteration_record(self):
+        # The non-v2 (strategy-runner) pre-chaos taint must appear in the
+        # persisted perIteration record — it is the only per-iteration taint
+        # channel a node-drain session persists. An iteration with no v2 reason
+        # of its own that the runner flagged app_ready_timeout must still record
+        # it, so c2_h3_anova's _rejection_reason can exclude it.
+        session = _session()
+        record = _accepted_record(session)
+        ir = {
+            "iteration": 1,
+            "preChaosHealthy": False,
+            "preChaosTaintReasons": ["app_ready_timeout"],
+            # in-tolerance placement → no v2 reason of its own
+            "podPlacements": {"a-1a-p1": "w1", "b-2b-p1": "w1", "c-3c-p1": "w2"},
+        }
+        v2.annotate_iteration(session, "f-050", ir)
+        assert record["perIteration"][0]["taintReasons"] == ["app_ready_timeout"]
+
+    def test_iteration_taintReasons_channel_is_also_folded(self):
+        # The runner can taint via ir["taintReasons"] directly (e.g.
+        # unknown_probes_after_retries) without a preChaosTaintReasons entry;
+        # that reason must also reach the persisted perIteration record.
+        session = _session()
+        record = _accepted_record(session)
+        ir = {
+            "iteration": 1,
+            "preChaosHealthy": True,
+            "preChaosTaintReasons": [],
+            "taintReasons": ["unknown_probes_after_retries"],
+            "podPlacements": {"a-1a-p1": "w1", "b-2b-p1": "w1", "c-3c-p1": "w2"},
+        }
+        v2.annotate_iteration(session, "f-050", ir)
+        assert record["perIteration"][0]["taintReasons"] == ["unknown_probes_after_retries"]
+
+    def test_prechaos_and_v2_taints_are_unioned_deduped(self):
+        # Pre-chaos reasons first, then new v2 reasons, no duplicates.
+        session = _session()
+        record = _accepted_record(session, target=0.0, name="f-000")
+        ir = {
+            "iteration": 1,
+            "preChaosHealthy": False,
+            "preChaosTaintReasons": ["app_ready_timeout"],
+            "podPlacements": {"a-1a-p1": "w1", "b-2b-p1": "w2", "c-3c-p1": "w3"},  # f=1.0 → drift
+        }
+        v2.annotate_iteration(session, "f-000", ir)
+        assert record["perIteration"][0]["taintReasons"] == [
+            "app_ready_timeout",
+            "v2_live_fraction_drifted",
+        ]
+
     def test_rejected_condition_taints_every_iteration(self):
         session = _session()
         _accepted_record(session, accepted=False, reasons=["fraction_target_missed"])

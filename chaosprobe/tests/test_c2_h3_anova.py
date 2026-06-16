@@ -55,8 +55,19 @@ def _latency(err_rate):
     return {"phases": {"during-chaos": {"routes": {"/": {"errorCount": e, "sampleCount": s}}}}}
 
 
-def _v2(replicas, mode, *, accepted=True, taints=None):
-    """A v2Session block with one accepted (by default) node-drain condition."""
+def _v2(replicas, mode, *, accepted=True, taints=None, per_iter_taints=None):
+    """A v2Session block with one accepted (by default) node-drain condition.
+
+    ``taints`` sets a single iteration's taintReasons; ``per_iter_taints`` (a
+    list of reason-lists) builds an N-iteration condition, one entry per
+    iteration — exercising the registered "EVERY iteration tainted" boundary.
+    """
+    if per_iter_taints is not None:
+        per_iteration = [
+            {"iteration": i + 1, "taintReasons": list(t)} for i, t in enumerate(per_iter_taints)
+        ]
+    else:
+        per_iteration = [{"iteration": 1, "taintReasons": taints or []}]
     return {
         "replicas": replicas,
         "mode": mode,
@@ -65,7 +76,7 @@ def _v2(replicas, mode, *, accepted=True, taints=None):
                 "condition": "f-050",
                 "accepted": accepted,
                 "rejectionReasons": [] if accepted else ["placement_verification_failed"],
-                "perIteration": [{"iteration": 1, "taintReasons": taints or []}],
+                "perIteration": per_iteration,
             }
         ],
     }
@@ -203,6 +214,35 @@ def test_collect_excludes_rejected_and_tainted(tmp_path):
     assert any("rej" in w and "excluded" in w for w in warnings)
     assert any("tainted" in w and "excluded" in w for w in warnings)
     assert any("norec" in w and "no perLevel record" in w for w in warnings)
+
+
+def test_collect_multi_iteration_taint_boundary(tmp_path):
+    # The registered rule excludes a session only when EVERY iteration is
+    # tainted. A session with some clean and some tainted iterations is KEPT;
+    # one where all iterations are tainted is EXCLUDED. (Pins all-vs-any.)
+    _write_session(
+        tmp_path,
+        "partial",
+        3,
+        "anti-affine",
+        6,
+        5,
+        0.01,
+        v2=_v2(3, "anti-affine", per_iter_taints=[[], ["app_ready_timeout"]]),
+    )
+    _write_session(
+        tmp_path,
+        "alltainted",
+        3,
+        "packed",
+        6,
+        3,
+        0.4,
+        v2=_v2(3, "packed", per_iter_taints=[["app_ready_timeout"], ["v2_live_fraction_drifted"]]),
+    )
+    sessions, warnings = c2.collect_sessions(str(tmp_path))
+    assert [s.run for s in sessions] == ["partial"]  # kept: not EVERY iteration tainted
+    assert any("alltainted" in w and "excluded" in w for w in warnings)
 
 
 def test_main_smoke(tmp_path, capsys):
