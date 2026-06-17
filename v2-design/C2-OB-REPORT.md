@@ -117,6 +117,18 @@ registered and was **not** re-tuned; this is surfaced as a measurement limit on
 the depth face, with the error face (which carries no such limit) supplying the
 substantive result.
 
+**Exploratory sensitivity (NOT confirmatory — does not change the verdict).**
+To show what the depth face indicates once the dynamic-range limit is removed, a
+*post-hoc, illustrative* **relative** view (not pre-registered, reported for
+transparency only): anti-affine trough depth (0.0455) is **50.1 % of r1's**
+(0.0909) — a **~50 % reduction**, with packed r=3 unchanged from r1. So the depth
+face *descriptively* shows anti-affinity halving the trough, directionally
+consistent with the error face's full rescue; the registered absolute 1-pod
+margin simply could not express it. This is exploratory and carries **no
+confirmatory weight** — the pre-registered V2-H3 verdict remains `CONJUNCTION =
+False` exactly as computed; retuning the frozen margin to flip it would be
+p-hacking and is not done.
+
 ## Limitations
 
 - **Preliminary pending Holm** across the confirmatory family (V2-H1/H2/H3/H5);
@@ -135,3 +147,22 @@ substantive result.
   depth margin is near-unmeetable under the round-robin spread; a reader may
   weigh the depth co-primary's "not met" in that light. The error co-primary
   carries no such limit.
+
+## Lesson for future pre-registrations (forward fix — not applied to this frozen study)
+
+The depth-margin construction limit is a **specification** issue, fixable in the
+next pre-registration (hotelReservation C2, a v3); it is **not** a data problem
+and does **not** require re-running C2 (see below). Two changes carry forward:
+
+1. **Define availability-rescue margins *relatively*, not in absolute pods.**
+   Express the trough-depth rescue as a fraction of the realized r=1 depth (e.g.
+   "anti-affine depth ≤ X % of r1 depth"), or use a metric with inherent dynamic
+   range (integrated outage = depth × duration, or the request-error rate). An
+   absolute pod-count margin collides with the small per-node footprint forced by
+   a capacity-thin cluster.
+2. **Add an achievability check to the freeze checklist.** Every SESOI/margin is
+   validated not only against the A/A *noise floor* (the current rule) but also
+   against the metric's *achievable range* on the actual placement + cluster — so
+   a margin that exceeds the maximum observable effect is caught **before** the
+   freeze, not after analysis. (Here: a design-time "max possible r1−anti depth
+   under round-robin on N=8" check would have shown range ≈ margin.)
