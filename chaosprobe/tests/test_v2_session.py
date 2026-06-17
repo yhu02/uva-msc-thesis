@@ -264,6 +264,17 @@ class TestBuildSession:
         with pytest.raises(ValueError, match="packed_assignment must be one of"):
             self._build(packed_assignment="bin-packing")
 
+    def test_defaults_to_no_dns_cache_axis(self):
+        assert self._build().dns_cache is None  # C1/C2 have no cache axis
+
+    @pytest.mark.parametrize("mode", ["on", "off"])
+    def test_accepts_dns_cache_mode(self, mode):
+        assert self._build(dns_cache=mode).dns_cache == mode
+
+    def test_invalid_dns_cache_raises(self):
+        with pytest.raises(ValueError, match="--v2-dns-cache must be one of"):
+            self._build(dns_cache="warm")
+
 
 # ── apply_condition: call shapes + sequencing per (r, mode) cell ─────
 
@@ -488,6 +499,61 @@ class TestApplyConditionRoundRobinPacked:
         record = session.per_level["f-050"]
         assert record["accepted"] is False
         assert record["rejectionReasons"] == ["live_fraction_unverifiable:b,c"]
+
+
+class TestApplyConditionDnsCache:
+    """C3 / V2-H2 cache axis: applied after placement, recorded, no-op when unset."""
+
+    def _wire_dns(self, monkeypatch, pending=None):
+        apply_dns = MagicMock(
+            return_value=SimpleNamespace(applied=["a"], pending=pending or [], duration_seconds=4.2)
+        )
+        monkeypatch.setattr(v2.dns, "apply_dns_cache", apply_dns)
+        return apply_dns
+
+    def test_cache_applied_after_placement_and_recorded(self, monkeypatch):
+        session = _session(dns_cache="off")
+        _wire_engine(
+            monkeypatch,
+            solution=_solution({"a": 0, "b": 0, "c": 1}, achieved=0.5, target=0.5),
+            verification=_verification(passed=True),
+            live={"a": ["w1"], "b": ["w1"], "c": ["w2"]},
+        )
+        apply_dns = self._wire_dns(monkeypatch)
+        v2.apply_condition(session, v2.V2Condition("f-050", 0.5))
+        # cache applied to the session's services with the session's mode.
+        api, ns, services, mode = apply_dns.call_args.args[:4]
+        assert ns == "ns" and mode == "off" and sorted(services) == sorted(session.services)
+        record = session.per_level["f-050"]
+        assert record["dnsCache"] == "off"
+        assert record["dnsCacheLatencySeconds"] == 4.2
+        assert record["accepted"] is True  # placement still adjudicated
+
+    def test_cache_pending_folds_into_pending(self, monkeypatch):
+        session = _session(dns_cache="off")
+        _wire_engine(
+            monkeypatch,
+            solution=_solution({"a": 0, "b": 0, "c": 1}, achieved=0.5, target=0.5),
+            verification=_verification(passed=True),
+            live={"a": ["w1"], "b": ["w1"], "c": ["w2"]},
+            pending=["b"],  # placement-pending
+        )
+        self._wire_dns(monkeypatch, pending=["c"])  # cache-pending
+        v2.apply_condition(session, v2.V2Condition("f-050", 0.5))
+        assert session.per_level["f-050"]["pendingDeployments"] == ["b", "c"]
+
+    def test_no_cache_axis_skips_dns(self, monkeypatch):
+        session = _session()  # dns_cache None (C1/C2)
+        _wire_engine(
+            monkeypatch,
+            solution=_solution({"a": 0, "b": 0, "c": 1}, achieved=0.5, target=0.5),
+            verification=_verification(passed=True),
+            live={"a": ["w1"], "b": ["w1"], "c": ["w2"]},
+        )
+        apply_dns = self._wire_dns(monkeypatch)
+        v2.apply_condition(session, v2.V2Condition("f-050", 0.5))
+        apply_dns.assert_not_called()
+        assert "dnsCache" not in session.per_level["f-050"]
 
 
 class TestApplyConditionPartialRecord:
@@ -804,6 +870,7 @@ class TestSessionMetadata:
         assert meta["replicas"] == 1
         assert meta["mode"] == MODE_PACKED
         assert meta["packedAssignment"] == v2.PACKED_ASSIGNMENT_SOLVER
+        assert meta["dnsCache"] is None  # no cache axis in this session
         assert meta["workers"] == list(WORKERS)
         assert meta["tolerance"] == v2.TOLERANCE
         assert meta["perLevel"][0] is executed
