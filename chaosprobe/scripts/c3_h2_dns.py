@@ -29,11 +29,13 @@ untainted iterations** of the UDP drop, via the shared
 :func:`m2_aa_analysis.load_condition_outcomes` taint machinery — rejected or
 fully-tainted conditions contribute no value (registered "never quoted" rule).
 
-**Pairing for (b).** Cache-off and cache-on spread values are paired
+**Pairing for (b).** Cache-off and cache-on **sessions** are paired
 **positionally by collection order** (timestamp, then run id) within each cache
-group — the campaign runs matched cache-off/cache-on pairs in randomized cache
-order, so the i-th cache-off session pairs with the i-th cache-on session. A
-recorded pair-id would be more robust; see the campaign driver.
+group — the i-th cache-off session with the i-th cache-on session — and pairs
+are formed **before** any missing/tainted (None) spread is dropped, so an
+excluded value never shifts the alignment of the others. The campaign runs
+matched cache-off/cache-on pairs in randomized cache order; a recorded pair-id
+would be more robust still (see the campaign driver).
 """
 
 from __future__ import annotations
@@ -164,7 +166,11 @@ def _block(label: str, a: List[float], b: List[float]) -> Dict[str, Any]:
         "median_b": round(st.median(b), 4) if b else None,
         "p_one_sided": _one_sided_greater(res),
         "p_two_sided": res["p_two_sided"],
-        "directionGreater": bool(a and b and st.median(a) > st.median(b)),
+        # Paired test ⇒ the direction is the sign of the median of the per-pair
+        # DIFFERENCES, not the difference of the marginal medians (the two can
+        # diverge for a non-monotone paired pattern). rescueMet gates the
+        # conjunction, so it must match the paired test wilcoxon actually runs.
+        "directionGreater": bool(a and b and st.median([x - y for x, y in zip(a, b)]) > 0),
     }
 
 
@@ -181,20 +187,32 @@ def analyze(results_dir: str) -> Dict[str, Any]:
     place = _block("placement-dependence (spread>packed, cache-off)", spread_a, packed_a)
     place["rescueMet"] = place["directionGreater"]
 
-    # (b) mechanism: spread cache-on vs cache-off shrinkage ≥ 50%, paired by order.
-    spread_off = [float(s.spread) for s in off if s.spread is not None]  # type: ignore[arg-type]
-    spread_on = [float(s.spread) for s in on if s.spread is not None]  # type: ignore[arg-type]
-    n_b = min(len(spread_off), len(spread_on))
-    if len(spread_off) != len(spread_on):
+    # Pair cache-off ↔ cache-on POSITIONALLY by collection order (the i-th
+    # cache-off session with the i-th cache-on session) BEFORE dropping any
+    # pair. Filtering None spreads independently per group and then zipping
+    # would let a single tainted/rejected (None) spread at a differing index
+    # shift the alignment of every later pair — silently pairing unrelated
+    # sessions. Pairing first keeps each pair its true collection-order partner;
+    # a pair is dropped only when a member is missing.
+    pairs = list(zip(off, on))
+    if len(off) != len(on):
         warnings.append(
-            f"V2-H2(b): unequal valid spread counts (off={len(spread_off)}, on={len(spread_on)}) "
-            f"— paired the first {n_b} by collection order"
+            f"V2-H2(b): unequal session counts (off={len(off)}, on={len(on)}) "
+            f"— paired the first {len(pairs)} by collection order"
         )
-    shrink = [(o - n) / o for o, n in zip(spread_off[:n_b], spread_on[:n_b]) if o > 0]
-    if len(shrink) < n_b:
+
+    # (b) mechanism: spread cache-on vs cache-off shrinkage ≥ 50%, per pair.
+    shrink: List[float] = []
+    dropped_b = 0
+    for so, sn in pairs:
+        if so.spread is None or sn.spread is None or float(so.spread) <= 0:
+            dropped_b += 1  # missing/tainted spread, or non-positive denominator
+            continue
+        shrink.append((float(so.spread) - float(sn.spread)) / float(so.spread))
+    if dropped_b:
         warnings.append(
-            f"V2-H2(b): dropped {n_b - len(shrink)} pair(s) with non-positive cache-off drop "
-            "(shrinkage denominator undefined)"
+            f"V2-H2(b): dropped {dropped_b} of {len(pairs)} pair(s) with a missing/tainted "
+            "spread or non-positive cache-off drop (shrinkage denominator)"
         )
     mech = _block(
         f"mechanism shrinkage ≥ {SHRINKAGE_BAR:.0%} (spread cache-on vs off)",
@@ -204,14 +222,17 @@ def analyze(results_dir: str) -> Dict[str, Any]:
     mech["shrinkageMedian"] = round(st.median(shrink), 4) if shrink else None
     mech["barMet"] = bool(shrink and st.median(shrink) >= SHRINKAGE_BAR)
 
-    # Secondary (not in family): packed arm shows ~no cache effect.
-    packed_off = [float(s.packed) for s in off if s.packed is not None]  # type: ignore[arg-type]
-    packed_on = [float(s.packed) for s in on if s.packed is not None]  # type: ignore[arg-type]
-    n_s = min(len(packed_off), len(packed_on))
+    # Secondary (not in family): packed arm shows ~no cache effect — same
+    # collection-order pairing, dropping a pair only when a packed value is missing.
+    packed_pairs = [
+        (float(so.packed), float(sn.packed))
+        for so, sn in pairs
+        if so.packed is not None and sn.packed is not None
+    ]
     secondary = _block(
         "secondary: packed cache effect (expected ~none)",
-        packed_off[:n_s],
-        packed_on[:n_s],
+        [o for o, _ in packed_pairs],
+        [n for _, n in packed_pairs],
     )
 
     p_a, p_b = place["p_one_sided"], mech["p_one_sided"]
