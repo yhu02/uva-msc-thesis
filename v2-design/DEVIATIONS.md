@@ -263,3 +263,48 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   semantics + §taint) and to the **M1b** feasibility gate (`packedAssignmentMethod
   = round-robin`, verified 11/11 schedulable). Implemented in
   `fix/v2-h3-round-robin-packed`.
+
+### D-2026-06-17-01 — V2-H2 NodeLocal DNSCache realized via pod `dnsConfig`
+
+- **date:** 2026-06-17
+- **what:** the C3 / V2-H2 DNS-cache intervention (cache on/off) is applied
+  **per app deployment via pod `dnsConfig`**, not via the kubelet
+  `--cluster-dns` default. The thesis cluster already runs NodeLocal DNSCache
+  (kubelet `clusterDNS = 169.254.25.10`, the link-local cache; it forwards
+  upstream to CoreDNS `10.233.0.3` over `force_tcp`), so pods are **cache-on by
+  default**. The C3 toggle therefore is: **cache-off** = patch
+  `dnsPolicy: None` + `dnsConfig.nameservers = [CoreDNS clusterIP]` (resolution
+  over UDP, bypassing the node-local cache — the v1 cross-node-UDP baseline),
+  replicating the ClusterFirst search domains + `ndots:5`; **cache-on** = clear
+  the override, restoring the kubelet-default node-local cache. The registered
+  hypothesis statement, the two-part test, the SESOI/50 % bar, and the n are
+  unchanged.
+- **why:** the pre-registration (§V2-H2) and DESIGN §10 (Arm 1) name "NodeLocal
+  DNSCache on/off" but do not pin the *application mechanism*. The kubelet
+  `--cluster-dns` route is node-level (sudo + kubelet restart per node) and is
+  **not cleanly per-session reversible**, which the registered design requires
+  ("paired sessions, randomized cache order"). The pod-`dnsConfig` route is a
+  per-session-reversible deployment patch (the same class the placement engine
+  uses), needs no node changes, and pods still resolve through the **same**
+  node-local cache when cache-on — so the *mechanism under test* (cross-node UDP
+  DNS conntrack removal) is preserved, only the per-deployment resolver
+  selection changes. The 2026-06-17 go/no-go smoke confirmed the realization
+  behaves as designed: cache-on's during-churn cross-node UDP pool was ~5× below
+  cache-off's, and spread's cache-on UDP drop shrank **78 %** vs cache-off
+  (registered bar 50 %).
+- **corollary recorded:** because the cluster is cache-on by default, **C1 and
+  C2 were collected cache-on**; C3's cache-off arm reproduces the v1
+  cross-node-UDP baseline via the override. This does not affect C1/C2's
+  registered outcomes (neither tests the conntrack-DNS path), but it is recorded
+  for transparency.
+- **blind?:** the realization choice was fixed at C3 *scoping*
+  ([`C3-OB-SCOPE.md`](C3-OB-SCOPE.md)) from the cluster's standing configuration
+  (cache-on default) and the per-session-reversibility requirement — **before**
+  the confirmatory campaign produced any V2-H2 outcome. The go/no-go smoke
+  (n = 1, directional) confirmed feasibility/direction but is **not** the
+  confirmatory n = 7 paired test (not yet run when this was logged), so no
+  confirmatory result informed the choice.
+- **decision ID:** ties to **V2-H2** (pre-registration §V2-H2) and DESIGN §10
+  Arm 1. Implemented in `chaosprobe/placement/dns_cache.py` (PR #300) + the
+  `--v2-dns-cache` session axis (PRs #301/#302); campaign driver
+  `scripts/run_c3_dns_campaign.sh` (#307).
