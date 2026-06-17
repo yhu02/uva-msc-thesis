@@ -95,13 +95,44 @@ def test_non_positive_cache_off_drop_dropped_from_shrinkage(monkeypatch):
     assert out["mechanismShrinkage"]["n_pairs"] == 1
 
 
-def test_unequal_spread_counts_warns_and_pairs_min(monkeypatch):
+def test_unequal_session_counts_warns_and_pairs_min(monkeypatch):
     off = [_sess(f"off{i}", "off", 10, 100) for i in range(3)]
     on = [_sess("on0", "on", 10, 20)]  # only 1 cache-on
     monkeypatch.setattr(c3, "collect_sessions", lambda _d: (off + on, []))
     out = c3.analyze("x")
-    assert any("unequal valid spread counts" in w for w in out["warnings"])
+    assert any("unequal session counts" in w for w in out["warnings"])
     assert out["mechanismShrinkage"]["n_pairs"] == 1
+
+
+def test_shrinkage_pairing_survives_misaligned_none_spreads(monkeypatch):
+    # Regression for the critical mis-pairing: a tainted (None) spread at a
+    # DIFFERENT index in each cache group must NOT shift the alignment. With
+    # collection-order pairing-before-dropping, only (off2↔on2) survives.
+    off = [
+        _sess("off0", "off", 10, 100.0),
+        _sess("off1", "off", 10, None),
+        _sess("off2", "off", 10, 110.0),
+    ]
+    on = [_sess("on0", "on", 10, None), _sess("on1", "on", 10, 22.0), _sess("on2", "on", 10, 24.0)]
+    monkeypatch.setattr(c3, "collect_sessions", lambda _d: (off + on, []))
+    out = c3.analyze("x")
+    assert out["mechanismShrinkage"]["n_pairs"] == 1
+    # off2 paired with on2 → (110−24)/110 = 0.7818; a mis-pair with on1 would give 0.80.
+    assert abs(out["mechanismShrinkage"]["shrinkageMedian"] - (110 - 24) / 110) < 1e-3
+
+
+def test_direction_uses_paired_difference_not_marginal_medians(monkeypatch):
+    # Non-monotone paired data: marginal median(spread)=11 < median(packed)=12,
+    # but the per-pair diffs [1,-9,18] have median +1 → the paired test direction
+    # (which rescueMet gates on) is spread>packed. rescueMet must follow the pair.
+    off = [
+        _sess("o0", "off", 9, 10.0),
+        _sess("o1", "off", 20, 11.0),
+        _sess("o2", "off", 12, 30.0),
+    ]
+    monkeypatch.setattr(c3, "collect_sessions", lambda _d: (off, []))
+    out = c3.analyze("x")
+    assert out["placementDependence"]["rescueMet"] is True
 
 
 # ── collect_sessions: grouping + exclusion ─────────────────────────────
@@ -190,4 +221,4 @@ def test_main_prints_warnings(tmp_path, monkeypatch, capsys):
     rc = c3.main(["--results-dir", str(tmp_path)])  # no --json
     assert rc == 0
     out = capsys.readouterr().out
-    assert "! " in out and "unequal valid spread counts" in out
+    assert "! " in out and "unequal session counts" in out
