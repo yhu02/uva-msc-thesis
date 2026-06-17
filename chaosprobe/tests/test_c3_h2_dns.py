@@ -121,18 +121,38 @@ def test_shrinkage_pairing_survives_misaligned_none_spreads(monkeypatch):
     assert abs(out["mechanismShrinkage"]["shrinkageMedian"] - (110 - 24) / 110) < 1e-3
 
 
-def test_direction_uses_paired_difference_not_marginal_medians(monkeypatch):
-    # Non-monotone paired data: marginal median(spread)=11 < median(packed)=12,
-    # but the per-pair diffs [1,-9,18] have median +1 → the paired test direction
-    # (which rescueMet gates on) is spread>packed. rescueMet must follow the pair.
+def test_direction_follows_wilcoxon_rank_not_median_of_diffs(monkeypatch):
+    # Non-monotone paired diffs [+1,+1,+1,-4,-5]: median = +1 (so a median-of-
+    # diffs flag would say spread>packed=True), but the signed-RANK mass has
+    # w_plus=6 < w_minus=9 → the one-sided Wilcoxon is AGAINST (p>0.5). rescueMet
+    # must follow the rank test the p-value uses, so it is False — never letting
+    # the conjunction boolean contradict p_a. (Pins the round-2 fix.)
     off = [
-        _sess("o0", "off", 9, 10.0),
-        _sess("o1", "off", 20, 11.0),
-        _sess("o2", "off", 12, 30.0),
+        _sess("o0", "off", 10, 11.0),
+        _sess("o1", "off", 10, 11.0),
+        _sess("o2", "off", 10, 11.0),
+        _sess("o3", "off", 10, 6.0),
+        _sess("o4", "off", 10, 5.0),
     ]
     monkeypatch.setattr(c3, "collect_sessions", lambda _d: (off, []))
     out = c3.analyze("x")
-    assert out["placementDependence"]["rescueMet"] is True
+    assert out["placementDependence"]["p_one_sided"] > 0.5  # against-direction
+    assert out["placementDependence"]["rescueMet"] is False
+
+
+def test_conjunction_false_when_a_coprimary_has_no_directional_p(monkeypatch):
+    # Every shrinkage exactly at the 0.5 bar → all (shrink−0.5) diffs are zero →
+    # Wilcoxon n_nonzero=0 → mech p=None → familyInputMaxP=None. barMet is True
+    # (median 0.5 ≥ 0.5), but the conjunction must NOT claim a pass with no
+    # significance value to feed Holm. (Pins the round-2 degenerate fix.)
+    off = [_sess(f"off{i}", "off", 10, 100.0) for i in range(3)]
+    on = [_sess(f"on{i}", "on", 10, 50.0) for i in range(3)]  # shrink = 0.5 each
+    monkeypatch.setattr(c3, "collect_sessions", lambda _d: (off + on, []))
+    out = c3.analyze("x")
+    assert out["mechanismShrinkage"]["barMet"] is True
+    assert out["familyInputMaxP"] is None
+    assert out["conjunction"] is False
+    assert any("not evaluable" in w for w in out["warnings"])
 
 
 # ── collect_sessions: grouping + exclusion ─────────────────────────────

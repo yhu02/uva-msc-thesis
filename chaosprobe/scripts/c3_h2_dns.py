@@ -159,18 +159,21 @@ def _one_sided_greater(res: Dict[str, object]) -> Optional[float]:
 def _block(label: str, a: List[float], b: List[float]) -> Dict[str, Any]:
     """Paired one-sided (a>b) Wilcoxon summary for a co-primary/secondary."""
     res = wilcoxon_signed_rank(a, b)
+    p_one = _one_sided_greater(res)
+    # The direction flag is derived from the SAME statistic as the p-value: the
+    # signed-RANK mass (w_plus ≥ w_minus), which _one_sided_greater encodes as
+    # p_one < 0.5 (in-direction with signal). Using the median of the per-pair
+    # diffs instead can disagree with the rank test for a non-monotone pattern,
+    # letting rescueMet/conjunction contradict p_a — so the boolean and the
+    # p-value can never tell opposite stories.
     return {
         "label": label,
         "n_pairs": len(a),
         "median_a": round(st.median(a), 4) if a else None,
         "median_b": round(st.median(b), 4) if b else None,
-        "p_one_sided": _one_sided_greater(res),
+        "p_one_sided": p_one,
         "p_two_sided": res["p_two_sided"],
-        # Paired test ⇒ the direction is the sign of the median of the per-pair
-        # DIFFERENCES, not the difference of the marginal medians (the two can
-        # diverge for a non-monotone paired pattern). rescueMet gates the
-        # conjunction, so it must match the paired test wilcoxon actually runs.
-        "directionGreater": bool(a and b and st.median([x - y for x, y in zip(a, b)]) > 0),
+        "directionGreater": p_one is not None and p_one < 0.5,
     }
 
 
@@ -238,7 +241,17 @@ def analyze(results_dir: str) -> Dict[str, Any]:
     p_a, p_b = place["p_one_sided"], mech["p_one_sided"]
     family_input = max(p_a, p_b) if (p_a is not None and p_b is not None) else None
     # Registered direction+bar conjunction (p-values uncorrected, pending Holm).
-    conjunction = bool(place["rescueMet"] and mech["barMet"])
+    # Requires a defined directional p for BOTH co-primaries: a co-primary whose
+    # paired differences are all zero (e.g. every shrinkage exactly at the bar)
+    # yields no Wilcoxon signal (p=None), so the conjunction cannot be evaluated
+    # — report it False (and warn) rather than letting barMet/rescueMet alone
+    # claim a pass with no significance value to feed Holm.
+    if family_input is None:
+        warnings.append(
+            "V2-H2: a co-primary produced no directional p (no non-zero paired "
+            "differences) — conjunction not evaluable; reported False pending more data"
+        )
+    conjunction = bool(place["rescueMet"] and mech["barMet"] and family_input is not None)
 
     return {
         "nSessions": len(sessions),
