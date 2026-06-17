@@ -22,6 +22,7 @@ from chaosprobe.commands.run_cmd import (
     _init_v2_session,
     _resolve_v2_args,
     _restore_v2_placements,
+    _selfheal_v2_dns,
     _strategies_overridden_on_cli,
     run,
 )
@@ -279,6 +280,30 @@ class TestRestoreV2Placements:
         session = self._session()
         session.dns_cache = "off"
         _restore_v2_placements(session, "ns")  # must not raise
+
+
+class TestSelfhealV2Dns:
+    """Startup DNS self-heal — recovers a cache-off override a prior aborted run left."""
+
+    def _session(self):
+        return TestRestoreV2Placements._session(self)
+
+    def test_resets_to_cache_on_for_any_v2_session(self, monkeypatch):
+        reset = MagicMock()
+        monkeypatch.setattr(run_cmd.dns_cache_engine, "apply_dns_cache", reset)
+        session = self._session()  # dns_cache None — self-heal still runs (heals a prior leak)
+        _selfheal_v2_dns(session, "ns")
+        api, ns, services, mode = reset.call_args.args[:4]
+        assert ns == "ns" and mode == run_cmd.dns_cache_engine.CACHE_ON
+        assert reset.call_args.kwargs.get("wait") is False  # don't block startup
+
+    def test_failure_is_swallowed(self, monkeypatch):
+        monkeypatch.setattr(
+            run_cmd.dns_cache_engine,
+            "apply_dns_cache",
+            MagicMock(side_effect=RuntimeError("api down")),
+        )
+        _selfheal_v2_dns(self._session(), "ns")  # must not raise
 
 
 class TestRunV2EndToEnd:

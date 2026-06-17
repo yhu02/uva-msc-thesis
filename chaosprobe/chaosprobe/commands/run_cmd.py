@@ -1177,6 +1177,32 @@ def _restore_v2_placements(session: V2Session, namespace: str) -> None:
             click.echo(f"  Warning: v2 DNS-cache reset failed: {e}", err=True)
 
 
+def _selfheal_v2_dns(session: V2Session, namespace: str) -> None:
+    """Startup self-heal: reset app DNS to the cluster default (cache-on).
+
+    A C3 cache-off override is applied per condition and reset at clean
+    cleanup (:func:`_restore_v2_placements`), but an **aborted or killed** run
+    (Ctrl-C / SIGTERM / crash) can leave the override in place — neither
+    ``affinity_engine.restore`` nor :func:`_clear_stale_placement` ever touch
+    ``dnsConfig``. This clears any stale override **before** the run measures
+    anything, making the DNS path symmetric with the placement self-heal so a
+    leaked cache-off override cannot silently corrupt a later v2 run's
+    cache-on baseline (the V2-H2 control assumption). Runs for **every** v2
+    session regardless of its own cache axis (the leak it heals is from a
+    *prior* run); a no-op (no rollout) when no override is present.
+    """
+    try:
+        dns_cache_engine.apply_dns_cache(
+            session.api,
+            namespace,
+            list(session.services),
+            dns_cache_engine.CACHE_ON,
+            wait=False,
+        )
+    except Exception as e:
+        click.echo(f"  Warning: v2 DNS-cache startup self-heal failed: {e}", err=True)
+
+
 def _strategies_overridden_on_cli() -> bool:
     """True when -s/--strategies was given explicitly (vs. its default).
 
@@ -1673,6 +1699,11 @@ def run(
     v2_state: Optional[V2Session] = None
     if v2_args is not None:
         v2_state = _init_v2_session(v2_args, namespace, mutator, service_routes)
+        # Self-heal a DNS-cache override a prior aborted C3 run may have left:
+        # reset to the cluster default before this run measures anything, so a
+        # stale cache-off path cannot corrupt the cache-on baseline. Symmetric
+        # with the placement self-heal below (_clear_stale_placement).
+        _selfheal_v2_dns(v2_state, namespace)
 
     if replicas:
         click.echo(f"Scaling app deployments to {replicas} replica(s)...")
