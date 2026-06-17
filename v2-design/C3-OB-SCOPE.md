@@ -1,10 +1,20 @@
 # C3 — implementation scope (V2-H2: placement-dependence + DNS intervention)
 
-**Status:** scoped, **not built**. This is the implementation plan for the C3
-campaign; the hypothesis itself is frozen in
-[`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §V2-H2 and
-[`00-DESIGN.md`](00-DESIGN.md) §10 (Arm 1). Nothing here changes the registered
-hypothesis, test, SESOI, or n. Build is user-initiated.
+**Status:** code **built + converged**; the cluster run is user-gated. The
+hypothesis is frozen in [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §V2-H2
+and [`00-DESIGN.md`](00-DESIGN.md) §10 (Arm 1); nothing here changes the
+registered hypothesis, test, SESOI, or n.
+
+**Build status (2026-06-17):**
+- ✅ DNS-cache toggle — `chaosprobe/placement/dns_cache.py` (PR #300).
+- ✅ `--v2-dns-cache` session knob + wiring + startup self-heal (PRs #301/#302).
+- ✅ Analysis driver — `scripts/c3_h2_dns.py` (PR #303), converged over 4
+  review rounds (#304/#305/#306 fixed pairing-alignment + rank-consistent
+  direction gates on both arms).
+- ✅ Campaign driver — `scripts/run_c3_dns_campaign.sh` (this change).
+- ⏳ **Cluster steps remain (user-gated):** the go/no-go smoke + cache-state
+  verification, then the full campaign run (~3 h/session ⇒ days), then deposit.
+  A dnsConfig-realization deviation must be logged before results are quoted.
 
 ## Registered design (what C3 must produce)
 
