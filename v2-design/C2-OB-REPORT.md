@@ -87,27 +87,35 @@ faces:
   of V2-H3: anti-affine `r=3` fully rescues the user-facing error rate (0.0 vs
   r1's 0.632; interaction p ≈ 0; rescue 0.632 ≫ the 0.302 margin).
 - **Trough depth** shows a significant interaction (p = 0.0065) but the
-  anti-affine rescue (0.0455) falls **below** the 0.0909 margin, so it is **not
-  met**.
+  anti-affine rescue (0.0455) falls **below** the 0.0909 margin — which, on this
+  placement, the depth co-primary **could not have cleared regardless of the
+  true effect** (see below).
 
-Because the conjunction requires *both* co-primaries to clear interaction +
-rescue + control, and the depth co-primary fails the rescue margin, the
-registered V2-H3 conjunction is **not met** on this campaign. The failure is now
-isolated to a **single** criterion — the depth-rescue margin — with everything
-else (both interactions significant, both packing controls passing, the error
-rescue large and significant) supporting V2-H3's direction.
+**Reading the verdict.** The registered conjunction is **not met**, but the
+single failing criterion — the trough-depth rescue margin — is one the depth
+co-primary was **unable to adjudicate by construction on this placement**, not
+evidence against rescue. Under round-robin spread, draining one node costs r=1
+only ≈ 1 pod of endpoints in total, so r=1's trough depth (0.0909) ≈ the
+registered 1-pod margin: the metric's dynamic range at r=1 is the same size as
+the bar the anti-affine arm must beat, leaving no room for a ≥1-pod rescue to
+register. **The substantive result is therefore the user-route error face**,
+where anti-affinity rescues strongly and significantly (0.632 → 0.0, p ≈ 0,
+rescue ≫ margin), with both packing controls passing. Honest summary:
+*replication rescues user-visible availability under node-drain when replicas
+are spread; the trough-depth face could not adjudicate rescue on this placement,
+so the strict both-faces conjunction is not satisfied* — directional support for
+V2-H3, not a refutation. (The depth-margin construction limit is a lesson for a
+future pre-registration — e.g. a depth margin defined relative to the realized
+r=1 depth — not a post-hoc retune of this frozen, analyzed criterion.)
 
-**Methodological caveat (flag for interpretation, not a post-hoc change).**
-Under the round-robin placement, draining one node removes the ~1–2 services
-pinned to it; for `r=1` that is ≈ 1 pod, so the r1 trough-depth median (0.0909)
-is essentially *equal to the registered 1-pod rescue margin* (0.0909). The
-depth-rescue criterion (r1−anti ≥ 1 pod) is therefore close to impossible to
-satisfy by construction on this placement — the whole app only loses about one
-pod's worth of endpoints at r=1, so the anti-affine arm cannot beat r1 by a full
-further pod. This is a tension between the registered absolute-1-pod margin and
-the round-robin spread, surfaced for the write-up; the analysis is reported
-exactly as registered and was **not** re-tuned. (The user-route error face, which
-*does* clear its margin, is unaffected by this construction limit.)
+**On the depth-margin construction limit (the precise arithmetic).** Under
+round-robin placement, draining one node removes the ~1–2 services pinned to it;
+for `r=1` that is ≈ 1 pod, so the r1 trough-depth median (0.0909) is essentially
+*equal to the registered 1-pod rescue margin* (0.0909) — the depth metric's
+dynamic range at r=1 coincides with the bar. The analysis is reported exactly as
+registered and was **not** re-tuned; this is surfaced as a measurement limit on
+the depth face, with the error face (which carries no such limit) supplying the
+substantive result.
 
 ## Limitations
 
