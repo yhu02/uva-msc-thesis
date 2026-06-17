@@ -58,6 +58,7 @@ from chaosprobe.orchestrator.v2_session import (
     session_metadata,
 )
 from chaosprobe.placement import affinity_engine
+from chaosprobe.placement import dns_cache as dns_cache_engine
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import DEFAULT_RUN_STRATEGIES, PlacementStrategy
 from chaosprobe.probes.builder import (
@@ -986,6 +987,7 @@ class V2RunArgs:
     mode: str
     workers: Tuple[str, ...]
     packed_assignment: str
+    dns_cache: Optional[str]
 
 
 def _resolve_v2_args(
@@ -996,6 +998,7 @@ def _resolve_v2_args(
     v2_mode: Optional[str],
     v2_workers: Optional[str],
     v2_packed_assignment: Optional[str],
+    v2_dns_cache: Optional[str],
     *,
     strategies_overridden: bool,
     seeds: Optional[str],
@@ -1022,6 +1025,7 @@ def _resolve_v2_args(
                 ("--v2-mode", v2_mode),
                 ("--v2-workers", v2_workers),
                 ("--v2-packed-assignment", v2_packed_assignment),
+                ("--v2-dns-cache", v2_dns_cache),
             )
             if value is not None
         ]
@@ -1076,6 +1080,10 @@ def _resolve_v2_args(
             f"--v2-packed-assignment must be one of {PACKED_ASSIGNMENTS}, "
             f"got '{packed_assignment}'"
         )
+    if v2_dns_cache is not None and v2_dns_cache not in dns_cache_engine.CACHE_MODES:
+        raise click.ClickException(
+            f"--v2-dns-cache must be one of {dns_cache_engine.CACHE_MODES}, got '{v2_dns_cache}'"
+        )
     if replicas not in affinity_engine.SUPPORTED_REPLICAS:
         raise click.ClickException(
             f"--v2-replicas must be one of {sorted(affinity_engine.SUPPORTED_REPLICAS)} "
@@ -1096,6 +1104,7 @@ def _resolve_v2_args(
         mode=mode,
         workers=workers,
         packed_assignment=packed_assignment,
+        dns_cache=v2_dns_cache,
     )
 
 
@@ -1120,6 +1129,7 @@ def _init_v2_session(
             mode=args.mode,
             workers=args.workers,
             packed_assignment=args.packed_assignment,
+            dns_cache=args.dns_cache,
             edges=edges,
             services=services,
             api=affinity_engine.K8sApi.from_cluster(),
@@ -1134,19 +1144,37 @@ def _init_v2_session(
         f"[{', '.join(c.name for c in session.conditions)}] "
         f"r={session.replicas} mode={session.mode} "
         f"packing={session.packed_assignment} "
+        f"dnsCache={session.dns_cache or 'default'} "
         f"orderSeed={session.order_seed} solverSeed={session.solver_seed}"
     )
     return session
 
 
 def _restore_v2_placements(session: V2Session, namespace: str) -> None:
-    """End-of-run cleanup: clear engine affinity patches back to defaults."""
+    """End-of-run cleanup: clear engine affinity patches back to defaults.
+
+    For a C3 session (DNS-cache axis), also reset the pod DNS resolver to the
+    cluster default (cache-on) — ``affinity_engine.restore`` does not touch
+    ``dnsConfig``, so a cache-off override would otherwise leak past the run.
+    """
     click.echo("Cleanup: restoring v2 affinity placements to default scheduling...")
     try:
         affinity_engine.restore(session.api, namespace, wait=False)
         click.echo("  v2 placements restored.")
     except Exception as e:
         click.echo(f"  Warning: v2 restore failed: {e}", err=True)
+    if session.dns_cache is not None:
+        try:
+            dns_cache_engine.apply_dns_cache(
+                session.api,
+                namespace,
+                list(session.services),
+                dns_cache_engine.CACHE_ON,
+                wait=False,
+            )
+            click.echo("  v2 DNS-cache reset to cluster default (cache-on).")
+        except Exception as e:
+            click.echo(f"  Warning: v2 DNS-cache reset failed: {e}", err=True)
 
 
 def _strategies_overridden_on_cli() -> bool:
@@ -1461,6 +1489,18 @@ def _acquire_run_lock() -> None:
         f"matches the M1b-verified packed semantics)."
     ),
 )
+@click.option(
+    "--v2-dns-cache",
+    type=click.Choice(list(dns_cache_engine.CACHE_MODES)),
+    default=None,
+    help=(
+        "DNS-cache axis for the C3 / V2-H2 campaign (default: unset = cluster "
+        "default, no override). 'off' overrides each app pod's dnsConfig to the "
+        "CoreDNS clusterIP over UDP (the v1 cross-node-UDP baseline); 'on' uses "
+        "the kubelet-default NodeLocal DNSCache. Applied per condition after "
+        "placement; reset to cluster default at cleanup."
+    ),
+)
 @neo4j_uri_option
 @neo4j_user_option
 @neo4j_password_option
@@ -1496,6 +1536,7 @@ def run(
     v2_mode: Optional[str],
     v2_workers: Optional[str],
     v2_packed_assignment: Optional[str],
+    v2_dns_cache: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
@@ -1534,6 +1575,7 @@ def run(
         v2_mode,
         v2_workers,
         v2_packed_assignment,
+        v2_dns_cache,
         strategies_overridden=_strategies_overridden_on_cli(),
         seeds=seeds,
         scale_replicas=replicas,

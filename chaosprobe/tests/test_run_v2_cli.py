@@ -41,6 +41,7 @@ def _resolve(**overrides):
         v2_mode=None,
         v2_workers=WORKERS,
         v2_packed_assignment=None,
+        v2_dns_cache=None,
         strategies_overridden=False,
         seeds=None,
         scale_replicas=0,
@@ -55,6 +56,7 @@ def _resolve(**overrides):
         kwargs["v2_mode"],
         kwargs["v2_workers"],
         kwargs["v2_packed_assignment"],
+        kwargs["v2_dns_cache"],
         strategies_overridden=kwargs["strategies_overridden"],
         seeds=kwargs["seeds"],
         scale_replicas=kwargs["scale_replicas"],
@@ -75,6 +77,7 @@ class TestResolveV2Args:
             ("--v2-mode", {"v2_mode": "packed"}),
             ("--v2-workers", {"v2_workers": WORKERS}),
             ("--v2-packed-assignment", {"v2_packed_assignment": "round-robin"}),
+            ("--v2-dns-cache", {"v2_dns_cache": "off"}),
         ],
     )
     def test_v2_flags_without_levels_raise(self, flag, overrides):
@@ -132,6 +135,7 @@ class TestResolveV2Args:
         assert args.levels == (0.0, 0.25, 0.5, 0.75, 1.0)
         assert args.workers == ("w1", "w2", "w3")
         assert args.packed_assignment == run_cmd._V2_DEFAULT_PACKED_ASSIGNMENT
+        assert args.dns_cache is None  # no cache axis unless requested (C1/C2)
 
     def test_round_robin_packing_resolves(self):
         args = _resolve(v2_packed_assignment="round-robin")
@@ -141,6 +145,15 @@ class TestResolveV2Args:
     def test_invalid_packed_assignment_raises(self):
         with pytest.raises(click.ClickException, match="--v2-packed-assignment must be one of"):
             _resolve(v2_packed_assignment="bin-packing")
+
+    @pytest.mark.parametrize("mode", ["on", "off"])
+    def test_dns_cache_resolves(self, mode):
+        args = _resolve(v2_dns_cache=mode)
+        assert args is not None and args.dns_cache == mode
+
+    def test_invalid_dns_cache_raises(self):
+        with pytest.raises(click.ClickException, match="--v2-dns-cache must be one of"):
+            _resolve(v2_dns_cache="warm")
 
     def test_conditions_match_order_seed(self):
         args = _resolve(v2_order_seed=7)
@@ -238,6 +251,34 @@ class TestRestoreV2Placements:
             run_cmd.affinity_engine, "restore", MagicMock(side_effect=RuntimeError("api down"))
         )
         _restore_v2_placements(self._session(), "ns")  # must not raise
+
+    def test_c3_session_also_resets_dns_to_cache_on(self, monkeypatch):
+        monkeypatch.setattr(run_cmd.affinity_engine, "restore", MagicMock())
+        reset = MagicMock()
+        monkeypatch.setattr(run_cmd.dns_cache_engine, "apply_dns_cache", reset)
+        session = self._session()
+        session.dns_cache = "off"  # a C3 session
+        _restore_v2_placements(session, "ns")
+        api, ns, services, mode = reset.call_args.args[:4]
+        assert ns == "ns" and mode == run_cmd.dns_cache_engine.CACHE_ON
+
+    def test_non_c3_session_does_not_touch_dns(self, monkeypatch):
+        monkeypatch.setattr(run_cmd.affinity_engine, "restore", MagicMock())
+        reset = MagicMock()
+        monkeypatch.setattr(run_cmd.dns_cache_engine, "apply_dns_cache", reset)
+        _restore_v2_placements(self._session(), "ns")  # dns_cache is None
+        reset.assert_not_called()
+
+    def test_dns_reset_failure_is_swallowed(self, monkeypatch):
+        monkeypatch.setattr(run_cmd.affinity_engine, "restore", MagicMock())
+        monkeypatch.setattr(
+            run_cmd.dns_cache_engine,
+            "apply_dns_cache",
+            MagicMock(side_effect=RuntimeError("api down")),
+        )
+        session = self._session()
+        session.dns_cache = "off"
+        _restore_v2_placements(session, "ns")  # must not raise
 
 
 class TestRunV2EndToEnd:

@@ -48,6 +48,7 @@ import chaosprobe.placement.fraction_solver as fs
 from chaosprobe.config.topology import ServiceRoute
 from chaosprobe.orchestrator import quiescence
 from chaosprobe.placement import affinity_engine as engine
+from chaosprobe.placement import dns_cache as dns
 
 #: Pre-registered f-level acceptance tolerance (single source: the solver's).
 TOLERANCE = fs.TARGET_TOLERANCE
@@ -96,6 +97,7 @@ class V2Session:
     settle_timeout: float = quiescence.DEFAULT_SETTLE_TIMEOUT
     rollout_timeout: float = DEFAULT_ROLLOUT_TIMEOUT
     packed_assignment: str = PACKED_ASSIGNMENT_SOLVER
+    dns_cache: Optional[str] = None
     per_level: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
@@ -240,6 +242,7 @@ def build_session(
     settle_timeout: float = quiescence.DEFAULT_SETTLE_TIMEOUT,
     rollout_timeout: float = DEFAULT_ROLLOUT_TIMEOUT,
     packed_assignment: str = PACKED_ASSIGNMENT_SOLVER,
+    dns_cache: Optional[str] = None,
 ) -> V2Session:
     """Validate the (r, mode, workers, graph) combination and build the session."""
     if replicas not in engine.SUPPORTED_REPLICAS:
@@ -251,6 +254,10 @@ def build_session(
     if packed_assignment not in PACKED_ASSIGNMENTS:
         raise ValueError(
             f"packed_assignment must be one of {PACKED_ASSIGNMENTS}, got '{packed_assignment}'"
+        )
+    if dns_cache is not None and dns_cache not in dns.CACHE_MODES:
+        raise ValueError(
+            f"--v2-dns-cache must be one of {dns.CACHE_MODES} (or unset), got '{dns_cache}'"
         )
     if mode == engine.MODE_ANTI_AFFINE and replicas > 1 and len(workers) < replicas:
         raise ValueError(
@@ -279,6 +286,7 @@ def build_session(
         settle_timeout=settle_timeout,
         rollout_timeout=rollout_timeout,
         packed_assignment=packed_assignment,
+        dns_cache=dns_cache,
     )
 
 
@@ -394,6 +402,24 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
     )
     record["schedulingLatencySeconds"] = round(applied.duration_seconds, 3)
     record["pendingDeployments"] = applied.pending
+
+    # C3 / V2-H2 DNS-cache axis: apply the session's cache mode to every app
+    # deployment *after* placement, so this condition's measurement window
+    # provably has the right cache state (a pod's resolv.conf is fixed at
+    # start; the Recreate in the cache patch restarts them). The placement's
+    # affinity is untouched by the cache patch, so verification below still
+    # adjudicates the placement. No-op for C1/C2 (dns_cache is None).
+    if session.dns_cache is not None:
+        cache_applied = dns.apply_dns_cache(
+            api,
+            namespace,
+            list(session.services),
+            session.dns_cache,
+            timeout=session.rollout_timeout,
+        )
+        record["dnsCache"] = session.dns_cache
+        record["dnsCacheLatencySeconds"] = round(cache_applied.duration_seconds, 3)
+        record["pendingDeployments"] = sorted(set(applied.pending) | set(cache_applied.pending))
 
     verification = engine.verify_placement(api, namespace, session.replicas, session.mode)
     record["verification"] = verification.to_dict()
@@ -596,6 +622,7 @@ def session_metadata(session: V2Session) -> Dict[str, Any]:
         "replicas": session.replicas,
         "mode": session.mode,
         "packedAssignment": session.packed_assignment,
+        "dnsCache": session.dns_cache,
         "workers": list(session.workers),
         "tolerance": TOLERANCE,
         "perLevel": per_level,
