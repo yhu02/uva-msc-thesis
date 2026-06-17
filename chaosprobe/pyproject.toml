@@ -178,6 +178,7 @@ files = [
     # placement/ — pod-placement strategy helpers (pure Python).
     "chaosprobe/placement/__init__.py",
     "chaosprobe/placement/affinity_engine.py",
+    "chaosprobe/placement/dns_cache.py",
     "chaosprobe/placement/fraction_solver.py",
     "chaosprobe/placement/mutator.py",
     "chaosprobe/placement/strategy.py",
