@@ -223,6 +223,11 @@ def analyze(results_dir: str) -> Dict[str, Any]:
         [SHRINKAGE_BAR] * len(shrink),
     )
     mech["shrinkageMedian"] = round(st.median(shrink), 4) if shrink else None
+    # `barMet` is the DESCRIPTIVE point-estimate check (median shrinkage ≥ bar).
+    # The registered (b) "met" is the one-sided Wilcoxon against the bar, whose
+    # direction is mech["directionGreater"] (rank-based) — the conjunction gates
+    # on THAT (see below), not on barMet alone, so the verdict can never
+    # contradict p_b (the same reconciliation arm (a) uses for rescueMet).
     mech["barMet"] = bool(shrink and st.median(shrink) >= SHRINKAGE_BAR)
 
     # Secondary (not in family): packed arm shows ~no cache effect — same
@@ -251,7 +256,13 @@ def analyze(results_dir: str) -> Dict[str, Any]:
             "V2-H2: a co-primary produced no directional p (no non-zero paired "
             "differences) — conjunction not evaluable; reported False pending more data"
         )
-    conjunction = bool(place["rescueMet"] and mech["barMet"] and family_input is not None)
+    # Both co-primary gates follow the SAME signed-rank statistic as their p:
+    # (a) rescueMet = place.directionGreater, (b) mech.directionGreater (the
+    # registered one-sided Wilcoxon against the 50% bar). Gating (b) on the
+    # median `barMet` alone would let the conjunction pass while p_b > 0.5 for a
+    # non-monotone shrinkage pattern — the round-2 reconciliation, now propagated
+    # to arm (b).
+    conjunction = bool(place["rescueMet"] and mech["directionGreater"] and family_input is not None)
 
     return {
         "nSessions": len(sessions),

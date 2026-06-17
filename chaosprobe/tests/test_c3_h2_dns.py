@@ -155,6 +155,23 @@ def test_conjunction_false_when_a_coprimary_has_no_directional_p(monkeypatch):
     assert any("not evaluable" in w for w in out["warnings"])
 
 
+def test_mechanism_gate_follows_rank_not_median(monkeypatch):
+    # Non-monotone shrinkage [0.51,0.51,0.51,0.10,0.0]: median = 0.51 ≥ bar so
+    # barMet=True, but the per-pair diffs vs 0.5 are [+.01,+.01,+.01,-.40,-.50]
+    # → signed-rank w_plus=6 < w_minus=9 → one-sided p_b > 0.5 (AGAINST). The
+    # conjunction must gate on the rank test, not the median, so it is False even
+    # though barMet is True. (Pins the round-3 propagation fix to arm (b).)
+    off = [_sess(f"off{i}", "off", 10, 100.0) for i in range(5)]
+    on_spreads = [49.0, 49.0, 49.0, 90.0, 100.0]  # shrink = (100−on)/100
+    on = [_sess(f"on{i}", "on", 10, sp) for i, sp in enumerate(on_spreads)]
+    monkeypatch.setattr(c3, "collect_sessions", lambda _d: (off + on, []))
+    out = c3.analyze("x")
+    assert out["mechanismShrinkage"]["barMet"] is True  # median cleared the bar
+    assert out["mechanismShrinkage"]["directionGreater"] is False  # rank test against
+    assert out["familyInputMaxP"] > 0.5  # p_b dominates and is against-direction
+    assert out["conjunction"] is False  # gated on the rank test, not the median
+
+
 # ── collect_sessions: grouping + exclusion ─────────────────────────────
 
 
