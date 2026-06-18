@@ -148,8 +148,10 @@ def _is_complete(p: Placement) -> bool:
 
 
 def _placement_label(f: float, r: int, mode: str) -> str:
+    # v2Session.mode is packed|anti-affine (NOT the packedAssignment solver/round-robin).
+    # Omit the mode suffix only for the canonical r=1 packed placement; show it otherwise.
     base = f"f={f:g}, r={r}"
-    return base if r == 1 and mode in ("packed", "solver", "") else f"{base}, {mode}"
+    return base if r == 1 and mode in ("packed", "") else f"{base}, {mode}"
 
 
 def _session_dns_cache(results_dir: str, run: str) -> Optional[str]:
@@ -305,6 +307,19 @@ def _coord_or(v: Optional[float], fallback: float) -> float:
     return fallback if v is None else v
 
 
+def _scatter_colour_kw(err: Optional[float]) -> Dict[str, Any]:
+    """scatter() colour kwargs for one point's error rate.
+
+    A *missing* error rate plots solid grey — NOT cmap 0.0, which would read as
+    "no errors". A present value is colour-mapped on viridis over [0, 1]. The
+    cmap/vmin/vmax args are passed ONLY when mapping a value, so the grey string
+    colour doesn't trigger matplotlib's "unused colormap args" warning.
+    """
+    if err is None:
+        return {"c": "lightgray"}
+    return {"c": [err], "cmap": "viridis", "vmin": 0, "vmax": 1}
+
+
 def _fmt(v: Optional[float]) -> str:
     return "—" if v is None else f"{v:.4g}"
 
@@ -335,8 +350,12 @@ def render(result: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def plot(result: Dict[str, Any], out_path: str) -> None:
-    """Two-face scatter: latency (x) vs trough depth (y), error rate as colour."""
+def plot(result: Dict[str, Any], out_path: str) -> Tuple[Any, Any]:
+    """Two-face scatter: latency (x) vs trough depth (y), error rate as colour.
+
+    Returns ``(fig, ax)`` (the figure is also saved and closed) so callers/tests
+    can inspect rendered properties — e.g. a missing-error point's grey facecolor.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -358,15 +377,8 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
         err = st["user_err_during"]["point"]
         corro = p["role"] == "corroboration"
         nd = p["nonDominated"] is True
-        # A missing error rate plots grey (not cmap 0.0, which would read as "no
-        # errors"); only pass cmap/vmin/vmax when actually colour-mapping a value,
-        # else matplotlib warns about unused colormap args on the string colour.
-        colour_kw: Dict[str, Any] = (
-            {"c": "lightgray"}
-            if err is None
-            else {"c": [err], "cmap": "viridis", "vmin": 0, "vmax": 1}
-        )
-        sc = ax.scatter(
+        colour_kw = _scatter_colour_kw(err)
+        scatter = ax.scatter(
             x,
             y,
             marker=markers.get(p["fault"], "o"),
@@ -377,6 +389,8 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
             zorder=3 if nd else 2,
             **colour_kw,
         )
+        if err is not None:
+            sc = scatter  # only a colour-mapped point gates the colorbar
         ax.errorbar(
             x,
             y,
@@ -421,6 +435,7 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
+    return fig, ax
 
 
 def main() -> None:

@@ -112,7 +112,7 @@ def test_non_dominated_empty():
 
 def test_label_r1_packed_omits_mode():
     assert h4._placement_label(0.5, 1, "packed") == "f=0.5, r=1"
-    assert h4._placement_label(0.0, 1, "solver") == "f=0, r=1"
+    assert h4._placement_label(0.0, 1, "") == "f=0, r=1"  # empty mode also omits
 
 
 def test_label_includes_mode_for_replicated_or_antiaffine():
@@ -312,7 +312,7 @@ def test_collect_campaign_dns_cache_filter(tmp_path):
         rdir,
         "s1",
         r=1,
-        mode="solver",
+        mode="packed",
         fault="pod-delete",
         dns_cache="on",
         levels=[("f-000", 0.0, True)],
@@ -322,7 +322,7 @@ def test_collect_campaign_dns_cache_filter(tmp_path):
         rdir,
         "s2",
         r=1,
-        mode="solver",
+        mode="packed",
         fault="pod-delete",
         dns_cache="off",
         levels=[("f-000", 0.0, True)],
@@ -330,7 +330,7 @@ def test_collect_campaign_dns_cache_filter(tmp_path):
     )
     placements, warnings = h4.collect_campaign(str(rdir), "C3", "corroboration", dns_cache="on")
     assert len(placements) == 1
-    p = placements[(0.0, 1, "solver", "pod-delete")]
+    p = placements[(0.0, 1, "packed", "pod-delete")]
     assert p.session_values[LAT] == [36.0]  # only the cache-on session
     # The excluded cache-off session is surfaced, not silently dropped.
     assert any("s2" in w and "dnsCache='off'" in w for w in warnings)
@@ -346,7 +346,7 @@ def test_collect_campaign_missing_dnscache_field_warns_not_silent(tmp_path):
         rdir,
         "s1",
         r=1,
-        mode="solver",
+        mode="packed",
         fault="pod-delete",
         dns_cache="on",
         levels=[("f-000", 0.0, True)],
@@ -356,7 +356,7 @@ def test_collect_campaign_missing_dnscache_field_warns_not_silent(tmp_path):
         rdir,
         "s2",
         r=1,
-        mode="solver",
+        mode="packed",
         fault="pod-delete",
         dns_cache=None,  # summary parses but has no dnsCache field
         levels=[("f-000", 0.0, True)],
@@ -375,7 +375,7 @@ def test_session_dns_cache_missing_field_is_none(tmp_path):
         rdir,
         "s1",
         r=1,
-        mode="solver",
+        mode="packed",
         fault="pod-delete",  # no dns_cache field
         levels=[("f-000", 0.0, True)],
         raws={"f-000": [_raw_iter(1, 36.0)]},
@@ -546,14 +546,18 @@ def test_coord_or_treats_zero_as_present_not_missing():
 
 
 def test_nd_membership_keyed_by_identity_not_label(monkeypatch, tmp_path):
-    # Fix 4 regression guard: two frontier placements that COLLIDE on (campaign,label)
-    # — _placement_label omits mode for r=1, so packed/solver both render "f=0, r=1".
-    # The winner dominates the loser; a label-keyed membership set would mark BOTH
-    # non-dominated. Identity keying must flag only the winner.
+    # Fix 4 regression guard: two frontier placements that COLLIDE on (campaign,label).
+    # The label omits the fault class, so the same (f, r, mode) under two different
+    # faults renders the identical "f=0, r=1" label on two distinct placements (the
+    # grouping key includes fault, so they ARE distinct). The winner dominates the
+    # loser; a label-keyed membership set would mark BOTH non-dominated — identity
+    # keying must flag only the winner.
     def fake_collect(results_dir, campaign, role, dns_cache=None):
         win = _pl(20.0, 1.0, 0.0, "f=0, r=1", "frontier", "C1")  # dominates
+        win.fault = "pod-delete"
         lose = _pl(40.0, 3.0, 0.6, "f=0, r=1", "frontier", "C1")  # dominated; SAME label
-        return {("packed",): win, ("solver",): lose}, []
+        lose.fault = "node-drain"  # differs only in fault (omitted from the label)
+        return {("pod-delete",): win, ("node-drain",): lose}, []
 
     monkeypatch.setattr(h4, "collect_campaign", fake_collect)
     monkeypatch.setattr(h4.Placement, "summarize", lambda self, seed=42: None)
@@ -568,16 +572,30 @@ def test_nd_membership_keyed_by_identity_not_label(monkeypatch, tmp_path):
     assert by_lat[0]["nonDominated"] is True and by_lat[1]["nonDominated"] is False
 
 
-def test_plot_handles_zero_latency_and_missing_error(tmp_path):
-    # Fix 5 regression guard: a 0.0-latency point (exercises _coord_or in the sort
-    # key/errorbars) and a point with err=None plotted LAST (exercises the grey
-    # facecolor AND the dedicated-ScalarMappable colorbar). A revert to `c=[err]`
-    # or to `fig.colorbar(sc)` on the grey point would crash here, not silently pass.
+def test_scatter_colour_kw_grey_for_missing_value_mapped_otherwise():
+    # Fix 5 regression guard (grey decision): a missing error rate → solid grey
+    # with NO cmap args (reverting to `c=[err]` / cmap-0.0 fails the first assert);
+    # a present value → colour-mapped on viridis over [0,1] (cmap args present, so
+    # the cmap-args-only-when-mapping refactor is pinned — a revert that always
+    # passed cmap args would not satisfy the grey branch's exact dict).
+    assert h4._scatter_colour_kw(None) == {"c": "lightgray"}
+    assert h4._scatter_colour_kw(0.0) == {"c": [0.0], "cmap": "viridis", "vmin": 0, "vmax": 1}
+    assert h4._scatter_colour_kw(0.5) == {"c": [0.5], "cmap": "viridis", "vmin": 0, "vmax": 1}
+
+
+def test_plot_no_colormap_warning_and_has_colorbar(tmp_path):
+    # Fix 5 regression guard (no unused-cmap warning + dedicated colorbar): a 0.0
+    # latency point (exercises _coord_or in the sort key) and an err=None point.
+    # Reverting the colour_kw refactor to always pass cmap/vmin/vmax on the grey
+    # string colour re-raises matplotlib's "No data for colormapping" UserWarning,
+    # which this `simplefilter("error")` turns into a failure.
+    import warnings as _warnings
+
     res = {
         "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
         "placements": [
-            _p_dict("C1", "f0", 0.0, 1.0, 0.04, True),  # valid 0.0 latency
-            _p_dict("C1", "f1", 40.0, 1.0, None, False),  # err=None, sorts last → grey
+            _p_dict("C1", "f0", 0.0, 1.0, 0.04, True),  # valid 0.0 latency (sorts first)
+            _p_dict("C1", "f1", 40.0, 1.0, None, False),  # err=None → grey (sorts last)
         ],
         "nonDominated": ["C1:f0"],
         "frontierSize": 2,
@@ -585,5 +603,10 @@ def test_plot_handles_zero_latency_and_missing_error(tmp_path):
         "warnings": [],
     }
     fig_path = tmp_path / "f.png"
-    h4.plot(res, str(fig_path))
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", UserWarning)
+        fig, ax = h4.plot(res, str(fig_path))
     assert fig_path.exists() and fig_path.stat().st_size > 0
+    # A dedicated colorbar axes exists (separate from the main axes), independent of
+    # the last-plotted (grey) point.
+    assert len(fig.axes) == 2 and fig.axes[-1] is not ax
