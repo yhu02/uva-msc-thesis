@@ -308,3 +308,39 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   Arm 1. Implemented in `chaosprobe/placement/dns_cache.py` (PR #300) + the
   `--v2-dns-cache` session axis (PRs #301/#302); campaign driver
   `scripts/run_c3_dns_campaign.sh` (#307).
+
+### D-2026-06-18-01 — V2-H4 frontier excludes C2 (no east-west latency face)
+
+- **date:** 2026-06-18
+- **what:** the descriptive V2-H4 placement frontier is built from the **C1
+  dose-response cells** (latency + availability faces, pod-delete) with the
+  **C3 endpoints** overlaid as corroboration; the **C2 node-drain replication
+  cells are excluded** from the two-face frontier.
+- **why:** C2 was collected with host-side Locust on the `/` route **only** — no
+  east-west prober ran — so C2 sessions have **no pre-chaos east-west p95**
+  (`ew_p95_pre_ms`), the registered latency-face axis. C2's depth is also stored
+  as a top-level fraction, not the per-iteration `es_trough_depth_pods` the
+  frontier uses. C2 therefore cannot be placed on the latency axis; its
+  replication results are reported on the availability face in `C2-OB-REPORT.md`
+  (V2-H3). Documented as a V2-H4 limitation in `V2-H4-H6-REPORT.md`.
+- **impact:** none on any confirmatory outcome (V2-H4 is descriptive, not in the
+  Holm family). The plotted frontier is degenerate on the availability face
+  under pod-delete (trough depth ≈ 1 pod for all placements), so no placement
+  margin-dominates; reported per protocol with the δ margins stated.
+- **blind?:** V2-H4 is descriptive with a registered reporting protocol; the
+  construction follows the protocol and the data actually collected — no
+  confirmatory outcome is affected.
+
+### D-2026-06-18-02 — V2-H6 (iptables direction transfer) not attempted
+
+- **date:** 2026-06-18
+- **what:** V2-H6 (exploratory secondary: spread-vs-packed UDP-drop direction
+  preserved under kube-proxy **iptables** mode) is **reported as not-attempted**.
+- **why:** the cluster ran kube-proxy **ipvs** throughout; no iptables-mode
+  campaign was run. V2-H6 was the **second item in the pre-declared de-scope
+  order** (`02-WORKPLAN.md`), and re-provisioning a parallel iptables cluster was
+  outside the realized scope. The pre-registration's exit criterion explicitly
+  permits an exploratory arm to be **reported as not-attempted**.
+- **impact:** none — V2-H6 is exploratory, uncorrected, outside the confirmatory
+  family; an un-run arm neither supports nor falsifies anything. Recorded in
+  `V2-H4-H6-REPORT.md`.
