@@ -415,7 +415,12 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="V2-H4 descriptive placement frontier")
-    ap.add_argument("--results-root", default="results", help="dir holding c1-/c2-/c3- subdirs")
+    ap.add_argument(
+        "--results-root",
+        default="results",
+        help="dir holding the c1-online-boutique/ and c3-dns/ campaign subdirs "
+        "(C2 has no east-west latency face and is excluded — see CAMPAIGNS)",
+    )
     ap.add_argument("--json", help="optional: write the full frontier dict here")
     ap.add_argument("--fig", help="optional: write the two-face scatter PNG here")
     ap.add_argument("--seed", type=int, default=42)
