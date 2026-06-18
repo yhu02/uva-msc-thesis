@@ -152,7 +152,11 @@ def analyze(paths: Dict[str, str], alpha: float = ALPHA) -> Dict[str, Any]:
 
     adjusted, reject = holm([r["pInput"] for r in rows], alpha)
     for r, adj, rej in zip(rows, adjusted, reject):
-        r["holmAdjusted"] = round(adj, 6)
+        # Store the FULL-precision adjusted p — rounding here could collapse a
+        # tiny adjusted p to 0.0 and make the reported value disagree with
+        # ``reject`` (which is computed from full precision). Round only at
+        # presentation time (``_fmt_p``).
+        r["holmAdjusted"] = adj
         r["holmSignificant"] = rej
         r["supported"] = bool(rej and r["barMet"])
 
@@ -165,7 +169,10 @@ def analyze(paths: Dict[str, str], alpha: float = ALPHA) -> Dict[str, Any]:
 
 
 def _fmt_p(p: float) -> str:
-    return f"{p:.4g}"
+    # 6 significant figures: enough to print the family inputs without lossy
+    # over-rounding (e.g. 0.98875 stays 0.98875, not 0.9888) and to stay aligned
+    # with the report tables.
+    return f"{p:.6g}"
 
 
 def render(result: Dict[str, Any]) -> str:
