@@ -305,9 +305,11 @@ def test_collect_campaign_dns_cache_filter(tmp_path):
     assert any("s2" in w and "dnsCache='off'" in w for w in warnings)
 
 
-def test_collect_campaign_unreadable_summary_warns_not_silent(tmp_path):
-    # A C3 session whose summary.json is corrupt → dnsCache reads None → excluded,
-    # but the exclusion must be reported (provenance: no silent drops).
+def test_collect_campaign_missing_dnscache_field_warns_not_silent(tmp_path):
+    # A C3 session whose summary parses but omits v2Session.dnsCache → cache reads
+    # None → excluded by the filter, but the exclusion must be SURFACED, not silent.
+    # (A genuinely corrupt summary is dropped upstream by discover_sessions; this
+    # drives collect_campaign's OWN cache-None branch with a readable session.)
     rdir = tmp_path / "c3"
     _write_session(
         rdir,
@@ -319,13 +321,21 @@ def test_collect_campaign_unreadable_summary_warns_not_silent(tmp_path):
         levels=[("f-000", 0.0, True)],
         raws={"f-000": [_raw_iter(1, 36.0)]},
     )
-    (rdir / "s2").mkdir()
-    (rdir / "s2" / "summary.json").write_text("{ this is not valid json")
+    _write_session(
+        rdir,
+        "s2",
+        r=1,
+        mode="solver",
+        fault="pod-delete",
+        dns_cache=None,  # summary parses but has no dnsCache field
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 88.0)]},
+    )
     placements, warnings = h4.collect_campaign(str(rdir), "C3", "corroboration", dns_cache="on")
-    # s2 is dropped (discover_sessions can't parse it) — and if it surfaces at all,
-    # _session_dns_cache returns None so the filter excludes it with a warning.
-    assert all(k[0] == 0.0 for k in placements)
-    assert h4._session_dns_cache(str(rdir), "s2") is None  # unreadable → None
+    assert all(k[0] == 0.0 for k in placements)  # only s1 (cache-on) kept
+    # The collect_campaign branch fires with the accurate "no dnsCache field" label.
+    assert any("s2" in w and "excluded from C3" in w and "no dnsCache field" in w for w in warnings)
+    assert h4._session_dns_cache(str(rdir), "s2") is None  # missing field → None
 
 
 def test_session_dns_cache_missing_field_is_none(tmp_path):
@@ -341,6 +351,39 @@ def test_session_dns_cache_missing_field_is_none(tmp_path):
     )
     assert h4._session_dns_cache(str(rdir), "s1") is None
     assert h4._session_dns_cache(str(rdir), "does-not-exist") is None
+
+
+def test_summarize_point_is_unrounded(tmp_path):
+    # bootstrap_ci rounds its "point" to 2dp; the dominance point must stay exact
+    # (δ_error=0.302 needs 3dp). 0.302 must survive, not collapse to 0.3.
+    p = h4.Placement(
+        label="p", f=0.0, r=1, mode="packed", fault="pod-delete", campaign="C1", role="frontier"
+    )
+    p.session_values = {ERR: [0.302, 0.302, 0.302]}
+    p.summarize(seed=1)
+    assert p.stats[ERR]["point"] == 0.302  # exact, not 0.3
+
+
+def test_incomplete_placement_is_unranked_not_non_dominated(monkeypatch, tmp_path):
+    # A frontier placement missing a DV must NOT appear non-dominated; it is
+    # unranked (nonDominated=None) and warned about, and excluded from the count.
+    def fake_collect(results_dir, campaign, role, dns_cache=None):
+        full = _pl(40.0, 3.0, 0.6, "full", "frontier", "C1")
+        incomplete = _pl(20.0, 1.0, 0.0, "inc", "frontier", "C1")
+        incomplete.stats[DEPTH]["point"] = None  # missing a DV
+        return {("a",): full, ("b",): incomplete}, []
+
+    monkeypatch.setattr(h4, "collect_campaign", fake_collect)
+    monkeypatch.setattr(h4.Placement, "summarize", lambda self, seed=42: None)
+    (tmp_path / "c1-online-boutique").mkdir()
+    res = h4.build_frontier(str(tmp_path))
+    by = {p["label"]: p for p in res["placements"]}
+    assert by["inc"]["nonDominated"] is None  # unranked, NOT True
+    assert "incomplete" in " ".join(res["warnings"])
+    assert res["frontierSize"] == 2  # both are frontier-role
+    # only the complete one is ranked; it is non-dominated (nothing complete dominates it)
+    assert res["nonDominated"] == ["C1:full"]
+    assert res["nonDominatedCount"] == 1
 
 
 def test_build_frontier_warns_on_missing_campaign_dir(tmp_path):
@@ -383,7 +426,11 @@ def test_plot_skips_points_with_missing_coordinate(tmp_path):
 
 
 def test_main_end_to_end_writes_json_and_fig(tmp_path, monkeypatch, capsys):
-    # One C1 frontier session over real fixtures; main() drives build → render → JSON → fig.
+    # CLI plumbing smoke: argv → build → render → JSON + fig. The fixture carries
+    # only the latency face (no depth/error), so its single placement is INCOMPLETE
+    # → unranked (empty frontier) with a surfaced warning — exercising main() plus
+    # the incomplete-placement path end-to-end. (The ranked happy path is covered by
+    # test_build_frontier_marks_roles_and_frontier.)
     rdir = tmp_path / "results" / "c1-online-boutique"
     _write_session(
         rdir,
@@ -413,7 +460,11 @@ def test_main_end_to_end_writes_json_and_fig(tmp_path, monkeypatch, capsys):
     printed = capsys.readouterr().out
     assert "placement frontier" in printed.lower()
     written = json.loads(out_json.read_text())
-    assert written["nonDominated"] == ["C1:f=0, r=1"]  # the single frontier cell
+    assert written["frontierSize"] == 1  # the cell is frontier-role
+    assert written["nonDominated"] == []  # but incomplete (latency-only) → unranked
+    assert any("incomplete" in w for w in written["warnings"])
+    by = {p["label"]: p for p in written["placements"]}
+    assert by["f=0, r=1"]["nonDominated"] is None
     assert out_fig.exists() and out_fig.stat().st_size > 0
 
 

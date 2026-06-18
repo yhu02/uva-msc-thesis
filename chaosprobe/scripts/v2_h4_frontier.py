@@ -95,8 +95,13 @@ class Placement:
         for dv in DVS:
             vals = self.session_values.get(dv.key, [])
             ci = bootstrap_ci(vals, statistic="median", seed=seed)
+            # The dominance check compares point estimates directly against δ
+            # bands as fine as 0.302 (δ_error), so the point MUST stay unrounded —
+            # bootstrap_ci rounds its "point" to 2 dp, which could flip a margin
+            # decision. Use the exact median for `point`; bootstrap_ci supplies
+            # only the CI bounds (display/plot).
             self.stats[dv.key] = {
-                "point": ci["point"],
+                "point": _median_or_none(vals),
                 "ci_low": ci["ci_low"],
                 "ci_high": ci["ci_high"],
                 "n": ci["n"],
@@ -124,6 +129,17 @@ def dominates(a: Placement, b: Placement) -> bool:
 def non_dominated(placements: List[Placement]) -> List[Placement]:
     """The frontier: placements not margin-dominated by any other in the set."""
     return [p for p in placements if not any(dominates(q, p) for q in placements if q is not p)]
+
+
+def _is_complete(p: Placement) -> bool:
+    """All three DV point estimates present — required to enter the dominance set.
+
+    A placement missing a DV (every iteration tainted, or a missing raw) can
+    never be *dominated* (``dominates`` bails on a ``None`` point), so it would
+    spuriously appear non-dominated; such placements are excluded from the
+    dominance computation and reported as unranked instead.
+    """
+    return all(p.stats.get(dv.key, {}).get("point") is not None for dv in DVS)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -170,10 +186,12 @@ def collect_campaign(
         if dns_cache is not None:
             cache = _session_dns_cache(results_dir, s.run)
             if cache != dns_cache:
-                # Surface the exclusion rather than dropping silently — an
-                # unreadable summary (cache is None) in a provenance-sensitive
-                # analysis must not vanish without a trace.
-                why = "unreadable summary" if cache is None else f"dnsCache={cache!r}"
+                # Surface the exclusion rather than dropping silently — a session
+                # must not vanish from a provenance-sensitive set without a trace.
+                # A genuinely unreadable summary is already dropped upstream by
+                # discover_sessions; reaching here with cache=None means the
+                # summary parsed but had no v2Session.dnsCache field.
+                why = "no dnsCache field" if cache is None else f"dnsCache={cache!r}"
                 warnings.append(f"{s.run}: excluded from {campaign} ({why}, want {dns_cache!r})")
                 continue
         fault = s.key.fault or "unknown"
@@ -229,13 +247,23 @@ def build_frontier(results_root: str, seed: int = 42) -> Dict[str, Any]:
         p.summarize(seed=seed)
 
     frontier_set = [p for p in all_placements if p.role == "frontier"]
-    nd = non_dominated(frontier_set)
-    nd_labels = {(p.campaign, p.label) for p in nd}
+    # Only placements with all DVs present can be ranked; an incomplete one is
+    # surfaced as unranked rather than silently sitting on the frontier.
+    complete = [p for p in frontier_set if _is_complete(p)]
+    for p in frontier_set:
+        if not _is_complete(p):
+            missing = [dv.key for dv in DVS if p.stats.get(dv.key, {}).get("point") is None]
+            warnings.append(
+                f"{p.campaign}:{p.label}: incomplete (missing {', '.join(missing)}) "
+                "— unranked, excluded from dominance"
+            )
+    nd = non_dominated(complete)
+    nd_ids = {id(p) for p in nd}
+    # Membership by object identity, not (campaign, label): _placement_label omits
+    # mode for r=1, so labels are not guaranteed unique across placements.
     return {
         "deltas": {dv.key: dv.delta for dv in DVS},
-        "placements": [
-            _placement_dict(p, (p.campaign, p.label) in nd_labels) for p in all_placements
-        ],
+        "placements": [_placement_dict(p, nd_ids) for p in all_placements],
         "nonDominated": [f"{p.campaign}:{p.label}" for p in nd],
         "frontierSize": len(frontier_set),
         "nonDominatedCount": len(nd),
@@ -243,7 +271,13 @@ def build_frontier(results_root: str, seed: int = 42) -> Dict[str, Any]:
     }
 
 
-def _placement_dict(p: Placement, is_non_dominated: bool) -> Dict[str, Any]:
+def _placement_dict(p: Placement, nd_ids: set) -> Dict[str, Any]:
+    # nonDominated is None for corroboration points AND for incomplete frontier
+    # placements (those never enter nd_ids) — i.e. "not ranked", distinct from False.
+    if p.role != "frontier" or not _is_complete(p):
+        ranked: Optional[bool] = None
+    else:
+        ranked = id(p) in nd_ids
     return {
         "campaign": p.campaign,
         "label": p.label,
@@ -252,7 +286,7 @@ def _placement_dict(p: Placement, is_non_dominated: bool) -> Dict[str, Any]:
         "mode": p.mode,
         "fault": p.fault,
         "role": p.role,
-        "nonDominated": is_non_dominated if p.role == "frontier" else None,
+        "nonDominated": ranked,
         "stats": p.stats,
     }
 
@@ -299,25 +333,30 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    def _or(v: Optional[float], fallback: float) -> float:
+        # Explicit None test: a valid 0.0 must NOT be treated as missing.
+        return fallback if v is None else v
+
     fig, ax = plt.subplots(figsize=(9, 6))
     markers = {"node-drain": "s", "pod-delete": "o"}
     sc = None
     max_depth = 0.0
     for i, p in enumerate(
-        sorted(result["placements"], key=lambda q: q["stats"]["ew_p95_pre_ms"]["point"] or 0)
+        sorted(result["placements"], key=lambda q: _or(q["stats"]["ew_p95_pre_ms"]["point"], 0.0))
     ):
         st = p["stats"]
         x, y = st["ew_p95_pre_ms"]["point"], st["es_trough_depth_pods"]["point"]
         if x is None or y is None:
             continue
-        max_depth = max(max_depth, st["es_trough_depth_pods"]["ci_high"] or y)
+        max_depth = max(max_depth, _or(st["es_trough_depth_pods"]["ci_high"], y))
         err = st["user_err_during"]["point"]
         corro = p["role"] == "corroboration"
         nd = p["nonDominated"] is True
         sc = ax.scatter(
             x,
             y,
-            c=[err if err is not None else 0.0],
+            # A missing error rate plots grey (not cmap 0.0, which would read as "no errors").
+            c="lightgray" if err is None else [err],
             cmap="viridis",
             vmin=0,
             vmax=1,
@@ -332,12 +371,12 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
             x,
             y,
             xerr=[
-                [x - (st["ew_p95_pre_ms"]["ci_low"] or x)],
-                [(st["ew_p95_pre_ms"]["ci_high"] or x) - x],
+                [x - _or(st["ew_p95_pre_ms"]["ci_low"], x)],
+                [_or(st["ew_p95_pre_ms"]["ci_high"], x) - x],
             ],
             yerr=[
-                [y - (st["es_trough_depth_pods"]["ci_low"] or y)],
-                [(st["es_trough_depth_pods"]["ci_high"] or y) - y],
+                [y - _or(st["es_trough_depth_pods"]["ci_low"], y)],
+                [_or(st["es_trough_depth_pods"]["ci_high"], y) - y],
             ],
             fmt="none",
             ecolor="gray",
@@ -362,7 +401,13 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
     ax.set_ylabel(f"{DVS[1].label}  (availability face — lower better)")
     ax.set_title("V2-H4 placement frontier — red ring = non-dominated · colour = user error rate")
     if sc is not None:
-        fig.colorbar(sc, ax=ax, label=DVS[2].label)
+        # Dedicated mappable so the colorbar is correct regardless of whether the
+        # last-plotted point used the cmap (a grey "missing error" point would not).
+        import matplotlib.cm as cm
+        from matplotlib.colors import Normalize
+
+        mappable = cm.ScalarMappable(norm=Normalize(vmin=0, vmax=1), cmap="viridis")
+        fig.colorbar(mappable, ax=ax, label=DVS[2].label)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
