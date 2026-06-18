@@ -1,6 +1,7 @@
 """Tests for scripts/v2_h4_frontier.py (V2-H4 descriptive placement frontier)."""
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -172,6 +173,134 @@ def test_build_frontier_marks_roles_and_frontier(monkeypatch, tmp_path):
     assert roles[("C3", "f0")]["role"] == "corroboration"
     assert roles[("C3", "f0")]["nonDominated"] is None  # corroboration is never ranked
     assert roles[("C1", "f50")]["nonDominated"] is False
+
+
+# ── collect_campaign(): end-to-end data extraction from on-disk fixtures ──
+#
+# Builds real session dirs (summary.json + raw f-XXX.json) so discover_sessions,
+# the per-level targetF lookup, the (f,r,mode) grouping, the accepted/taint skips,
+# the dnsCache filter, and the per-session-median aggregation all run for real.
+
+
+def _raw_iter(n, ew_pre, pre_taints=()):
+    """A raw iteration carrying an east-west pre-chaos p95 (the latency face)."""
+    it = {
+        "iteration": n,
+        "verdict": "PASS",
+        "metrics": {"latency": {"phases": {"pre-chaos": {"routes": {"a->b": {"p95_ms": ew_pre}}}}}},
+    }
+    if pre_taints:
+        it["preChaosTaintReasons"] = list(pre_taints)
+    return it
+
+
+def _write_session(results_dir, name, *, r, mode, fault, levels, dns_cache=None, raws):
+    """levels = [(condition, targetF, accepted)]; raws = {condition: [iterations]}."""
+    run = results_dir / name
+    run.mkdir(parents=True)
+    per_level = [
+        {"condition": c, "targetF": f, "liveAchievedF": f, "accepted": acc, "rejectionReasons": []}
+        for c, f, acc in levels
+    ]
+    v2 = {
+        "solverSeed": 0,
+        "replicas": r,
+        "mode": mode,
+        "workers": ["w1", "w2"],
+        "levels": [f for _, f, _ in levels],
+        "perLevel": per_level,
+    }
+    if dns_cache is not None:
+        v2["dnsCache"] = dns_cache
+    summary = {
+        "runId": name,
+        "timestamp": f"2026-01-01T00:00:0{name[-1]}+00:00",
+        "v2Session": v2,
+        "faults": {fault: {"strategies": {}}},
+    }
+    (run / "summary.json").write_text(json.dumps(summary))
+    for cond, iters in raws.items():
+        (run / f"{cond}.json").write_text(
+            json.dumps({"placement": {"assignments": {"svc-a": "w1"}}, "iterations": iters})
+        )
+
+
+def test_collect_campaign_groups_and_aggregates(tmp_path):
+    rdir = tmp_path / "c1"
+    # Two sessions of the SAME placement (f=0, r=1, packed) → one grouped placement.
+    _write_session(
+        rdir,
+        "s1",
+        r=1,
+        mode="packed",
+        fault="pod-delete",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 30.0), _raw_iter(2, 40.0)]},
+    )
+    _write_session(
+        rdir,
+        "s2",
+        r=1,
+        mode="packed",
+        fault="pod-delete",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 50.0)]},
+    )
+    placements, _ = h4.collect_campaign(str(rdir), "C1", "frontier")
+    assert len(placements) == 1
+    p = next(iter(placements.values()))
+    assert (p.f, p.r, p.mode, p.fault) == (0.0, 1, "packed", "pod-delete")
+    # session_values = one per-session median each: s1 median(30,40)=35, s2 median(50)=50.
+    assert sorted(p.session_values[LAT]) == [35.0, 50.0]
+
+
+def test_collect_campaign_skips_unaccepted_and_tainted(tmp_path):
+    rdir = tmp_path / "c1"
+    # f-100 not accepted (skipped); f-000 has one tainted iteration (folded to None, excluded).
+    _write_session(
+        rdir,
+        "s1",
+        r=1,
+        mode="packed",
+        fault="pod-delete",
+        levels=[("f-000", 0.0, True), ("f-100", 1.0, False)],
+        raws={
+            "f-000": [_raw_iter(1, 30.0, pre_taints=["x"]), _raw_iter(2, 40.0)],
+            "f-100": [_raw_iter(1, 99.0)],
+        },
+    )
+    placements, _ = h4.collect_campaign(str(rdir), "C1", "frontier")
+    assert set(k[0] for k in placements) == {0.0}  # f-100 rejected → absent
+    p = placements[(0.0, 1, "packed")]
+    assert p.session_values[LAT] == [40.0]  # tainted iter-1 excluded; median over {40} only
+
+
+def test_collect_campaign_dns_cache_filter(tmp_path):
+    rdir = tmp_path / "c3"
+    _write_session(
+        rdir,
+        "s1",
+        r=1,
+        mode="solver",
+        fault="pod-delete",
+        dns_cache="on",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 36.0)]},
+    )
+    _write_session(
+        rdir,
+        "s2",
+        r=1,
+        mode="solver",
+        fault="pod-delete",
+        dns_cache="off",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 88.0)]},
+    )
+    placements, _ = h4.collect_campaign(str(rdir), "C3", "corroboration", dns_cache="on")
+    assert len(placements) == 1
+    p = placements[(0.0, 1, "solver")]
+    assert p.session_values[LAT] == [36.0]  # only the cache-on session
 
 
 def test_render_and_plot_smoke(tmp_path):

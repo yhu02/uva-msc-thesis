@@ -54,7 +54,6 @@ if _SCRIPTS_DIR not in sys.path:  # `python scripts/v2_h4_frontier.py` adds it; 
 from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
     _median_or_none,
     discover_sessions,
-    load_condition_outcomes,
 )
 
 
@@ -111,7 +110,6 @@ def dominates(a: Placement, b: Placement) -> bool:
     latency face AND on both availability DVs (the conservative all-DV reading
     of the registered margin rule). Missing point estimates ⇒ no dominance.
     """
-    beats_any = False
     for dv in DVS:
         pa = a.stats.get(dv.key, {}).get("point")
         pb = b.stats.get(dv.key, {}).get("point")
@@ -119,8 +117,8 @@ def dominates(a: Placement, b: Placement) -> bool:
             return False
         if pb - pa < dv.delta:  # A not better than B by the full margin on this DV
             return False
-        beats_any = True
-    return beats_any
+    # Reached only by beating B by ≥ δ on every (non-empty) DV.
+    return True
 
 
 def non_dominated(placements: List[Placement]) -> List[Placement]:
@@ -138,17 +136,19 @@ def _placement_label(f: float, r: int, mode: str) -> str:
     return base if r == 1 and mode in ("packed", "solver", "") else f"{base}, {mode}"
 
 
-def _session_meta(results_dir: str, run: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """(v2Session, faultClass) for one session — read straight from summary.json."""
+def _session_dns_cache(results_dir: str, run: str) -> Optional[str]:
+    """``v2Session.dnsCache`` for one session (the m2 ``Session`` model omits it).
+
+    Only read when a ``dns_cache`` filter is in effect (C3) — the other session
+    metadata the frontier needs (fault, r, mode, per-level f, per-iteration DV
+    rows) is already on the ``Session``/``LevelObs`` from ``discover_sessions``.
+    """
     path = os.path.join(results_dir, run, "summary.json")
     try:
         with open(path) as fh:
-            summary = json.load(fh)
+            return ((json.load(fh) or {}).get("v2Session") or {}).get("dnsCache")
     except (OSError, ValueError):
-        return None, None
-    faults = summary.get("faultExperiments") or []
-    fault = ",".join(faults) if faults else "unknown"
-    return summary.get("v2Session") or {}, fault
+        return None
 
 
 def collect_campaign(
@@ -156,51 +156,41 @@ def collect_campaign(
 ) -> Tuple[Dict[Tuple[Any, ...], Placement], List[str]]:
     """Group one campaign's accepted, untainted session-condition values by placement.
 
-    ``dns_cache`` (when set) keeps only sessions whose ``v2Session.dnsCache``
-    matches — used to pin C3 to its cache-on placement (cache is the V2-H2
-    intervention, not a placement dimension).
+    Reuses what ``discover_sessions`` already loaded — ``s.key`` (fault, r, mode),
+    ``obs.target_f``, and ``obs.iteration_values`` (the per-iteration DV rows, with
+    taint-excluded iterations already folded to ``None``) — so the 20–100 MB raw
+    condition files are parsed **once**, not re-read here. ``dns_cache`` (when set)
+    keeps only sessions whose ``v2Session.dnsCache`` matches — used to pin C3 to its
+    cache-on placement (cache is the V2-H2 intervention, not a placement dimension);
+    it is the one field the m2 ``Session`` model omits, so it is read on demand.
     """
     sessions, warnings = discover_sessions(results_dir)
     placements: Dict[Tuple[Any, ...], Placement] = {}
     for s in sessions:
-        v2, fault = _session_meta(results_dir, s.run)
-        if v2 is None:
-            warnings.append(f"{s.run}: unreadable summary — skipped")
+        if dns_cache is not None and _session_dns_cache(results_dir, s.run) != dns_cache:
             continue
-        if dns_cache is not None and v2.get("dnsCache") != dns_cache:
-            continue
-        r = int(v2.get("replicas") or 1)
-        mode = (
-            v2.get("mode") or ""
-        )  # placement mode (packed/anti-affine); NOT the assignment method
-        per_level_f = {pl.get("condition"): pl.get("targetF") for pl in v2.get("perLevel", [])}
+        fault = s.key.fault or "unknown"
+        r = s.key.replicas
+        mode = s.key.mode or ""  # placement mode (packed/anti-affine), not the assignment method
         for condition, obs in s.levels.items():
             if not obs.accepted:
                 continue
-            f = per_level_f.get(condition)
-            if f is None:
-                warnings.append(f"{s.run}/{condition}: no targetF — skipped")
-                continue
-            per_outcome = load_condition_outcomes(
-                os.path.join(results_dir, s.run), condition, s.tainted, s.taints
-            )
-            if per_outcome is None:
-                continue
-            key = (round(float(f), 4), r, mode)
+            f = obs.target_f
+            key = (round(f, 4), r, mode)
             p = placements.get(key)
             if p is None:
                 p = Placement(
-                    label=_placement_label(float(f), r, mode),
-                    f=float(f),
+                    label=_placement_label(f, r, mode),
+                    f=f,
                     r=r,
                     mode=mode,
-                    fault=fault or "unknown",
+                    fault=fault,
                     campaign=campaign,
                     role=role,
                 )
                 placements[key] = p
             for dv in DVS:
-                v = _median_or_none(per_outcome.get(dv.key) or [])
+                v = _median_or_none(obs.iteration_values.get(dv.key) or [])
                 if v is not None:
                     p.session_values.setdefault(dv.key, []).append(v)
     return placements, warnings
