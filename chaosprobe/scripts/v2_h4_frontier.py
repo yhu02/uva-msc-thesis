@@ -167,8 +167,15 @@ def collect_campaign(
     sessions, warnings = discover_sessions(results_dir)
     placements: Dict[Tuple[Any, ...], Placement] = {}
     for s in sessions:
-        if dns_cache is not None and _session_dns_cache(results_dir, s.run) != dns_cache:
-            continue
+        if dns_cache is not None:
+            cache = _session_dns_cache(results_dir, s.run)
+            if cache != dns_cache:
+                # Surface the exclusion rather than dropping silently — an
+                # unreadable summary (cache is None) in a provenance-sensitive
+                # analysis must not vanish without a trace.
+                why = "unreadable summary" if cache is None else f"dnsCache={cache!r}"
+                warnings.append(f"{s.run}: excluded from {campaign} ({why}, want {dns_cache!r})")
+                continue
         fault = s.key.fault or "unknown"
         r = s.key.replicas
         mode = s.key.mode or ""  # placement mode (packed/anti-affine), not the assignment method

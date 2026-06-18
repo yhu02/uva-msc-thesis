@@ -297,10 +297,124 @@ def test_collect_campaign_dns_cache_filter(tmp_path):
         levels=[("f-000", 0.0, True)],
         raws={"f-000": [_raw_iter(1, 88.0)]},
     )
-    placements, _ = h4.collect_campaign(str(rdir), "C3", "corroboration", dns_cache="on")
+    placements, warnings = h4.collect_campaign(str(rdir), "C3", "corroboration", dns_cache="on")
     assert len(placements) == 1
     p = placements[(0.0, 1, "solver")]
     assert p.session_values[LAT] == [36.0]  # only the cache-on session
+    # The excluded cache-off session is surfaced, not silently dropped.
+    assert any("s2" in w and "dnsCache='off'" in w for w in warnings)
+
+
+def test_collect_campaign_unreadable_summary_warns_not_silent(tmp_path):
+    # A C3 session whose summary.json is corrupt → dnsCache reads None → excluded,
+    # but the exclusion must be reported (provenance: no silent drops).
+    rdir = tmp_path / "c3"
+    _write_session(
+        rdir,
+        "s1",
+        r=1,
+        mode="solver",
+        fault="pod-delete",
+        dns_cache="on",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 36.0)]},
+    )
+    (rdir / "s2").mkdir()
+    (rdir / "s2" / "summary.json").write_text("{ this is not valid json")
+    placements, warnings = h4.collect_campaign(str(rdir), "C3", "corroboration", dns_cache="on")
+    # s2 is dropped (discover_sessions can't parse it) — and if it surfaces at all,
+    # _session_dns_cache returns None so the filter excludes it with a warning.
+    assert all(k[0] == 0.0 for k in placements)
+    assert h4._session_dns_cache(str(rdir), "s2") is None  # unreadable → None
+
+
+def test_session_dns_cache_missing_field_is_none(tmp_path):
+    rdir = tmp_path / "c3"
+    _write_session(
+        rdir,
+        "s1",
+        r=1,
+        mode="solver",
+        fault="pod-delete",  # no dns_cache field
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 36.0)]},
+    )
+    assert h4._session_dns_cache(str(rdir), "s1") is None
+    assert h4._session_dns_cache(str(rdir), "does-not-exist") is None
+
+
+def test_build_frontier_warns_on_missing_campaign_dir(tmp_path):
+    # No campaign subdirs exist → each is skipped with a warning, empty frontier.
+    res = h4.build_frontier(str(tmp_path))
+    assert res["frontierSize"] == 0
+    assert res["nonDominatedCount"] == 0
+    assert any("missing — skipped" in w for w in res["warnings"])
+
+
+def test_render_shows_warning_count(tmp_path):
+    res = {
+        "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
+        "placements": [_p_dict("C1", "f0", 35.7, 1.0, 0.04, True)],
+        "nonDominated": ["C1:f0"],
+        "frontierSize": 1,
+        "nonDominatedCount": 1,
+        "warnings": ["w1", "w2"],
+    }
+    out = h4.render(res)
+    assert "2 warning(s)" in out
+
+
+def test_plot_skips_points_with_missing_coordinate(tmp_path):
+    # A placement with a None latency point must be skipped, not crash plot().
+    res = {
+        "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
+        "placements": [
+            _p_dict("C1", "f0", 35.7, 1.0, 0.04, True),
+            _p_dict("C1", "fX", None, 1.0, 0.04, False),  # missing x → skipped
+        ],
+        "nonDominated": ["C1:f0"],
+        "frontierSize": 2,
+        "nonDominatedCount": 1,
+        "warnings": [],
+    }
+    fig_path = tmp_path / "f.png"
+    h4.plot(res, str(fig_path))
+    assert fig_path.exists() and fig_path.stat().st_size > 0
+
+
+def test_main_end_to_end_writes_json_and_fig(tmp_path, monkeypatch, capsys):
+    # One C1 frontier session over real fixtures; main() drives build → render → JSON → fig.
+    rdir = tmp_path / "results" / "c1-online-boutique"
+    _write_session(
+        rdir,
+        "s1",
+        r=1,
+        mode="packed",
+        fault="pod-delete",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 35.0)]},
+    )
+    out_json, out_fig = tmp_path / "f.json", tmp_path / "f.png"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "v2_h4_frontier.py",
+            "--results-root",
+            str(tmp_path / "results"),
+            "--json",
+            str(out_json),
+            "--fig",
+            str(out_fig),
+            "--seed",
+            "1",
+        ],
+    )
+    h4.main()
+    printed = capsys.readouterr().out
+    assert "placement frontier" in printed.lower()
+    written = json.loads(out_json.read_text())
+    assert written["nonDominated"] == ["C1:f=0, r=1"]  # the single frontier cell
+    assert out_fig.exists() and out_fig.stat().st_size > 0
 
 
 def test_render_and_plot_smoke(tmp_path):
