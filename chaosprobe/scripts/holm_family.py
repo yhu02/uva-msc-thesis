@@ -59,7 +59,7 @@ def holm(pvalues: List[float], alpha: float = ALPHA) -> Tuple[List[float], List[
     for rank, idx in enumerate(order):
         running = max(running, (m - rank) * pvalues[idx])
         adjusted[idx] = min(1.0, running)
-    reject = [adjusted[i] <= alpha for i in range(m)]
+    reject = [a <= alpha for a in adjusted]
     return adjusted, reject
 
 
@@ -73,6 +73,25 @@ def _get(obj: Any, *path: str) -> Any:
     return cur
 
 
+def _float_p(doc: Any, hyp: str, *path: str) -> float:
+    """A family-input p as float, failing loudly on a present-but-null value.
+
+    Every upstream driver legitimately emits ``null`` for its p-key on sparse /
+    degenerate data (no defined trend, an unestimable interaction, a co-primary
+    with no paired differences, a missing required sub-score). A ``null`` cannot
+    enter the Holm family, so raise a clear, hypothesis-named error here rather
+    than letting ``float(None)`` surface an opaque ``TypeError`` — mirroring the
+    path-annotated ``KeyError`` ``_get`` raises on a missing key.
+    """
+    val = _get(doc, *path)
+    if val is None:
+        raise ValueError(
+            f"{hyp} family-input p is null ({'.'.join(path)}) — primary test "
+            "not evaluable on this data; cannot enter the Holm family"
+        )
+    return float(val)
+
+
 def _load(path: str) -> Any:
     with open(path) as fh:
         return json.load(fh)
@@ -80,7 +99,7 @@ def _load(path: str) -> Any:
 
 def h1_input(doc: Any) -> Tuple[float, bool, str]:
     """V2-H1: Page's L one-sided p; bar = effect meets SESOI (≥ 15 %)."""
-    p = float(_get(doc, "pageTrendTest", "p_one_sided"))
+    p = _float_p(doc, "V2-H1", "pageTrendTest", "p_one_sided")
     meets_sesoi = bool(_get(doc, "sesoi", "meetsSesoi"))
     pct = _get(doc, "sesoi", "pctChange")
     sesoi_pct = _get(doc, "sesoi", "sesoiPct")
@@ -91,7 +110,7 @@ def h1_input(doc: Any) -> Tuple[float, bool, str]:
 
 def h2_input(doc: Any) -> Tuple[float, bool, str]:
     """V2-H2: max(p_a, p_b); bar = the two-part conjunction passes."""
-    p = float(_get(doc, "familyInputMaxP"))
+    p = _float_p(doc, "V2-H2", "familyInputMaxP")
     conj = bool(_get(doc, "conjunction"))
     note = "placement-dependence ∧ DNS-shrinkage conjunction"
     return p, conj, note
@@ -99,8 +118,8 @@ def h2_input(doc: Any) -> Tuple[float, bool, str]:
 
 def h3_input(doc: Any) -> Tuple[float, bool, str]:
     """V2-H3: max of the two co-primary ART interaction p's; bar = rescue conjunction."""
-    p_depth = float(_get(doc, "troughDepthFraction", "artInteraction", "p"))
-    p_err = float(_get(doc, "userErrorRate", "artInteraction", "p"))
+    p_depth = _float_p(doc, "V2-H3", "troughDepthFraction", "artInteraction", "p")
+    p_err = _float_p(doc, "V2-H3", "userErrorRate", "artInteraction", "p")
     p = max(p_depth, p_err)
     conj = bool(_get(doc, "conjunctionRescue"))
     note = f"co-primary interactions max(depth {p_depth}, err {p_err}); anti-affine rescue margin"
@@ -109,7 +128,7 @@ def h3_input(doc: Any) -> Tuple[float, bool, str]:
 
 def h5_input(doc: Any) -> Tuple[float, bool, str]:
     """V2-H5: max(p_availability, p_mechanism); bar = required-subscore conjunction."""
-    p = float(_get(doc, "decision", "holmInput"))
+    p = _float_p(doc, "V2-H5", "decision", "holmInput")
     conj = bool(_get(doc, "decision", "conjunctionPass"))
     note = "availability ∧ mechanism ICC ≥ 0.5 conjunction"
     return p, conj, note

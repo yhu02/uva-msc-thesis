@@ -49,13 +49,32 @@ def test_holm_classic_example():
     assert rej == [True, False, False, True]
 
 
-def test_holm_monotonicity_enforced():
-    # A small p after a large one must not produce a smaller adjusted value.
-    adj, _ = hf.holm([0.5, 0.001])
-    assert adj[0] >= adj[1] or adj[1] >= adj[0]  # both defined
-    # sorted: .001*2=.002 ; .5*1=.5 -> .002, .5
-    assert adj[1] == pytest.approx(0.002)
-    assert adj[0] == pytest.approx(0.5)
+def test_holm_monotonicity_running_max_is_load_bearing():
+    # Input where the running max MUST lift a value: sorted [0.03, 0.04] gives
+    # rank0 0.03*2=0.06 and rank1 0.04*1=0.04 — the 0.04 must be lifted to 0.06.
+    # A holm() with no running max would leave the 0.04 entry at 0.04, so this
+    # test fails against a non-monotone implementation (unlike [0.5, 0.001],
+    # which sorts already-increasing and exercises nothing).
+    adj, _ = hf.holm([0.04, 0.03])
+    assert adj[0] == pytest.approx(0.06)  # 0.04 lifted from 0.04 to 0.06
+    assert adj[1] == pytest.approx(0.06)  # 0.03 * 2
+    # Adjusted p-values are non-decreasing along the ascending-p sort order.
+    by_p = [adj[i] for i in sorted(range(2), key=lambda i: [0.04, 0.03][i])]
+    assert by_p == sorted(by_p)
+
+
+def test_holm_reject_boundary_is_inclusive():
+    # reject iff adjusted <= alpha (inclusive) — a registered decision.
+    assert hf.holm([0.05], alpha=0.05) == ([0.05], [True])
+    _, rej = hf.holm([0.0500001], alpha=0.05)
+    assert rej == [False]
+
+
+def test_holm_ties():
+    # Equal p-values: rank0 multiplier (m) dominates via the running max.
+    adj, rej = hf.holm([0.02, 0.02, 0.02], alpha=0.05)
+    assert adj == [pytest.approx(0.06)] * 3
+    assert rej == [False, False, False]
 
 
 def test_holm_caps_at_one():
@@ -127,6 +146,36 @@ def test_get_raises_with_path_on_miss():
         hf.h1_input({"sesoi": {}})
 
 
+# ── null-p upstream contract (every driver may emit null on sparse data) ──
+
+
+def test_h2_null_p_raises_named_error():
+    with pytest.raises(ValueError, match="V2-H2 family-input p is null"):
+        hf.h2_input({"familyInputMaxP": None, "conjunction": False})
+
+
+def test_h3_null_coprimary_raises_before_max():
+    # max(None, 0.1) would itself be a TypeError — guard must fire first.
+    doc = {
+        "troughDepthFraction": {"artInteraction": {"p": None}},
+        "userErrorRate": {"artInteraction": {"p": 0.1}},
+        "conjunctionRescue": False,
+    }
+    with pytest.raises(ValueError, match="V2-H3 family-input p is null"):
+        hf.h3_input(doc)
+
+
+def test_h1_null_p_raises_named_error():
+    doc = {"pageTrendTest": {"p_one_sided": None}, "sesoi": {"meetsSesoi": False}}
+    with pytest.raises(ValueError, match="V2-H1 family-input p is null"):
+        hf.h1_input(doc)
+
+
+def test_h5_null_p_raises_named_error():
+    with pytest.raises(ValueError, match="V2-H5 family-input p is null"):
+        hf.h5_input({"decision": {"holmInput": None, "conjunctionPass": False}})
+
+
 # ── analyze() / supported logic ────────────────────────────────────────
 
 
@@ -190,8 +239,56 @@ def test_analyze_bar_without_significance_not_supported(tmp_path):
     assert by["V2-H1"]["supported"] is False
 
 
-def test_render_contains_verdict(tmp_path):
+def test_render_verifies_per_row_data(tmp_path):
     res = hf.analyze(_family_docs(tmp_path))
     out = hf.render(res)
     assert "NO confirmatory hypothesis is supported" in out
-    assert "V2-H1" in out and "V2-H5" in out
+    # The H1 row must show significant (Y) but not supported (no) — sub-SESOI.
+    h1_row = next(ln for ln in out.splitlines() if ln.strip().startswith("V2-H1 "))
+    assert " Y " in h1_row and " no " in h1_row
+    # The H2 row must show not-significant (N) and not supported.
+    h2_row = next(ln for ln in out.splitlines() if ln.strip().startswith("V2-H2 "))
+    assert " N " in h2_row and " no " in h2_row
+
+
+def test_render_supported_path(tmp_path):
+    # With H3's rescue conjunction passing, its significant interaction is SUPPORTED.
+    res = hf.analyze(_family_docs(tmp_path, h3_conj=True))
+    out = hf.render(res)
+    assert "at least one hypothesis is SUPPORTED" in out
+    h3_row = next(ln for ln in out.splitlines() if ln.strip().startswith("V2-H3 "))
+    assert "SUPPORTED" in h3_row
+
+
+# ── main() CLI wiring + JSON round-trip ────────────────────────────────
+
+
+def test_main_round_trips_analyze(tmp_path, monkeypatch, capsys):
+    import json
+
+    paths = _family_docs(tmp_path)
+    out_json = tmp_path / "family.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "holm_family.py",
+            "--h1",
+            paths["V2-H1"],
+            "--h2",
+            paths["V2-H2"],
+            "--h3",
+            paths["V2-H3"],
+            "--h5",
+            paths["V2-H5"],
+            "--json",
+            str(out_json),
+        ],
+    )
+    hf.main()
+    captured = capsys.readouterr().out
+    assert "Holm correction" in captured
+    # The written JSON must equal a direct analyze() over the same flag→key mapping.
+    written = json.loads(out_json.read_text())
+    expected = hf.analyze(paths)
+    assert written == expected
+    assert written["anySupported"] is False
