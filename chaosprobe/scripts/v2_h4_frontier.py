@@ -296,6 +296,12 @@ def _placement_dict(p: Placement, nd_ids: set) -> Dict[str, Any]:
 # ──────────────────────────────────────────────────────────────────────
 
 
+def _coord_or(v: Optional[float], fallback: float) -> float:
+    """A plot coordinate or its fallback — explicit None test so a valid 0.0 is
+    NOT treated as missing (``0.0 or fallback`` would wrongly pick the fallback)."""
+    return fallback if v is None else v
+
+
 def _fmt(v: Optional[float]) -> str:
     return "—" if v is None else f"{v:.4g}"
 
@@ -333,10 +339,7 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    def _or(v: Optional[float], fallback: float) -> float:
-        # Explicit None test: a valid 0.0 must NOT be treated as missing.
-        return fallback if v is None else v
-
+    _or = _coord_or
     fig, ax = plt.subplots(figsize=(9, 6))
     markers = {"node-drain": "s", "pod-delete": "o"}
     sc = None
@@ -352,20 +355,24 @@ def plot(result: Dict[str, Any], out_path: str) -> None:
         err = st["user_err_during"]["point"]
         corro = p["role"] == "corroboration"
         nd = p["nonDominated"] is True
+        # A missing error rate plots grey (not cmap 0.0, which would read as "no
+        # errors"); only pass cmap/vmin/vmax when actually colour-mapping a value,
+        # else matplotlib warns about unused colormap args on the string colour.
+        colour_kw: Dict[str, Any] = (
+            {"c": "lightgray"}
+            if err is None
+            else {"c": [err], "cmap": "viridis", "vmin": 0, "vmax": 1}
+        )
         sc = ax.scatter(
             x,
             y,
-            # A missing error rate plots grey (not cmap 0.0, which would read as "no errors").
-            c="lightgray" if err is None else [err],
-            cmap="viridis",
-            vmin=0,
-            vmax=1,
             marker=markers.get(p["fault"], "o"),
             s=220 if nd else 90,
             edgecolors="red" if nd else ("gray" if corro else "black"),
             linewidths=2.0 if nd else 1.0,
             alpha=0.55 if corro else 0.95,
             zorder=3 if nd else 2,
+            **colour_kw,
         )
         ax.errorbar(
             x,

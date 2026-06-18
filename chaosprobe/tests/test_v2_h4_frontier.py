@@ -502,3 +502,57 @@ def _p_dict(camp, label, lat, depth, err, nd, role="frontier"):
         "nonDominated": nd,
         "stats": {LAT: s(lat), DEPTH: s(depth), ERR: s(err)},
     }
+
+
+# ── regression guards for fix 4 (identity membership) + fix 5 (plot None/0.0) ──
+
+
+def test_coord_or_treats_zero_as_present_not_missing():
+    # The core of fix 5: a valid 0.0 coordinate/CI bound must NOT fall back.
+    assert h4._coord_or(0.0, 9.9) == 0.0  # `0.0 or 9.9` would wrongly give 9.9
+    assert h4._coord_or(None, 9.9) == 9.9
+    assert h4._coord_or(3.2, 9.9) == 3.2
+
+
+def test_nd_membership_keyed_by_identity_not_label(monkeypatch, tmp_path):
+    # Fix 4 regression guard: two frontier placements that COLLIDE on (campaign,label)
+    # — _placement_label omits mode for r=1, so packed/solver both render "f=0, r=1".
+    # The winner dominates the loser; a label-keyed membership set would mark BOTH
+    # non-dominated. Identity keying must flag only the winner.
+    def fake_collect(results_dir, campaign, role, dns_cache=None):
+        win = _pl(20.0, 1.0, 0.0, "f=0, r=1", "frontier", "C1")  # dominates
+        lose = _pl(40.0, 3.0, 0.6, "f=0, r=1", "frontier", "C1")  # dominated; SAME label
+        return {("packed",): win, ("solver",): lose}, []
+
+    monkeypatch.setattr(h4, "collect_campaign", fake_collect)
+    monkeypatch.setattr(h4.Placement, "summarize", lambda self, seed=42: None)
+    (tmp_path / "c1-online-boutique").mkdir()
+    res = h4.build_frontier(str(tmp_path))
+
+    assert res["nonDominatedCount"] == 1  # only the winner, despite the shared label
+    flags = [p["nonDominated"] for p in res["placements"]]
+    assert sorted(flags, key=lambda b: b is True) == [False, True]  # exactly one each
+    # The winner (lower latency) is the non-dominated one.
+    by_lat = sorted(res["placements"], key=lambda p: p["stats"][LAT]["point"])
+    assert by_lat[0]["nonDominated"] is True and by_lat[1]["nonDominated"] is False
+
+
+def test_plot_handles_zero_latency_and_missing_error(tmp_path):
+    # Fix 5 regression guard: a 0.0-latency point (exercises _coord_or in the sort
+    # key/errorbars) and a point with err=None plotted LAST (exercises the grey
+    # facecolor AND the dedicated-ScalarMappable colorbar). A revert to `c=[err]`
+    # or to `fig.colorbar(sc)` on the grey point would crash here, not silently pass.
+    res = {
+        "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
+        "placements": [
+            _p_dict("C1", "f0", 0.0, 1.0, 0.04, True),  # valid 0.0 latency
+            _p_dict("C1", "f1", 40.0, 1.0, None, False),  # err=None, sorts last → grey
+        ],
+        "nonDominated": ["C1:f0"],
+        "frontierSize": 2,
+        "nonDominatedCount": 1,
+        "warnings": [],
+    }
+    fig_path = tmp_path / "f.png"
+    h4.plot(res, str(fig_path))
+    assert fig_path.exists() and fig_path.stat().st_size > 0
