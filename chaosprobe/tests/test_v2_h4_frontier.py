@@ -271,8 +271,39 @@ def test_collect_campaign_skips_unaccepted_and_tainted(tmp_path):
     )
     placements, _ = h4.collect_campaign(str(rdir), "C1", "frontier")
     assert set(k[0] for k in placements) == {0.0}  # f-100 rejected → absent
-    p = placements[(0.0, 1, "packed")]
+    p = placements[(0.0, 1, "packed", "pod-delete")]
     assert p.session_values[LAT] == [40.0]  # tainted iter-1 excluded; median over {40} only
+
+
+def test_collect_campaign_separates_placements_by_fault(tmp_path):
+    # Same (f, r, mode) under two different faults must NOT merge into one
+    # placement (the Placement carries a single fault label, so merging would
+    # mislabel). They produce two distinct keyed placements.
+    rdir = tmp_path / "mixed"
+    _write_session(
+        rdir,
+        "s1",
+        r=1,
+        mode="packed",
+        fault="pod-delete",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 30.0)]},
+    )
+    _write_session(
+        rdir,
+        "s2",
+        r=1,
+        mode="packed",
+        fault="node-drain",
+        levels=[("f-000", 0.0, True)],
+        raws={"f-000": [_raw_iter(1, 80.0)]},
+    )
+    placements, _ = h4.collect_campaign(str(rdir), "C1", "frontier")
+    assert (0.0, 1, "packed", "pod-delete") in placements
+    assert (0.0, 1, "packed", "node-drain") in placements
+    assert len(placements) == 2  # not merged
+    assert placements[(0.0, 1, "packed", "pod-delete")].session_values[LAT] == [30.0]
+    assert placements[(0.0, 1, "packed", "node-drain")].session_values[LAT] == [80.0]
 
 
 def test_collect_campaign_dns_cache_filter(tmp_path):
@@ -299,7 +330,7 @@ def test_collect_campaign_dns_cache_filter(tmp_path):
     )
     placements, warnings = h4.collect_campaign(str(rdir), "C3", "corroboration", dns_cache="on")
     assert len(placements) == 1
-    p = placements[(0.0, 1, "solver")]
+    p = placements[(0.0, 1, "solver", "pod-delete")]
     assert p.session_values[LAT] == [36.0]  # only the cache-on session
     # The excluded cache-off session is surfaced, not silently dropped.
     assert any("s2" in w and "dnsCache='off'" in w for w in warnings)

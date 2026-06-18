@@ -201,7 +201,10 @@ def collect_campaign(
             if not obs.accepted:
                 continue
             f = obs.target_f
-            key = (round(f, 4), r, mode)
+            # Group by fault too: a Placement carries one fault label, so merging
+            # different-fault sessions at the same (f, r, mode) would mislabel the
+            # point. Single-fault campaign dirs are unaffected (fault is constant).
+            key = (round(f, 4), r, mode, fault)
             p = placements.get(key)
             if p is None:
                 p = Placement(
