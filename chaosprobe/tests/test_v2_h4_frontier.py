@@ -499,6 +499,67 @@ def test_main_end_to_end_writes_json_and_fig(tmp_path, monkeypatch, capsys):
     assert out_fig.exists() and out_fig.stat().st_size > 0
 
 
+def test_plot_does_not_raise_on_rounded_ci_past_point(tmp_path):
+    # Regression: the point is the EXACT median but ci bounds are 2-dp rounded, so a
+    # bound can land a hair past the point (ci_low > point), making an errorbar arm
+    # negative. Without clamping, ax.errorbar raises ValueError and the --fig path
+    # aborts. Fixture mirrors the real trigger: ci_low (21.87) just above point (21.869).
+    res = {
+        "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
+        "placements": [
+            {
+                "campaign": "C1",
+                "label": "f0",
+                "displayId": "C1:f0",
+                "f": 0.0,
+                "r": 1,
+                "mode": "packed",
+                "fault": "pod-delete",
+                "role": "frontier",
+                "nonDominated": True,
+                "stats": {
+                    LAT: {"point": 21.869, "ci_low": 21.87, "ci_high": 21.87, "n": 3},
+                    DEPTH: {
+                        "point": 1.0,
+                        "ci_low": 1.01,
+                        "ci_high": 1.01,
+                        "n": 3,
+                    },  # ci_low > point
+                    ERR: {"point": 0.04, "ci_low": 0.04, "ci_high": 0.04, "n": 3},
+                },
+            }
+        ],
+        "nonDominated": ["C1:f0"],
+        "frontierSize": 1,
+        "nonDominatedCount": 1,
+        "warnings": [],
+    }
+    fig_path = tmp_path / "f.png"
+    h4.plot(res, str(fig_path))  # must NOT raise ValueError on the negative arm
+    assert fig_path.exists() and fig_path.stat().st_size > 0
+
+
+def test_plot_no_colorbar_when_all_errors_missing(tmp_path):
+    # Fix 3 regression guard: the colorbar is gated on `sc`, set only when a point is
+    # actually colour-mapped (err not None). With every point err=None, no colorbar
+    # axes must be drawn. Reverting the gate to an unconditional `sc = scatter`
+    # regrows a spurious colorbar (len(fig.axes) == 2) and fails this assertion.
+    res = {
+        "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
+        "placements": [
+            _p_dict("C1", "f0", 10.0, 1.0, None, True),
+            _p_dict("C1", "f1", 20.0, 1.0, None, False),
+        ],
+        "nonDominated": ["C1:f0"],
+        "frontierSize": 2,
+        "nonDominatedCount": 1,
+        "warnings": [],
+    }
+    fig_path = tmp_path / "f.png"
+    fig, ax = h4.plot(res, str(fig_path))
+    assert len(fig.axes) == 1  # main axes only — no colorbar when nothing is colour-mapped
+
+
 def test_render_and_plot_smoke(tmp_path):
     res = {
         "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
@@ -525,6 +586,7 @@ def _p_dict(camp, label, lat, depth, err, nd, role="frontier"):
     return {
         "campaign": camp,
         "label": label,
+        "displayId": f"{camp}:{label}",
         "f": 0.0,
         "r": 1,
         "mode": "packed",
@@ -570,6 +632,23 @@ def test_nd_membership_keyed_by_identity_not_label(monkeypatch, tmp_path):
     # The winner (lower latency) is the non-dominated one.
     by_lat = sorted(res["placements"], key=lambda p: p["stats"][LAT]["point"])
     assert by_lat[0]["nonDominated"] is True and by_lat[1]["nonDominated"] is False
+    # The shown nonDominated id disambiguates the collision by fault (not just
+    # the ambiguous "C1:f=0, r=1"), so the list is unambiguous.
+    assert res["nonDominated"] == ["C1:f=0, r=1 (pod-delete)"]
+
+
+def test_display_ids_disambiguate_only_on_collision():
+    # No collision → bare "campaign:label"; a shared (campaign,label) → fault appended.
+    a = _pl(1.0, 1.0, 0.0, "f=0, r=1", "frontier", "C1")
+    a.fault = "pod-delete"
+    b = _pl(2.0, 1.0, 0.0, "f=0, r=1", "frontier", "C1")  # SAME (campaign,label) as a
+    b.fault = "node-drain"
+    c = _pl(3.0, 1.0, 0.0, "f=0.5, r=1", "frontier", "C1")  # distinct label
+    c.fault = "pod-delete"
+    ids = h4._display_ids([a, b, c])
+    assert ids[id(a)] == "C1:f=0, r=1 (pod-delete)"  # disambiguated
+    assert ids[id(b)] == "C1:f=0, r=1 (node-drain)"  # disambiguated
+    assert ids[id(c)] == "C1:f=0.5, r=1"  # bare — no collision
 
 
 def test_scatter_colour_kw_grey_for_missing_value_mapped_otherwise():

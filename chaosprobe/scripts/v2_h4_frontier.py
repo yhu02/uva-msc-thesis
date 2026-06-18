@@ -236,6 +236,27 @@ CAMPAIGNS: Tuple[Tuple[str, str, str, Optional[str]], ...] = (
 )
 
 
+def _display_ids(placements: List[Placement]) -> Dict[int, str]:
+    """A unique human-readable id per placement, keyed by ``id(p)``.
+
+    The base is ``"{campaign}:{label}"``, but ``_placement_label`` omits the mode
+    for r=1 and never includes the fault, so two placements can share a base (e.g.
+    the same (f, r, mode) under different faults in one results tree). When a base
+    is shared, every colliding placement gets its fault appended so the id stays
+    unambiguous everywhere it is shown (the non-dominated list, the figure). On
+    data with no collisions the id equals the bare ``"{campaign}:{label}"``.
+    """
+    bases: Dict[str, int] = {}
+    for p in placements:
+        base = f"{p.campaign}:{p.label}"
+        bases[base] = bases.get(base, 0) + 1
+    out: Dict[int, str] = {}
+    for p in placements:
+        base = f"{p.campaign}:{p.label}"
+        out[id(p)] = f"{base} ({p.fault})" if bases[base] > 1 else base
+    return out
+
+
 def build_frontier(results_root: str, seed: int = 42) -> Dict[str, Any]:
     """Collect all campaigns, summarize, compute the non-dominated frontier set."""
     all_placements: List[Placement] = []
@@ -264,19 +285,22 @@ def build_frontier(results_root: str, seed: int = 42) -> Dict[str, Any]:
             )
     nd = non_dominated(complete)
     nd_ids = {id(p) for p in nd}
-    # Membership by object identity, not (campaign, label): _placement_label omits
-    # mode for r=1, so labels are not guaranteed unique across placements.
+    # Membership by object identity, not (campaign, label): the label never includes
+    # the fault class (and omits mode for r=1), so the same (f, r, mode) under two
+    # faults collides on label. The shown identifiers come from _display_ids, which
+    # disambiguates any such collision by fault.
+    display = _display_ids(all_placements)
     return {
         "deltas": {dv.key: dv.delta for dv in DVS},
-        "placements": [_placement_dict(p, nd_ids) for p in all_placements],
-        "nonDominated": [f"{p.campaign}:{p.label}" for p in nd],
+        "placements": [_placement_dict(p, nd_ids, display[id(p)]) for p in all_placements],
+        "nonDominated": [display[id(p)] for p in nd],
         "frontierSize": len(frontier_set),
         "nonDominatedCount": len(nd),
         "warnings": warnings,
     }
 
 
-def _placement_dict(p: Placement, nd_ids: set) -> Dict[str, Any]:
+def _placement_dict(p: Placement, nd_ids: set, display_id: str) -> Dict[str, Any]:
     # nonDominated is None for corroboration points AND for incomplete frontier
     # placements (those never enter nd_ids) — i.e. "not ranked", distinct from False.
     if p.role != "frontier" or not _is_complete(p):
@@ -286,6 +310,7 @@ def _placement_dict(p: Placement, nd_ids: set) -> Dict[str, Any]:
     return {
         "campaign": p.campaign,
         "label": p.label,
+        "displayId": display_id,  # unique, collision-disambiguated identifier
         "f": p.f,
         "r": p.r,
         "mode": p.mode,
@@ -335,7 +360,7 @@ def render(result: Dict[str, Any]) -> str:
         st = p["stats"]
         nd = "—" if p["nonDominated"] is None else ("Y" if p["nonDominated"] else "n")
         lines.append(
-            f"  {p['campaign'] + ':' + p['label']:28.28} {p['fault']:10.10} "
+            f"  {p['displayId']:28.28} {p['fault']:10.10} "
             f"{_fmt(st['ew_p95_pre_ms']['point']):>9} "
             f"{_fmt(st['es_trough_depth_pods']['point']):>8} "
             f"{_fmt(st['user_err_during']['point']):>8} {nd:>4} {p['role']}"
@@ -395,16 +420,20 @@ def plot(result: Dict[str, Any], out_path: str) -> Tuple[Any, Any]:
         )
         if err is not None:
             sc = scatter  # only a colour-mapped point gates the colorbar
+        # Clamp arms to ≥ 0: the point is the EXACT median but the CI bounds come
+        # from bootstrap_ci ROUNDED to 2 dp, so a bound can land a hair past the
+        # point (e.g. ci_low 21.87 vs point 21.869) — a tiny negative arm that
+        # matplotlib's errorbar rejects. A 2-dp rounding excursion is visually nil.
         ax.errorbar(
             x,
             y,
             xerr=[
-                [x - _or(st["ew_p95_pre_ms"]["ci_low"], x)],
-                [_or(st["ew_p95_pre_ms"]["ci_high"], x) - x],
+                [max(0.0, x - _or(st["ew_p95_pre_ms"]["ci_low"], x))],
+                [max(0.0, _or(st["ew_p95_pre_ms"]["ci_high"], x) - x)],
             ],
             yerr=[
-                [y - _or(st["es_trough_depth_pods"]["ci_low"], y)],
-                [_or(st["es_trough_depth_pods"]["ci_high"], y) - y],
+                [max(0.0, y - _or(st["es_trough_depth_pods"]["ci_low"], y))],
+                [max(0.0, _or(st["es_trough_depth_pods"]["ci_high"], y) - y)],
             ],
             fmt="none",
             ecolor="gray",
@@ -414,7 +443,7 @@ def plot(result: Dict[str, Any], out_path: str) -> Tuple[Any, Any]:
         # Stagger labels vertically (alternating) so the clustered points stay legible.
         dy = 12 if i % 2 == 0 else -16
         ax.annotate(
-            f"{p['campaign']}:{p['label']}",
+            p["displayId"],
             (x, y),
             fontsize=7,
             xytext=(0, dy),
