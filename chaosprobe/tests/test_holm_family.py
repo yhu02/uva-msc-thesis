@@ -211,6 +211,14 @@ def test_analyze_none_supported(tmp_path):
     assert by["V2-H2"]["holmSignificant"] is False and by["V2-H2"]["supported"] is False
     assert by["V2-H5"]["holmSignificant"] is False and by["V2-H5"]["supported"] is False
     assert res["anySupported"] is False
+    # Pin the headline family-adjusted p-values end-to-end (driver-JSON → analyze),
+    # not just the boolean flags — a rounding/precision regression in the reported
+    # holmAdjusted field must fail here (reject is computed from full precision, so
+    # the booleans alone would not catch it).
+    assert by["V2-H1"]["holmAdjusted"] == pytest.approx(0.0008)
+    assert by["V2-H3"]["holmAdjusted"] == pytest.approx(0.0195)
+    assert by["V2-H5"]["holmAdjusted"] == pytest.approx(0.5002)
+    assert by["V2-H2"]["holmAdjusted"] == pytest.approx(0.98875)
 
 
 def test_analyze_support_requires_both_sig_and_bar(tmp_path):
