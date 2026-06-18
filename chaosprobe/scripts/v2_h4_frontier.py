@@ -358,7 +358,11 @@ def plot(result: Dict[str, Any], out_path: str) -> Tuple[Any, Any]:
     """
     import matplotlib
 
-    matplotlib.use("Agg")
+    # Select the headless Agg backend only if no one has imported pyplot yet —
+    # don't stomp a backend another module already configured (savefig works on
+    # any backend, so we never need to force it once one is chosen).
+    if "matplotlib.pyplot" not in sys.modules:
+        matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     _or = _coord_or
