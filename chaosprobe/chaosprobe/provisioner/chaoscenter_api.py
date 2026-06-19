@@ -22,8 +22,11 @@ from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 logger = logging.getLogger(__name__)
 
 # The managed ChaosCenter admin password is resolved at runtime, never
-# committed.  Override with this env var, or let ChaosProbe generate one and
-# persist it so the value is stable across runs for a given instance.
+# committed.  Override with this env var, or let ChaosProbe generate one.
+# Resolution itself is READ-ONLY (see _resolve_managed_password): the value is
+# generated/persisted to the file only AFTER a successful rotation actually sets
+# it on ChaosCenter (see _chaoscenter_login), so the file never gets ahead of
+# the live instance.  Once written, it is stable across runs for that instance.
 CHAOSCENTER_PASSWORD_ENV = "CHAOSPROBE_CHAOSCENTER_PASSWORD"
 CHAOSCENTER_PASSWORD_FILE = Path.home() / ".chaosprobe" / "chaoscenter-admin-password"
 
@@ -296,6 +299,15 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         Tries the provided password first, then the managed password,
         then the factory default.  If the factory default works the
         password is automatically rotated to the managed password.
+
+        Fails fast (``RuntimeError``) if ``CHAOSPROBE_CHAOSCENTER_PASSWORD`` is
+        set to a policy-non-compliant value — even when an explicit ``password``
+        is provided.  This is deliberate: the env var is global config that wins
+        top precedence in :func:`_resolve_managed_password`, so a non-compliant
+        value cannot be the rotation target and would orphan the instance behind
+        an unusable override.  Treating it as a hard config error (fix or unset
+        it) is safer than silently rotating to a generated value the env then
+        shadows.
         """
         username = username or self.CHAOSCENTER_DEFAULT_USER
 

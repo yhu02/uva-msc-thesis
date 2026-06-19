@@ -812,6 +812,17 @@ class TestChaoscenterLogin:
         with pytest.raises(RuntimeError, match="violates ChaosCenter's password policy"):
             setup._chaoscenter_login("http://localhost:9003")
 
+    def test_noncompliant_env_fails_fast_even_with_explicit_password(self, monkeypatch):
+        # Contract: a non-compliant env override is a hard config error that
+        # fails fast even when an explicit (valid) password is supplied — the
+        # env var has top precedence in resolution and can't be the rotation
+        # target, so it must be fixed/unset rather than silently worked around.
+        # Pins the up-front guard placement (ahead of the candidate loop).
+        monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "from-env")  # non-compliant
+        setup = _make_setup()
+        with pytest.raises(RuntimeError, match="violates ChaosCenter's password policy"):
+            setup._chaoscenter_login("http://localhost:9003", password="Valid1pass!")
+
     def test_login_raises_when_all_passwords_fail(self):
         setup = _make_setup()
         with patch.object(
