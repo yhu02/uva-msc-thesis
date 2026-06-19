@@ -1,6 +1,7 @@
 """Tests for ChaosCenter dashboard integration."""
 
 import json
+import os
 from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
@@ -1752,15 +1753,34 @@ class TestResolveManagedPassword:
     def test_persist_writes_0600(self, tmp_path, monkeypatch):
         pw_file = tmp_path / "sub" / "pw"
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
-        chaoscenter_api._persist_managed_password("Persisted9!")
+        # Permissive umask (0): a create-then-chmod path would briefly produce a
+        # 0666 file; the os.open(...,0o600) create must yield 0600 regardless.
+        old_umask = os.umask(0)
+        try:
+            chaoscenter_api._persist_managed_password("Persisted9!")
+        finally:
+            os.umask(old_umask)
         assert pw_file.read_text() == "Persisted9!"
         assert oct(pw_file.stat().st_mode)[-3:] == "600"  # locked down
+
+    def test_persist_rehardens_preexisting_loose_file(self, tmp_path, monkeypatch):
+        # O_CREAT's mode only applies on creation, so a pre-existing world-readable
+        # file must still be tightened to 0600 by the trailing chmod.
+        pw_file = tmp_path / "pw"
+        pw_file.write_text("old")
+        pw_file.chmod(0o644)
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        chaoscenter_api._persist_managed_password("New1pass!")
+        assert pw_file.read_text() == "New1pass!"
+        assert oct(pw_file.stat().st_mode)[-3:] == "600"
 
     def test_persist_io_error_is_tolerated(self, tmp_path, monkeypatch):
         a_dir = tmp_path / "iam_a_dir"
         a_dir.mkdir()
-        # write_text on a directory raises OSError; persistence must swallow it
-        # (a non-persisted password just means the next run re-derives it).
+        # Opening a directory for write raises OSError; persistence must swallow
+        # it (logged at WARNING) rather than crash. Note: a failed persist is not
+        # recoverable by re-derivation — the managed password is random — but
+        # that is the caller's lockout risk, not this function's to raise on.
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", a_dir)
         chaoscenter_api._persist_managed_password("Persisted9!")  # no raise
 

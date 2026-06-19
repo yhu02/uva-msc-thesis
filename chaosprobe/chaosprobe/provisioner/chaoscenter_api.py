@@ -114,15 +114,36 @@ def _persist_managed_password(pwd: str) -> None:
 
     Call this ONLY after ChaosCenter's admin password has been successfully set
     to ``pwd`` (a successful rotation), so the file always matches the live
-    instance and can never orphan it.  I/O failures are tolerated (logged) —
-    a non-persisted password just means the next run re-derives it.
+    instance and can never orphan it.
+
+    The managed password is RANDOM, so a failed persist is NOT recoverable by
+    re-derivation: if this fails right after a rotation and no
+    ``CHAOSPROBE_CHAOSCENTER_PASSWORD`` env var is set, future runs cannot know
+    the live instance's password and will fail to authenticate (a reinstall or
+    a manually-supplied password is then required).  The failure is therefore
+    logged at WARNING, not silently swallowed.
     """
     try:
         CHAOSCENTER_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CHAOSCENTER_PASSWORD_FILE.write_text(pwd)
-        CHAOSCENTER_PASSWORD_FILE.chmod(0o600)
+        # Create with 0600 from the syscall so the admin-password file is never
+        # even briefly world-readable: write_text() would create it with the
+        # umask default (commonly 0644) and only tighten it on the later chmod.
+        # O_CREAT's mode only applies on creation, so re-chmod afterwards to also
+        # harden a pre-existing, looser-permissioned file.
+        fd = os.open(CHAOSCENTER_PASSWORD_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, pwd.encode())
+        finally:
+            os.close(fd)
+        os.chmod(CHAOSCENTER_PASSWORD_FILE, 0o600)
     except OSError:
-        logger.debug("could not persist managed ChaosCenter password", exc_info=True)
+        logger.warning(
+            "could not persist managed ChaosCenter password to %s; if a rotation "
+            "just succeeded, future runs may be unable to authenticate unless %s is set",
+            CHAOSCENTER_PASSWORD_FILE,
+            CHAOSCENTER_PASSWORD_ENV,
+            exc_info=True,
+        )
 
 
 def _extract_token(resp: dict) -> str:
