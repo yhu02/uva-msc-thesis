@@ -135,8 +135,10 @@ def _extract_http_routes(
     """Extract HTTP routes from scenario httpProbes for latency measurement.
 
     Parses the experiment's httpProbe definitions and returns a list of
-    ``(service, path, description, method)`` tuples suitable for
-    ``ContinuousLatencyProber``.
+    ``(service, route, description, method)`` tuples suitable for
+    ``ContinuousLatencyProber``. ``route`` is the path PLUS any query string
+    (deduped by base path) — preserved because some workloads' routes error
+    without their params (e.g. hotelReservation's ``/hotels?inDate=...&lat=...``).
 
     When the scenario defines no httpProbes (e.g. ``node-drain``, which omits
     litmus probes because they would evaluate on the very node being drained and
@@ -282,7 +284,8 @@ def _build_iteration_routes(
     iteration's probers.
 
     North-south routes come from the scenario httpProbes (frontend HTTP,
-    ``(service, path, desc, method)``) and are always preserved.
+    ``(service, route, desc, method)`` where ``route`` is the path plus any
+    query string) and are always preserved.
     East-west routes are the service-dependency graph as protocol-aware
     ``ServiceRoute`` tuples (``grpc``/``tcp`` with the real ``host:port``),
     so gRPC backends are probed over their actual port instead of a

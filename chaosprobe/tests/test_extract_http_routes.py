@@ -102,3 +102,36 @@ def test_no_probes_falls_back_to_user_home_route():
 
 def test_no_probes_no_fallback_returns_empty():
     assert _extract_http_routes({"experiments": []}, "online-boutique") == []
+
+
+def test_unnamed_probe_name_falls_back_to_full_route():
+    # A probe without a 'name' uses the full route (path + query) as its
+    # description — pins the name=probe.get("name", route) fallback.
+    sc = {
+        "experiments": [
+            {
+                "spec": {
+                    "spec": {
+                        "experiments": [
+                            {
+                                "spec": {
+                                    "probe": [
+                                        {
+                                            "type": "httpProbe",
+                                            # no "name" key
+                                            "httpProbe/inputs": {
+                                                "url": "http://frontend.hr.svc.cluster.local/hotels?q=1",
+                                                "method": {"get": {}},
+                                            },
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+    routes = _extract_http_routes(sc, "hr", fallback_service="frontend")
+    assert routes == [("frontend", "/hotels?q=1", "/hotels?q=1", "GET")]
