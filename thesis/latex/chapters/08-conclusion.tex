@@ -1,4 +1,3 @@
-% Ported from thesis/08-conclusion.md — wording unchanged.
 \chapter{Conclusion \& future work}\label{ch:conclusion}
 
 \section{Conclusion}\label{sec:conclusion}
@@ -6,123 +5,95 @@
 This thesis asked: \textbf{under which chaos fault classes does pod placement
 measurably affect mechanism-level behaviour and user-visible outcomes in a
 Kubernetes microservice application, and when do aggregate resilience scores
-obscure those effects?} The answer the data supports is layered, and
-different for each fault class tested.
+obscure those effects?} Answered through a pre-registered, Holm-corrected
+confirmatory family, the result is a real mechanism whose reach is rigorously
+bounded.
 
-Under single-replica \texttt{pod-delete} \textbf{churn}, placement moves the mechanism
-layer, not the user layer, and the score is blind to both. Spreading the
-target's dependents reproducibly flushes a large fraction of per-node
-conntrack state during the kill cycle (38.5\% vs 2.7\% median, spread >
-colocate in 7/7 independent sessions; H2), yet this most reproducible signal
-in the study is statistically decoupled from the fault-dependent user routes
-(H3) --- and the aggregate score cannot rank the strategies at all, with 3.3\%
-of its variance between strategies and a minimum detectable effect larger
-than any gap that exists (H1). Under \textbf{load contention}, the regime where
-latency is the user-visible outcome, the same shape recurs: co-location
-reproducibly lowers the east-west inter-service tail (1.36--1.39$\times$ across two
-batches), but the user-layer effect did not survive clean replication, so
-none is claimed (H4). Under \textbf{node failure}, placement finally moves the
-layer that counts there --- availability --- and it does so with the opposite
-sign to the latency face: the co-location that minimizes the east-west tail
-(H5's cross-node-fraction separator --- the two node-local placements held the
-two lowest tails of eight in both batches, joint $p \approx 0.0013$) maximizes
-blast radius and recovery time
-(11/11 services offline and $\approx$10.3 s recovery vs 2/11 and $\approx$2.6 s; H6). The
-aggregate score, finally, obscures placement effects in every regime tested,
-for the three regime-specific reasons diagnosed in \S\ref{sec:decoupling}.
+The positive thread is the \emph{mechanism}. Placement reproducibly moves a
+UDP-conntrack reconvergence signature, and that effect is significant in every
+campaign: it is placement-dependent under churn (H2), it interacts with
+replication under node-drain (H3's error face, where anti-affine replication
+fully rescues the user-route error rate), and it is the one scorecard layer with
+near-perfect test-retest reliability (H5, mechanism ICC 0.994 vs a naive
+aggregate's 0.066). A NodeLocal DNSCache intervention removes the conntrack drop
+under both placements --- the one actionable lever the study confirmed.
 
-The four contributions of \S\ref{sec:contributions} carry this answer, each within the boundary
-drawn in Chapter~\ref{ch:threats}. The layered-decoupling result, the trade-off pair, and
-the score critique (claim 1) are statements about a single-replica
-deployment on one small virtualized v1.28.6/ipvs cluster --- bounded per
-\S\ref{sec:generalizes}'s table, and never ``spread is worse'' or a best strategy. ChaosProbe (claim 2) and the provenance-gated campaign protocol
-(claim 3) are the portable parts: any cluster and workload can rerun this
-design, and every number quoted here traces to an archived, hash-stamped run
-(Appendix~\ref{app:provenance}). The negative findings (claim 4) bound which fault classes can
-test placement at all on clusters of this class.
+The bound is what pre-registration makes precise. No confirmatory hypothesis
+clears its registered bar (\S\ref{sec:family-holm}): the dose-response is
+detectable but below the 15\,\% SESOI (H1); placement-dependence replicates with
+the \emph{opposite} sign, packing concentrating more per-node conntrack churn
+than spreading, so the conjunction fails (H2); replication's rescue is clear on
+the error face but the trough-depth co-primary could not adjudicate it on this
+placement (H3); and the scorecard's availability layer is unreliable under churn
+(H5). The latency$\leftrightarrow$availability frontier is correspondingly
+degenerate on the availability face under pod-delete (H4). Placement moves the
+mechanism; at the pre-registered bar, it does not move the user-visible
+placement, availability, and dose-response outcomes the hypotheses predicted.
+
+The three contributions of \S\ref{sec:contributions} carry this answer within the
+boundary of Chapter~\ref{ch:threats}. The empirical finding --- a real,
+DNS-mediated, placement-dependent conntrack mechanism whose user-visible reach is
+bounded --- is a statement about a single-replica baseline on one small
+virtualized v1.28.6/ipvs cluster (\S\ref{sec:generalizes}), never ``spread is
+worse'' or a best strategy. ChaosProbe and the deposit-before-analysis campaign
+protocol are the portable parts: any cluster and workload can rerun this design,
+and every number traces to an archived, hash-stamped run
+(Appendix~\ref{app:provenance}).
 
 The methodological point is the one we would have the field retain. Chaos
-evaluation of placement needs \textbf{layered measurement and provenance-gated
-replication, not a single score}: each fault class deposited its placement
-signal in a different layer, a one-number instrument missed all of them, and
-the only findings that survived were the ones forced through independent
-sessions and strict provenance --- including one striking user-layer ``result''
-that did not.
+evaluation of placement needs \textbf{layered measurement, pre-registration, and
+provenance-gated replication, not a single score}: each fault class deposited
+its placement signal in a specific layer, a one-number instrument's availability
+component was unreliable or undefined exactly where it mattered, and freezing the
+hypotheses and effect-size bars before collection is what turned ``we observed
+placement effects'' into the more honest ``here is exactly which effects survive
+a strict bar, and which do not.''
 
 \section{Future work}\label{sec:future-work}
 
-\subsection*{E1 --- multi-replica $\times$ node-drain (skipped; structurally null as designed)}
+\subsection*{Second-workload external validity (the highest-value next step)}
 
-The natural ``positive'' experiment --- 3 replicas per service, drain a node,
-expect \texttt{spread} to keep services available while \texttt{colocate} loses them --- was
-piloted and \textbf{deliberately skipped}: ChaosProbe's \texttt{spread} strategy
-implements per-service \textbf{deterministic nodeSelector pinning}, which spreads
-\emph{different services} across nodes but pins \textbf{all replicas of a given service
-to one node} (pilot observation: all 3 \texttt{productcatalogservice} replicas on
-one worker). Draining the target node therefore kills all N replicas
-regardless of strategy --- the multi-replica availability contrast \textbf{cannot
-materialize} with the mutator as implemented; the experiment is structurally
-null, not informative. Options for future work:
+The single largest threat (\S\ref{sec:generalizes}) is that all results come from
+one workload. The natural next step is to replicate the confirmatory family on a
+second microservice application (e.g.\ a Consul/gRPC workload such as
+DeathStarBench hotelReservation). A scoping attempt surfaced a concrete blocker
+worth recording: that workload's inter-service gRPC clients enter a keepalive
+reconnection storm (server-side \texttt{too\_many\_pings} GoAway responses) after
+the per-iteration clean-baseline restart, leaving the search path unavailable
+for many minutes and false-tainting every iteration's readiness gate, even
+though the latency data collected once it recovers is clean. The
+restart-for-clean-baseline protocol is thus incompatible with workloads prone to
+such storms without one of: a much longer readiness budget, a per-workload skip
+of the per-iteration restart (a documented protocol deviation), or tuning the
+workload's gRPC keepalive (a change to the system under test). Resolving that
+choice is the prerequisite for clean second-workload data.
 
-\begin{itemize}
-\item \textbf{(a)} use default Kubernetes scheduling (topology spread) for the
-  replicated arm --- but then it is no longer a placement-\emph{strategy} contrast;
-\item \textbf{(b)} extend the \texttt{spread} strategy with pod-anti-affinity /
-  \texttt{topologySpreadConstraints} so a service's replicas land on distinct nodes
-  (a mutator code change, then rerun E1);
-\item \textbf{(c)} accept H6's single-replica blast-radius result as the availability
-  evidence (the option taken in this thesis) and leave multi-replica
-  anti-affinity as the headline extension.
-\end{itemize}
-
-\subsection*{P2 --- path-scoped network latency $\times$ dependency-aware placement}
-
-The cleanest remaining shot at a \emph{user-visible} locality effect: inject
-latency on traffic to a central dependency and test whether node-local
-placements (and a repaired \texttt{dependency-aware} --- H5 showed its BFS partition
-does not actually co-locate communicating services) beat \texttt{spread} on
-dependent routes beyond the control gap. Key risk: the fault must actually
-differentiate local vs cross-node paths (a packet/path check), else the
-placement signal collapses.
-
-\subsection*{H7 --- target-scoped cross-node fraction (discussion-tier)}
-
-A static predictor for the \emph{churn mechanism}: the cross-node fraction
-restricted to edges incident on the chaos target tracks conntrack flush
-slightly better than the global fraction ($\rho \approx 0.34$ target-scoped vs $\approx 0.30$
-global at 7 sessions) --- suggestive, underpowered, explicitly \textbf{not} a claim;
-worth a dedicated campaign.
-
-\subsection*{Other extensions}
+\subsection*{Decomposing and extending the mechanism}
 
 \begin{itemize}
-\item \textbf{Third H5 batch / different cluster} --- the second batch (\S\ref{sec:h5}) reproduced
-  the two-regime separation but collapsed the continuous correlation
-  ($\rho$ 0.79 $\rightarrow$ 0.25); a third batch on a different cluster would test whether
-  the \emph{separation} transfers beyond this environment.
-\item \textbf{H6 gradient: denser concentrations} --- the 6-strategy gradient (\S\ref{sec:h6},
-  observed = predicted blast, $\rho = 1.0$) is complete; the open questions are
-  denser intermediate per-node concentrations and the multi-replica regime,
-  plus an explanation for the non-monotone recovery times.
-\item \textbf{H2 flush apportionment} --- the protocol-composition probe (\S\ref{sec:h2-mechanism}) shows
-  both mechanisms (kernel TCP teardown at kills; the placement-dependent
-  UDP/DNS pool) but, at $i = 1$ with a ramp-contaminated baseline, cannot
-  apportion the campaign's flush percentages between them; a steady-state
-  multi-iteration probe would.
-\item Larger/bare-metal clusters, other CNIs and kube-proxy modes (iptables,
-  nftables), production traffic, multi-replica workloads, and scheduler
-  integration of the cross-node fraction as a scoring plugin.
+\item \textbf{Conntrack-drop apportionment.} The drop has both a kernel TCP
+  teardown component and the placement-dependent UDP/DNS pool the cache removes
+  (\S\ref{sec:h2-mechanism}); a steady-state, multi-iteration protocol-composition
+  probe would apportion the two, converting the study's most reproducible signal
+  from mechanism-consistent to causally decomposed.
+\item \textbf{A rescue-margin the depth face can express.} H3's trough-depth
+  co-primary could not adjudicate rescue because the registered absolute one-pod
+  margin coincided with the $r{=}1$ dynamic range on this placement; a margin
+  defined relative to the realized $r{=}1$ depth (or an integrated outage =
+  depth\,$\times$\,duration metric) would let a future pre-registration test the
+  depth face on its merits.
+\item \textbf{Denser dose levels and other faults.} Finer cross-node-fraction
+  steps around the detected (sub-SESOI) trend, and a fault that varies the
+  availability face while retaining a latency face, would let the frontier (H4)
+  realize the trade-off it is degenerate on here.
 \end{itemize}
 
-Prioritized: the highest-value next step is the multi-replica $\times$ node-drain
-experiment via option (b) --- a small mutator extension unlocks the one regime
-this study structurally excluded, where placement \emph{should} finally reach the
-user-visible layer, and a null there would be genuinely surprising rather
-than designed-in. Close behind it sit the two cheap completions of existing
-results --- a second H5 batch and the H6 gradient --- followed by the H2
-protocol-composition probe, which converts the study's most reproducible
-signal from mechanism-consistent to causally decomposed. P2 is the ambitious
-shot and should be attempted only with the packet/path check in place. The
-common thread is the method: every one of these experiments runs on the same
-layered, provenance-gated protocol this thesis contributes, and each would
-sharpen --- not merely extend --- the boundary of where placement matters.
+\subsection*{Environment and scope}
+
+Larger and bare-metal clusters, other CNIs and kube-proxy modes (iptables,
+nftables --- the de-scoped direction-transfer comparison), multi-replica
+workloads beyond the node-drain regime H3 reaches, production traffic, and
+integrating the cross-node fraction into a scheduler as a scoring plugin. The
+common thread is the method: each of these runs on the same layered,
+pre-registered, provenance-gated protocol this thesis contributes, and each
+would sharpen --- not merely extend --- the boundary of where placement matters.
