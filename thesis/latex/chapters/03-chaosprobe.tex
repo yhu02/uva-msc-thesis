@@ -209,9 +209,11 @@ mapping rather than a bibliography of irreproducible measurements.
 
 The framework's limitations are part of its honest description. Placement
 is mutated at deployment level with \texttt{nodeSelector}, which is what makes
-the realized placement verifiable, but also what restricts the study to
-between-service topology --- per-service replica anti-affinity is out of
-reach of the current mutator, a boundary that shapes the future-work
+the realized placement verifiable: the $f$ knob varies between-service topology
+at one replica per service, and the $r$ knob reaches $r{=}3$ packed/anti-affine
+through round-robin per-replica pinning in H3's node-drain campaign
+(\S\ref{sec:h3}). Multi-replica anti-affinity beyond that node-drain regime is
+out of reach of the current mutator, a boundary that shapes the future-work
 design in \S\ref{sec:future-work}. The probers sample at fixed cadences (EndpointSlice
 snapshots every 15 s), so sub-cadence transients are invisible; the
 blast-radius troughs (H3) are well above this resolution, but finer-grained
