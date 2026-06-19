@@ -169,3 +169,68 @@ class TestServiceDependencyRoutes:
             ]
         )
         assert m.get_service_dependencies() == [("checkoutservice", "productcatalogservice")]
+
+
+def _svc(name, port):
+    s = MagicMock()
+    s.metadata.name = name
+    p = MagicMock()
+    p.port = port
+    s.spec.ports = [p]
+    return s
+
+
+def _mutator_with_services(services):
+    """A mutator whose core_api.list_namespaced_service returns (name, port) services."""
+    m = PlacementMutator.__new__(PlacementMutator)
+    m.namespace = "hotel-reservation"
+    m.core_api = MagicMock()
+    m.core_api.list_namespaced_service.return_value = MagicMock(
+        items=[_svc(n, p) for n, p in services]
+    )
+    return m
+
+
+class TestGetTopologyDependencyRoutes:
+    def test_resolves_edges_to_host_port_and_protocol(self, tmp_path):
+        topo = tmp_path / "topology.json"
+        topo.write_text(
+            '{"services":["frontend","search","geo","mongodb-geo","memcached-rate","rate"],'
+            '"edges":[["frontend","search"],["search","geo"],["geo","mongodb-geo"],'
+            '["rate","memcached-rate"]]}'
+        )
+        m = _mutator_with_services(
+            [
+                ("frontend", 5000),
+                ("search", 8082),
+                ("geo", 8083),
+                ("mongodb-geo", 27017),
+                ("memcached-rate", 11211),
+                ("rate", 8084),
+            ]
+        )
+        routes = {(r[0], r[1]): r for r in m.get_topology_dependency_routes(str(topo))}
+        # gRPC service edge: host:port from the live Service, protocol grpc, desc src->tgt
+        assert routes[("frontend", "search")] == (
+            "frontend",
+            "search",
+            "search:8082",
+            "grpc",
+            "frontend->search",
+        )
+        assert routes[("search", "geo")][2:] == ("geo:8083", "grpc", "search->geo")
+        # Datastore edges → tcp (label only; the prober TCP-connects either way)
+        assert routes[("geo", "mongodb-geo")][3] == "tcp"
+        assert routes[("rate", "memcached-rate")][3] == "tcp"
+
+    def test_skips_target_with_no_resolvable_service(self, tmp_path):
+        topo = tmp_path / "topology.json"
+        topo.write_text(
+            '{"services":["frontend","search","ghost"],'
+            '"edges":[["frontend","search"],["frontend","ghost"]]}'
+        )
+        # 'ghost' has no Service (e.g. headless) → its edge is dropped, not crashed.
+        m = _mutator_with_services([("frontend", 5000), ("search", 8082)])
+        routes = m.get_topology_dependency_routes(str(topo))
+        targets = {r[1] for r in routes}
+        assert targets == {"search"} and "ghost" not in targets

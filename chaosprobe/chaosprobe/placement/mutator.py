@@ -277,6 +277,40 @@ class PlacementMutator:
         """
         return [(route[0], route[1]) for route in self.get_service_dependency_routes()]
 
+    def get_topology_dependency_routes(self, topology_path: str) -> List[ServiceRoute]:
+        """East-west routes from a static ``topology.json``, ports from live Services.
+
+        The env-var-based :meth:`get_service_dependency_routes` is empty for
+        workloads that discover peers another way (e.g. hotelReservation uses
+        Consul, not ``*_SERVICE_ADDR`` env vars). This fallback reads the
+        hand-curated edges from ``topology.json`` (the same file the solver gate
+        consumes) and resolves each target's ``host:port`` from the namespace's
+        live Services, so the in-cluster TCP-connect prober
+        (:mod:`chaosprobe.metrics.latency`) can still measure inter-service
+        latency. Protocol is a label only here (the probe is a TCP connect
+        either way): ``tcp`` for datastores (memcached/mongodb/redis), ``grpc``
+        otherwise. Targets with no resolvable Service port are skipped.
+        """
+        from chaosprobe.placement.fraction_solver import load_static_topology
+
+        edges, _services = load_static_topology(topology_path)
+
+        port_by_service: Dict[str, int] = {}
+        for svc in self.core_api.list_namespaced_service(self.namespace).items:
+            ports = (svc.spec.ports or []) if svc.spec else []
+            if ports and ports[0].port is not None:
+                port_by_service[svc.metadata.name] = int(ports[0].port)
+
+        routes: List[ServiceRoute] = []
+        for source, target, _weight in edges:
+            port = port_by_service.get(target)
+            if port is None:
+                # No (or headless) Service for this target — nothing to TCP-probe.
+                continue
+            protocol = "tcp" if target.startswith(("memcached", "mongodb", "redis")) else "grpc"
+            routes.append((source, target, f"{target}:{port}", protocol, f"{source}->{target}"))
+        return routes
+
     def apply_strategy(
         self,
         strategy: PlacementStrategy,

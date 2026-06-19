@@ -605,6 +605,36 @@ class TestBuildIterationRoutes:
         assert len(north_south) == 2  # only the scenario probes
         assert east_west == []
 
+    def test_empty_env_var_deps_fall_back_to_adjacent_topology(self, tmp_path):
+        """When env-var dependency discovery is empty (e.g. Consul-based hotel),
+        east-west routes come from a topology.json adjacent to the scenario."""
+        (tmp_path / "topology.json").write_text(
+            '{"services":["frontend","search"],"edges":[["frontend","search"]]}'
+        )
+        scenario = _make_scenario(["/"])
+        scenario["path"] = str(tmp_path)  # load_scenario sets this to the scenario dir
+        mutator = MagicMock()
+        mutator.get_service_dependency_routes.return_value = []  # env-var discovery empty
+        mutator.get_topology_dependency_routes.return_value = [
+            ("frontend", "search", "search:8082", "grpc", "frontend->search")
+        ]
+        ctx = _make_ctx(mutator)
+
+        north_south, east_west = _build_iteration_routes(scenario, ctx)
+        mutator.get_topology_dependency_routes.assert_called_once()
+        assert [r[1] for r in east_west] == ["search"]
+        assert east_west[0][2] == "search:8082"
+
+    def test_no_topology_adjacent_stays_empty(self):
+        """No topology.json next to the scenario → fallback is a no-op (empty)."""
+        scenario = _make_scenario(["/"])  # no 'path' key → nothing to find
+        mutator = MagicMock()
+        mutator.get_service_dependency_routes.return_value = []
+        ctx = _make_ctx(mutator)
+        _, east_west = _build_iteration_routes(scenario, ctx)
+        assert east_west == []
+        mutator.get_topology_dependency_routes.assert_not_called()
+
     def test_dependency_fetch_failure_falls_back_to_north_south(self):
         """A K8s API failure when fetching dependencies must not break the
         iteration — log the warning, fall back to north-south only."""

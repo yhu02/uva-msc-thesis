@@ -246,6 +246,25 @@ def _build_route_view_for_iteration(
     return build_route_view(locust_stats, latency_phases)
 
 
+def _adjacent_topology_path(scenario: Dict[str, Any]) -> Optional[str]:
+    """Path to a ``topology.json`` adjacent to the scenario, or None.
+
+    Mirrors :func:`chaosprobe.config.topology.parse_topology_from_scenario`'s
+    deploy-dir lookup: the scenario ``path`` is the scenario directory, so the
+    topology file is ``<path>/topology.json`` (or the parent's, if the scenario
+    file lives one level down). Returns the first that exists.
+    """
+    from pathlib import Path
+
+    base = scenario.get("path")
+    if not base:
+        return None
+    for candidate in (Path(base) / "topology.json", Path(base).parent / "topology.json"):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _build_iteration_routes(
     scenario: Dict[str, Any],
     ctx: "RunContext",
@@ -270,6 +289,25 @@ def _build_iteration_routes(
     except Exception as exc:  # noqa: BLE001 — K8s client raises broad set
         logger.warning("Failed to fetch service dependencies for east-west routes: %s", exc)
         dependency_routes = []
+
+    # Env-var discovery is empty for workloads that find peers another way
+    # (e.g. hotelReservation uses Consul, not *_SERVICE_ADDR env vars). Fall back
+    # to the static topology.json adjacent to the scenario so the east-west
+    # latency face is still measured (the registered V2-H1 outcome ew_p95).
+    if not dependency_routes:
+        topology_path = _adjacent_topology_path(scenario)
+        if topology_path:
+            try:
+                dependency_routes = ctx.mutator.get_topology_dependency_routes(topology_path)
+                if dependency_routes:
+                    logger.info(
+                        "East-west routes from static topology %s (%d edges) — "
+                        "env-var discovery was empty",
+                        topology_path,
+                        len(dependency_routes),
+                    )
+            except Exception as exc:  # noqa: BLE001 — file/K8s errors are non-fatal
+                logger.warning("Static-topology east-west fallback failed: %s", exc)
 
     east_west = _consolidate_service_routes(dependency_routes)
 
