@@ -18,6 +18,7 @@ from chaosprobe.config.topology import ServiceRoute, _extract_dependencies_from_
 from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
 from chaosprobe.orchestrator.preflight import LITMUS_INFRA_DEPLOYMENTS
+from chaosprobe.placement.fraction_solver import load_static_topology
 from chaosprobe.placement.strategy import (
     DeploymentInfo,
     NodeAssignment,
@@ -291,8 +292,6 @@ class PlacementMutator:
         either way): ``tcp`` for datastores (memcached/mongodb/redis), ``grpc``
         otherwise. Targets with no resolvable Service port are skipped.
         """
-        from chaosprobe.placement.fraction_solver import load_static_topology
-
         edges, _services = load_static_topology(topology_path)
 
         port_by_service: Dict[str, int] = {}

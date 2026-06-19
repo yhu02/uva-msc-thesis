@@ -234,3 +234,21 @@ class TestGetTopologyDependencyRoutes:
         routes = m.get_topology_dependency_routes(str(topo))
         targets = {r[1] for r in routes}
         assert targets == {"search"} and "ghost" not in targets
+
+    def test_skips_service_with_no_port(self, tmp_path):
+        topo = tmp_path / "topology.json"
+        topo.write_text(
+            '{"services":["frontend","search","portless"],'
+            '"edges":[["frontend","search"],["frontend","portless"]]}'
+        )
+        # 'portless' Service exists but exposes no usable port (ports=[]) → its edge
+        # is skipped via the `if ports and ports[0].port is not None` guard, no crash.
+        m = _mutator_with_services([("frontend", 5000), ("search", 8082)])
+        portless = MagicMock()
+        portless.metadata.name = "portless"
+        portless.spec.ports = []
+        m.core_api.list_namespaced_service.return_value = MagicMock(
+            items=[_svc("frontend", 5000), _svc("search", 8082), portless]
+        )
+        routes = m.get_topology_dependency_routes(str(topo))
+        assert {r[1] for r in routes} == {"search"}

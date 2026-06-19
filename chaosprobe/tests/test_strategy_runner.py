@@ -594,6 +594,9 @@ class TestBuildIterationRoutes:
         for r in east_west:
             assert r[3] in ("grpc", "tcp")
             assert ":" in r[2]
+        # The topology fallback must NOT fire when env-var discovery is non-empty —
+        # online-boutique (which has env-var deps) is unaffected, no double-counting.
+        mutator.get_topology_dependency_routes.assert_not_called()
 
     def test_no_dependencies_returns_empty_east_west(self):
         scenario = _make_scenario(["/", "/cart"])
@@ -634,6 +637,47 @@ class TestBuildIterationRoutes:
         _, east_west = _build_iteration_routes(scenario, ctx)
         assert east_west == []
         mutator.get_topology_dependency_routes.assert_not_called()
+
+    def test_topology_found_in_parent_when_scenario_in_subdir(self, tmp_path):
+        """_adjacent_topology_path's second candidate: scenario path is a
+        subdirectory and topology.json sits in its PARENT (mirrors
+        parse_topology_from_scenario's parent-deploy-dir fallback)."""
+        (tmp_path / "topology.json").write_text(
+            '{"services":["frontend","search"],"edges":[["frontend","search"]]}'
+        )
+        subdir = tmp_path / "experiments"
+        subdir.mkdir()
+        scenario = _make_scenario(["/"])
+        scenario["path"] = str(subdir)  # topology.json is in the parent, not here
+        mutator = MagicMock()
+        mutator.get_service_dependency_routes.return_value = []
+        mutator.get_topology_dependency_routes.return_value = [
+            ("frontend", "search", "search:8082", "grpc", "frontend->search")
+        ]
+        ctx = _make_ctx(mutator)
+        _, east_west = _build_iteration_routes(scenario, ctx)
+        # The parent-directory candidate resolved the topology and routes populated.
+        mutator.get_topology_dependency_routes.assert_called_once_with(
+            str(tmp_path / "topology.json")
+        )
+        assert [r[1] for r in east_west] == ["search"]
+
+    def test_topology_fallback_failure_degrades_to_empty(self, tmp_path):
+        """If the topology fallback raises (malformed topology.json, K8s error),
+        the broad-except degrades to empty east-west and north-south survives —
+        it must NOT propagate and break the iteration."""
+        (tmp_path / "topology.json").write_text(
+            '{"services":["frontend","search"],"edges":[["frontend","search"]]}'
+        )
+        scenario = _make_scenario(["/"])
+        scenario["path"] = str(tmp_path)
+        mutator = MagicMock()
+        mutator.get_service_dependency_routes.return_value = []
+        mutator.get_topology_dependency_routes.side_effect = ValueError("malformed topology")
+        ctx = _make_ctx(mutator)
+        north_south, east_west = _build_iteration_routes(scenario, ctx)
+        assert len(north_south) == 1  # north-south survives
+        assert east_west == []  # fallback raise swallowed, degraded to empty
 
     def test_dependency_fetch_failure_falls_back_to_north_south(self):
         """A K8s API failure when fetching dependencies must not break the
