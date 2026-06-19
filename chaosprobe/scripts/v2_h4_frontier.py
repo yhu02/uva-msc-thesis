@@ -29,7 +29,9 @@ depth is recorded as a top-level fraction (a different shape and unit from the
 per-iteration ``es_trough_depth_pods`` the frontier uses). C2's replication
 results live on the availability face and are reported in ``C2-OB-REPORT.md``
 (V2-H3); the missing east-west prober is a stated V2-H4 limitation, not a hidden
-omission. Every point is labeled by fault class (all pod-delete here).
+omission. Each point carries its fault class as a field/marker (all pod-delete
+here); the fault is appended to a point's *display identifier* only when needed
+to disambiguate a shared ``campaign:label`` (see :func:`_display_ids`).
 
 Session-condition values are the median over untainted iterations (shared m2
 taint machinery, "never quoted" exclusion); per placement, the point estimate
@@ -293,6 +295,8 @@ def build_frontier(results_root: str, seed: int = 42) -> Dict[str, Any]:
     return {
         "deltas": {dv.key: dv.delta for dv in DVS},
         "placements": [_placement_dict(p, nd_ids, display[id(p)]) for p in all_placements],
+        # Unique, collision-disambiguated identifiers (NOT bare campaign:label) — so
+        # this list is unambiguous even when two placements share a campaign:label.
         "nonDominated": [display[id(p)] for p in nd],
         "frontierSize": len(frontier_set),
         "nonDominatedCount": len(nd),
