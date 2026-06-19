@@ -1733,6 +1733,15 @@ class TestResolveManagedPassword:
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
         assert chaoscenter_api._resolve_managed_password() == "Persisted1!"
 
+    def test_preserves_intentional_spaces_strips_only_newlines(self, tmp_path, monkeypatch):
+        # Only line terminators are stripped — an intentional trailing space in
+        # the stored password is preserved (strip() would have eaten it).
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "pw"
+        pw_file.write_text("Pass word1! \n")  # trailing space then newline
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        assert chaoscenter_api._resolve_managed_password() == "Pass word1! "
+
     def test_returns_none_when_absent(self, tmp_path, monkeypatch):
         # Read-only: with no env and no file, resolution returns None and does
         # NOT create the file — generation/persistence happens only after a

@@ -96,8 +96,11 @@ def _resolve_managed_password() -> Optional[str]:
         if CHAOSCENTER_PASSWORD_FILE.exists():
             # Pin UTF-8 (matches _persist_managed_password) and tolerate a
             # corrupt/garbled file (UnicodeDecodeError) like any other IO error,
-            # rather than letting it bubble up and break authentication.
-            existing = CHAOSCENTER_PASSWORD_FILE.read_text(encoding="utf-8").strip()
+            # rather than letting it bubble up and break authentication.  Strip
+            # only line terminators (the trailing newline an editor or older
+            # write may add) — NOT spaces — so an intentional space in the
+            # password is preserved verbatim.
+            existing = CHAOSCENTER_PASSWORD_FILE.read_text(encoding="utf-8").strip("\r\n")
             if existing:
                 # Re-harden perms before reuse: the file holds the admin password,
                 # but may have been created manually or had its mode changed, so a
@@ -140,8 +143,15 @@ def _persist_managed_password(pwd: str) -> None:
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(CHAOSCENTER_PASSWORD_FILE, flags, 0o600)
         # Wrap the fd in a buffered text writer: it handles partial writes and
-        # pins UTF-8 (matching the read side), and closes the fd on exit.
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # pins UTF-8 (matching the read side), and closes the fd on exit.  If
+        # fdopen() itself raises (before it takes ownership of the fd), close the
+        # raw fd explicitly so it cannot leak.
+        try:
+            fh = os.fdopen(fd, "w", encoding="utf-8")
+        except Exception:
+            os.close(fd)
+            raise
+        with fh:
             fh.write(pwd)
         os.chmod(CHAOSCENTER_PASSWORD_FILE, 0o600)
     except OSError:
