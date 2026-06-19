@@ -43,15 +43,15 @@ the report-class auto-numbering reproduces the manuscript's figure numbers.
 |---|---|
 | `main.tex` | report class (11pt, a4paper); title page (supervisor/date are `\newcommand` TODO placeholders); abstract; TOC; chapter inputs; bibliography |
 | `chapters/01-introduction.tex` … `chapters/08-conclusion.tex` | one file per chapter, ported 1:1 from `thesis/01-…md` … `thesis/08-…md` |
-| `appendix/a-provenance.tex` | `thesis/09-appendix-provenance.md`, split into Appendix A (run provenance) and Appendix B (negative findings) |
+| `appendix/a-provenance.tex` | run provenance for the single pre-registered study: the C1/C2/C3 campaign table, the claims→campaigns map, and integrity anchors |
 | `references.bib` | derived from [`references.md`](../../references.md); papers as `@article`/`@inproceedings` with DOI, web/issue/KEP/blog sources as `@misc` with `howpublished` + `url` + access date 2026-06-11 |
 
 ## Porting conventions
 
 - Dependencies are deliberately minimal: `inputenc`/`fontenc`/`lmodern`,
-  `geometry`, `graphicx`, `booktabs`, `natbib` (+ `plainnat`), `hyperref`.
-  No `siunitx`, no `tabularx`, no listings.
-- Markdown `§x.y` / "Chapter N" / "Appendix A/B" / "Figure x.y" cross-references
+  `amsmath` (for `\text{}` in math mode), `geometry`, `graphicx`, `booktabs`,
+  `natbib` (+ `plainnat`), `hyperref`. No `siunitx`, no `tabularx`, no listings.
+- Markdown `§x.y` / "Chapter N" / "Appendix A" / "Figure x.y" cross-references
   became `\S\ref{sec:…}` / `Chapter~\ref{ch:…}` / `Appendix~\ref{app:…}` /
   `Figure~\ref{fig:…}` with stable labels, so numbering stays correct if
   sections move.
