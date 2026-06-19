@@ -361,9 +361,11 @@ class TestRunV2EndToEnd:
         monkeypatch.setattr(run_cmd, "_restore_v2_placements", restore)
 
         executed = []
+        contexts = []
 
         def fake_execute(ctx, strategy_name, idx, total):
             executed.append((strategy_name, idx, total, ctx.v2_session))
+            contexts.append(ctx)
             return (
                 {
                     "strategy": strategy_name,
@@ -400,10 +402,10 @@ class TestRunV2EndToEnd:
             ["-n", "demo", "-o", str(tmp_path), "-e", "pod-delete.yaml", *cli_args],
             catch_exceptions=False,
         )
-        return result, executed, written, restore
+        return result, executed, written, restore, contexts
 
     def test_conditions_ride_strategy_loop_in_randomized_order(self, tmp_path, monkeypatch):
-        result, executed, written, restore = self._invoke(tmp_path, monkeypatch)
+        result, executed, written, restore, _contexts = self._invoke(tmp_path, monkeypatch)
         assert result.exit_code == 0, result.output
         expected = [c.name for c in v2.ordered_conditions((0.0, 0.25, 0.5, 0.75, 1.0), 7)]
         assert [name for name, _i, _t, _s in executed] == expected
@@ -412,7 +414,7 @@ class TestRunV2EndToEnd:
         assert len({id(s) for *_x, s in executed}) == 1
 
     def test_summary_gains_v2_session_block(self, tmp_path, monkeypatch):
-        result, executed, written, restore = self._invoke(tmp_path, monkeypatch)
+        result, executed, written, restore, _contexts = self._invoke(tmp_path, monkeypatch)
         assert result.exit_code == 0, result.output
         meta = written["results"]["v2Session"]
         assert meta["orderSeed"] == 7
@@ -426,14 +428,14 @@ class TestRunV2EndToEnd:
         assert all(e["rejectionReasons"] == ["condition_not_executed"] for e in meta["perLevel"])
 
     def test_v2_restore_runs_at_cleanup(self, tmp_path, monkeypatch):
-        result, _executed, _written, restore = self._invoke(tmp_path, monkeypatch)
+        result, _executed, _written, restore, _contexts = self._invoke(tmp_path, monkeypatch)
         assert result.exit_code == 0, result.output
         restore.assert_called_once()
 
     def test_v1_path_is_untouched(self, tmp_path, monkeypatch):
         # Without --v2-* flags the run takes the v1 named-strategy path:
         # no session, no v2Session block, no engine restore.
-        result, executed, written, restore = self._invoke(
+        result, executed, written, restore, _contexts = self._invoke(
             tmp_path, monkeypatch, cli_args=["-s", "baseline,default"]
         )
         assert result.exit_code == 0, result.output
@@ -441,6 +443,25 @@ class TestRunV2EndToEnd:
         assert all(s is None for *_x, s in executed)
         assert "v2Session" not in written["results"]
         restore.assert_not_called()
+
+    def test_app_ready_timeout_flag_flows_to_run_context(self, tmp_path, monkeypatch):
+        # The remaining link in the value flow: a user-supplied
+        # --app-ready-timeout must reach RunContext construction (guards the
+        # `app_ready_timeout=app_ready_timeout` pass-through in run() — removing
+        # it would otherwise still pass the rest of the suite).
+        result, _executed, _written, _restore, contexts = self._invoke(
+            tmp_path, monkeypatch, cli_args=["-s", "baseline", "--app-ready-timeout", "400"]
+        )
+        assert result.exit_code == 0, result.output
+        assert contexts and all(c.app_ready_timeout == 400 for c in contexts)
+
+    def test_app_ready_timeout_defaults_to_240_on_run_context(self, tmp_path, monkeypatch):
+        # Omitting the flag leaves the OB-suited 240s default on the context.
+        result, _executed, _written, _restore, contexts = self._invoke(
+            tmp_path, monkeypatch, cli_args=["-s", "baseline"]
+        )
+        assert result.exit_code == 0, result.output
+        assert contexts and all(c.app_ready_timeout == 240 for c in contexts)
 
     def test_v1_unknown_strategy_still_rejected(self):
         result = CliRunner().invoke(run, ["-n", "demo", "-s", "bogus"])

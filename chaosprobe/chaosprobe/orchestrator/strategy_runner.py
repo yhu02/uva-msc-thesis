@@ -517,6 +517,14 @@ class RunContext:
     # _run_iterations records per-iteration live fractions / taints.
     v2_session: Optional[V2Session] = None
 
+    # Upper bound (seconds) for the per-iteration functional readiness gate
+    # (``wait_for_app_ready``).  240s suits fast-restarting apps (Online
+    # Boutique).  Slow-recovering workloads — e.g. hotelReservation, whose
+    # frontend cannot re-resolve its gRPC backends through Consul for ~2-4 min
+    # after a restart — need a larger budget so the clean-baseline restart does
+    # not false-taint every iteration with ``app_ready_timeout``.
+    app_ready_timeout: int = 240
+
 
 # ---------------------------------------------------------------------------
 # Public entry-point
@@ -869,13 +877,15 @@ def _run_single_iteration(
     # readiness and still measured by the latency prober, but do NOT gate
     # (wait_for_app_ready's gate_east_west defaults False — gating on every
     # internal edge flaps on workloads with many of them).
-    # 240s upper bound: consecutive-OK (≥15s) + sustained period (15s) +
-    # generous slack for slow JVM warm-up between iterations.  The function
-    # returns early as soon as the gate passes.
+    # Default 240s upper bound: consecutive-OK (≥15s) + sustained period (15s)
+    # + generous slack for slow JVM warm-up between iterations.  Configurable
+    # via --app-ready-timeout (ctx.app_ready_timeout) for slow-recovering
+    # workloads (e.g. hotelReservation's ~2-4 min Consul/gRPC re-resolution).
+    # The function returns early as soon as the gate passes.
     app_ready = wait_for_app_ready(
         ctx.namespace,
         ctx.target_deployment,
-        timeout=240,
+        timeout=ctx.app_ready_timeout,
         http_routes=http_routes or None,
         service_routes=service_routes or None,
     )
