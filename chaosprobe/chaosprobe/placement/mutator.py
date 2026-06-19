@@ -29,6 +29,23 @@ from chaosprobe.placement.strategy import (
 
 logger = logging.getLogger(__name__)
 
+# Datastores that speak their own TCP wire protocol (not gRPC). Used to label a
+# topology-derived east-west route's protocol accurately — the label is persisted
+# in latency summaries / Neo4j, so a default-grpc would misdescribe these backends
+# (the prober TCP-connects regardless, so the probe itself is unaffected).
+_TCP_DATASTORE_PREFIXES = (
+    "memcached",
+    "mongodb",
+    "redis",
+    "mysql",
+    "mariadb",
+    "postgres",  # covers postgres / postgresql
+    "cassandra",
+    "rabbitmq",
+    "etcd",
+    "zookeeper",
+)
+
 # Built-in Kubernetes label for targeting nodes by hostname
 PLACEMENT_LABEL_KEY = "kubernetes.io/hostname"
 # Annotation to track which deployments are managed by ChaosProbe placement
@@ -306,7 +323,7 @@ class PlacementMutator:
             if port is None:
                 # No (or headless) Service for this target — nothing to TCP-probe.
                 continue
-            protocol = "tcp" if target.startswith(("memcached", "mongodb", "redis")) else "grpc"
+            protocol = "tcp" if target.startswith(_TCP_DATASTORE_PREFIXES) else "grpc"
             routes.append((source, target, f"{target}:{port}", protocol, f"{source}->{target}"))
         return routes
 

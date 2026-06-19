@@ -223,6 +223,23 @@ class TestGetTopologyDependencyRoutes:
         assert routes[("geo", "mongodb-geo")][3] == "tcp"
         assert routes[("rate", "memcached-rate")][3] == "tcp"
 
+    def test_tcp_protocol_for_other_datastores(self, tmp_path):
+        # Datastores beyond memcached/mongodb/redis (postgres, mysql, ...) are
+        # labeled tcp, not grpc — the protocol label is persisted, so it must be
+        # accurate for these TCP-wire backends too.
+        topo = tmp_path / "topology.json"
+        topo.write_text(
+            '{"services":["api","postgres-main","mysql-orders","cache"],'
+            '"edges":[["api","postgres-main"],["api","mysql-orders"],["api","cache"]]}'
+        )
+        m = _mutator_with_services(
+            [("api", 8080), ("postgres-main", 5432), ("mysql-orders", 3306), ("cache", 6379)]
+        )
+        routes = {(r[0], r[1]): r for r in m.get_topology_dependency_routes(str(topo))}
+        assert routes[("api", "postgres-main")][3] == "tcp"
+        assert routes[("api", "mysql-orders")][3] == "tcp"
+        assert routes[("api", "cache")][3] == "grpc"  # "cache" matches no datastore prefix
+
     def test_skips_target_with_no_resolvable_service(self, tmp_path):
         topo = tmp_path / "topology.json"
         topo.write_text(
