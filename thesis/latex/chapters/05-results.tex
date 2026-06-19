@@ -9,9 +9,9 @@ only if it is both Holm-significant \emph{and} clears its registered
 effect-size / reliability bar. The confirmatory family is corrected and
 adjudicated together in \S\ref{sec:family-holm}.
 
-% TODO(figures): dose-response, frontier, ICC, and conntrack-drop figures
-% (campaign-report figure sources) to be imported into figures/ in a later
-% pass; all numbers below are table-complete and self-contained without them.
+% Figures are generated from the archived C1/C2/C3 sessions by the committed
+% chaosprobe/scripts/single_study_figures.py (every on-figure number is computed
+% from the source data by the same driver the tables below report).
 
 \section{H1 --- Dose-response of the east-west tail}\label{sec:h1}
 
@@ -50,7 +50,18 @@ $f{=}0.75$ (39.55\,ms) --- neither a strict monotone climb nor the clean
 two-regime step that would have triggered the distinct registered
 ``threshold, not dose-response'' outcome. \textbf{H1 is therefore not supported:}
 the dose-response is real and statistically significant but practically
-negligible at the registered bar.
+negligible at the registered bar (Figure~\ref{fig:h1}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.78\textwidth]{fig-h1-dose-response.png}
+  \caption{\textbf{H1 --- dose-response of the east-west tail} (C1, $r{=}1$,
+    \texttt{pod-delete}). Per-level grand-median east-west p95 rises then
+    plateaus/dips at $f{=}0.75$; the $f{=}0\rightarrow1$ change is $+13.35\,\%$,
+    below the registered $15\,\%$ SESOI (dashed), so H1 is not supported despite
+    a Holm-significant Page's $L$ trend.}
+  \label{fig:h1}
+\end{figure}
 
 \section{H2 --- Placement-dependence and the DNS intervention}\label{sec:h2}
 
@@ -91,7 +102,20 @@ direction to the registered prediction. A registered secondary confirms the
 mechanism's generality: the packed placement's cache-off drop (median 11153.4)
 also collapses to $\approx 0$ with the cache on (median $-105.2$;
 $p = 0.01125$) --- the intervention removes the drop under \emph{both}
-placements.
+placements (Figure~\ref{fig:h2}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-h2-conntrack-dns.png}
+  \caption{\textbf{H2 --- conntrack placement-dependence and the DNS
+    intervention} (C3). (a) The cache-off during-churn UDP-conntrack drop is
+    \emph{larger} under packing than spreading --- reversed against the
+    registered prediction, packed $>$ spread in all 7 pairs. (b) Enabling the
+    NodeLocal DNSCache collapses the packed drop to $\approx 0$ and shrinks the
+    spread drop by a $78\,\%$ median, removing it under both placements: arm (b)
+    passes, but the reversed direction (a) fails the conjunction.}
+  \label{fig:h2}
+\end{figure}
 
 \section{H3 --- Replication rescue under node-drain}\label{sec:h3}
 
@@ -134,7 +158,20 @@ registered one-pod margin --- the metric's dynamic range coincides with the bar
 it must beat, leaving no room for a rescue to register. The depth co-primary is
 reported exactly as registered (not retuned); the substantive result is the
 error face, where replication rescues user-visible availability when replicas
-are spread.
+are spread (Figure~\ref{fig:h3}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-h3-replication-rescue.png}
+  \caption{\textbf{H3 --- replication rescue under node-drain} (C2), across the
+    three cells. (a) Trough depth: the anti-affine rescue (0.0455) falls below
+    the registered one-pod margin (0.0909, dashed), which the $r{=}1$ and
+    $r{=}3$-packed cells sit on by construction --- the depth face cannot
+    adjudicate. (b) User-route error: anti-affine $r{=}3$ fully rescues
+    ($0.632\rightarrow0$), clearing the 0.302 margin. The conjunction fails only
+    on the depth co-primary it could not test.}
+  \label{fig:h3}
+\end{figure}
 
 \section{H4 --- The placement frontier (descriptive)}\label{sec:h4}
 
@@ -171,7 +208,19 @@ so the protocol correctly crowns no winner. The two-face
 latency$\leftrightarrow$availability trade-off the frontier was designed to
 reveal is \textbf{not realizable from the collected data}: the fault that varies
 the availability face (node-drain) has no latency face, and the fault with a
-latency face (pod-delete) produces no availability-face variation.
+latency face (pod-delete) produces no availability-face variation
+(Figure~\ref{fig:h4}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.72\textwidth]{fig-h4-frontier.png}
+  \caption{\textbf{H4 --- descriptive placement frontier} (C1,
+    \texttt{pod-delete}). All five placements are non-dominated (red rings): the
+    latency face varies (east-west p95 $35.7$--$41.4$\,ms) but the availability
+    face is degenerate --- trough depth is $\approx1$ pod and the error rate
+    uniformly low --- so no placement dominates on all faces.}
+  \label{fig:h4}
+\end{figure}
 
 \section{H5 --- Layered scorecard reliability}\label{sec:h5}
 
@@ -205,7 +254,18 @@ conntrack-reconvergence sub-score is far more test-retest reliable than a single
 aggregate score. The verdict is robust to the analysis's taint-handling choice
 (the conjunction fails either way). A single-campaign 0.994 with a wide-ish
 lower CI bound is strong but is re-evaluated across environments before being
-over-read.
+over-read (Figure~\ref{fig:h5}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.82\textwidth]{fig-h5-scorecard-icc.png}
+  \caption{\textbf{H5 --- layered-scorecard test-retest reliability} (C1). The
+    mechanism sub-score (ICC 0.994) clears the registered $\text{ICC}\geq0.5$ bar
+    (dashed); the required availability sub-score does not (0.180), so H5 is not
+    supported. Both far exceed the naive single-aggregate baseline (0.066). Bars
+    show 95\,\% bootstrap CIs.}
+  \label{fig:h5}
+\end{figure}
 
 \section{Confirmatory family --- Holm capstone}\label{sec:family-holm}
 
