@@ -412,9 +412,31 @@ def test_incomplete_placement_is_unranked_not_non_dominated(monkeypatch, tmp_pat
     assert by["inc"]["nonDominated"] is None  # unranked, NOT True
     assert "incomplete" in " ".join(res["warnings"])
     assert res["frontierSize"] == 2  # both are frontier-role
+    assert res["rankedCount"] == 1  # only the complete one is eligible for dominance
     # only the complete one is ranked; it is non-dominated (nothing complete dominates it)
     assert res["nonDominated"] == ["C1:full"]
     assert res["nonDominatedCount"] == 1
+    # render reports the fraction over rankedCount (1), not frontierSize (2), and notes
+    # the unranked placement — so it never reads as "1/2 dominated".
+    out = h4.render(res)
+    assert "(1/1)" in out and "1 unranked" in out
+
+
+def test_render_empty_nondominated_shows_placeholder():
+    # An all-incomplete frontier: 0 ranked, empty non-dominated list. The line must
+    # read "(0/0): (none)" — not a bare trailing colon (looks like truncated output)
+    # and not "0/1" (looks like the placement was dominated).
+    res = {
+        "deltas": {LAT: 4.4, DEPTH: 1.0, ERR: 0.302},
+        "placements": [],
+        "nonDominated": [],
+        "frontierSize": 1,
+        "rankedCount": 0,
+        "nonDominatedCount": 0,
+        "warnings": [],
+    }
+    out = h4.render(res)
+    assert "(0/0): (none)" in out and "1 unranked" in out
 
 
 def test_build_frontier_warns_on_missing_campaign_dir(tmp_path):

@@ -299,6 +299,10 @@ def build_frontier(results_root: str, seed: int = 42) -> Dict[str, Any]:
         # this list is unambiguous even when two placements share a campaign:label.
         "nonDominated": [display[id(p)] for p in nd],
         "frontierSize": len(frontier_set),
+        # rankedCount = frontier placements eligible for dominance (all DVs present).
+        # frontierSize may exceed it (incomplete placements are unranked, not dominated),
+        # so the non-dominated fraction is reported over rankedCount, not frontierSize.
+        "rankedCount": len(complete),
         "nonDominatedCount": len(nd),
         "warnings": warnings,
     }
@@ -370,9 +374,15 @@ def render(result: Dict[str, Any]) -> str:
             f"{_fmt(st['user_err_during']['point']):>8} {nd:>4} {p['role']}"
         )
     lines.append("")
+    # Denominator is rankedCount (placements eligible for dominance), not frontierSize —
+    # an unranked/incomplete placement is not "dominated". Note any unranked count, and
+    # print an explicit placeholder when the non-dominated set is empty.
+    ranked = result.get("rankedCount", result["frontierSize"])
+    unranked = result["frontierSize"] - ranked
+    members = ", ".join(result["nonDominated"]) if result["nonDominated"] else "(none)"
+    suffix = f"  [{unranked} unranked]" if unranked else ""
     lines.append(
-        f"  Non-dominated frontier ({result['nonDominatedCount']}/{result['frontierSize']}): "
-        + ", ".join(result["nonDominated"])
+        f"  Non-dominated frontier ({result['nonDominatedCount']}/{ranked}): {members}{suffix}"
     )
     if result["warnings"]:
         lines.append(f"  ({len(result['warnings'])} warning(s))")
