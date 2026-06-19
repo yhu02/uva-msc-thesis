@@ -34,6 +34,7 @@ dependency-aware`.
 | `-e, --experiment <file>` | scenario default | Experiment YAML; repeat for a multi-fault matrix. |
 | `--settle-time <s>` | 60 | Pre- and post-chaos steady-state sample window (seconds). |
 | `--baseline-duration <s>` | 0 | Pre-chaos baseline window override; `0` falls back to `--settle-time`. |
+| `--app-ready-timeout <s>` | 240 | Upper bound for the per-iteration app-readiness gate after the clean-baseline restart. Raise it for slow-recovering workloads (e.g. hotelReservation's ~2-4 min Consul/gRPC re-resolution) so the gate does not false-taint every iteration. Returns early once ready, so a larger budget is free when the app recovers quickly. |
 | `--batch-id <label>` | current UTC date | Batch/session label written to `summary.json → batchId` and emitted by `export` as the `batch_id` column; lets mixed-run analysis separate run-to-run cluster drift from strategy effects. |
 | `--load-profile <steady\|ramp\|spike>` | steady | Locust load profile during chaos. |
 | `--seed <n>` | 42 | Base seed for the `random` strategy (iteration *k* uses `seed + k − 1`). |

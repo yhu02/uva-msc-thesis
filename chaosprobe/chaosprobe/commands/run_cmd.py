@@ -1308,6 +1308,21 @@ def _acquire_run_lock() -> None:
     ),
 )
 @click.option(
+    "--app-ready-timeout",
+    default=240,
+    type=int,
+    help=(
+        "Upper bound (seconds) for the per-iteration functional app-readiness "
+        "gate after the clean-baseline restart.  The default 240s suits "
+        "fast-restarting apps (Online Boutique).  Raise it for slow-recovering "
+        "workloads — e.g. hotelReservation, whose frontend cannot re-resolve "
+        "its gRPC backends through Consul for ~2-4 min after a restart — so "
+        "the gate does not false-taint every iteration with "
+        "'app_ready_timeout'.  The gate returns early as soon as it passes, so "
+        "a larger budget costs nothing when the app recovers quickly."
+    ),
+)
+@click.option(
     "--experiment",
     "-e",
     multiple=True,
@@ -1540,6 +1555,7 @@ def run(
     seed: int,
     seeds: Optional[str],
     settle_time: int,
+    app_ready_timeout: int,
     experiment: Tuple[str, ...],
     iterations: int,
     load_profile: Optional[str],
@@ -1798,6 +1814,7 @@ def run(
             timeout=timeout,
             seed=seed,
             settle_time=settle_time,
+            app_ready_timeout=app_ready_timeout,
             iterations=iterations,
             baseline_duration=baseline_duration,
             measure_latency=measure_latency,
