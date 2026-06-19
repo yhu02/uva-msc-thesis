@@ -28,8 +28,6 @@ import os
 import sys
 from typing import Any, Dict, List, Sequence
 
-import matplotlib.pyplot as plt
-
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
@@ -39,12 +37,16 @@ import c2_h3_anova  # noqa: E402
 import c3_h2_dns  # noqa: E402
 import scorecard  # noqa: E402
 import v2_h4_frontier  # noqa: E402
+
+# Pull `plt` from thesis_figures (it calls matplotlib.use("Agg") *before*
+# importing pyplot) so the Agg backend is selected before pyplot is touched.
 from thesis_figures import (  # noqa: E402  (reuse the shared house style + workflow schematic)
     ACCENT,
     DARK,
     _save,
     apply_thesis_style,
     fig01_workflow,
+    plt,
 )
 
 # Okabe-Ito colorblind-safe accents used across the data figures.
@@ -103,7 +105,7 @@ def fig_h1_dose(c1_dir: str, out_dir: str) -> str:
         ls="--",
         color=MARGIN_C,
         lw=1.4,
-        label=f"15% SESOI threshold ({sesoi_thresh:.1f} ms)",
+        label=f"{sesoi['sesoiPct']:.0f}% SESOI threshold ({sesoi_thresh:.1f} ms)",
     )
     ax.set_xlabel("cross-node fraction $f$ (packing $\\rightarrow$ spreading)")
     ax.set_ylabel("east-west p95 latency (ms), pre-chaos")
@@ -115,7 +117,7 @@ def fig_h1_dose(c1_dir: str, out_dir: str) -> str:
         f"Page's $L$={page['l_statistic']:.0f}, $z$={page['z']:.2f}, "
         f"$p$={page['p_one_sided']:.4f}\n"
         f"$f$=0$\\rightarrow$1: +{sesoi['pctChange']:.2f}% "
-        f"(below 15% SESOI $\\rightarrow$ not supported)",
+        f"(below {sesoi['sesoiPct']:.0f}% SESOI $\\rightarrow$ not supported)",
     )
     ax.set_title("H1 — dose-response of the east-west tail (C1)")
     return _save(fig, out_dir, "fig-h1-dose-response.png")
