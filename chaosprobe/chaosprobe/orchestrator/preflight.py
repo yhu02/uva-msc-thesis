@@ -25,6 +25,43 @@ LITMUS_INFRA_DEPLOYMENTS = frozenset(
     }
 )
 
+# Backing services that hold state or provide discovery/tracing that the app's
+# own services depend on. The clean-baseline / clean-strategy-start rollout
+# restart must NOT cycle these: the goal is a fresh *application* state, not a
+# wiped datastore — and restarting them can break the app for the whole session.
+# Concretely, hotelReservation's Consul runs without persistence, so restarting
+# it drops every service registration and the gRPC services can no longer resolve
+# peers ("produced zero addresses") until they happen to re-register. Matched as
+# a lowercased-name substring so it covers the standard backing services across
+# workloads (online-boutique's redis-cart, hotelReservation's consul/mongodb/
+# memcached/jaeger, etc.).
+STATEFUL_INFRA_NAME_HINTS = (
+    "consul",
+    "mongodb",
+    "memcached",
+    "redis",
+    "mysql",
+    "postgres",
+    "jaeger",
+    "zipkin",
+    "etcd",
+    "zookeeper",
+    "kafka",
+    "rabbitmq",
+    "cassandra",
+)
+
+
+def is_stateful_infra(name: str) -> bool:
+    """True if ``name`` looks like a stateful backing service to leave running.
+
+    Used to exclude datastores / service-discovery / tracing from the baseline
+    rollout restart (see :data:`STATEFUL_INFRA_NAME_HINTS`). Substring match on
+    the lowercased deployment name.
+    """
+    lowered = name.lower()
+    return any(hint in lowered for hint in STATEFUL_INFRA_NAME_HINTS)
+
 
 def wait_for_healthy_deployments(
     namespace: str, timeout: int = 60, *, strict: bool = False

@@ -51,8 +51,16 @@ spec:
   type: ClusterIP
   selector:
     app: frontend
+  # Expose port 80 (→ container 5000) so cluster-internal portless URLs work for
+  # BOTH litmus httpProbes and the in-cluster latency prober (which strips any URL
+  # port and rebuilds http://frontend.../{route} on :80) — matching online-boutique's
+  # frontend Service (port 80 → targetPort 8080). Port 5000 is kept for callers that
+  # address it explicitly (deploy/experiment.yaml, README, the load-target forward).
   ports:
     - name: http
+      port: 80
+      targetPort: 5000
+    - name: http-5000
       port: 5000
       targetPort: 5000
 ---

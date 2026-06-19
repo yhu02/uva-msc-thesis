@@ -24,6 +24,7 @@ from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.diagnostics import capture_unknown_diagnostics
 from chaosprobe.orchestrator.preflight import (
+    is_stateful_infra,
     wait_for_healthy_deployments,
 )
 from chaosprobe.orchestrator.probers import (
@@ -1519,7 +1520,9 @@ def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
         app_deps = [
             d.metadata.name
             for d in deps.items
-            if not d.metadata.name.startswith(infra_prefixes) and (d.spec.replicas or 0) > 0
+            if not d.metadata.name.startswith(infra_prefixes)
+            and not is_stateful_infra(d.metadata.name)
+            and (d.spec.replicas or 0) > 0
         ]
         if not app_deps:
             return

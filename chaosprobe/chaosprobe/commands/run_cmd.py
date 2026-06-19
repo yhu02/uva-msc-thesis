@@ -35,6 +35,7 @@ from chaosprobe.orchestrator.preflight import (
     extract_experiment_types,
     extract_load_service,
     extract_target_deployment,
+    is_stateful_infra,
 )
 from chaosprobe.orchestrator.run_phases import (
     init_graph_store,
@@ -515,6 +516,7 @@ def _clear_stale_placement(mutator: PlacementMutator, namespace: str) -> None:
             d.metadata.name
             for d in all_deps.items
             if d.metadata.name not in LITMUS_INFRA_DEPLOYMENTS
+            and not is_stateful_infra(d.metadata.name)
         ]
         now = datetime.now(timezone.utc).isoformat()
         for dep_name in restart_names:
