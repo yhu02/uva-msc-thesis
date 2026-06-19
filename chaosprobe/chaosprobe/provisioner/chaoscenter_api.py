@@ -132,8 +132,13 @@ def _persist_managed_password(pwd: str) -> None:
         # even briefly world-readable: write_text() would create it with the
         # umask default (commonly 0644) and only tighten it on the later chmod.
         # O_CREAT's mode only applies on creation, so re-chmod afterwards to also
-        # harden a pre-existing, looser-permissioned file.
-        fd = os.open(CHAOSCENTER_PASSWORD_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # harden a pre-existing, looser-permissioned file.  O_NOFOLLOW (where
+        # available) refuses to follow a symlink at the final path component, so
+        # a planted symlink can't redirect the O_TRUNC write to clobber another
+        # file (matters if ever run elevated); a symlinked target is rejected
+        # (ELOOP -> OSError) rather than followed.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(CHAOSCENTER_PASSWORD_FILE, flags, 0o600)
         # Wrap the fd in a buffered text writer: it handles partial writes and
         # pins UTF-8 (matching the read side), and closes the fd on exit.
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

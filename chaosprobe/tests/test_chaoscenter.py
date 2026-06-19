@@ -718,7 +718,9 @@ class TestChaoscenterLogin:
         pwfile = tmp_path / "pw"
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
         setup = _make_setup()
-        setup._managed_pass = "legacy24charNonCompliantTok"  # >16, no special/upper guarantee
+        setup._managed_pass = (
+            "legacy24charNonCompliantTok"  # non-compliant: >16 chars and no special char
+        )
 
         def fake_auth(url, user, pwd):
             if pwd == setup.CHAOSCENTER_DEFAULT_PASS:
@@ -1791,6 +1793,21 @@ class TestResolveManagedPassword:
         chaoscenter_api._persist_managed_password("New1pass!")
         assert pw_file.read_text() == "New1pass!"
         assert oct(pw_file.stat().st_mode)[-3:] == "600"
+
+    @pytest.mark.skipif(
+        not hasattr(os, "O_NOFOLLOW"), reason="O_NOFOLLOW unavailable on this platform"
+    )
+    def test_persist_does_not_follow_symlink(self, tmp_path, monkeypatch):
+        # O_NOFOLLOW: a symlink planted at the password path must NOT be followed
+        # — the open is refused (ELOOP -> OSError, tolerated) so the link's target
+        # is never clobbered by the O_TRUNC write.
+        victim = tmp_path / "victim"
+        victim.write_text("important")
+        link = tmp_path / "pw"
+        link.symlink_to(victim)
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", link)
+        chaoscenter_api._persist_managed_password("New1pass!")  # no raise
+        assert victim.read_text() == "important"  # target untouched
 
     def test_persist_io_error_is_tolerated(self, tmp_path, monkeypatch):
         a_dir = tmp_path / "iam_a_dir"
