@@ -122,6 +122,15 @@ def _persist_managed_password(pwd: str) -> None:
         logger.debug("could not persist managed ChaosCenter password", exc_info=True)
 
 
+def _extract_token(resp: dict) -> str:
+    """Pull the access token from a ChaosCenter login response.
+
+    litmus has used a few key spellings across versions; try them in order and
+    coerce a missing token to ``""`` so callers can treat the boundary as ``str``.
+    """
+    return resp.get("accessToken") or resp.get("access_token") or resp.get("token") or ""
+
+
 class _ChaosCenterAPIMixin(_LitmusSetupBase):
     """ChaosCenter API methods mixed into LitmusSetup."""
 
@@ -224,8 +233,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             f"{server_url}/login",
             data={"username": username, "password": password},
         )
-        token = resp.get("accessToken") or resp.get("access_token") or resp.get("token")
-        if not token:
+        if not _extract_token(resp):
             raise RuntimeError("Failed to obtain ChaosCenter access token")
         return resp
 
@@ -290,6 +298,21 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         password is automatically rotated to the managed password.
         """
         username = username or self.CHAOSCENTER_DEFAULT_USER
+
+        # A non-compliant env override is a hard config error: litmus would
+        # reject rotating to it, and silently rotating to a generated
+        # replacement instead would orphan the instance (the env value shadows
+        # the persisted recovery value on every later run — it has top
+        # precedence in _resolve_managed_password). Fail clearly so the user
+        # fixes the override rather than ending up unrecoverable.
+        env_pw = os.environ.get(CHAOSCENTER_PASSWORD_ENV)
+        if env_pw and not _is_policy_compliant(env_pw):
+            raise RuntimeError(
+                f"{CHAOSCENTER_PASSWORD_ENV} violates ChaosCenter's password policy "
+                "(8-16 characters with a digit, lowercase, uppercase, and special "
+                "character). Set a compliant value or unset it."
+            )
+
         candidates = []
         if password:
             candidates.append(password)
@@ -302,12 +325,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         for pwd in candidates:
             try:
                 resp = self._chaoscenter_authenticate(auth_url, username, pwd)
-                # token is read from the JSON login response (Any | None);
-                # _chaoscenter_authenticate already raised if it was absent,
-                # so coerce to a concrete str at this boundary.
-                token: str = (
-                    resp.get("accessToken") or resp.get("access_token") or resp.get("token") or ""
-                )
+                token: str = _extract_token(resp)
                 project_id = resp.get("projectID", "")
 
                 # Auto-rotate factory default → managed password.  We only reach
@@ -339,12 +357,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                             username,
                             target,
                         )
-                        token = (
-                            resp2.get("accessToken")
-                            or resp2.get("access_token")
-                            or resp2.get("token")
-                            or ""
-                        )
+                        token = _extract_token(resp2)
                         project_id = resp2.get("projectID", project_id)
                         print("  ChaosCenter: default password rotated to managed password")
                     except Exception:

@@ -636,6 +636,24 @@ class TestDashboardCLI:
 # ---------------------------------------------------------------------------
 
 
+class TestExtractToken:
+    """`_extract_token` reads the access token across litmus key spellings,
+    coercing a missing token to ``""``."""
+
+    @pytest.mark.parametrize(
+        "resp,expected",
+        [
+            ({"accessToken": "a"}, "a"),
+            ({"access_token": "b"}, "b"),
+            ({"token": "c"}, "c"),
+            ({}, ""),  # no token key at all
+            ({"accessToken": "", "token": "t"}, "t"),  # falsy first key falls through
+        ],
+    )
+    def test_extract_token(self, resp, expected):
+        assert chaoscenter_api._extract_token(resp) == expected
+
+
 class TestChaoscenterLogin:
     def test_login_with_provided_password(self):
         setup = _make_setup()
@@ -713,6 +731,9 @@ class TestChaoscenterLogin:
         assert target != "legacy24charNonCompliantTok"
         assert chaoscenter_api._is_policy_compliant(target)
         assert pwfile.read_text() == target  # the compliant target was persisted
+        # The in-memory cache was upgraded too, so a later login in the same
+        # process serves the new compliant value (no re-rotation loop).
+        assert setup.CHAOSCENTER_MANAGED_PASS == target
 
     def test_login_does_not_persist_when_rotation_fails(self, tmp_path, monkeypatch):
         # change_password failing (e.g. policy/transport error) must NOT persist
@@ -754,6 +775,42 @@ class TestChaoscenterLogin:
         assert token == "tok"
         mock_change.assert_not_called()
         assert not pwfile.exists()
+
+    def test_login_rotation_consumes_relogin_response(self, tmp_path, monkeypatch):
+        # Rotation happy-path: instance is on DEFAULT, so the managed login fails
+        # first; default works and rotates; the re-login with the new password
+        # succeeds and ITS token/projectID are returned (not the stale default
+        # token). Guards the resp2 consumption the fix reworked.
+        pwfile = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        setup = _make_setup()  # managed = "Test1managed!" (compliant)
+        managed_calls = {"n": 0}
+
+        def fake_auth(url, user, pwd):
+            if pwd == setup.CHAOSCENTER_MANAGED_PASS:
+                managed_calls["n"] += 1
+                if managed_calls["n"] == 1:
+                    raise RuntimeError("instance still on default")  # pre-rotation
+                return {"accessToken": "rotated-tok", "projectID": "p2"}  # post-rotation re-login
+            if pwd == setup.CHAOSCENTER_DEFAULT_PASS:
+                return {"accessToken": "default-tok", "projectID": "p0"}
+            raise RuntimeError("bad")
+
+        with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
+            with patch.object(setup, "_chaoscenter_change_password"):
+                token, pid = setup._chaoscenter_login("http://localhost:9003")
+        assert token == "rotated-tok"  # from resp2, not the default-login token
+        assert pid == "p2"
+        assert pwfile.read_text() == "Test1managed!"  # persisted after the rotation
+
+    def test_login_rejects_noncompliant_env_override(self, monkeypatch):
+        # A non-compliant env override is a hard config error — fail clearly
+        # rather than silently rotating to a generated value (which the env would
+        # then permanently shadow, orphaning the instance).
+        monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "from-env")  # non-compliant
+        setup = _make_setup()
+        with pytest.raises(RuntimeError, match="violates ChaosCenter's password policy"):
+            setup._chaoscenter_login("http://localhost:9003")
 
     def test_login_raises_when_all_passwords_fail(self):
         setup = _make_setup()
