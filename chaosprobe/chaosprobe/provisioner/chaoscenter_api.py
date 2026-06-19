@@ -22,8 +22,11 @@ from chaosprobe.provisioner._setup_base import _LitmusSetupBase
 logger = logging.getLogger(__name__)
 
 # The managed ChaosCenter admin password is resolved at runtime, never
-# committed.  Override with this env var, or let ChaosProbe generate one and
-# persist it so the value is stable across runs for a given instance.
+# committed.  Override with this env var, or let ChaosProbe generate one.
+# Resolution itself is READ-ONLY (see _resolve_managed_password): the value is
+# generated/persisted to the file only AFTER a successful rotation actually sets
+# it on ChaosCenter (see _chaoscenter_login), so the file never gets ahead of
+# the live instance.  Once written, it is stable across runs for that instance.
 CHAOSCENTER_PASSWORD_ENV = "CHAOSPROBE_CHAOSCENTER_PASSWORD"
 CHAOSCENTER_PASSWORD_FILE = Path.home() / ".chaosprobe" / "chaoscenter-admin-password"
 
@@ -70,27 +73,35 @@ def _generate_compliant_password() -> str:
     return "".join(chars)
 
 
-def _resolve_managed_password() -> str:
-    """Resolve the managed ChaosCenter admin password without committing it.
+def _resolve_managed_password() -> Optional[str]:
+    """Resolve the managed ChaosCenter admin password — READ-ONLY.
 
     Resolution order: the ``CHAOSPROBE_CHAOSCENTER_PASSWORD`` env var, then a
-    previously-persisted ``~/.chaosprobe`` file, then a freshly generated secret
-    that is persisted to that file with ``0600`` perms.  The password must be
-    stable across runs — a provisioned ChaosCenter keeps whatever it was rotated
-    to — so it is cached on disk rather than baked into source, where a fixed
-    default would be a master key for every deployment the tool ever manages.
+    previously-persisted ``~/.chaosprobe`` file (reused verbatim, compliant or
+    not), else ``None``.  This function NEVER generates or rewrites the file.
+
+    Why read-only: the persisted file is the record of the password a live
+    ChaosCenter was actually rotated to.  Silently regenerating it (the previous
+    behaviour, e.g. "migrating" a non-compliant value) mints a value the running
+    instance was never set to, orphaning its admin password — the file and the
+    live instance drift apart and every subsequent login 401s.  A fresh or
+    upgraded password is therefore generated and persisted ONLY after a
+    successful rotation actually sets it on ChaosCenter (see
+    ``_chaoscenter_login``), so the file can never get ahead of the instance.
     """
     env = os.environ.get(CHAOSCENTER_PASSWORD_ENV)
     if env:
         return env
     try:
         if CHAOSCENTER_PASSWORD_FILE.exists():
-            existing = CHAOSCENTER_PASSWORD_FILE.read_text().strip()
-            # Reuse a persisted value only if it satisfies ChaosCenter's policy.
-            # A previously-generated token_urlsafe(18) is 24 chars (non-compliant)
-            # and would fail the default→managed rotation, leaving ChaosCenter on
-            # its default password and blocking project creation; migrate it.
-            if existing and _is_policy_compliant(existing):
+            # Pin UTF-8 (matches _persist_managed_password) and tolerate a
+            # corrupt/garbled file (UnicodeDecodeError) like any other IO error,
+            # rather than letting it bubble up and break authentication.  Strip
+            # only line terminators (the trailing newline an editor or older
+            # write may add) — NOT spaces — so an intentional space in the
+            # password is preserved verbatim.
+            existing = CHAOSCENTER_PASSWORD_FILE.read_text(encoding="utf-8").strip("\r\n")
+            if existing:
                 # Re-harden perms before reuse: the file holds the admin password,
                 # but may have been created manually or had its mode changed, so a
                 # persisted-value path that skipped this could leave it world-readable.
@@ -99,16 +110,67 @@ def _resolve_managed_password() -> str:
                 except OSError:
                     logger.debug("could not re-harden password file perms", exc_info=True)
                 return existing
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         logger.debug("could not read managed ChaosCenter password file", exc_info=True)
-    pwd = _generate_compliant_password()
+    return None
+
+
+def _persist_managed_password(pwd: str) -> None:
+    """Persist the managed password to ``~/.chaosprobe`` with ``0600`` perms.
+
+    Call this ONLY after ChaosCenter's admin password has been successfully set
+    to ``pwd`` (a successful rotation), so the file always matches the live
+    instance and can never orphan it.
+
+    The managed password is RANDOM, so a failed persist is NOT recoverable by
+    re-derivation: if this fails right after a rotation and no
+    ``CHAOSPROBE_CHAOSCENTER_PASSWORD`` env var is set, future runs cannot know
+    the live instance's password and will fail to authenticate (a reinstall or
+    a manually-supplied password is then required).  The failure is therefore
+    logged at WARNING, not silently swallowed.
+    """
     try:
         CHAOSCENTER_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CHAOSCENTER_PASSWORD_FILE.write_text(pwd)
-        CHAOSCENTER_PASSWORD_FILE.chmod(0o600)
+        # Create with 0600 from the syscall so the admin-password file is never
+        # even briefly world-readable: write_text() would create it with the
+        # umask default (commonly 0644) and only tighten it on the later chmod.
+        # O_CREAT's mode only applies on creation, so re-chmod afterwards to also
+        # harden a pre-existing, looser-permissioned file.  O_NOFOLLOW (where
+        # available) refuses to follow a symlink at the final path component, so
+        # a planted symlink can't redirect the O_TRUNC write to clobber another
+        # file (matters if ever run elevated); a symlinked target is rejected
+        # (ELOOP -> OSError) rather than followed.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(CHAOSCENTER_PASSWORD_FILE, flags, 0o600)
+        # Wrap the fd in a buffered text writer: it handles partial writes and
+        # pins UTF-8 (matching the read side), and closes the fd on exit.  If
+        # fdopen() itself raises (before it takes ownership of the fd), close the
+        # raw fd explicitly so it cannot leak.
+        try:
+            fh = os.fdopen(fd, "w", encoding="utf-8")
+        except Exception:
+            os.close(fd)
+            raise
+        with fh:
+            fh.write(pwd)
+        os.chmod(CHAOSCENTER_PASSWORD_FILE, 0o600)
     except OSError:
-        logger.debug("could not persist managed ChaosCenter password", exc_info=True)
-    return pwd
+        logger.warning(
+            "could not persist managed ChaosCenter password to %s; if a rotation "
+            "just succeeded, future runs may be unable to authenticate unless %s is set",
+            CHAOSCENTER_PASSWORD_FILE,
+            CHAOSCENTER_PASSWORD_ENV,
+            exc_info=True,
+        )
+
+
+def _extract_token(resp: dict) -> str:
+    """Pull the access token from a ChaosCenter login response.
+
+    litmus has used a few key spellings across versions; try them in order and
+    coerce a missing token to ``""`` so callers can treat the boundary as ``str``.
+    """
+    return resp.get("accessToken") or resp.get("access_token") or resp.get("token") or ""
 
 
 class _ChaosCenterAPIMixin(_LitmusSetupBase):
@@ -120,13 +182,16 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
     def CHAOSCENTER_MANAGED_PASS(self) -> str:
         """Admin password ChaosProbe rotates the factory default to.
 
-        Resolved once per instance via :func:`_resolve_managed_password` (env
-        var → persisted file → generated secret); never a source-committed
-        default.
+        Resolved once per instance: env var → persisted file → a freshly
+        generated compliant secret.  The generated case is NOT persisted here —
+        :func:`_resolve_managed_password` is read-only; the value is persisted
+        only after a rotation actually sets it on ChaosCenter (see
+        :meth:`_chaoscenter_login`), so the file never gets ahead of the live
+        instance.  Never a source-committed default.
         """
         cached: Optional[str] = getattr(self, "_managed_pass", None)
         if cached is None:
-            cached = _resolve_managed_password()
+            cached = _resolve_managed_password() or _generate_compliant_password()
             self._managed_pass = cached
         return cached
 
@@ -210,8 +275,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
             f"{server_url}/login",
             data={"username": username, "password": password},
         )
-        token = resp.get("accessToken") or resp.get("access_token") or resp.get("token")
-        if not token:
+        if not _extract_token(resp):
             raise RuntimeError("Failed to obtain ChaosCenter access token")
         return resp
 
@@ -274,8 +338,32 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         Tries the provided password first, then the managed password,
         then the factory default.  If the factory default works the
         password is automatically rotated to the managed password.
+
+        Fails fast (``RuntimeError``) if ``CHAOSPROBE_CHAOSCENTER_PASSWORD`` is
+        set to a policy-non-compliant value — even when an explicit ``password``
+        is provided.  This is deliberate: the env var is global config that wins
+        top precedence in :func:`_resolve_managed_password`, so a non-compliant
+        value cannot be the rotation target and would orphan the instance behind
+        an unusable override.  Treating it as a hard config error (fix or unset
+        it) is safer than silently rotating to a generated value the env then
+        shadows.
         """
         username = username or self.CHAOSCENTER_DEFAULT_USER
+
+        # A non-compliant env override is a hard config error: litmus would
+        # reject rotating to it, and silently rotating to a generated
+        # replacement instead would orphan the instance (the env value shadows
+        # the persisted recovery value on every later run — it has top
+        # precedence in _resolve_managed_password). Fail clearly so the user
+        # fixes the override rather than ending up unrecoverable.
+        env_pw = os.environ.get(CHAOSCENTER_PASSWORD_ENV)
+        if env_pw and not _is_policy_compliant(env_pw):
+            raise RuntimeError(
+                f"{CHAOSCENTER_PASSWORD_ENV} violates ChaosCenter's password policy "
+                "(8-16 characters with a digit, lowercase, uppercase, and special "
+                "character). Set a compliant value or unset it."
+            )
+
         candidates = []
         if password:
             candidates.append(password)
@@ -288,36 +376,39 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         for pwd in candidates:
             try:
                 resp = self._chaoscenter_authenticate(auth_url, username, pwd)
-                # token is read from the JSON login response (Any | None);
-                # _chaoscenter_authenticate already raised if it was absent,
-                # so coerce to a concrete str at this boundary.
-                token: str = (
-                    resp.get("accessToken") or resp.get("access_token") or resp.get("token") or ""
-                )
+                token: str = _extract_token(resp)
                 project_id = resp.get("projectID", "")
 
-                # Auto-rotate factory default → managed password
+                # Auto-rotate factory default → managed password.  We only reach
+                # here because the DEFAULT worked, so the instance is NOT on the
+                # persisted/managed value — making it safe to (a) upgrade a
+                # non-compliant managed target to a fresh compliant one (litmus
+                # would reject rotating to a non-compliant password) and (b)
+                # persist the target, with no risk of orphaning a live instance.
                 if pwd == self.CHAOSCENTER_DEFAULT_PASS and pwd != self.CHAOSCENTER_MANAGED_PASS:
+                    target = self.CHAOSCENTER_MANAGED_PASS
+                    if not _is_policy_compliant(target):
+                        target = _generate_compliant_password()
+                        self._managed_pass = target
                     try:
                         self._chaoscenter_change_password(
                             auth_url,
                             username,
                             self.CHAOSCENTER_DEFAULT_PASS,
-                            self.CHAOSCENTER_MANAGED_PASS,
+                            target,
                             token=token,
                         )
+                        # Persist ONLY after ChaosCenter's admin password is
+                        # actually set to `target`, so the file can never get
+                        # ahead of the live instance (the orphaning bug).
+                        _persist_managed_password(target)
                         # Re-login with the new password
                         resp2 = self._chaoscenter_authenticate(
                             auth_url,
                             username,
-                            self.CHAOSCENTER_MANAGED_PASS,
+                            target,
                         )
-                        token = (
-                            resp2.get("accessToken")
-                            or resp2.get("access_token")
-                            or resp2.get("token")
-                            or ""
-                        )
+                        token = _extract_token(resp2)
                         project_id = resp2.get("projectID", project_id)
                         print("  ChaosCenter: default password rotated to managed password")
                     except Exception:

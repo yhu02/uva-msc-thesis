@@ -1,6 +1,7 @@
 """Tests for ChaosCenter dashboard integration."""
 
 import json
+import os
 from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
@@ -29,7 +30,7 @@ def _make_setup(**overrides) -> LitmusSetup:
         # Pre-seed the managed-password cache so the CHAOSCENTER_MANAGED_PASS
         # property resolves deterministically and never touches the real
         # ~/.chaosprobe during tests (resolution itself is tested separately).
-        setup._managed_pass = "test-managed-password"
+        setup._managed_pass = "Test1managed!"  # policy-compliant deterministic seed
         for k, v in overrides.items():
             setattr(setup, k, v)
         return setup
@@ -636,6 +637,24 @@ class TestDashboardCLI:
 # ---------------------------------------------------------------------------
 
 
+class TestExtractToken:
+    """`_extract_token` reads the access token across litmus key spellings,
+    coercing a missing token to ``""``."""
+
+    @pytest.mark.parametrize(
+        "resp,expected",
+        [
+            ({"accessToken": "a"}, "a"),
+            ({"access_token": "b"}, "b"),
+            ({"token": "c"}, "c"),
+            ({}, ""),  # no token key at all
+            ({"accessToken": "", "token": "t"}, "t"),  # falsy first key falls through
+        ],
+    )
+    def test_extract_token(self, resp, expected):
+        assert chaoscenter_api._extract_token(resp) == expected
+
+
 class TestChaoscenterLogin:
     def test_login_with_provided_password(self):
         setup = _make_setup()
@@ -666,7 +685,12 @@ class TestChaoscenterLogin:
         assert token == "tok2"
         assert setup.CHAOSCENTER_MANAGED_PASS in calls
 
-    def test_login_auto_rotates_default_password(self):
+    def test_login_auto_rotates_default_password(self, tmp_path, monkeypatch):
+        # Isolate the password file: rotation now persists the managed password
+        # only after change_password succeeds, so point it at a temp file (never
+        # the real ~/.chaosprobe).
+        pwfile = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
         setup = _make_setup()
         auth_calls = []
 
@@ -680,8 +704,127 @@ class TestChaoscenterLogin:
         with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
             with patch.object(setup, "_chaoscenter_change_password") as mock_change:
                 token, pid = setup._chaoscenter_login("http://localhost:9003")
-        # Default password succeeded — should attempt rotation
+        # Default password succeeded — should rotate to (compliant) managed and
+        # persist it only after the rotation call succeeded.
         mock_change.assert_called_once()
+        assert mock_change.call_args.args[3] == "Test1managed!"  # the rotation target
+        assert pwfile.read_text() == "Test1managed!"  # persisted after success
+
+    def test_login_upgrades_noncompliant_managed_target_on_rotation(self, tmp_path, monkeypatch):
+        # If the managed target is non-compliant, rotating TO it would be
+        # rejected by litmus; since the default worked (instance not on the old
+        # value), generate a fresh compliant target, rotate to it, and persist
+        # that — never the non-compliant value.
+        pwfile = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        setup = _make_setup()
+        setup._managed_pass = (
+            "legacy24charNonCompliantTok"  # non-compliant: >16 chars and no special char
+        )
+
+        def fake_auth(url, user, pwd):
+            if pwd == setup.CHAOSCENTER_DEFAULT_PASS:
+                return {"accessToken": "tok", "projectID": "p1"}
+            raise RuntimeError("bad")
+
+        with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
+            with patch.object(setup, "_chaoscenter_change_password") as mock_change:
+                setup._chaoscenter_login("http://localhost:9003")
+        target = mock_change.call_args.args[3]
+        assert target != "legacy24charNonCompliantTok"
+        assert chaoscenter_api._is_policy_compliant(target)
+        assert pwfile.read_text() == target  # the compliant target was persisted
+        # The in-memory cache was upgraded too, so a later login in the same
+        # process serves the new compliant value (no re-rotation loop).
+        assert setup.CHAOSCENTER_MANAGED_PASS == target
+
+    def test_login_does_not_persist_when_rotation_fails(self, tmp_path, monkeypatch):
+        # change_password failing (e.g. policy/transport error) must NOT persist
+        # a password the live instance was never set to — otherwise the file
+        # drifts from the instance (the orphaning bug).
+        pwfile = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        setup = _make_setup()
+
+        def fake_auth(url, user, pwd):
+            if pwd == setup.CHAOSCENTER_DEFAULT_PASS:
+                return {"accessToken": "tok", "projectID": "p1"}
+            raise RuntimeError("bad")
+
+        with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
+            with patch.object(
+                setup, "_chaoscenter_change_password", side_effect=RuntimeError("policy")
+            ):
+                token, _pid = setup._chaoscenter_login("http://localhost:9003")
+        assert token == "tok"  # falls back to the default-password token
+        assert not pwfile.exists()  # nothing persisted
+
+    def test_login_with_managed_does_not_rotate_or_persist(self, tmp_path, monkeypatch):
+        # When the managed (persisted) password works, the live instance is
+        # already on it — no rotation, no regeneration, no file write. This is
+        # the steady state that must never re-mint/orphan the password.
+        pwfile = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        setup = _make_setup()
+
+        def fake_auth(url, user, pwd):
+            if pwd == setup.CHAOSCENTER_MANAGED_PASS:
+                return {"accessToken": "tok", "projectID": "p1"}
+            raise RuntimeError("bad")
+
+        with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
+            with patch.object(setup, "_chaoscenter_change_password") as mock_change:
+                token, _pid = setup._chaoscenter_login("http://localhost:9003")
+        assert token == "tok"
+        mock_change.assert_not_called()
+        assert not pwfile.exists()
+
+    def test_login_rotation_consumes_relogin_response(self, tmp_path, monkeypatch):
+        # Rotation happy-path: instance is on DEFAULT, so the managed login fails
+        # first; default works and rotates; the re-login with the new password
+        # succeeds and ITS token/projectID are returned (not the stale default
+        # token). Guards the resp2 consumption the fix reworked.
+        pwfile = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        setup = _make_setup()  # managed = "Test1managed!" (compliant)
+        managed_calls = {"n": 0}
+
+        def fake_auth(url, user, pwd):
+            if pwd == setup.CHAOSCENTER_MANAGED_PASS:
+                managed_calls["n"] += 1
+                if managed_calls["n"] == 1:
+                    raise RuntimeError("instance still on default")  # pre-rotation
+                return {"accessToken": "rotated-tok", "projectID": "p2"}  # post-rotation re-login
+            if pwd == setup.CHAOSCENTER_DEFAULT_PASS:
+                return {"accessToken": "default-tok", "projectID": "p0"}
+            raise RuntimeError("bad")
+
+        with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
+            with patch.object(setup, "_chaoscenter_change_password"):
+                token, pid = setup._chaoscenter_login("http://localhost:9003")
+        assert token == "rotated-tok"  # from resp2, not the default-login token
+        assert pid == "p2"
+        assert pwfile.read_text() == "Test1managed!"  # persisted after the rotation
+
+    def test_login_rejects_noncompliant_env_override(self, monkeypatch):
+        # A non-compliant env override is a hard config error — fail clearly
+        # rather than silently rotating to a generated value (which the env would
+        # then permanently shadow, orphaning the instance).
+        monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "from-env")  # non-compliant
+        setup = _make_setup()
+        with pytest.raises(RuntimeError, match="violates ChaosCenter's password policy"):
+            setup._chaoscenter_login("http://localhost:9003")
+
+    def test_noncompliant_env_fails_fast_even_with_explicit_password(self, monkeypatch):
+        # Contract: a non-compliant env override is a hard config error that
+        # fails fast even when an explicit (valid) password is supplied — the
+        # env var has top precedence in resolution and can't be the rotation
+        # target, so it must be fixed/unset rather than silently worked around.
+        # Pins the up-front guard placement (ahead of the candidate loop).
+        monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "from-env")  # non-compliant
+        setup = _make_setup()
+        with pytest.raises(RuntimeError, match="violates ChaosCenter's password policy"):
+            setup._chaoscenter_login("http://localhost:9003", password="Valid1pass!")
 
     def test_login_raises_when_all_passwords_fail(self):
         setup = _make_setup()
@@ -1570,8 +1713,10 @@ class TestSchemeAndHost:
 
 class TestResolveManagedPassword:
     """The managed ChaosCenter admin password is resolved at runtime — env var,
-    then persisted file, then generated-and-persisted secret — never a
-    source-committed default (REVIEW.md W2)."""
+    then persisted file (verbatim), else None — never a source-committed default
+    (REVIEW.md W2). Resolution is READ-ONLY: generation + persistence happen only
+    after a successful rotation (see TestChaoscenterLogin), so the file never
+    drifts ahead of the live instance."""
 
     def test_env_var_takes_precedence(self, tmp_path, monkeypatch):
         monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "from-env")
@@ -1588,26 +1733,100 @@ class TestResolveManagedPassword:
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
         assert chaoscenter_api._resolve_managed_password() == "Persisted1!"
 
-    def test_generates_and_persists_when_absent(self, tmp_path, monkeypatch):
+    def test_preserves_intentional_spaces_strips_only_newlines(self, tmp_path, monkeypatch):
+        # Only line terminators are stripped — an intentional trailing space in
+        # the stored password is preserved (strip() would have eaten it).
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "pw"
+        pw_file.write_text("Pass word1! \n")  # trailing space then newline
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        assert chaoscenter_api._resolve_managed_password() == "Pass word1! "
+
+    def test_returns_none_when_absent(self, tmp_path, monkeypatch):
+        # Read-only: with no env and no file, resolution returns None and does
+        # NOT create the file — generation/persistence happens only after a
+        # successful rotation, so the file never gets ahead of the instance.
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
         pw_file = tmp_path / "sub" / "pw"
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
-        pwd = chaoscenter_api._resolve_managed_password()
-        assert pwd  # a non-empty generated secret
-        assert pw_file.read_text() == pwd  # persisted for stability across runs
-        assert oct(pw_file.stat().st_mode)[-3:] == "600"  # locked down
-        # A later run reads the same value back rather than regenerating.
-        assert chaoscenter_api._resolve_managed_password() == pwd
+        assert chaoscenter_api._resolve_managed_password() is None
+        assert not pw_file.exists()  # nothing written
 
-    def test_io_errors_are_tolerated(self, tmp_path, monkeypatch):
+    def test_undecodable_file_returns_none(self, tmp_path, monkeypatch):
+        # A corrupt/non-UTF-8 file must be tolerated like any IO error (return
+        # None) rather than raising UnicodeDecodeError and breaking auth.
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "pw"
+        pw_file.write_bytes(b"\xff\xfe\x00bad")  # invalid UTF-8
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        assert chaoscenter_api._resolve_managed_password() is None
+
+    def test_persist_then_resolve_roundtrips_utf8(self, tmp_path, monkeypatch):
+        # persist (UTF-8) and resolve (UTF-8) agree on encoding, so a non-ASCII
+        # value round-trips intact.
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        chaoscenter_api._persist_managed_password("Pä55wörd!")
+        assert chaoscenter_api._resolve_managed_password() == "Pä55wörd!"
+
+    def test_read_io_error_returns_none(self, tmp_path, monkeypatch):
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
         a_dir = tmp_path / "iam_a_dir"
         a_dir.mkdir()
-        # Pointing the password "file" at a directory makes both the read
-        # (read_text) and the write (write_text) raise OSError; resolution must
-        # still return a usable generated secret rather than crash.
+        # Pointing the password "file" at a directory makes the read (read_text)
+        # raise OSError; resolution must tolerate it and return None, not crash.
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", a_dir)
-        assert chaoscenter_api._resolve_managed_password()
+        assert chaoscenter_api._resolve_managed_password() is None
+
+    def test_persist_writes_0600(self, tmp_path, monkeypatch):
+        pw_file = tmp_path / "sub" / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        # Permissive umask (0): a create-then-chmod path would briefly produce a
+        # 0666 file; the os.open(...,0o600) create must yield 0600 regardless.
+        old_umask = os.umask(0)
+        try:
+            chaoscenter_api._persist_managed_password("Persisted9!")
+        finally:
+            os.umask(old_umask)
+        assert pw_file.read_text() == "Persisted9!"
+        assert oct(pw_file.stat().st_mode)[-3:] == "600"  # locked down
+
+    def test_persist_rehardens_preexisting_loose_file(self, tmp_path, monkeypatch):
+        # O_CREAT's mode only applies on creation, so a pre-existing world-readable
+        # file must still be tightened to 0600 by the trailing chmod.
+        pw_file = tmp_path / "pw"
+        pw_file.write_text("old")
+        pw_file.chmod(0o644)
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        chaoscenter_api._persist_managed_password("New1pass!")
+        assert pw_file.read_text() == "New1pass!"
+        assert oct(pw_file.stat().st_mode)[-3:] == "600"
+
+    @pytest.mark.skipif(
+        not hasattr(os, "O_NOFOLLOW"), reason="O_NOFOLLOW unavailable on this platform"
+    )
+    def test_persist_does_not_follow_symlink(self, tmp_path, monkeypatch):
+        # O_NOFOLLOW: a symlink planted at the password path must NOT be followed
+        # — the open is refused (ELOOP -> OSError, tolerated) so the link's target
+        # is never clobbered by the O_TRUNC write.
+        victim = tmp_path / "victim"
+        victim.write_text("important")
+        link = tmp_path / "pw"
+        link.symlink_to(victim)
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", link)
+        chaoscenter_api._persist_managed_password("New1pass!")  # no raise
+        assert victim.read_text() == "important"  # target untouched
+
+    def test_persist_io_error_is_tolerated(self, tmp_path, monkeypatch):
+        a_dir = tmp_path / "iam_a_dir"
+        a_dir.mkdir()
+        # Opening a directory for write raises OSError; persistence must swallow
+        # it (logged at WARNING) rather than crash. Note: a failed persist is not
+        # recoverable by re-derivation — the managed password is random — but
+        # that is the caller's lockout risk, not this function's to raise on.
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", a_dir)
+        chaoscenter_api._persist_managed_password("Persisted9!")  # no raise
 
     def test_no_committed_credential_in_source(self):
         from pathlib import Path as _Path
@@ -1627,6 +1846,18 @@ class TestResolveManagedPassword:
         assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
         assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
         assert len(calls) == 1  # resolved once, then served from the instance cache
+
+    def test_property_generates_compliant_when_unresolved(self, tmp_path, monkeypatch):
+        # When nothing is resolved (no env, no file), the property falls back to
+        # a freshly generated compliant secret WITHOUT persisting it — the file
+        # is written only after a rotation sets it on ChaosCenter.
+        monkeypatch.setattr(chaoscenter_api, "_resolve_managed_password", lambda: None)
+        pwfile = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        setup = LitmusSetup.__new__(LitmusSetup)
+        pwd = setup.CHAOSCENTER_MANAGED_PASS
+        assert chaoscenter_api._is_policy_compliant(pwd)
+        assert not pwfile.exists()  # generated, not persisted here
 
 
 # ---------------------------------------------------------------------------
@@ -1659,16 +1890,18 @@ class TestPasswordPolicy:
     def test_is_policy_compliant(self, pwd, ok):
         assert chaoscenter_api._is_policy_compliant(pwd) is ok
 
-    def test_resolve_migrates_noncompliant_persisted_password(self, tmp_path, monkeypatch):
-        # A previously-persisted token_urlsafe value (24 chars, non-compliant) must
-        # be replaced with a compliant one, not reused (it would fail rotation).
+    def test_resolve_reuses_noncompliant_persisted_password_verbatim(self, tmp_path, monkeypatch):
+        # A persisted value is reused EXACTLY as stored, even if non-compliant —
+        # it may be what a live ChaosCenter was set to (pre-policy), so silently
+        # replacing it would orphan the instance. Upgrading a non-compliant value
+        # happens only during a successful rotation (where the default proved the
+        # instance is NOT on it), not here.
         pwfile = tmp_path / "chaoscenter-admin-password"
-        pwfile.write_text("oldNonCompliantToken_urlsafe_24x")  # >16, no special/upper guarantee
+        pwfile.write_text("oldNonCompliantToken_urlsafe_24x")  # >16, non-compliant
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
-        pwd = chaoscenter_api._resolve_managed_password()
-        assert chaoscenter_api._is_policy_compliant(pwd)
-        assert pwfile.read_text().strip() == pwd  # migrated value persisted
+        assert chaoscenter_api._resolve_managed_password() == "oldNonCompliantToken_urlsafe_24x"
+        assert pwfile.read_text().strip() == "oldNonCompliantToken_urlsafe_24x"  # NOT rewritten
 
     def test_resolve_rehardens_persisted_file_perms(self, tmp_path, monkeypatch):
         # A persisted compliant password whose file is world-readable must be
