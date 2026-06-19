@@ -25,8 +25,9 @@ the \emph{opposite} sign, packing concentrating more per-node conntrack churn
 than spreading, so the conjunction fails (H2); replication's rescue is clear on
 the error face but the trough-depth co-primary could not adjudicate it on this
 placement (H3); and the scorecard's availability layer is unreliable under churn
-(H5). The latency$\leftrightarrow$availability frontier is correspondingly
-degenerate on the availability face under pod-delete (H4). Placement moves the
+(H5). The latency$\leftrightarrow$availability frontier is likewise
+degenerate on the availability face under pod-delete (H4) --- both reflecting
+that pod-delete produces no sustained availability outage to discriminate on. Placement moves the
 mechanism; at the pre-registered bar, it does not move the user-visible
 placement, availability, and dose-response outcomes the hypotheses predicted.
 
