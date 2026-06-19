@@ -1310,7 +1310,7 @@ def _acquire_run_lock() -> None:
 @click.option(
     "--app-ready-timeout",
     default=240,
-    type=int,
+    type=click.IntRange(min=1),
     help=(
         "Upper bound (seconds) for the per-iteration functional app-readiness "
         "gate after the clean-baseline restart.  The default 240s suits "

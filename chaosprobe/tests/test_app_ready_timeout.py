@@ -90,6 +90,15 @@ def test_cli_flag_rejects_non_integer():
     assert "app-ready-timeout" in result.output.lower()
 
 
+@pytest.mark.parametrize("bad", ["0", "-5"])
+def test_cli_flag_rejects_non_positive(bad):
+    # A 0/negative timeout would make the gate time out immediately and taint
+    # every iteration; IntRange(min=1) rejects it at the CLI boundary.
+    result = CliRunner().invoke(run, ["--app-ready-timeout", bad])
+    assert result.exit_code != 0
+    assert "app-ready-timeout" in result.output.lower()
+
+
 class _GateReached(Exception):
     """Sentinel raised from the patched gate to stop the iteration right after
     the readiness call, without driving the heavyweight downstream body."""
