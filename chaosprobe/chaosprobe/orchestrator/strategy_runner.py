@@ -864,9 +864,11 @@ def _run_single_iteration(
     # Verify app-level readiness across the probed routes before starting
     # probers.  This prevents cascading poisoning where a previous
     # iteration's post-chaos damage leaks into the next iteration's
-    # pre-chaos baseline.  North-south HTTP routes always gate; east-west
-    # gRPC/TCP service routes additionally gate when the probe pod has
-    # python3 (else K8s-native gRPC readiness already covers them).
+    # pre-chaos baseline.  The user-facing north-south HTTP routes gate
+    # readiness; east-west service edges are covered by K8s deployment
+    # readiness and still measured by the latency prober, but do NOT gate
+    # (wait_for_app_ready's gate_east_west defaults False — gating on every
+    # internal edge flaps on workloads with many of them).
     # 240s upper bound: consecutive-OK (≥15s) + sustained period (15s) +
     # generous slack for slow JVM warm-up between iterations.  The function
     # returns early as soon as the gate passes.

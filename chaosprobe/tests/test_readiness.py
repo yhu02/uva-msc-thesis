@@ -1,10 +1,12 @@
-"""Tests for the app-readiness gate's east-west gRPC/TCP probing.
+"""Tests for the app-readiness gate.
 
-``wait_for_app_ready`` gates north-south routes over HTTP and east-west
-service routes over a TCP connect to the real ``host:port`` (the correct
-probe for gRPC/TCP backends that serve no HTTP).  These tests drive the
-gate with a mocked pod-exec and clock so the loop runs a fixed number of
-ticks without sleeping.
+``wait_for_app_ready`` gates on the user-facing north-south HTTP routes by
+default; east-west service routes (a TCP connect to the real ``host:port`` —
+the correct probe for gRPC/TCP backends that serve no HTTP) gate ONLY when
+``gate_east_west=True`` (the production default is False). These tests drive the
+gate with a mocked pod-exec and clock so the loop runs a fixed number of ticks
+without sleeping; ``_run_gate`` passes ``gate_east_west=True`` by default because
+most cases here exercise the opt-in east-west path.
 """
 
 import itertools
@@ -162,6 +164,21 @@ class TestAppReadyReturnValue:
                 _exec_http_ok_tcp_ok, timeout=60, required_consecutive=1, sustained_period_s=0
             )
             is True
+        )
+
+    def test_north_south_http_failure_blocks_the_gate(self):
+        # The positive half of "north-south-only gate": with NO east-west routes,
+        # a north-south HTTP route that returns FAIL must prevent the gate from
+        # passing (returns False) — north-south is the sole functional signal, so a
+        # regression that stopped gating on it (e.g. `if False and "OK" not in out`)
+        # would be caught here. Generous timeout/consecutive so only the HTTP
+        # failure — not the tick budget — can cause the False.
+        def _http_fail(core, ns, pod, cmd):
+            return "FAIL"  # the wget HTTP probe never succeeds
+
+        assert (
+            self._drive(_http_fail, timeout=60, required_consecutive=1, sustained_period_s=0)
+            is False
         )
 
     def test_no_probe_pod_returns_true(self):
