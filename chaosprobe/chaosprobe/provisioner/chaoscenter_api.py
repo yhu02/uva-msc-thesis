@@ -94,7 +94,10 @@ def _resolve_managed_password() -> Optional[str]:
         return env
     try:
         if CHAOSCENTER_PASSWORD_FILE.exists():
-            existing = CHAOSCENTER_PASSWORD_FILE.read_text().strip()
+            # Pin UTF-8 (matches _persist_managed_password) and tolerate a
+            # corrupt/garbled file (UnicodeDecodeError) like any other IO error,
+            # rather than letting it bubble up and break authentication.
+            existing = CHAOSCENTER_PASSWORD_FILE.read_text(encoding="utf-8").strip()
             if existing:
                 # Re-harden perms before reuse: the file holds the admin password,
                 # but may have been created manually or had its mode changed, so a
@@ -104,7 +107,7 @@ def _resolve_managed_password() -> Optional[str]:
                 except OSError:
                     logger.debug("could not re-harden password file perms", exc_info=True)
                 return existing
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         logger.debug("could not read managed ChaosCenter password file", exc_info=True)
     return None
 
@@ -131,10 +134,10 @@ def _persist_managed_password(pwd: str) -> None:
         # O_CREAT's mode only applies on creation, so re-chmod afterwards to also
         # harden a pre-existing, looser-permissioned file.
         fd = os.open(CHAOSCENTER_PASSWORD_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, pwd.encode())
-        finally:
-            os.close(fd)
+        # Wrap the fd in a buffered text writer: it handles partial writes and
+        # pins UTF-8 (matching the read side), and closes the fd on exit.
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(pwd)
         os.chmod(CHAOSCENTER_PASSWORD_FILE, 0o600)
     except OSError:
         logger.warning(

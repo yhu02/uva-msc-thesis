@@ -1741,6 +1741,24 @@ class TestResolveManagedPassword:
         assert chaoscenter_api._resolve_managed_password() is None
         assert not pw_file.exists()  # nothing written
 
+    def test_undecodable_file_returns_none(self, tmp_path, monkeypatch):
+        # A corrupt/non-UTF-8 file must be tolerated like any IO error (return
+        # None) rather than raising UnicodeDecodeError and breaking auth.
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "pw"
+        pw_file.write_bytes(b"\xff\xfe\x00bad")  # invalid UTF-8
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        assert chaoscenter_api._resolve_managed_password() is None
+
+    def test_persist_then_resolve_roundtrips_utf8(self, tmp_path, monkeypatch):
+        # persist (UTF-8) and resolve (UTF-8) agree on encoding, so a non-ASCII
+        # value round-trips intact.
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pw_file = tmp_path / "pw"
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
+        chaoscenter_api._persist_managed_password("Pä55wörd!")
+        assert chaoscenter_api._resolve_managed_password() == "Pä55wörd!"
+
     def test_read_io_error_returns_none(self, tmp_path, monkeypatch):
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
         a_dir = tmp_path / "iam_a_dir"
