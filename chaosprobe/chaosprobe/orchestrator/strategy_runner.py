@@ -24,6 +24,7 @@ from chaosprobe.metrics.collector import MetricsCollector
 from chaosprobe.orchestrator import portforward as pf
 from chaosprobe.orchestrator.diagnostics import capture_unknown_diagnostics
 from chaosprobe.orchestrator.preflight import (
+    is_stateful_infra,
     wait_for_healthy_deployments,
 )
 from chaosprobe.orchestrator.probers import (
@@ -134,8 +135,10 @@ def _extract_http_routes(
     """Extract HTTP routes from scenario httpProbes for latency measurement.
 
     Parses the experiment's httpProbe definitions and returns a list of
-    ``(service, path, description, method)`` tuples suitable for
-    ``ContinuousLatencyProber``.
+    ``(service, route, description, method)`` tuples suitable for
+    ``ContinuousLatencyProber``. ``route`` is the path PLUS any query string
+    (deduped by base path) — preserved because some workloads' routes error
+    without their params (e.g. hotelReservation's ``/hotels?inDate=...&lat=...``).
 
     When the scenario defines no httpProbes (e.g. ``node-drain``, which omits
     litmus probes because they would evaluate on the very node being drained and
@@ -161,10 +164,18 @@ def _extract_http_routes(
                 if not url:
                     continue
                 parsed = urlparse(url)
-                path = parsed.path or "/"
-                if path in seen:
+                base_path = parsed.path or "/"
+                # Dedup by base path (one prober route per path), but PRESERVE the
+                # query string in the requested route — hotelReservation's routes
+                # (/hotels?inDate=...&lat=..., /recommendations?..., /user?...)
+                # return errors without their params, so a path-only probe would
+                # report ~100% errors / 0 samples (a broken-probe artifact, not
+                # degradation). Online-boutique's routes are path-only, so this is
+                # a no-op there.
+                if base_path in seen:
                     continue
-                seen.add(path)
+                seen.add(base_path)
+                route = base_path + (f"?{parsed.query}" if parsed.query else "")
 
                 # Extract service name from hostname (e.g. frontend.online-boutique.svc...)
                 host = parsed.hostname or ""
@@ -174,9 +185,9 @@ def _extract_http_routes(
 
                 method_def = inputs.get("method", {})
                 method = "GET" if "get" in method_def else "POST"
-                name = probe.get("name", path)
+                name = probe.get("name", route)
 
-                routes.append((service, path, name, method))
+                routes.append((service, route, name, method))
 
     if not routes and fallback_service:
         routes.append((fallback_service, "/", "user-home", "GET"))
@@ -246,6 +257,25 @@ def _build_route_view_for_iteration(
     return build_route_view(locust_stats, latency_phases)
 
 
+def _adjacent_topology_path(scenario: Dict[str, Any]) -> Optional[str]:
+    """Path to a ``topology.json`` adjacent to the scenario, or None.
+
+    Mirrors :func:`chaosprobe.config.topology.parse_topology_from_scenario`'s
+    deploy-dir lookup: the scenario ``path`` is the scenario directory, so the
+    topology file is ``<path>/topology.json`` (or the parent's, if the scenario
+    file lives one level down). Returns the first that exists.
+    """
+    from pathlib import Path
+
+    base = scenario.get("path")
+    if not base:
+        return None
+    for candidate in (Path(base) / "topology.json", Path(base).parent / "topology.json"):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _build_iteration_routes(
     scenario: Dict[str, Any],
     ctx: "RunContext",
@@ -254,7 +284,8 @@ def _build_iteration_routes(
     iteration's probers.
 
     North-south routes come from the scenario httpProbes (frontend HTTP,
-    ``(service, path, desc, method)``) and are always preserved.
+    ``(service, route, desc, method)`` where ``route`` is the path plus any
+    query string) and are always preserved.
     East-west routes are the service-dependency graph as protocol-aware
     ``ServiceRoute`` tuples (``grpc``/``tcp`` with the real ``host:port``),
     so gRPC backends are probed over their actual port instead of a
@@ -270,6 +301,25 @@ def _build_iteration_routes(
     except Exception as exc:  # noqa: BLE001 — K8s client raises broad set
         logger.warning("Failed to fetch service dependencies for east-west routes: %s", exc)
         dependency_routes = []
+
+    # Env-var discovery is empty for workloads that find peers another way
+    # (e.g. hotelReservation uses Consul, not *_SERVICE_ADDR env vars). Fall back
+    # to the static topology.json adjacent to the scenario so the east-west
+    # latency face is still measured (the registered V2-H1 outcome ew_p95).
+    if not dependency_routes:
+        topology_path = _adjacent_topology_path(scenario)
+        if topology_path:
+            try:
+                dependency_routes = ctx.mutator.get_topology_dependency_routes(topology_path)
+                if dependency_routes:
+                    logger.info(
+                        "East-west routes from static topology %s (%d edges) — "
+                        "env-var discovery was empty",
+                        topology_path,
+                        len(dependency_routes),
+                    )
+            except Exception as exc:  # noqa: BLE001 — file/K8s errors are non-fatal
+                logger.warning("Static-topology east-west fallback failed: %s", exc)
 
     east_west = _consolidate_service_routes(dependency_routes)
 
@@ -814,9 +864,11 @@ def _run_single_iteration(
     # Verify app-level readiness across the probed routes before starting
     # probers.  This prevents cascading poisoning where a previous
     # iteration's post-chaos damage leaks into the next iteration's
-    # pre-chaos baseline.  North-south HTTP routes always gate; east-west
-    # gRPC/TCP service routes additionally gate when the probe pod has
-    # python3 (else K8s-native gRPC readiness already covers them).
+    # pre-chaos baseline.  The user-facing north-south HTTP routes gate
+    # readiness; east-west service edges are covered by K8s deployment
+    # readiness and still measured by the latency prober, but do NOT gate
+    # (wait_for_app_ready's gate_east_west defaults False — gating on every
+    # internal edge flaps on workloads with many of them).
     # 240s upper bound: consecutive-OK (≥15s) + sustained period (15s) +
     # generous slack for slow JVM warm-up between iterations.  The function
     # returns early as soon as the gate passes.
@@ -1463,7 +1515,12 @@ def _run_iterations(
 
 
 def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
-    """Trigger a rollout restart of all app deployments in the namespace.
+    """Rollout-restart the namespace's app deployments, EXCLUDING stateful infra.
+
+    Stateful backing services (datastores / service-discovery / tracing — see
+    :func:`is_stateful_infra`) are deliberately left running: the goal is fresh
+    *application* state, not a wiped datastore, and cycling non-durable infra
+    (e.g. hotelReservation's Consul) breaks the app for the whole session.
 
     This clears post-chaos damage (stuck connections, unhealthy pods,
     resource exhaustion) that the settle-time alone cannot fix.
@@ -1481,7 +1538,9 @@ def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
         app_deps = [
             d.metadata.name
             for d in deps.items
-            if not d.metadata.name.startswith(infra_prefixes) and (d.spec.replicas or 0) > 0
+            if not d.metadata.name.startswith(infra_prefixes)
+            and not is_stateful_infra(d.metadata.name)
+            and (d.spec.replicas or 0) > 0
         ]
         if not app_deps:
             return

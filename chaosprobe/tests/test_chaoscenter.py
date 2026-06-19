@@ -976,18 +976,41 @@ class TestEnsureChaoscenterConfigured:
         assert result["infra_id"] == "existing-inactive"
         mock_reg.assert_not_called()  # Must NOT re-register
 
-    def test_raises_on_missing_project_id(self):
+    def test_create_project_called_when_login_returns_no_project(self):
+        # Fresh ChaosCenter: first login has no projectID → create_project is
+        # invoked (mocked, no real network), then a re-login is attempted. Here
+        # the re-login is still empty so it raises before the downstream bootstrap
+        # — asserting the create+relogin contract. The happy continuation is
+        # covered by the live smoke; failure/still-empty are tested below.
         setup = _make_setup()
-        with patch.object(
-            setup,
-            "_chaoscenter_login",
-            return_value=("tok", ""),
+        with (
+            patch.object(setup, "_chaoscenter_login", return_value=("tok", "")) as mock_login,
+            patch.object(setup, "_chaoscenter_create_project") as mock_create,
         ):
-            with pytest.raises(RuntimeError, match="projectID"):
-                setup.ensure_chaoscenter_configured(
-                    namespace="ns",
-                    base_host="http://localhost",
-                )
+            with pytest.raises(RuntimeError, match="still returned no projectID"):
+                setup.ensure_chaoscenter_configured(namespace="ns", base_host="http://localhost")
+        mock_create.assert_called_once()
+        assert mock_create.call_args.args[1] == "chaosprobe"  # (auth_url, project, token)
+        assert mock_create.call_args.args[2] == "tok"
+        assert mock_login.call_count == 2  # initial + re-login after create
+
+    def test_raises_when_create_project_fails(self):
+        setup = _make_setup()
+        with (
+            patch.object(setup, "_chaoscenter_login", return_value=("tok", "")),
+            patch.object(setup, "_chaoscenter_create_project", side_effect=RuntimeError("api 401")),
+        ):
+            with pytest.raises(RuntimeError, match="project creation failed"):
+                setup.ensure_chaoscenter_configured(namespace="ns", base_host="http://localhost")
+
+    def test_create_project_endpoint_body_and_token(self):
+        setup = _make_setup()
+        with patch.object(setup, "_chaoscenter_api_request", return_value={}) as mock_req:
+            setup._chaoscenter_create_project("http://localhost:9003", "chaosprobe", "tok")
+        mock_req.assert_called_once()
+        assert mock_req.call_args.args[0] == "http://localhost:9003/create_project"
+        assert mock_req.call_args.kwargs["data"] == {"projectName": "chaosprobe"}
+        assert mock_req.call_args.kwargs["token"] == "tok"
 
 
 # ---------------------------------------------------------------------------
@@ -1558,11 +1581,12 @@ class TestResolveManagedPassword:
         assert not (tmp_path / "pw").exists()
 
     def test_reads_persisted_file(self, tmp_path, monkeypatch):
+        # A persisted, policy-COMPLIANT password is reused verbatim.
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
         pw_file = tmp_path / "pw"
-        pw_file.write_text("persisted-secret\n")
+        pw_file.write_text("Persisted1!\n")
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
-        assert chaoscenter_api._resolve_managed_password() == "persisted-secret"
+        assert chaoscenter_api._resolve_managed_password() == "Persisted1!"
 
     def test_generates_and_persists_when_absent(self, tmp_path, monkeypatch):
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
@@ -1603,3 +1627,69 @@ class TestResolveManagedPassword:
         assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
         assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
         assert len(calls) == 1  # resolved once, then served from the instance cache
+
+
+# ---------------------------------------------------------------------------
+# Password policy (litmus 3.x: 8–16 chars, 1 digit/lower/upper/special)
+# ---------------------------------------------------------------------------
+
+
+class TestPasswordPolicy:
+    def test_generated_password_is_compliant(self):
+        for _ in range(50):
+            pwd = chaoscenter_api._generate_compliant_password()
+            assert chaoscenter_api._is_policy_compliant(pwd), pwd
+
+    @pytest.mark.parametrize(
+        "pwd,ok",
+        [
+            ("Chaos1probe!", True),
+            ("aB3$xyzq", True),  # exactly 8
+            ("aB3$xyzqaB3$xyzq", True),  # exactly 16
+            ("short1!A", True),
+            ("nouppercase1!", False),  # no uppercase
+            ("NOLOWERCASE1!", False),  # no lowercase
+            ("NoDigitsHere!", False),  # no digit
+            ("NoSpecial1Abc", False),  # no special
+            ("Ab1!", False),  # too short (<8)
+            ("Ab1!Ab1!Ab1!Ab1!x", False),  # 17 chars, too long
+            ("VGhpc0lzMjRDaGFyc1Rva2Vu", False),  # token_urlsafe-style 24 chars
+        ],
+    )
+    def test_is_policy_compliant(self, pwd, ok):
+        assert chaoscenter_api._is_policy_compliant(pwd) is ok
+
+    def test_resolve_migrates_noncompliant_persisted_password(self, tmp_path, monkeypatch):
+        # A previously-persisted token_urlsafe value (24 chars, non-compliant) must
+        # be replaced with a compliant one, not reused (it would fail rotation).
+        pwfile = tmp_path / "chaoscenter-admin-password"
+        pwfile.write_text("oldNonCompliantToken_urlsafe_24x")  # >16, no special/upper guarantee
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pwd = chaoscenter_api._resolve_managed_password()
+        assert chaoscenter_api._is_policy_compliant(pwd)
+        assert pwfile.read_text().strip() == pwd  # migrated value persisted
+
+    def test_resolve_rehardens_persisted_file_perms(self, tmp_path, monkeypatch):
+        # A persisted compliant password whose file is world-readable must be
+        # re-hardened to 0600 on reuse (it holds the admin password).
+
+        pwfile = tmp_path / "chaoscenter-admin-password"
+        pwfile.write_text("Chaos1probe!")
+        pwfile.chmod(0o644)  # too permissive (e.g. created manually)
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        assert chaoscenter_api._resolve_managed_password() == "Chaos1probe!"
+        assert (pwfile.stat().st_mode & 0o777) == 0o600  # re-hardened
+
+    def test_resolve_keeps_compliant_persisted_password(self, tmp_path, monkeypatch):
+        pwfile = tmp_path / "chaoscenter-admin-password"
+        pwfile.write_text("Chaos1probe!")
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        assert chaoscenter_api._resolve_managed_password() == "Chaos1probe!"
+
+    def test_resolve_env_var_wins(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", tmp_path / "nope")
+        monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "EnvP4ss!word")
+        assert chaoscenter_api._resolve_managed_password() == "EnvP4ss!word"

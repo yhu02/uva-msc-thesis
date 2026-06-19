@@ -18,6 +18,7 @@ from chaosprobe.config.topology import ServiceRoute, _extract_dependencies_from_
 from chaosprobe.k8s import ensure_k8s_config
 from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
 from chaosprobe.orchestrator.preflight import LITMUS_INFRA_DEPLOYMENTS
+from chaosprobe.placement.fraction_solver import load_static_topology
 from chaosprobe.placement.strategy import (
     DeploymentInfo,
     NodeAssignment,
@@ -27,6 +28,23 @@ from chaosprobe.placement.strategy import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Datastores that speak their own TCP wire protocol (not gRPC). Used to label a
+# topology-derived east-west route's protocol accurately — the label is persisted
+# in latency summaries / Neo4j, so a default-grpc would misdescribe these backends
+# (the prober TCP-connects regardless, so the probe itself is unaffected).
+_TCP_DATASTORE_PREFIXES = (
+    "memcached",
+    "mongodb",
+    "redis",
+    "mysql",
+    "mariadb",
+    "postgres",  # covers postgres / postgresql
+    "cassandra",
+    "rabbitmq",
+    "etcd",
+    "zookeeper",
+)
 
 # Built-in Kubernetes label for targeting nodes by hostname
 PLACEMENT_LABEL_KEY = "kubernetes.io/hostname"
@@ -276,6 +294,38 @@ class PlacementMutator:
         placement strategy, which only needs the edge pairs.
         """
         return [(route[0], route[1]) for route in self.get_service_dependency_routes()]
+
+    def get_topology_dependency_routes(self, topology_path: str) -> List[ServiceRoute]:
+        """East-west routes from a static ``topology.json``, ports from live Services.
+
+        The env-var-based :meth:`get_service_dependency_routes` is empty for
+        workloads that discover peers another way (e.g. hotelReservation uses
+        Consul, not ``*_SERVICE_ADDR`` env vars). This fallback reads the
+        hand-curated edges from ``topology.json`` (the same file the solver gate
+        consumes) and resolves each target's ``host:port`` from the namespace's
+        live Services, so the in-cluster TCP-connect prober
+        (:mod:`chaosprobe.metrics.latency`) can still measure inter-service
+        latency. Protocol is a label only here (the probe is a TCP connect
+        either way): ``tcp`` for datastores (memcached/mongodb/redis), ``grpc``
+        otherwise. Targets with no resolvable Service port are skipped.
+        """
+        edges, _services = load_static_topology(topology_path)
+
+        port_by_service: Dict[str, int] = {}
+        for svc in self.core_api.list_namespaced_service(self.namespace).items:
+            ports = (svc.spec.ports or []) if svc.spec else []
+            if ports and ports[0].port is not None:
+                port_by_service[svc.metadata.name] = int(ports[0].port)
+
+        routes: List[ServiceRoute] = []
+        for source, target, _weight in edges:
+            port = port_by_service.get(target)
+            if port is None:
+                # No (or headless) Service for this target — nothing to TCP-probe.
+                continue
+            protocol = "tcp" if target.startswith(_TCP_DATASTORE_PREFIXES) else "grpc"
+            routes.append((source, target, f"{target}:{port}", protocol, f"{source}->{target}"))
+        return routes
 
     def apply_strategy(
         self,

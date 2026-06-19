@@ -133,6 +133,7 @@ def wait_for_app_ready(
     required_consecutive: int = 5,
     sustained_period_s: int = 15,
     latency_budget_ms: int = 5000,
+    gate_east_west: bool = False,
 ) -> bool:
     """Wait until all probed routes respond successfully and stay stable.
 
@@ -155,14 +156,18 @@ def wait_for_app_ready(
 
     K8s readiness probes may pass while the application isn't fully
     serving traffic (e.g. during connection pool warm-up).  This does
-    actual probes from a probe pod to confirm end-to-end readiness across
-    the routes the experiment will measure: north-south ``http_routes``
-    via HTTP, and east-west ``service_routes`` (``(source, target,
-    host:port, protocol, desc)`` tuples) via a TCP connect to the real
-    ``host:port`` — the correct probe for gRPC/TCP backends that expose no
-    HTTP endpoint.  The TCP gate is only applied when the probe pod has
-    python3; otherwise those backends fall back to K8s-native gRPC
-    readiness (already enforced by the deployment-readiness wait).
+    actual probes from a probe pod to confirm end-to-end readiness of the
+    **user-facing north-south ``http_routes``** (via HTTP) — whether the app
+    can serve user traffic is the "ready for chaos" signal.
+
+    East-west ``service_routes`` (``(source, target, host:port, protocol,
+    desc)`` tuples) gate ONLY when ``gate_east_west`` is set: they are
+    TCP-connect-probed to the real ``host:port`` (the correct probe for
+    gRPC/TCP backends with no HTTP endpoint, when the pod has python3). By
+    default they do NOT gate — they are covered by K8s deployment readiness
+    and still measured by the latency prober — because gating on every
+    internal edge makes the gate flap (and false-positive-taint iterations)
+    on workloads with many east-west routes during post-restart churn.
 
     Returns ``True`` when the gate passed (or was skipped because no probe
     pod was available), and ``False`` when it timed out — the caller treats a
@@ -196,10 +201,17 @@ def wait_for_app_ready(
     if not urls_to_check:
         urls_to_check = [("/_healthz", f"http://frontend.{namespace}.svc.cluster.local/_healthz")]
 
-    # East-west gRPC/TCP targets (host:port), deduplicated, gated via a
-    # python3 socket connect when the probe pod supports it.
+    # East-west gRPC/TCP targets (host:port), deduplicated, gated via a python3
+    # socket connect when the probe pod supports it — ONLY when gate_east_west is
+    # set. By default the readiness gate is the user-facing north-south routes:
+    # whether the app can serve user traffic is the right "ready for chaos" signal,
+    # and the east-west service edges are already covered by K8s deployment
+    # readiness and are still MEASURED by the latency prober. Gating on all
+    # east-west edges too made the gate flap on workloads with many internal edges
+    # (hotelReservation's 11 routes during the post-restart re-registration window),
+    # false-positive-tainting every iteration even though all routes served fine.
     tcp_targets: List[Tuple[str, str]] = []
-    if service_routes:
+    if service_routes and gate_east_west:
         seen_hosts = set()
         for _src, _tgt, host, _proto, label in service_routes:
             if host and host not in seen_hosts:

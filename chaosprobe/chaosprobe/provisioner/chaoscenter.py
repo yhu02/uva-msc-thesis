@@ -433,7 +433,28 @@ spec:
             password=password,
         )
         if not project_id:
-            raise RuntimeError("ChaosCenter login did not return a projectID")
+            # A freshly-installed ChaosCenter gives the admin no default project,
+            # so login returns no projectID. Create one (the managed password is
+            # now in effect, which litmus requires before project creation), then
+            # re-login to pick up its projectID.
+            print("  ChaosCenter: no project yet — creating default project...")
+            try:
+                self._chaoscenter_create_project(auth_url, "chaosprobe", token)
+            except Exception as exc:  # noqa: BLE001 — surfaced via the raise below
+                logger.debug("create_project failed", exc_info=True)
+                raise RuntimeError(
+                    f"ChaosCenter login returned no projectID and project creation "
+                    f"failed: {exc}"
+                ) from exc
+            token, project_id = self._chaoscenter_login(
+                auth_url,
+                username=username,
+                password=password,
+            )
+            if not project_id:
+                raise RuntimeError(
+                    "ChaosCenter still returned no projectID after creating a project"
+                )
 
         env_name = f"chaosprobe-{namespace}"
 
