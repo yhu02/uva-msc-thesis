@@ -38,13 +38,19 @@ _PASSWORD_LEN = 16  # within the 8–16 window, max entropy
 
 
 def _is_policy_compliant(pwd: str) -> bool:
-    """True if ``pwd`` satisfies ChaosCenter's 8–16 char + complexity policy."""
+    """True if ``pwd`` satisfies ChaosCenter's 8–16 char + complexity policy.
+
+    "Special" is any non-alphanumeric character — broader than the subset
+    :func:`_generate_compliant_password` draws from — so a user-supplied env/file
+    password using a different special (e.g. ``+``) is not falsely rejected and
+    needlessly regenerated.
+    """
     return (
         8 <= len(pwd) <= 16
         and any(c.isdigit() for c in pwd)
         and any(c.islower() for c in pwd)
         and any(c.isupper() for c in pwd)
-        and any(c in _PASSWORD_SPECIALS for c in pwd)
+        and any(not c.isalnum() for c in pwd)
     )
 
 

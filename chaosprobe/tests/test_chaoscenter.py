@@ -976,18 +976,41 @@ class TestEnsureChaoscenterConfigured:
         assert result["infra_id"] == "existing-inactive"
         mock_reg.assert_not_called()  # Must NOT re-register
 
-    def test_raises_on_missing_project_id(self):
+    def test_create_project_called_when_login_returns_no_project(self):
+        # Fresh ChaosCenter: first login has no projectID → create_project is
+        # invoked (mocked, no real network), then a re-login is attempted. Here
+        # the re-login is still empty so it raises before the downstream bootstrap
+        # — asserting the create+relogin contract. The happy continuation is
+        # covered by the live smoke; failure/still-empty are tested below.
         setup = _make_setup()
-        with patch.object(
-            setup,
-            "_chaoscenter_login",
-            return_value=("tok", ""),
+        with (
+            patch.object(setup, "_chaoscenter_login", return_value=("tok", "")) as mock_login,
+            patch.object(setup, "_chaoscenter_create_project") as mock_create,
         ):
-            with pytest.raises(RuntimeError, match="projectID"):
-                setup.ensure_chaoscenter_configured(
-                    namespace="ns",
-                    base_host="http://localhost",
-                )
+            with pytest.raises(RuntimeError, match="still returned no projectID"):
+                setup.ensure_chaoscenter_configured(namespace="ns", base_host="http://localhost")
+        mock_create.assert_called_once()
+        assert mock_create.call_args.args[1] == "chaosprobe"  # (auth_url, project, token)
+        assert mock_create.call_args.args[2] == "tok"
+        assert mock_login.call_count == 2  # initial + re-login after create
+
+    def test_raises_when_create_project_fails(self):
+        setup = _make_setup()
+        with (
+            patch.object(setup, "_chaoscenter_login", return_value=("tok", "")),
+            patch.object(setup, "_chaoscenter_create_project", side_effect=RuntimeError("api 401")),
+        ):
+            with pytest.raises(RuntimeError, match="project creation failed"):
+                setup.ensure_chaoscenter_configured(namespace="ns", base_host="http://localhost")
+
+    def test_create_project_endpoint_body_and_token(self):
+        setup = _make_setup()
+        with patch.object(setup, "_chaoscenter_api_request", return_value={}) as mock_req:
+            setup._chaoscenter_create_project("http://localhost:9003", "chaosprobe", "tok")
+        mock_req.assert_called_once()
+        assert mock_req.call_args.args[0] == "http://localhost:9003/create_project"
+        assert mock_req.call_args.kwargs["data"] == {"projectName": "chaosprobe"}
+        assert mock_req.call_args.kwargs["token"] == "tok"
 
 
 # ---------------------------------------------------------------------------
