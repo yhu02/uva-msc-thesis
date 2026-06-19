@@ -1,0 +1,52 @@
+# Placement Experiment — node-drain on the node hosting search (hotelReservation)
+# Second-workload EXTERNAL-VALIDITY replication of the V2-H3 replication-rescue
+# design (online-boutique was the frozen confirmatory workload).
+#
+# WHY: node-drain is the node-level failure that topology-spread / anti-affinity
+# exists for. Draining a worker evicts every pod on it, so placement decides the
+# blast radius — most telling with MULTI-REPLICA services (run with --replicas 3):
+#   - packed/colocate → all replicas of a service share the drained node → full
+#                       per-service outage.
+#   - anti-affine/spread → at most one replica per service on the drained node →
+#                          the service stays up on the others.
+#
+# Target follows the placement strategy: TARGET_NODE is left "auto" and the runner
+# resolves it (singular env — node-drain reads TARGET_NODE) to whichever node the
+# active strategy placed search on.
+#
+# NO litmus probes (deliberately, same as online-boutique/node-drain): during a
+# drain the litmus probe-evaluation machinery runs on the very node being drained,
+# so every probe resolves to `Unknown` — a structural artifact, not a signal, and
+# it trips the runner's ">50% Unknown → retry" path (which can leave a node
+# cordoned). The V2-H3 outcomes are measured WITHOUT litmus probes: EndpointSlice
+# trough depth (availability), the in-cluster latency prober's user route + the
+# east-west service-dependency routes (from the adjacent topology.json, since
+# hotelReservation uses Consul, not *_SERVICE_ADDR env vars), and the conntrack
+# sampler. See scripts/blast_radius.py and scripts/c2_h3_anova.py.
+#
+# Usage:
+#   chaosprobe run -n hotel-reservation -s spread,colocate \
+#     -e scenarios/hotel-reservation/node-drain.yaml --replicas 3 -i 4
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-node-drain
+spec:
+  engineState: active
+  appinfo:
+    appns: hotel-reservation
+    applabel: app=search
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: node-drain
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            # "auto" → resolved by the runner to the node hosting applabel above
+            # (per-strategy). node-drain reads the SINGULAR TARGET_NODE. Replace
+            # with a node name to pin it manually.
+            - name: TARGET_NODE
+              value: "auto"
