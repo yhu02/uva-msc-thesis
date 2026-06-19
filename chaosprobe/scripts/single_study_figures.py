@@ -256,7 +256,7 @@ def fig_h3_rescue(c2_dir: str, out_dir: str) -> str:
     axe.legend(loc="upper right", fontsize=8)
     _annotate(
         axe,
-        f"interaction $p$$\\approx$0\n"
+        f"interaction $p \\approx 0$\n"
         f"rescue {error['rescueObserved']:.4f} $\\geq$ margin "
         f"$\\rightarrow$ met",
     )
