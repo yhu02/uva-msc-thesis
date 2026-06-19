@@ -186,7 +186,7 @@ def fig_h2_conntrack(c3_dir: str, out_dir: str) -> str:
     axb.set_title("(b) NodeLocal DNSCache removes the drop")
     _annotate(
         axb,
-        f"spread: $-${shrink_pct:.0f}% with cache on\n"
+        f"spread: −{shrink_pct:.0f}% with cache on\n"
         f"($p$={mech['p_one_sided']:.4f}, $\\geq$50% bar met)",
     )
 
