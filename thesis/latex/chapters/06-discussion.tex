@@ -68,7 +68,7 @@ plausibly contribute to the observed drop: kernel-side teardown of TCP flows
 traversing the killed pod (connection close transitions entries into
 short-timeout conntrack states --- \texttt{close} 10\,s, \texttt{close\_wait}
 60\,s, \texttt{fin\_wait}/\texttt{time\_wait} 120\,s, versus five days for
-\texttt{ESTABLISHED} --- so FIN/RST teardown expires entries within $\le$120\,s of
+\texttt{ESTABLISHED} --- so FIN/RST teardown expires entries within $\le 120$\,s of
 the kill, with no kube-proxy involvement), and the UDP/DNS pool that
 kube-proxy's documented cleanup acts on, which churns as connection turnover
 drives DNS re-resolution.

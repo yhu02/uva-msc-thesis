@@ -25,7 +25,7 @@ Largest existing K8s failure-injection dataset (11,965 experiments), architectur
 Benchmarks \textbf{where the cluster runs, not where pods land}: no churn-vs-node-failure distinction, no conntrack/kube-proxy mechanism, no placement knob. Complementary and orthogonal. \\
 \addlinespace
 \textbf{NetMARKS} --- Wojciechowski et al.\ (INFOCOM 2021), \href{https://ieeexplore.ieee.org/document/9488670/}{DOI 10.1109/INFOCOM42981.2021.9488670}; \textbf{TraDE} (2024), \href{https://arxiv.org/abs/2411.05323}{arXiv:2411.05323} &
-Locality as an \emph{optimization objective}: network/traffic-aware schedulers that co-locate using runtime telemetry (NetMARKS: up to 37\% response-time reduction). &
+Locality as an \emph{optimization objective}: network/traffic-aware schedulers that co-locate using runtime telemetry (NetMARKS: up to 37\,\% response-time reduction). &
 They \emph{optimize} locality with runtime metrics; this thesis instead \emph{manipulates} the cross-node dependency-edge fraction as a controlled variable and measures the kernel/network mechanism it moves (the conntrack reconvergence signature) and its dose-response on the east-west tail (H1). The locality concept itself is theirs; NetMARKS reports end-to-end response time, not east-west p95 --- directional precedent, not like-for-like. \\
 \bottomrule
 \end{tabular}
@@ -117,7 +117,7 @@ regimes they were written for.
   DOI 10.1145/3777375; $\approx$90 sources through April 2024) defines chaos outcomes
   solely against steady-state user-visible indicators and contains no
   placement, kernel/scheduler, conntrack, or EndpointSlice content; the
-  Dec-2025 SLR (arXiv:2512.16959) adds a recovery-pattern taxonomy and an
+  December 2025 SLR (arXiv:2512.16959) adds a recovery-pattern taxonomy and an
   evaluation-score checklist, likewise without placement variation. Both are
   evidence the placement-aware, cross-layer, metric-reliability angle is \textbf{a
   specific gap, not a field-wide void}.
