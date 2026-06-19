@@ -1,8 +1,6 @@
-% Ported from thesis/02-related-work.md — wording unchanged.
-\chapter{Related work}\label{ch:related}
-
 % Citation details (full citations, DOIs, links, verified positioning
-% notes) live in references.bib (derived from references.md).
+% notes) live in references.bib.
+\chapter{Related work}\label{ch:related}
 
 \section{Positioning: the quadrant this thesis occupies}\label{sec:positioning}
 
@@ -16,7 +14,7 @@ The four nearest works, and the axis on which each differs:
 \midrule
 \textbf{MicroRes} --- Yang et al.\ (ISSTA 2024), \href{https://arxiv.org/abs/2212.12850}{arXiv:2212.12850} &
 Score-based resilience profiling: ranks degradation by whether it disseminates from system to user metrics. &
-\textbf{``They score the decoupling; we measure its mechanism''} under a manipulated variable (placement). MicroRes performs no variance decomposition, ICC, power, or test-retest reliability analysis of its index --- H1's reliability critique is that gap. Scope H1 \emph{against} their reported 0.86--0.90 accuracy / 0.92--0.95 F1: those are for \textbf{binary} resilient-vs-non-resilient classification with per-dataset tuned thresholds, so H1 must stay ``the score cannot \textbf{rank placement strategies under session variance}'' --- never ``aggregate scores don't work''. \\
+\textbf{``They score the decoupling; we measure its mechanism''} under a manipulated variable (placement). MicroRes performs no variance decomposition, ICC, or test-retest reliability analysis of its index --- this thesis's scorecard-reliability audit (H5) is that gap. Scope it \emph{against} their reported 0.86--0.90 accuracy / 0.92--0.95 F1: those are for \textbf{binary} resilient-vs-non-resilient classification with per-dataset tuned thresholds, a different task from the test-retest reliability of a continuous score across repeated conditions. \\
 \addlinespace
 \textbf{Cast} --- ICSE 2026 SEIP, \href{https://arxiv.org/html/2602.00972v1}{arXiv:2602.00972} &
 Production resilience testing at Huawei Cloud: traffic record-and-replay + application/RPC-level fault injection (137 potential vulnerabilities, 89 confirmed). &
@@ -24,11 +22,11 @@ Cast finds \emph{application-layer fault-handling bugs}; this thesis measures \e
 \addlinespace
 \textbf{Cloud-edge fault-injection study} --- Liu et al.\ (2025), \href{https://arxiv.org/abs/2507.16109}{arXiv:2507.16109} &
 Largest existing K8s failure-injection dataset (11,965 experiments), architecture-level benchmarking of cloud-edge deployments. &
-Benchmarks \textbf{where the cluster runs, not where pods land}: no churn-vs-contention distinction, no conntrack/kube-proxy mechanism, no placement-strategy comparison. Complementary and orthogonal. \\
+Benchmarks \textbf{where the cluster runs, not where pods land}: no churn-vs-node-failure distinction, no conntrack/kube-proxy mechanism, no placement knob. Complementary and orthogonal. \\
 \addlinespace
 \textbf{NetMARKS} --- Wojciechowski et al.\ (INFOCOM 2021), \href{https://ieeexplore.ieee.org/document/9488670/}{DOI 10.1109/INFOCOM42981.2021.9488670}; \textbf{TraDE} (2024), \href{https://arxiv.org/abs/2411.05323}{arXiv:2411.05323} &
 Locality as an \emph{optimization objective}: network/traffic-aware schedulers that co-locate using runtime telemetry (NetMARKS: up to 37\% response-time reduction). &
-They \emph{optimize} with runtime metrics; \textbf{H5 validates a static, pre-chaos two-regime separator} --- the cross-node dependency-edge fraction separates node-local from spreading placements, and that separation predicted the east-west tail in two independent batches (batch-1 $\rho = 0.79$ did \textbf{not} replicate as a continuous law: $\rho = 0.25$ n.s.\ in batch 2; the replicated claim is the separation, not a smooth correlation). The locality concept itself is theirs. NetMARKS reports end-to-end response time, not east-west p95: directional precedent, not like-for-like. \\
+They \emph{optimize} locality with runtime metrics; this thesis instead \emph{manipulates} the cross-node dependency-edge fraction as a controlled variable and measures the kernel/network mechanism it moves (the conntrack reconvergence signature) and its dose-response on the east-west tail (H1). The locality concept itself is theirs; NetMARKS reports end-to-end response time, not east-west p95 --- directional precedent, not like-for-like. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -36,122 +34,93 @@ They \emph{optimize} with runtime metrics; \textbf{H5 validates a static, pre-ch
 These four works define the axes of the space this thesis sits in: MicroRes
 and Cast evaluate resilience without touching placement, while NetMARKS/TraDE
 and Liu et al.\ vary deployment topology without chaos-style evaluation of the
-outcome. The intersection --- manipulate placement as the controlled variable,
+outcome. The intersection --- manipulate placement as a controlled variable,
 inject faults from distinct classes, measure the mechanism and user layers
-simultaneously, and audit the reliability of the aggregate score current
+simultaneously, and audit the reliability of the resilience score current
 practice would use instead --- is empty, and that intersection is where this
-thesis sits. The positioning is deliberately modest on each axis, and each
-differentiator --- including the precise scoping of H1 against MicroRes's
-binary-classification success --- is stated once, in the table above; the
-MicroRes scoping is restated only where it bites, at the H1 result (\S\ref{sec:h1}).
+thesis sits.
 
 Stated as coordinates: on the axis \emph{what is manipulated}, this thesis sits
-with the schedulers (placement) and against the profilers (observability
-weighting, fault selection); on the axis \emph{what is measured}, it sits below
-the user-visible steady state, at the kernel/network mechanism layer, where
-none of the four neighbors measure; on the axis \emph{what is trusted}, it
-treats the evaluation metric itself as an object of study rather than an
-instrument taken on faith. The rest of this chapter walks the supporting
-lineages: the scheduler literature that supplies the strategies and the
-predictions (\S\ref{sec:scheduler-lineage}), the chaos-engineering tradition that supplies the
-faults and the gap (\S\ref{sec:chaos-lineage}), the measurement-methodology literature that
-supplies H1's argument shape (\S\ref{sec:methodology-precedents}), and the tail-latency work that
-supplies L3 and the reporting discipline (\S\ref{sec:tail-latency}).
+with the schedulers (placement) and against the profilers; on the axis
+\emph{what is measured}, it sits below the user-visible steady state, at the
+kernel/network mechanism layer, where none of the four neighbors measure; on
+the axis \emph{what is trusted}, it treats the evaluation metric itself as an
+object of study rather than an instrument taken on faith. The rest of this
+chapter walks the supporting lineages: the scheduler literature that supplies
+the placement knobs and the predictions (\S\ref{sec:scheduler-lineage}), the
+chaos-engineering tradition that supplies the faults and the gap
+(\S\ref{sec:chaos-lineage}), the measurement-methodology literature that
+supplies the study's argument shape (\S\ref{sec:methodology-precedents}), and
+the tail-latency work that supplies the reporting discipline
+(\S\ref{sec:tail-latency}).
 
 \section{Scheduler \& placement lineage}\label{sec:scheduler-lineage}
 
 \begin{itemize}
-\item \textbf{Borg} --- Verma et al.\ (EuroSys 2015): bin-packing/best-fit scheduling,
-  anti-affinity defaults; source for the claim that production schedulers
-  optimize for resource fit, not fault isolation; cited for the \texttt{best-fit}
-  strategy. \textbf{Borg/Omega/Kubernetes} --- Burns et al.\ (ACM Queue 2016): how
-  Borg's lessons map onto the Kubernetes default scheduler.
+\item \textbf{Borg} --- Verma et al.\ (EuroSys 2015) and \textbf{Borg/Omega/Kubernetes}
+  --- Burns et al.\ (ACM Queue 2016): production schedulers optimize for resource
+  fit, not fault isolation --- the gap that motivates studying placement's
+  resilience consequences directly.
 \item \textbf{Medea} --- Garefalakis et al.\ (EuroSys 2018): the canonical
-  ``spread-is-best'' topology-constraint reference; source of L2's predicted
-  ordering. The thesis finds this prescription did not transfer to
-  single-replica churn --- it remains valid for the multi-replica availability
-  regime it was written for.
-\item \textbf{Sparrow} --- Ousterhout et al.\ (SOSP 2013): randomized scheduling; cited
-  for the \texttt{random} strategy.
-\item \textbf{Quasar} --- Delimitrou \& Kozyrakis (ASPLOS 2014) and \textbf{Bubble-Up} --- Mars
-  et al.\ (MICRO 2011): the interference/contention model behind L1
-  (``co-location hurts''); found \emph{inapplicable in the single-replica churn
-  regime} tested here, not wrong in the contention settings it was written
-  for.
-\item Supporting: \textbf{Resource Central} --- Cortez et al.\ (SOSP 2017) for the
-  \texttt{adversarial} (worst-fit hotspot) strategy; \textbf{DeathStarBench} --- Gan et al.\
-  (ASPLOS 2019), \textbf{Sinan} --- Zhang et al.\ (ASPLOS 2021), and \textbf{METIS} ---
-  Karypis \& Kumar (1998) for the \texttt{dependency-aware} strategy's graph-partition
-  lineage.
+  ``spread-is-best'' topology-constraint reference, the source of the
+  placement-dependence prediction H2 tests; valid for the multi-replica
+  availability regime it was written for.
+\item \textbf{Quasar} --- Delimitrou \& Kozyrakis (ASPLOS 2014) and \textbf{Bubble-Up}
+  --- Mars et al.\ (MICRO 2011): the interference/contention model behind the
+  expectation that co-location is costly --- written for the contention regime,
+  not the churn regime this thesis's \texttt{pod-delete} fault realizes.
+\item Supporting graph-partition lineage for the cross-node-fraction knob:
+  \textbf{DeathStarBench} --- Gan et al.\ (ASPLOS 2019), \textbf{Sinan} --- Zhang et al.\
+  (ASPLOS 2021), and \textbf{METIS} --- Karypis \& Kumar (1998).
 \end{itemize}
 
-This lineage serves the thesis in two distinct roles: it supplies the
-\emph{strategies} and it supplies the \emph{predictions}. On the strategy side, each of
-ChaosProbe's eight placement strategies (\S\ref{sec:architecture}) is anchored in a documented
-scheduling idea rather than invented ad hoc: \texttt{best-fit} realizes the
-bin-packing objective production schedulers inherit from Borg
-\citep{verma2015borg,burns2016borg}; \texttt{random} is the
-degenerate single-node case of Sparrow's randomized dispatch
-\citep{ousterhout2013sparrow};
-\texttt{adversarial} constructs the asymmetric resource hotspot that workload
-characterization studies identify as the pathological case
-\citep{cortez2017resource};
-and \texttt{dependency-aware} partitions the service dependency graph in the spirit
-of the microservice-topology literature
-\citep{gan2019deathstarbench,zhang2021sinan}, using a
-lightweight BFS variant of balanced k-way partitioning
-\citep{karypis1998metis}.
-The remaining strategies anchor the design's two poles and its controls:
-\texttt{colocate} operationalizes the locality objective of the network-aware
-schedulers (\S\ref{sec:positioning}), \texttt{spread} operationalizes Medea-style failure-domain
-separation, \texttt{default} is the unmodified Kubernetes scheduler --- the
-resource-fit baseline operators actually get --- and \texttt{baseline} is the
-no-fault control that bounds what the instruments report when nothing is
-injected. The set is deliberately a \emph{spanning} set rather than a contest of
-contenders: it covers the packing--spreading axis densely enough that H5's
-cross-node fraction takes values across its whole range (0.00 to 0.80,
-\S\ref{sec:h5}), which is what makes the predictor testable.
+This lineage serves the thesis in two roles: it supplies the \emph{placement
+knobs} and it supplies the \emph{predictions}. On the knob side, placement is
+manipulated through two orthogonal, continuously-varying controls rather than a
+set of named strategies (\S\ref{sec:campaign}): the \textbf{cross-node fraction}
+$f$ --- the fraction of inter-service dependency edges that cross a node boundary,
+spanning packing ($f{=}0$) to spreading ($f{=}1$) --- operationalizes the
+locality axis of the network-aware schedulers \citep{wojciechowski2021netmarks,
+trade2024scheduling}, computed by a lightweight balanced graph partition in
+the spirit of the microservice-topology literature \citep{gan2019deathstarbench,
+zhang2021sinan,karypis1998metis}; and the \textbf{replication degree} $r$ with
+packed vs anti-affine modes operationalizes Medea-style failure-domain
+separation \citep{garefalakis2018medea}. Sweeping $f$ continuously is what makes
+the dose-response question (H1) and the static cross-node-fraction predictor
+testable, rather than contrasting a handful of discrete placements.
 
-On the prediction side, the lineage yields the three literature-derived
-expectations the study tests, labeled L1--L3. L1 --- \emph{co-location is the worst
-placement under fault} --- distills the interference model: Bubble-Up
-\citep{mars2011bubbleup}
-and Quasar
-\citep{delimitrou2014quasar}
-both quantify how co-located workloads degrade each other through shared
-resources, so a fault landing on a packed node should hurt most. L2 --- \emph{spread
-isolates best} --- distills Medea's topology-constraint reasoning
-\citep{garefalakis2018medea}:
-placing components in distinct failure domains bounds the impact of any one
-domain's failure. L3 --- \emph{recovery time predicts the resilience score} --- is
-derived in \S\ref{sec:tail-latency} from the tail-latency literature. Chapters \ref{ch:results} and \ref{ch:discussion} find all
-three \textbf{inapplicable in the single-replica churn regime tested} (\S\ref{sec:l1l3}): the
-fault class they implicitly assume (contention, multi-replica availability)
-is not the fault class \texttt{pod-delete} realizes there. We state this finding
-with care, because it is a scoping result, not a refutation --- under load
-contention, the regime L1 and L2 were actually written for, the locality
-intuition behind them does hold at the mechanism layer (H4, H5), and the
-availability reasoning behind L2 reappears, with its sign confirmed, in the
-node-failure regime (H6).
+On the prediction side, the lineage yields the literature expectations the
+study tests confirmatorily. The locality optimizers predict that spreading
+service dependencies across nodes moves the network mechanism --- the basis of
+H2's placement-dependence arm. Medea's failure-domain reasoning predicts that
+anti-affine replication rescues availability under node failure --- the basis of
+H3. The contention model \citep{mars2011bubbleup,delimitrou2014quasar} predicts
+co-location is costly, but for a regime (resource contention, multi-replica
+availability) distinct from the single-replica churn this thesis injects; the
+results (\S\ref{sec:family-holm}) find the mechanism these works describe is
+real and reproducibly moved by placement, while the user-visible placement
+advantages they motivate do not reach the pre-registered bar in this regime ---
+a scoping result about where the prescriptions transfer, not a refutation of the
+regimes they were written for.
 
 \section{Chaos-engineering lineage}\label{sec:chaos-lineage}
 
 \begin{itemize}
 \item \textbf{Principles} --- Basiri et al.\ (IEEE Software 2016); \textbf{Chaos
   Monkey/Simian Army} --- Netflix (2011): fault-injection-by-killing, which
-  ChaosProbe generalizes across controlled placements.
-\item \textbf{LitmusChaos}: the injection engine ChaosProbe drives (pod-delete,
+  this thesis generalizes across controlled placements.
+\item \textbf{LitmusChaos}: the injection engine driven here (pod-delete,
   hogs, node-drain).
 \item \textbf{ChaosEater} --- Kikuta et al.\ (ASE 2025 NIER): LLM-automated chaos ---
-  orthogonal, situates the 2025 landscape.
+  orthogonal; situates the 2025 landscape.
 \item \textbf{Gap evidence} --- the ACM CSUR multi-vocal review (arXiv:2412.01416,
   DOI 10.1145/3777375; $\approx$90 sources through April 2024) defines chaos outcomes
   solely against steady-state user-visible indicators and contains no
   placement, kernel/scheduler, conntrack, or EndpointSlice content; the
-  Dec-2025 SLR (arXiv:2512.16959) adds a recovery-pattern taxonomy and RES
-  checklist, likewise without placement variation. Cite both as evidence the
-  placement-aware, cross-layer, metric-reliability angle is \textbf{a specific gap,
-  not a field-wide void}.
+  Dec-2025 SLR (arXiv:2512.16959) adds a recovery-pattern taxonomy and an
+  evaluation-score checklist, likewise without placement variation. Both are
+  evidence the placement-aware, cross-layer, metric-reliability angle is \textbf{a
+  specific gap, not a field-wide void}.
 \item Adjacent K8s failure analysis: \textbf{Mutiny!} --- Barletta et al.\ (DSN 2024),
   etcd-state corruption (complementary layer); Yang et al.\ (arXiv:2405.18001),
   placement-vs-reliability via \emph{modeling} rather than empirical injection.
@@ -159,148 +128,122 @@ node-failure regime (H6).
 
 Chaos engineering begins as a production practice: Netflix's Chaos Monkey
 terminated instances at random to force teams to build for failure
-\citep{netflix2011simian},
-and the practice was later codified as a discipline --- hypothesize about
+\citep{netflix2011simian}, later codified as a discipline --- hypothesize about
 steady state, inject realistic faults, observe whether the steady state
-survives \citep{basiri2016chaos}.
-ChaosProbe inherits the central fault of that tradition, the kill, but
-inverts its key design choice: where Chaos Monkey kills at \emph{random} to
-exercise unknown weaknesses, ChaosProbe kills under \emph{controlled, repeated
-placements} to measure a specific variable's effect. The injection machinery
-itself is delegated to LitmusChaos, a CNCF chaos toolkit whose experiment
-CRDs (pod-delete, resource hogs, node-drain) ChaosProbe drives
-programmatically (\S\ref{sec:architecture}). At the automation frontier, ChaosEater
-\citep{kikuta2025chaoseater} uses LLMs to design
-and run chaos experiments end to end --- orthogonal to this thesis's question,
-but evidence that the field's current emphasis is on automating the loop, not
-on auditing the metrics the loop optimizes.
+survives \citep{basiri2016chaos}. This thesis inherits the central fault of that
+tradition, the kill, but inverts its key design choice: where Chaos Monkey kills
+at \emph{random} to exercise unknown weaknesses, here the kill is delivered
+under \emph{controlled, repeated placements} to measure a specific variable's
+effect. The injection machinery is delegated to LitmusChaos, a CNCF chaos
+toolkit whose experiment CRDs (pod-delete, resource hogs, node-drain) the tool
+drives programmatically (\S\ref{sec:architecture}). At the automation frontier,
+ChaosEater \citep{kikuta2025chaoseater} uses LLMs to design and run chaos
+experiments end to end --- orthogonal to this thesis's question, but evidence
+that the field's current emphasis is on automating the loop, not on auditing the
+metrics the loop optimizes.
 
 The gap this thesis targets is visible in the field's own syntheses. The ACM
 CSUR multi-vocal review (\href{https://arxiv.org/abs/2412.01416}{arXiv:2412.01416},
 $\approx$90 sources through April 2024) defines chaos outcomes solely against
 steady-state user-visible indicators --- latency, error rate, throughput,
 availability --- and contains no placement, kernel/scheduler, conntrack, or
-EndpointSlice content; its open-research-issues section is organizational
-(culture, skills, resources), not metrological. The December 2025 SLR on
-resilient microservices (\href{https://arxiv.org/abs/2512.16959}{arXiv:2512.16959})
-adds a recovery-pattern taxonomy and an evaluation-score checklist, again
-without placement variation, and the JSS systematic review of chaos
-experiments in microservice architectures
-\citep{awad2025chaosslr}
-is likewise silent on placement-strategy variation. We read these surveys
-carefully: they show that the placement-aware, cross-layer,
-metric-reliability angle is a \emph{specific gap} in a well-consolidated
-literature, not that the literature is deficient wholesale.
+EndpointSlice content. The December 2025 SLR on resilient microservices
+(\href{https://arxiv.org/abs/2512.16959}{arXiv:2512.16959}) adds a
+recovery-pattern taxonomy and an evaluation-score checklist, again without
+placement variation, and the JSS systematic review of chaos experiments
+\citep{awad2025chaosslr} is likewise silent on placement-strategy variation.
+These surveys show that the placement-aware, cross-layer, metric-reliability
+angle is a \emph{specific gap} in a well-consolidated literature, not that the
+literature is deficient wholesale.
 
 The nearest empirical Kubernetes failure studies work at adjacent layers.
-Mutiny! \citep{barletta2024mutiny} shows how
-corruption of cluster state (etcd) propagates to cluster-wide failures --- a
-control-plane layer this thesis does not touch, just as Mutiny! does not
-touch placement. Liu et al.'s cloud-edge dataset (\S\ref{sec:positioning}) is the scale
-benchmark for K8s fault injection but varies environment, not placement. And
-Yang et al.\ \citep{yang2024networkaware} address
-placement-versus-reliability directly but through analytical modeling --- they
-predict failure reduction where this thesis measures behavior under injected
-faults. Together these works bracket the contribution: the layer (pod
-placement within one cluster), the method (empirical injection under a
-manipulated variable), and the measurement design (cross-layer with a
-reliability audit) are each individually present in the literature's
-neighborhood, but not combined.
+Mutiny! \citep{barletta2024mutiny} shows how corruption of cluster state (etcd)
+propagates to cluster-wide failures --- a control-plane layer this thesis does
+not touch. Liu et al.'s cloud-edge dataset (\S\ref{sec:positioning}) is the
+scale benchmark for K8s fault injection but varies environment, not placement.
+Yang et al.\ \citep{yang2024networkaware} address placement-versus-reliability
+directly but through analytical modeling --- predicting failure reduction where
+this thesis measures behavior under injected faults. Together these works
+bracket the contribution: the layer (pod placement within one cluster), the
+method (empirical injection under a manipulated variable), and the measurement
+design (cross-layer with a reliability audit) are each individually present in
+the literature's neighborhood, but not combined.
 
 Two further neighbors mark the methodological and forward-looking edges of
-the space. Hagedoorn et al.\
-\citep{hagedoorn2026topology} empirically study how
-\emph{architectural topology} --- the structure of the application's service graph
---- affects microservice performance and energy use; they are a methodology
-peer in varying a structural property and measuring the consequence, but
-their manipulated variable is the application's design, where ours is its
+the space. Hagedoorn et al.\ \citep{hagedoorn2026topology} empirically study how
+\emph{architectural topology} --- the structure of the application's service
+graph --- affects microservice performance and energy use; they are a methodology
+peer in varying a structural property and measuring the consequence, but their
+manipulated variable is the application's design, where ours is its
 \emph{deployment} onto nodes with the application held fixed. And recent
-constraint-based pod-packing work
-\citep{priority2025packing} shows the scheduling
-community continuing to refine packing objectives --- relevant to \S\ref{sec:future-work}'s
-suggestion that a validated static metric like the cross-node fraction
-could be integrated into such schedulers as a scoring signal, closing the
-loop from evaluation back to optimization.
+constraint-based pod-packing work \citep{priority2025packing} shows the
+scheduling community continuing to refine packing objectives --- relevant to
+\S\ref{sec:future-work}'s suggestion that a validated static metric like the
+cross-node fraction could be integrated into such schedulers as a scoring
+signal, closing the loop from evaluation back to optimization.
 
 \section{Methodology precedents}\label{sec:methodology-precedents}
 
 \begin{itemize}
 \item \textbf{Maricq et al.\ (OSDI 2018), ``Taming Performance Variability''} --- the
-  argument-shape precedent for H1: quantify the noise, prescribe the
-  repetitions ($\approx$900k data points, 835 servers). Cite with precision: their
-  CONFIRM tool uses nonparametric CI-width stopping, \textbf{not} formal
-  hypothesis-test power analysis, and ``blocked design'' is this thesis's term.
+  argument-shape precedent: quantify the noise, then prescribe what repetition
+  can and cannot detect ($\approx$900k data points, 835 servers). Cite with
+  precision: their CONFIRM tool uses nonparametric CI-width stopping, \textbf{not}
+  formal hypothesis-test power analysis.
 \item \textbf{Mytkowicz et al.\ (ASPLOS 2009)} --- measurement bias (``Producing Wrong
   Data Without Doing Anything Wrong!''); the lineage does not start in 2018.
 \item \textbf{Hoefler \& Belli (SC 2015)} --- report distributions and CIs, not means.
 \end{itemize}
 
-H1's statistical framing follows an established argument shape in systems
+The study's statistical framing follows an established argument shape in systems
 measurement: before comparing systems, quantify the environment's own
-variability and derive what repetition can and cannot detect. The precedent
-is \citet{maricq2018taming},
-who showed across roughly 900,000 data points on 835 supposedly identical
-servers that hardware-level run-to-run variability is large enough to
-undermine naive quantitative comparison, and built CONFIRM to recommend
-repetition counts from historical variability. We cite this precedent with
+variability and derive what repetition can and cannot detect. The precedent is
+\citet{maricq2018taming}, who showed across roughly 900,000 data points on 835
+supposedly identical servers that hardware-level run-to-run variability is large
+enough to undermine naive quantitative comparison, and built CONFIRM to
+recommend repetition counts from historical variability. We cite this with
 precision: CONFIRM's stopping rule is nonparametric confidence-interval-width
-stopping, \emph{not} formal hypothesis-test power analysis, and ``blocked design''
-is this thesis's term for its own campaign structure, not Maricq et al.'s.
-H1 performs the same move --- variance decomposition, then a power and
-minimum-detectable-effect calculation --- on a chaos-engineering score rather
-than a hardware benchmark.
+stopping, \emph{not} formal hypothesis-test power analysis. This thesis makes the
+same move --- estimate the measurement noise floor (the A/A calibration block),
+then fix the smallest effect sizes of interest and per-cell sample sizes against
+it before collecting confirmatory data (\S\ref{sec:campaign}).
 
-The lineage does not start in 2018.
-\citet{mytkowicz2009producing}
-demonstrated that measurement bias from factors as incidental as link order
-and environment size can produce wrong conclusions in careful experiments ---
-the canonical warning that an unexamined measurement pipeline is itself a
-threat to validity, which motivates this thesis's provenance capture (\S\ref{sec:provenance})
-and its metric-availability bookkeeping (\S\ref{sec:threats-table}).
-\citet{hoefler2015scientific}
-codify the reporting discipline this thesis adopts: report distributions and
-confidence intervals, not bare means, and treat nonparametric methods as the
-default when normality is unestablished --- the reason Chapter~\ref{ch:methodology}'s toolkit is
-built on rank-based tests, bootstrap intervals, and equivalence testing
-rather than t-tests on means.
+The lineage does not start in 2018. \citet{mytkowicz2009producing} demonstrated
+that measurement bias from factors as incidental as link order and environment
+size can produce wrong conclusions in careful experiments --- the canonical
+warning that an unexamined measurement pipeline is itself a threat to validity,
+which motivates this thesis's provenance capture (\S\ref{sec:provenance}).
+\citet{hoefler2015scientific} codify the reporting discipline this thesis
+adopts: report distributions and confidence intervals, not bare means, and
+treat nonparametric methods as the default when normality is unestablished ---
+the reason Chapter~\ref{ch:methodology}'s toolkit is built on rank-based tests,
+bootstrap intervals, and equivalence testing rather than $t$-tests on means.
 
 \section{Tail latency}\label{sec:tail-latency}
 
 \begin{itemize}
 \item \textbf{The Tail at Scale} --- Dean \& Barroso (CACM 2013): shared resources $\rightarrow$
-  latency variability $\rightarrow$ service-quality damage; the intuition L3 distilled
-  into ``recovery time predicts the score'', which found no stable relationship
-  in this regime (recovery's two-phase split is unstable run-to-run).
+  latency variability $\rightarrow$ service-quality damage; the source of the
+  tail-first reporting discipline this thesis adopts.
 \end{itemize}
 
-\citet{dean2013tail}
-established the canonical chain from shared resources to latency variability
-to user-visible service-quality damage, and the corollary that the \emph{tail} of
-the latency distribution, not its center, is what users experience in
-fan-out architectures. The thesis draws on this work twice. First, it is the
-source of L3, the third literature-derived prediction: if tail effects
-dominate user experience, then the duration of the disruption window --- here,
-the target pod's recovery time --- should predict the resilience score. The
-data does not bear this out in the regime tested: recovery time's two-phase
-decomposition (deletion-to-scheduled versus scheduled-to-ready) is itself
-unstable run-to-run, so there is no stable relationship to find on either
-side (\S\ref{sec:l1l3}). Second, the tail-first reporting convention shapes the
-measurement design: ChaosProbe's route probers report p50/p95/p99 per route,
-and every latency claim in Chapter~\ref{ch:results} is a tail claim (p95), not a mean claim.
+\citet{dean2013tail} established the canonical chain from shared resources to
+latency variability to user-visible service-quality damage, and the corollary
+that the \emph{tail} of the latency distribution, not its center, is what users
+experience in fan-out architectures. The tail-first convention shapes the
+measurement design: the route probers report p50/p95/p99 per route, and every
+latency claim in Chapter~\ref{ch:results} is a tail claim (p95), not a mean
+claim --- in particular the east-west p95 that is H1's dose-response outcome.
 
-Finally, what is \emph{not} in the literature. Our searches --- general web search,
-arXiv, Semantic Scholar, and Google Scholar's surfaced results, with the
-coverage limits disclosed in \texttt{references.md} \S 8 --- found no
-peer-reviewed paper that frames \texttt{pod-delete} as a churn fault distinct from
-contention faults, none that identifies conntrack/EndpointSlice reconvergence
-as the dominant mechanism under pod-delete on small clusters, and none that
-empirically compares six or more placement strategies under chaos. The
-closest works, surveyed above, operate at a different layer (etcd
-corruption), a different scope (cloud-edge environments without placement
-comparison), or with a different method (analytical modeling). We state this
-as the result of a bounded search rather than as proof of absence: ACM DL,
-IEEE Xplore, and recent USENIX proceedings were not exhaustively swept, and
-practitioner venues (KubeCon, SRECon, Linux Plumbers) may document parts of
-the kill-cycle mechanism outside the peer-reviewed record. Within those
-bounds, the churn-versus-contention mechanism framing appears to be a novel
-contribution.
+Finally, what is \emph{not} in the literature. Our searches --- general web
+search, arXiv, Semantic Scholar, and Google Scholar's surfaced results --- found
+no peer-reviewed paper that frames \texttt{pod-delete} as a churn fault distinct
+from contention faults, none that identifies conntrack/EndpointSlice
+reconvergence as the dominant mechanism under pod-delete on small clusters, and
+none that manipulates a continuous placement knob under chaos while auditing the
+resilience score's reliability. We state this as the result of a bounded search
+rather than proof of absence: ACM DL, IEEE Xplore, and recent USENIX proceedings
+were not exhaustively swept, and practitioner venues (KubeCon, SRECon, Linux
+Plumbers) may document parts of the kill-cycle mechanism outside the
+peer-reviewed record. Within those bounds, the churn-versus-contention mechanism
+framing appears to be a novel contribution.
