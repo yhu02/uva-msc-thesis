@@ -91,6 +91,13 @@ def _resolve_managed_password() -> str:
             # and would fail the default→managed rotation, leaving ChaosCenter on
             # its default password and blocking project creation; migrate it.
             if existing and _is_policy_compliant(existing):
+                # Re-harden perms before reuse: the file holds the admin password,
+                # but may have been created manually or had its mode changed, so a
+                # persisted-value path that skipped this could leave it world-readable.
+                try:
+                    CHAOSCENTER_PASSWORD_FILE.chmod(0o600)
+                except OSError:
+                    logger.debug("could not re-harden password file perms", exc_info=True)
                 return existing
     except OSError:
         logger.debug("could not read managed ChaosCenter password file", exc_info=True)

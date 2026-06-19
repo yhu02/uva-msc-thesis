@@ -1670,6 +1670,18 @@ class TestPasswordPolicy:
         assert chaoscenter_api._is_policy_compliant(pwd)
         assert pwfile.read_text().strip() == pwd  # migrated value persisted
 
+    def test_resolve_rehardens_persisted_file_perms(self, tmp_path, monkeypatch):
+        # A persisted compliant password whose file is world-readable must be
+        # re-hardened to 0600 on reuse (it holds the admin password).
+
+        pwfile = tmp_path / "chaoscenter-admin-password"
+        pwfile.write_text("Chaos1probe!")
+        pwfile.chmod(0o644)  # too permissive (e.g. created manually)
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        assert chaoscenter_api._resolve_managed_password() == "Chaos1probe!"
+        assert (pwfile.stat().st_mode & 0o777) == 0o600  # re-hardened
+
     def test_resolve_keeps_compliant_persisted_password(self, tmp_path, monkeypatch):
         pwfile = tmp_path / "chaoscenter-admin-password"
         pwfile.write_text("Chaos1probe!")
