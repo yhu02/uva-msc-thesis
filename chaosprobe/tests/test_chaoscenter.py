@@ -1558,11 +1558,12 @@ class TestResolveManagedPassword:
         assert not (tmp_path / "pw").exists()
 
     def test_reads_persisted_file(self, tmp_path, monkeypatch):
+        # A persisted, policy-COMPLIANT password is reused verbatim.
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
         pw_file = tmp_path / "pw"
-        pw_file.write_text("persisted-secret\n")
+        pw_file.write_text("Persisted1!\n")
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pw_file)
-        assert chaoscenter_api._resolve_managed_password() == "persisted-secret"
+        assert chaoscenter_api._resolve_managed_password() == "Persisted1!"
 
     def test_generates_and_persists_when_absent(self, tmp_path, monkeypatch):
         monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
@@ -1603,3 +1604,57 @@ class TestResolveManagedPassword:
         assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
         assert setup.CHAOSCENTER_MANAGED_PASS == "resolved-pw"
         assert len(calls) == 1  # resolved once, then served from the instance cache
+
+
+# ---------------------------------------------------------------------------
+# Password policy (litmus 3.x: 8–16 chars, 1 digit/lower/upper/special)
+# ---------------------------------------------------------------------------
+
+
+class TestPasswordPolicy:
+    def test_generated_password_is_compliant(self):
+        for _ in range(50):
+            pwd = chaoscenter_api._generate_compliant_password()
+            assert chaoscenter_api._is_policy_compliant(pwd), pwd
+
+    @pytest.mark.parametrize(
+        "pwd,ok",
+        [
+            ("Chaos1probe!", True),
+            ("aB3$xyzq", True),  # exactly 8
+            ("aB3$xyzqaB3$xyzq", True),  # exactly 16
+            ("short1!A", True),
+            ("nouppercase1!", False),  # no uppercase
+            ("NOLOWERCASE1!", False),  # no lowercase
+            ("NoDigitsHere!", False),  # no digit
+            ("NoSpecial1Abc", False),  # no special
+            ("Ab1!", False),  # too short (<8)
+            ("Ab1!Ab1!Ab1!Ab1!x", False),  # 17 chars, too long
+            ("VGhpc0lzMjRDaGFyc1Rva2Vu", False),  # token_urlsafe-style 24 chars
+        ],
+    )
+    def test_is_policy_compliant(self, pwd, ok):
+        assert chaoscenter_api._is_policy_compliant(pwd) is ok
+
+    def test_resolve_migrates_noncompliant_persisted_password(self, tmp_path, monkeypatch):
+        # A previously-persisted token_urlsafe value (24 chars, non-compliant) must
+        # be replaced with a compliant one, not reused (it would fail rotation).
+        pwfile = tmp_path / "chaoscenter-admin-password"
+        pwfile.write_text("oldNonCompliantToken_urlsafe_24x")  # >16, no special/upper guarantee
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        pwd = chaoscenter_api._resolve_managed_password()
+        assert chaoscenter_api._is_policy_compliant(pwd)
+        assert pwfile.read_text().strip() == pwd  # migrated value persisted
+
+    def test_resolve_keeps_compliant_persisted_password(self, tmp_path, monkeypatch):
+        pwfile = tmp_path / "chaoscenter-admin-password"
+        pwfile.write_text("Chaos1probe!")
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
+        monkeypatch.delenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, raising=False)
+        assert chaoscenter_api._resolve_managed_password() == "Chaos1probe!"
+
+    def test_resolve_env_var_wins(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", tmp_path / "nope")
+        monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "EnvP4ss!word")
+        assert chaoscenter_api._resolve_managed_password() == "EnvP4ss!word"

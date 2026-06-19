@@ -8,6 +8,7 @@ import json as _json
 import logging
 import os
 import secrets
+import string
 import subprocess
 import tempfile
 import time
@@ -26,6 +27,42 @@ logger = logging.getLogger(__name__)
 CHAOSCENTER_PASSWORD_ENV = "CHAOSPROBE_CHAOSCENTER_PASSWORD"
 CHAOSCENTER_PASSWORD_FILE = Path.home() / ".chaosprobe" / "chaoscenter-admin-password"
 
+# ChaosCenter (litmus 3.x) enforces a password policy: 8–16 characters with at
+# least one digit, lowercase, uppercase, and special character. A password that
+# violates it makes the default→managed rotation fail (and litmus then refuses
+# project creation until the default password is changed), so the managed
+# password MUST be policy-compliant. (token_urlsafe produces 24 chars with no
+# complexity guarantee — non-compliant.)
+_PASSWORD_SPECIALS = "!@#$%^&*"
+_PASSWORD_LEN = 16  # within the 8–16 window, max entropy
+
+
+def _is_policy_compliant(pwd: str) -> bool:
+    """True if ``pwd`` satisfies ChaosCenter's 8–16 char + complexity policy."""
+    return (
+        8 <= len(pwd) <= 16
+        and any(c.isdigit() for c in pwd)
+        and any(c.islower() for c in pwd)
+        and any(c.isupper() for c in pwd)
+        and any(c in _PASSWORD_SPECIALS for c in pwd)
+    )
+
+
+def _generate_compliant_password() -> str:
+    """A random password meeting ChaosCenter's policy (one of each class)."""
+    rng = secrets.SystemRandom()
+    required = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice(_PASSWORD_SPECIALS),
+    ]
+    pool = string.ascii_letters + string.digits + _PASSWORD_SPECIALS
+    rest = [secrets.choice(pool) for _ in range(_PASSWORD_LEN - len(required))]
+    chars = required + rest
+    rng.shuffle(chars)
+    return "".join(chars)
+
 
 def _resolve_managed_password() -> str:
     """Resolve the managed ChaosCenter admin password without committing it.
@@ -43,11 +80,15 @@ def _resolve_managed_password() -> str:
     try:
         if CHAOSCENTER_PASSWORD_FILE.exists():
             existing = CHAOSCENTER_PASSWORD_FILE.read_text().strip()
-            if existing:
+            # Reuse a persisted value only if it satisfies ChaosCenter's policy.
+            # A previously-generated token_urlsafe(18) is 24 chars (non-compliant)
+            # and would fail the default→managed rotation, leaving ChaosCenter on
+            # its default password and blocking project creation; migrate it.
+            if existing and _is_policy_compliant(existing):
                 return existing
     except OSError:
         logger.debug("could not read managed ChaosCenter password file", exc_info=True)
-    pwd = secrets.token_urlsafe(18)
+    pwd = _generate_compliant_password()
     try:
         CHAOSCENTER_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
         CHAOSCENTER_PASSWORD_FILE.write_text(pwd)
@@ -177,6 +218,27 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                 "oldPassword": old_password,
                 "newPassword": new_password,
             },
+            token=token,
+        )
+
+    def _chaoscenter_create_project(
+        self,
+        auth_url: str,
+        project_name: str,
+        token: str,
+    ) -> None:
+        """Create a ChaosCenter project for the authenticated user.
+
+        A freshly-installed ChaosCenter (litmus 3.x) gives the admin no default
+        project, so login returns an empty ``projectID`` and every GraphQL call
+        that needs one fails. Creating a project here completes the bootstrap;
+        the user's subsequent login then returns its ``projectID``. litmus
+        refuses this until the default password has been changed, so the managed
+        password must already be in effect (see :func:`_resolve_managed_password`).
+        """
+        self._chaoscenter_api_request(
+            f"{auth_url}/create_project",
+            data={"projectName": project_name},
             token=token,
         )
 

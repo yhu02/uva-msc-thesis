@@ -1502,7 +1502,12 @@ def _run_iterations(
 
 
 def _restart_app_deployments(namespace: str, target_deployment: str) -> None:
-    """Trigger a rollout restart of all app deployments in the namespace.
+    """Rollout-restart the namespace's app deployments, EXCLUDING stateful infra.
+
+    Stateful backing services (datastores / service-discovery / tracing — see
+    :func:`is_stateful_infra`) are deliberately left running: the goal is fresh
+    *application* state, not a wiped datastore, and cycling non-durable infra
+    (e.g. hotelReservation's Consul) breaks the app for the whole session.
 
     This clears post-chaos damage (stuck connections, unhealthy pods,
     resource exhaustion) that the settle-time alone cannot fix.

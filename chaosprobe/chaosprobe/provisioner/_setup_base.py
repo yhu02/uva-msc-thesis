@@ -91,6 +91,13 @@ class _LitmusSetupBase(Protocol):
         password: str = "",
     ) -> tuple[str, str]: ...
 
+    def _chaoscenter_create_project(
+        self,
+        auth_url: str,
+        project_name: str,
+        token: str,
+    ) -> None: ...
+
     def _chaoscenter_list_environments(
         self,
         gql_url: str,
