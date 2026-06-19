@@ -83,10 +83,12 @@ request to the scheduler, not a guarantee of the realized state, the mutator
 verifies the outcome: each iteration records per-service
 \textbf{\texttt{placementMatchRates}} --- the fraction of pods that actually landed where
 the strategy intended --- so mismatched iterations are visible to the analysis
-rather than silently polluting it (\S\ref{sec:threats-table}). This deployment-level,
-single-replica design is a scoping decision with consequences the thesis
-returns to repeatedly: it cleanly manipulates \emph{between-service} topology, but
-it structurally excludes multi-replica anti-affinity questions (\S\ref{sec:generalizes}, \S\ref{sec:future-work}).
+rather than silently polluting it (\S\ref{sec:threats-table}). Manipulating $f$
+at one replica per service is a scoping decision with consequences the thesis
+returns to repeatedly: it cleanly varies \emph{between-service} topology, while
+\emph{within-service} replication is exercised only by the $r$ knob in H3's
+node-drain campaign --- multi-replica anti-affinity beyond that regime is out of
+scope (\S\ref{sec:generalizes}, \S\ref{sec:future-work}).
 
 \textbf{LitmusChaos runner.} Fault injection is delegated to LitmusChaos: the
 runner (\texttt{chaos/runner.py}) saves, triggers, and polls ChaosEngine experiments
