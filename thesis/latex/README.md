@@ -49,8 +49,8 @@ the report-class auto-numbering reproduces the manuscript's figure numbers.
 ## Porting conventions
 
 - Dependencies are deliberately minimal: `inputenc`/`fontenc`/`lmodern`,
-  `geometry`, `graphicx`, `booktabs`, `natbib` (+ `plainnat`), `hyperref`.
-  No `siunitx`, no `tabularx`, no listings.
+  `amsmath` (for `\text{}` in math mode), `geometry`, `graphicx`, `booktabs`,
+  `natbib` (+ `plainnat`), `hyperref`. No `siunitx`, no `tabularx`, no listings.
 - Markdown `§x.y` / "Chapter N" / "Appendix A" / "Figure x.y" cross-references
   became `\S\ref{sec:…}` / `Chapter~\ref{ch:…}` / `Appendix~\ref{app:…}` /
   `Figure~\ref{fig:…}` with stable labels, so numbering stays correct if
