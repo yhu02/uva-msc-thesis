@@ -62,7 +62,7 @@ Two fault classes are used, each matched to the layer it exercises:
   strong, reproducible conntrack signature but \emph{no sustained endpoint
   outage} --- which is why the availability face is degenerate under this fault
   (\S\ref{sec:h4}) and the availability scorecard layer has little reproducible
-  signal to estimate under it (\S\ref{sec:h5}). Used by H1, H2, H4.
+  signal to estimate under it (\S\ref{sec:h5}). Used by H1, H2, H4, H5.
 \item \textbf{Node failure (\texttt{node-drain}).} Draining a worker node
   removes whole pods' worth of endpoints at once, producing the sustained
   availability trough the replication-rescue hypothesis (H3) needs. It is run
@@ -114,8 +114,10 @@ actual run cluster; it passed (all five levels within $\pm 0.05$, 3/3
 consecutive attempts), so the designed-level dose design and Page's test stand
 rather than the pre-registered continuous-fraction fallback. \textbf{M2} was an
 A/A calibration block (same-placement pairs, null data) that estimated the
-measurement noise floor; the SESOIs and dominance margins were then fixed so
-each exceeds that floor. The H1 SESOI ($\geq 15\,\%$), for example, was set
+measurement noise floor; the SESOIs and dominance margins were then fixed at or
+above that floor under the registered ``no smaller than the A/A noise band''
+rule --- the H1 SESOI exceeds it, while the H3 rescue/TOST and H4 dominance
+margins are set equal to the band. The H1 SESOI ($\geq 15\,\%$), for example, was set
 between the measured A/A noise band ($\approx 11.2\,\%$ of the pre-chaos level)
 and the larger separation seen in an earlier internal pilot, so that an effect
 at the pilot magnitude would clear it with margin while anything inside
