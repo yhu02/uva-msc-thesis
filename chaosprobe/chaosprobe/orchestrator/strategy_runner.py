@@ -162,10 +162,18 @@ def _extract_http_routes(
                 if not url:
                     continue
                 parsed = urlparse(url)
-                path = parsed.path or "/"
-                if path in seen:
+                base_path = parsed.path or "/"
+                # Dedup by base path (one prober route per path), but PRESERVE the
+                # query string in the requested route — hotelReservation's routes
+                # (/hotels?inDate=...&lat=..., /recommendations?..., /user?...)
+                # return errors without their params, so a path-only probe would
+                # report ~100% errors / 0 samples (a broken-probe artifact, not
+                # degradation). Online-boutique's routes are path-only, so this is
+                # a no-op there.
+                if base_path in seen:
                     continue
-                seen.add(path)
+                seen.add(base_path)
+                route = base_path + (f"?{parsed.query}" if parsed.query else "")
 
                 # Extract service name from hostname (e.g. frontend.online-boutique.svc...)
                 host = parsed.hostname or ""
@@ -175,9 +183,9 @@ def _extract_http_routes(
 
                 method_def = inputs.get("method", {})
                 method = "GET" if "get" in method_def else "POST"
-                name = probe.get("name", path)
+                name = probe.get("name", route)
 
-                routes.append((service, path, name, method))
+                routes.append((service, route, name, method))
 
     if not routes and fallback_service:
         routes.append((fallback_service, "/", "user-home", "GET"))
