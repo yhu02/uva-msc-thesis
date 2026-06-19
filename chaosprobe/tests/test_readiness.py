@@ -16,13 +16,15 @@ HTTP_ROUTE = [("frontend", "/", "homepage", "GET")]
 GRPC_ROUTE = [("checkout", "currency", "currency:7000", "grpc", "checkout->currency")]
 
 
-def _run_gate(exec_fn, http_routes, service_routes, timeout=4):
+def _run_gate(exec_fn, http_routes, service_routes, timeout=4, gate_east_west=True):
     """Drive ``wait_for_app_ready`` with a mocked pod exec + clock.
 
     With ``itertools.count`` as the clock and ``timeout=4`` the loop runs
     exactly 3 ticks and never reaches the consecutive-OK threshold, so the
     warmup/sustained phase is not entered.  Returns the exec mock so tests
-    can inspect which probes were issued.
+    can inspect which probes were issued. ``gate_east_west`` defaults True here
+    because most of these tests exercise the (opt-in) east-west TCP gate; the
+    production default is False (north-south-only gate).
     """
     exec_mock = MagicMock(side_effect=exec_fn)
     fake_time = MagicMock()
@@ -42,6 +44,7 @@ def _run_gate(exec_fn, http_routes, service_routes, timeout=4):
             http_routes=http_routes,
             service_routes=service_routes,
             required_consecutive=5,
+            gate_east_west=gate_east_west,
         )
     return exec_mock
 
@@ -105,6 +108,13 @@ class TestEastWestGate:
 
     def test_no_service_routes_runs_http_only(self):
         exec_mock = _run_gate(_exec_http_ok_tcp_ok, HTTP_ROUTE, None)
+        assert _python3_calls(exec_mock) == []
+
+    def test_east_west_not_gated_by_default(self):
+        # Production default (gate_east_west=False): even WITH service_routes, the
+        # gate runs north-south HTTP only — no TCP/python3 east-west probe — so a
+        # failing east-west edge cannot false-positive-taint the iteration.
+        exec_mock = _run_gate(_exec_http_ok_tcp_fail, HTTP_ROUTE, GRPC_ROUTE, gate_east_west=False)
         assert _python3_calls(exec_mock) == []
 
 
