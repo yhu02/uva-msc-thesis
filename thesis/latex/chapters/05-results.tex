@@ -1,366 +1,249 @@
-% Ported from thesis/05-results.md — wording unchanged.
 \chapter{Results}\label{ch:results}
 
-% Numbers in this chapter are FINAL (post-#245): the 7-session campaign
-% (s01–s07) is the primary H1–H3 evidence; the pooled pre-campaign run-set is
-% pilot-only. Every number traces to an archived run via Appendix A.
-% Wording per scope-of-claims.md.
+This chapter reports the pre-registered confirmatory study. The four
+confirmatory hypotheses (H1, H2, H3, H5) are corrected together by Holm across
+the campaigns; H4 is a descriptive frontier (not a falsifiable member); H6 was
+not attempted (\S\ref{sec:h6}). Each section states its \emph{registered bar
+first}, then the outcome against that bar --- a hypothesis counts as supported
+only if it is both Holm-significant \emph{and} clears its registered
+effect-size / reliability bar. The confirmatory family is corrected and
+adjudicated together in \S\ref{sec:family-holm}.
 
-Reading order: H1 establishes that the aggregate instrument is blind; H2--H4
-show placement reproducibly moves mechanism layers that do not reach the
-user; H5--H6 locate where placement does bite --- node failure --- as a measured
-latency$\leftrightarrow$availability trade-off. The fault-class grouping is churn (H1--H3),
-load (H4--H5), node failure (H6).
+% TODO(figures): dose-response, frontier, ICC, and conntrack-drop figures
+% (campaign-report figure sources) to be imported into figures/ in a later
+% pass; all numbers below are table-complete and self-contained without them.
 
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-02-core-matrix.png}
-  \caption{The fault-class $\times$ measurement-layer core matrix: which layer
-    moves under churn / load / node failure, and whether it reaches the user.}
-  \label{fig:core-matrix}
-\end{figure}
+\section{H1 --- Dose-response of the east-west tail}\label{sec:h1}
 
-\section{H1 --- The aggregate score cannot rank placement strategies}\label{sec:h1}
+\textbf{Registered bar.} H1 predicts that median east-west (inter-service) p95
+latency increases \emph{monotonically} in the achieved cross-node fraction $f$
+across the designed levels $\{0, 0.25, 0.5, 0.75, 1.0\}$. Primary test: Page's
+$L$ trend test (tie-corrected), session-condition medians of the pre-chaos
+east-west p95 as the unit. The smallest effect size of interest (SESOI),
+frozen pre-registration, is a \textbf{$\geq 15\,\%$ increase} from $f=0$ to
+$f=1$; a statistically detectable but sub-SESOI trend is reported as below the
+bar, not as support.
 
-\textbf{Statement.} The probe-based aggregate resilience score does not
-reproducibly discriminate placement strategies; between-strategy differences
-are a small fraction of total score variance and undetectable at feasible
-iteration counts.
+\textbf{Campaign.} Eight complete-block sessions (online-boutique, $r=1$,
+\texttt{pod-delete} churn), each visiting all five $f$-levels in randomized
+order; $5\times 3 = 15$ iterations per session, all \texttt{doctor --strict}
+clean, all $f$-targets hit exactly.
 
-\textbf{Result --- supported (7-session campaign, 147 churn iterations).}
+\textbf{Result --- trend detected, but below the SESOI.}
 
 \begin{center}
-\begin{tabular}{p{0.5\textwidth}p{0.42\textwidth}}
+\begin{tabular}{lr}
 \toprule
-\textbf{Quantity} & \textbf{Value} \\
-\midrule
-\texttt{ICC\_strategy} & \textbf{0.033} (cluster-bootstrap 95\% CI \textbf{[0.014, 0.178]}) \\
-Variance partition & between-strategy \textbf{3.3\%} / run-to-run \textbf{37.6\%} / iteration \textbf{59.1\%} \\
-Focal contrast (colocate 64.0 vs spread 74.3) & $d = 0.46$ $\rightarrow$ \textbf{73 iterations/strategy} for 80\% power \\
-MDE at the $n = 3$ actually run per session & 2.29 sd $\approx$ \textbf{51 score points} --- larger than any gap that exists \\
+Page's $L$ & $L = 410$, $z = 3.54$ \\
+$p$ (one-sided, uncorrected) & $0.0002$ \\
+per-level median p95 (ms) & 35.74 / 38.60 / 41.40 / 39.55 / 40.51 \\
+$f{=}0 \rightarrow f{=}1$ effect & \textbf{$+13.35\,\%$} \\
+$15\,\%$ SESOI & \textbf{not met} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The earlier pooled run-set (16 mixed-version runs: ICC 0.046, focal $d = 0.06$
-needing $\approx$3,982/strategy) read the same way and is retained as the pilot only.
+A monotone-increasing trend is detected ($p = 0.0002$; Holm-adjusted in
+\S\ref{sec:family-holm}), but the total effect ($+13.35\,\%$) sits below the
+registered $15\,\%$ SESOI. The medians rise then plateau/dip slightly at
+$f{=}0.75$ (39.55\,ms) --- neither a strict monotone climb nor the clean
+two-regime step that would have triggered the distinct registered
+``threshold, not dose-response'' outcome. \textbf{H1 is therefore not supported:}
+the dose-response is real and statistically significant but practically
+negligible at the registered bar.
 
-Scope (per \S\ref{sec:positioning}): this is ``cannot \textbf{rank placement strategies under session
-variance}'' --- MicroRes's 0.86--0.90 \emph{binary} classification accuracy is a
-different task and is not contradicted.
+\section{H2 --- Placement-dependence and the DNS intervention}\label{sec:h2}
 
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-03-h1-score-distributions.png}
-  \caption{Per-strategy score distributions across the seven sessions
-    (overlapping spreads, means clustered 64--74).}
-  \label{fig:h1-dist}
-\end{figure}
+\textbf{Registered bar.} H2 is a two-part, both-must-pass conjunction over the
+during-churn UDP-conntrack drop (\texttt{udp\_conntrack\_drop\_entries}):
+\textbf{(a) placement-dependence} --- spread ($f{=}1$) shows a \emph{larger}
+drop than packed ($f{=}0$), paired; and \textbf{(b) DNS mechanism} --- enabling
+the NodeLocal DNSCache shrinks the spread placement's drop by $\geq 50\,\%$.
+Both arms must pass for H2 to hold.
 
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-04-h1-icc-trajectory.png}
-  \caption{ICC trajectory as sessions accumulate, 0.222 $\rightarrow$ 0.033
-    (run-to-run variance accrues with k).}
-  \label{fig:h1-icc}
-\end{figure}
+\textbf{Campaign.} 14 sessions (7 cache-off, 7 cache-on), $r=1$, placements
+$f{=}0$ (packed) / $f{=}1$ (spread), \texttt{pod-delete} churn; all 14 accepted,
+untainted, strict-clean.
 
-\section{H2 --- Placement reproducibly moves a kernel/network reconvergence signature}\label{sec:h2}
-
-\textbf{Statement.} Under churn, spreading the target's dependents across nodes
-flushes a large fraction of per-node conntrack state during the kill cycle;
-co-location does not.
-
-\textbf{Result --- supported (7/7 sessions).} Median conntrack flush: \texttt{spread}
-\textbf{38.5\%} vs \texttt{colocate} \textbf{2.7\%}; \texttt{spread > colocate} in \textbf{7/7} independent
-sessions --- \textbf{sign test $p = 0.0156$, paired Wilcoxon $W = 0$, $p = 0.0225$}.
-The pooled pilot agreed (36.6\% vs 1.9\%, 16/16 runs). This is the most
-reproducible signal in the study.
-
-Secondary, corroborating only: \texttt{colocate} throttles CPU lowest in 6/7
-sessions (the pooled pilot had \texttt{best-fit} lower still) --- lead with conntrack.
-
-\textbf{Mechanism --- protocol composition measured.} A dedicated probe (per-node
-\texttt{conntrack -L} protocol counts at 5 s intervals through one full kill cycle
-under each placement; \S\ref{sec:h2-mechanism}, raw data + chaos-window timestamps in
-\texttt{data/conntrack-probe/}) yields three window-robust composition findings:
-(1) \textbf{TCP dominates the table under both placements and drops sharply at
-the kill cycles in both} (spread 5,935 $\rightarrow$ 4,253, $-$28\%; colocate
-4,973 $\rightarrow$ 3,937, $-$21\%) --- kernel-side teardown of flows traversing the killed
-pod: kube-proxy has no TCP conntrack-deletion path (\#100698, \#104098;
-verified across the $\le$v1.31 exec cleaner and $\ge$v1.32 netlink reconciler), and
-close-state conntrack timeouts (10--120 s; \S\ref{sec:h2-mechanism}) expire torn-down flows
-within the cycle;
-(2) \textbf{the clearly placement-dependent component is UDP (DNS)}: under
-steady load \texttt{spread} sustains $\sim$\textbf{4$\times$} more UDP entries than \texttt{colocate}
-(chaos-window medians 910 vs 224), consistent with cross-node calls driving
-connection churn and DNS re-resolution, and with kube-proxy's documented
-UDP-only cleanup (\#48370, \#108523, \#126130; ipvs mode here) having more to
-clean under spread; (3) with $i = 1$ and a Locust-ramp-contaminated
-baseline, the probe \textbf{cannot apportion the campaign's flush percentages}
-between the two paths --- both mechanisms are visible; their shares remain
-unquantified. The seven sessions carry the statistics; the probe carries
-composition and event timing.
-
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-05-h2-conntrack.png}
-  \caption{Conntrack flush \% per strategy across the seven sessions
-    (spread > colocate in all seven; note \texttt{default} flushes as hard as \texttt{spread}
-    ($\sim$42\%) while \texttt{dependency-aware}/\texttt{best-fit} show \emph{negative} flush --- entries
-    grow during chaos --- consistent with the flush tracking placement-dependent
-    state composition rather than a fixed per-strategy quantity).}
-  \label{fig:h2-conntrack}
-\end{figure}
-
-\section{H3 --- The mechanism is decoupled from the user-visible outcome}\label{sec:h3}
-
-\textbf{Statement.} The reproducible mechanism (H2) does not translate into a
-reproducible user-visible outcome on the fault-dependent routes beyond a
-run-level confound.
-
-\textbf{Result --- decoupling supported (campaign + three pilot tests).} Across the
-7 sessions (49 strategy-cells): conntrack flush $\rightarrow$ \textbf{dependent}-route p95 is
-\textbf{$\rho = 0.07$ ($p = 0.65$)} and \textbf{decoupled by TOST}, while the \textbf{control}
-route shows $\rho = 0.29$ ($p = 0.043$) --- the mechanism correlates with the route
-that does \emph{not} depend on the killed service: the signature of a run-level
-confound, not propagation. The only dependent-significant association
-(TCP-retransmit delta, $\rho = -0.32$) is \emph{negative} --- opposite a propagation
-story. Pilot agreement: pooled $\rho = 0.15$ n.s.; the one significant mechanism
-(CoreDNS p99) stronger on control (0.54) than dependent (0.31); within-run
-mean $\rho \approx +0.10$; robust to route reclassification.
-
-No statistics needed for the headline table: \texttt{dependency-aware} has the
-\emph{worst} mechanism (conntrack +20\%) and the \emph{best} dependent-route error rate
-(1.4\%); \texttt{spread} flushes 9$\times$ more than \texttt{colocate} yet they tie on user-visible
-error (8.0\% vs 8.9\%).
-
-Why would a kernel-layer signature this reproducible fail to reach the user
-routes? The plausible mechanism reading: under single-replica churn the
-user-visible outcome is dominated by the outage itself --- the target's only
-replica is gone for the same deletion-to-ready cycle whatever the topology ---
-while client retries and timeouts mask the differences in reconvergence
-timing that the conntrack signature represents. This interpretation is ours
-(per the convention of Chapter~\ref{ch:discussion}); what is measured is the layer split, and
-\S\ref{sec:decoupling} develops the account in full.
-
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-06-h3-scatter.png}
-  \caption{Mechanism-vs-outcome scatter (dependent vs control routes
-    per strategy-cell): the flush correlates with the route that does \emph{not}
-    depend on the killed service.}
-  \label{fig:h3-scatter}
-\end{figure}
-
-\section{H4 --- Under load contention, placement moves the mechanism, not (reproducibly) the user}\label{sec:h4}
-
-This section contains the first of two results the provenance discipline
-retracted --- the demonstration that the gate works as designed (\S\ref{sec:campaign}).
-
-\textbf{Result --- mechanism replicates; user layer does not.} Two $i = 4$ batches
-(the second with fully clean, doctor-gated provenance):
-
-\begin{itemize}
-\item \emph{Replicated}: east-west inter-service p95, median spread/colocate ratio
-  \textbf{1.39$\times$ (batch A)} and \textbf{1.36$\times$ (batch B)} --- co-location keeps calls
-  node-local.
-\item \emph{Not replicated}: user-facing during-load ratios collapsed from $\sim$2.1--2.4$\times$
-  (batch A, dependent > control) to $\sim$1.05--1.40$\times$ (batch B, dependent $\approx$
-  control --- no dependency specificity). The dirty pilot's ``co-location $\sim$3$\times$
-  better at the user layer'' reading did not survive replication.
-\end{itemize}
-
-\textbf{No user-visible placement effect is claimed under load.} The finding
-matches the churn result: layered decoupling holds across both fault classes.
-
-Why does the east-west effect replicate while the user routes do not? The
-inter-service hop is the direct mechanical path placement changes --- a call
-either crosses a node boundary or it does not --- whereas a user-facing route
-aggregates many hops and, under a 200-user spike, sits behind cluster-wide
-queueing noise that affects every route alike. The locality term plausibly
-drowns in that first-order saturation before it reaches the front end. This
-interpretation is ours (per the convention of Chapter~\ref{ch:discussion}); \S\ref{sec:tradeoff} prices the
-east-west locality face that does replicate against its availability
-counterpart.
-
-\section{H5 --- A graph-derived metric separates node-local from spreading placements}\label{sec:h5}
-
-This section contains the second result the provenance discipline retracted:
-replication kept the separation but took back the headline correlation (\S\ref{sec:campaign}).
-
-\textbf{Result --- the two-regime separation replicates across two independent
-batches; a continuous law does not.} Across all 8 strategies under a
-200-user spike ($i = 4$ per batch):
+\textbf{Result --- the DNS arm passes; the placement arm reverses.}
 
 \begin{center}
-\begin{tabular}{lrrrr}
+\begin{tabular}{p{0.30\textwidth}p{0.34\textwidth}r}
 \toprule
-\textbf{strategy} & \textbf{frac (batch 1)} & \textbf{EW p95 (batch 1)} & \textbf{frac (batch 2)} & \textbf{EW p95 (batch 2)} \\
+arm & result & one-sided $p$ \\
 \midrule
-\textbf{colocate} & 0.00 & \textbf{33.9} & 0.00 & \textbf{33.2} \\
-\textbf{best-fit} & 0.13 & \textbf{35.3} & 0.00 & \textbf{35.7} \\
-dependency-aware & 0.73 & 42.6 & 0.73 & 43.8 \\
-spread & 0.73 & 43.5 & 0.73 & 44.2 \\
-baseline & 0.70 & 43.5 & 0.78 & 41.7 \\
-adversarial & 0.80 & 43.5 & 0.80 & 42.0 \\
-default & 0.78 & 45.5 & 0.82 & 41.6 \\
-random & 0.80 & 43.9 & 0.80 & 42.8 \\
+(a) placement-dependence (cache-off) & \textbf{packed $>$ spread in 7/7 pairs} (packed median 11153.4, spread 8929.1) --- direction \textbf{reversed} & 0.98875 \\
+(b) DNS mechanism (within-spread) & \textbf{78.0\,\% median} shrinkage (all 7 pairs 61--85\,\%) --- \textbf{passes} & 0.01125 \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-In \textbf{both} batches the two node-local placements (cross-node fraction $\approx$ 0)
-occupy the two lowest east-west tails of eight --- per-batch null probability
-$1/28 \approx 0.036$, jointly $\approx 0.0013$ --- at $\sim$\textbf{1.25$\times$} below the spreading cluster
-($\sim$34.6 vs $\sim$43.5 ms medians in batch 1; $\sim$34.5 vs $\sim$42.4 ms in batch 2). The
-fraction, computed pre-chaos from the dependency graph + actual
-\texttt{podPlacements}, captures that separation.
+\textbf{Conjunction = False; H2 is not supported.} Arm (b) is strongly
+confirmed --- the DNS-cache intervention removes the conntrack drop. Arm (a)
+fails on \emph{direction}, and the reversal is robust and monotone: packed
+exceeds spread in every one of the 7 cache-off pairs (two-sided Wilcoxon at the
+$n=7$ floor, $p = 0.0225$). Co-locating a service's replicas on one node
+\emph{concentrates} the per-node conntrack churn when \texttt{pod-delete} hits
+that node, producing a \emph{larger} during-churn UDP drop than spread
+placement, which distributes the same replicas across nodes. Placement
+\emph{does} matter for the conntrack drop --- significantly, but in the opposite
+direction to the registered prediction. A registered secondary confirms the
+mechanism's generality: the packed placement's cache-off drop (median 11153.4)
+also collapses to $\approx 0$ with the cache on (median $-105.2$;
+$p = 0.01125$) --- the intervention removes the drop under \emph{both}
+placements.
 
-The \emph{continuous} correlation did \textbf{not} replicate: batch 1's Spearman
-$\rho = 0.79$ ($n = 8$, carried by \texttt{best-fit}'s intermediate 0.13 point) collapsed
-to \textbf{$\rho = 0.25$ (n.s.)} in batch 2, where \texttt{best-fit} packed fully (fraction
-0.00) and the spreading cluster showed no internal trend. We therefore claim
-H5 as a \textbf{replicated two-regime separator}, not a smooth predictor --- and
-quote $\rho = 0.79$ only alongside $\rho = 0.25$.
+\section{H3 --- Replication rescue under node-drain}\label{sec:h3}
 
-Secondary findings: locality is \textbf{not unique to \texttt{colocate}} (\texttt{best-fit}'s
-bin-packing lands node-local in both batches --- any node-packing placement
-gets the benefit); \textbf{\texttt{dependency-aware} did not deliver} (fraction 0.73 in
-both batches --- the BFS partition did not co-locate communicating services as
-intended; its tail $\approx$ spread's both times).
+\textbf{Registered bar.} H3 predicts an \emph{interaction}: replication
+($r{=}3$) rescues availability under node-drain only when replicas do not share
+the failure domain (anti-affine $r{=}3 \ll r{=}1$; packed $r{=}3 \approx r{=}1$).
+Two co-primary outcomes --- trough depth and user-route error rate --- combined
+both-must-pass; each requires (i) a significant ART-ANOVA $r\times\text{mode}$
+interaction, (ii) the anti-affine rescue margin met, and (iii) the
+packed$\approx r{=}1$ equivalence (TOST) control.
 
-Caveats: the user layer stays weak ($\sim$1.3$\times$, not dependency-specific); batch
-2's launching tree was dirty in non-code files only (deck binary + figure
-PNGs; running code = \texttt{e543fbb}); the aggregate score is \textbf{saturated} in
-these load runs (batch 1: all eight strategies scored 100; CIs overlap in
-both batches --- H1 again, and the saturation \S\ref{sec:decoupling} discusses); this is
-\textbf{validation of a static separator}, not of the locality concept (\S\ref{sec:positioning}).
+\textbf{Campaign.} 24 node-drain sessions ($3$ cells $\times\,8$): r1-packed,
+r3-packed, r3-anti-affine, on the capacity-feasible round-robin packed
+instrument; all 24 accepted and untainted.
 
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-07-h5-fraction-vs-tail.png}
-  \caption{Cross-node fraction vs during-load east-west p95 (batch 1;
-    square markers = the node-local pair). Batch 2 reproduces the separation with
-    \texttt{best-fit} at fraction 0.00; see the table above.}
-  \label{fig:h5-fraction}
-\end{figure}
-
-\section{H6 --- Co-location is a latency/availability trade-off}\label{sec:h6}
-
-\textbf{Result --- supported and reproduced (two doctor-clean node-drain batches:
-$i = 1$ and $i = 3$).} Draining the node hosting \texttt{productcatalogservice}:
+\textbf{Result --- the error face rescues; the depth face cannot adjudicate.}
 
 \begin{center}
-\begin{tabular}{llll}
+\begin{tabular}{p{0.20\textwidth}rrrp{0.26\textwidth}}
 \toprule
-\textbf{placement} & \textbf{services on drained node} & \textbf{blast radius (observed)} & \textbf{target recovery (mean)} \\
+co-primary & r1 & r3-pk & r3-anti & verdict vs bar \\
 \midrule
-\textbf{colocate} & 11 / 11 & \textbf{11 --- whole app offline} & \textbf{$\approx$ 10.3 s} \\
-\textbf{spread} & 2 / 11 & \textbf{2 (18\%)} & \textbf{$\approx$ 2.6 s} \\
+trough depth (frac) & 0.0909 & 0.0909 & 0.0455 & interaction sig ($p{=}0.0065$); rescue $0.0455 < 0.0909$ margin $\rightarrow$ \textbf{not met} \\
+user-route error & 0.6316 & 0.6316 & 0.0000 & interaction $p \approx 0$; rescue $0.6316 \geq 0.302$ $\rightarrow$ \textbf{met}; TOST within band \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Observed blast equals placement-predicted blast in every iteration, measured
-from EndpointSlice outage troughs (15 s sampling) --- not the score, which is
-unusable here (a drain leaves every Litmus probe \texttt{Unknown}; H1 again).
+\textbf{Conjunction = False; H3 is not supported} --- but the single failing
+criterion is one the depth co-primary \emph{could not adjudicate by
+construction}. Both packing controls pass (packed $r{=}3 \approx r{=}1$ exactly
+on both faces), so the instrument behaves as designed. On the
+\textbf{user-route error face}, anti-affine $r{=}3$ fully rescues the error rate
+($0.632 \rightarrow 0.0$; interaction $p \approx 0$; rescue $\gg$ the 0.302
+margin) --- strong, significant directional support. On the \textbf{trough-depth
+face}, the interaction is significant ($p = 0.0065$) but the anti-affine rescue
+(0.0455) falls below the 0.0909 margin; under round-robin spread, draining one
+node costs $r{=}1$ only $\approx 1$ pod, so the $r{=}1$ depth (0.0909) equals the
+registered one-pod margin --- the metric's dynamic range coincides with the bar
+it must beat, leaving no room for a rescue to register. The depth co-primary is
+reported exactly as registered (not retuned); the substantive result is the
+error face, where replication rescues user-visible availability when replicas
+are spread.
 
-\textbf{Gradient extension (6 placing strategies $\times$ $i = 3$, doctor-clean).}
-The full gradient run confirms the relationship is exact across the
-intermediate placements: \textbf{observed blast equals the placement-predicted
-blast for every strategy} ---
+\section{H4 --- The placement frontier (descriptive)}\label{sec:h4}
+
+\textbf{Protocol (registered, descriptive --- no $p$-value).} For each designed
+placement, the \emph{latency face} (pre-chaos east-west p95 tail) is plotted
+against the \emph{availability face} (during-chaos trough depth in pods +
+user-route error rate), and the non-dominated set is reported under frozen
+margins ($\delta_{\text{latency}} = 4.4$\,ms, $\delta_{\text{depth}} = 1.0$
+pod, $\delta_{\text{error}} = 0.302$; dominance requires beating on the latency
+face \emph{and} both availability DVs).
 
 \begin{center}
-\begin{tabular}{llll}
+\begin{tabular}{lrrrc}
 \toprule
-\textbf{strategy} & \textbf{services on drained node} & \textbf{blast (observed)} & \textbf{recovery (mean)} \\
+placement (r=1, pod-delete) & EW p95 [ms] & depth [pods] & user err & non-dom.? \\
 \midrule
-colocate & 11 & \textbf{11} & 10.8 s \\
-random & 4 & \textbf{4} & 4.6 s \\
-dependency-aware & 3 & \textbf{3} & 33.3 s \\
-best-fit & 3 & \textbf{3} & 9.7 s \\
-spread & 2 & \textbf{2} & 2.6 s \\
-adversarial & 2 & \textbf{2} & 33.1 s \\
+$f{=}0$ (packed) & 35.74 & 1.0 & 0.04 & yes \\
+$f{=}0.25$ & 38.60 & 1.0 & 0.04 & yes \\
+$f{=}0.5$ & 41.40 & 1.0 & 0.04 & yes \\
+$f{=}0.75$ & 39.55 & 1.0 & 0.04 & yes \\
+$f{=}1$ (spread) & 40.51 & 1.0 & 0.01 & yes \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Spearman(predicted, observed) = \textbf{1.0} ($n = 6$): per-node concentration
-predicts the availability consequence exactly, the availability analogue of
-H5's separator. \textbf{Recovery time, however, is \emph{not} monotone in blast} ---
-intermediate-blast placements produced both the fastest (4.6 s) and slowest
-(33.3 s) recoveries --- so the recovery claim is scoped to the
-colocate-vs-spread extremes contrast (10.3 s vs 2.6 s, $\sim$4$\times$), where it
-reproduced across both original batches. (Recovery times are not pooled
-across batches: the gradient run is a distinct batch and reads colocate at
-10.8 s vs 10.3 s in the two-point batches.)
+\textbf{Non-dominated set: all 5/5 placements.} The frontier is degenerate on
+the availability face: \texttt{pod-delete} removes a single pod by
+construction, so trough depth is $\approx 1$ pod for every placement and the
+error rate is uniformly low --- neither availability DV separates placements by
+its margin. The latency face \emph{does} vary (packed 35.7\,ms vs mid 41.4\,ms,
+$> \delta_{\text{latency}}$, non-overlapping CIs --- the H1 signal), but a
+single-face advantage cannot establish margin-dominance under the all-DV rule,
+so the protocol correctly crowns no winner. The two-face
+latency$\leftrightarrow$availability trade-off the frontier was designed to
+reveal is \textbf{not realizable from the collected data}: the fault that varies
+the availability face (node-drain) has no latency face, and the fault with a
+latency face (pod-delete) produces no availability-face variation.
 
-\textbf{The trade-off is the finding}: the same co-location that gives the lowest
-east-west tail (H5: $\sim$33--34 ms in both batches) gives a 100\% single-drain
-outage; \texttt{spread} is the mirror. One graph property, two opposing measured
-consequences. Framing per scope-of-claims: this is the \textbf{quantification of a
-known qualitative trade-off}, not its discovery (the full novelty framing
-lives in \S\ref{sec:tradeoff}) --- the empirical content is that it materializes under real
-chaos with no partial survival, holds across the full strategy gradient, and
-drives a measured recovery penalty at the extremes.
+\section{H5 --- Layered scorecard reliability}\label{sec:h5}
 
-Caveats: single-replica, single cluster; recovery non-monotonicity above.
+\textbf{Registered bar.} H5 evaluates a layered resilience scorecard against a
+\textbf{naive single-aggregate baseline} via condition-level test-retest
+reliability (ICC), requiring a conjunction of the \textbf{availability} and
+\textbf{mechanism} sub-scores each clearing an absolute bar of $\text{ICC}\geq
+0.5$.
 
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-08-h6-trough-timeline.png}
-  \caption{EndpointSlice ready-count trajectory through the drain
-    (colocate vs spread; the $i = 3$ batch catches the trough that a fixed-offset
-    snapshot missed --- the motivation for the 15 s trough sampler).}
-  \label{fig:h6-trough}
-\end{figure}
-
-\begin{figure}[tb]
-  \centering
-  \includegraphics[width=\textwidth]{fig-09-tradeoff.png}
-  \caption{The headline figure: the same placements plotted on the
-    east-west latency axis (H5) and the node-drain blast-radius axis (H6),
-    opposing gradients of co-location.}
-  \label{fig:tradeoff}
-\end{figure}
-
-\section{Per-claim evidence table}\label{sec:evidence-table}
+\textbf{Result --- mechanism reliable, availability not.}
 
 \begin{center}
-\footnotesize
-\begin{tabular}{p{0.24\textwidth}p{0.15\textwidth}p{0.21\textwidth}p{0.07\textwidth}p{0.21\textwidth}}
+\begin{tabular}{lrlc}
 \toprule
-\textbf{Claim} & \textbf{Data} & \textbf{Test} & \textbf{Figure} & \textbf{Archived run(s) (Appendix~\ref{app:provenance})} \\
+sub-score & ICC & 95\,\% CI & $\geq 0.5$? \\
 \midrule
-H1: score cannot rank under session variance & s01--s07, 147 iterations & variance partition; ICC + cluster-bootstrap CI; power/MDE & \ref{fig:h1-dist}, \ref{fig:h1-icc} & run-20260608-233543 \ldots{} run-20260610-130249 (7 archives) \\
-\addlinespace
-H2: conntrack flush, spread > colocate & s01--s07 & sign test (7/7, $p = 0.0156$); Wilcoxon ($W = 0$, $p = 0.0225$) & \ref{fig:h2-conntrack} & same 7 archives \\
-\addlinespace
-H3: mechanism $\perp$ dependent-route outcome & s01--s07, 49 cells & Spearman dep 0.07 vs ctrl 0.29*; TOST equivalence & \ref{fig:h3-scatter} & same 7 archives \\
-\addlinespace
-H4: east-west replicates, user layer does not & 2 $\times$ $i = 4$ load batches & ratio replication (1.36--1.39$\times$); dep-vs-ctrl collapse & --- & run-20260607-193053, run-20260607-221822 \\
-\addlinespace
-H2 mechanism: UDP-pool decomposition & 2 $\times$ $i = 1$ probe runs + 5 s protocol samples & composition: UDP $-$50--58\% vs TCP growth under spread & --- & run-20260610-200013, run-20260610-201131; \texttt{data/conntrack-probe/} \\
-\addlinespace
-H5: cross-node fraction separates node-local from spreading & 2 $\times$ (8 strategies $\times$ $i = 4$) & lowest-2-of-8 ranks in both batches (joint $\approx$ 0.0013); $\rho = 0.79 \rightarrow 0.25$ & \ref{fig:h5-fraction}, \ref{fig:tradeoff} & run-20260608-070638, run-20260610-202426 \\
-\addlinespace
-H6: blast radius + recovery trade-off & 2 node-drain batches + 6-strategy gradient & predicted = observed blast every iteration; gradient $\rho = 1.0$ ($n = 6$); recovery contrast at extremes & \ref{fig:h6-trough}, \ref{fig:tradeoff} & run-20260608-194827, run-20260608-205229, run-20260610-172430 \\
+availability (required) & \textbf{0.180} & [0.042, 0.468] & \textbf{no} \\
+mechanism (required) & \textbf{0.994} & [0.635, 0.999] & yes \\
+naive aggregate baseline & 0.066 & [0.027, 0.343] & --- \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\section{What the gate retracted}\label{sec:retractions}
+\textbf{Required conjunction: FAIL; H5 is not supported.} This is a sensible
+registered falsification, not a method failure: \texttt{pod-delete} churn
+produces no sustained endpoint outage, so the availability layer has little
+reproducible between-condition signal to estimate (that face is fault-matched
+to node-drain). The mechanism layer is the headline reliability result --- ICC
+0.994 versus the naive aggregate's 0.066: the layered scorecard's
+conntrack-reconvergence sub-score is far more test-retest reliable than a single
+aggregate score. The verdict is robust to the analysis's taint-handling choice
+(the conjunction fails either way). A single-campaign 0.994 with a wide-ish
+lower CI bound is strong but is re-evaluated across environments before being
+over-read.
 
-Two of this study's most striking numbers appear nowhere among its claims,
-and that is a result in itself. The dirty H4 pilot read as ``co-location $\sim$3$\times$
-better at the user layer''; the clean, doctor-gated replication collapsed the
-user-facing ratios to $\sim$1.05--1.40$\times$ with no dependency specificity, and the
-reading was retracted (\S\ref{sec:h4}). H5's batch-1 continuous correlation (Spearman
-$\rho = 0.79$) collapsed to $\rho = 0.25$ n.s.\ in batch 2, and only the two-regime
-separation is claimed (\S\ref{sec:h5}). In both cases the provenance-and-replication
-gate (\S\ref{sec:campaign}) did exactly what it was designed to do: it caught the most
-quotable numbers in the study and removed them. A method that retracts its
-own most striking results is the credibility argument for contribution 3 ---
-the campaign protocol's discipline is demonstrated here, not merely stated
-(\S\ref{sec:not-claimed}, \S\ref{sec:conclusion}).
+\section{Confirmatory family --- Holm capstone}\label{sec:family-holm}
+
+The four confirmatory hypotheses are corrected together by Holm at
+$\alpha = 0.05$, each member's family-input $p$ read verbatim from its own
+analysis driver.
+
+\begin{center}
+\begin{tabular}{llrrc}
+\toprule
+hyp & primary test & input $p$ & Holm-adj $p$ & supported? \\
+\midrule
+H1 & dose-response (Page's $L$) & 0.0002 & \textbf{0.0008} & no (effect $<$ SESOI) \\
+H2 & placement + DNS & 0.98875 & 0.98875 & no (placement reversed) \\
+H3 & replication rescue & 0.0065 & \textbf{0.0195} & no (rescue margin unmet) \\
+H5 & layered scorecard ICC & 0.2501 & 0.5002 & no (availability ICC $<0.5$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Family verdict: no confirmatory hypothesis is supported.} Two primaries
+(H1's trend, H3's interaction) survive Holm as statistically significant, but
+Holm-significance is necessary, not sufficient: each member also carries a
+registered effect-size / reliability bar the $p$-value cannot speak to, and
+every member fails its bar or its significance. The consistent, positive thread
+across all four campaigns is the \emph{mechanism}: the UDP-conntrack
+reconvergence signature is real, individually significant in every campaign
+(H2's placement effect, H3's interaction, H5's mechanism ICC 0.994), and
+movable by placement and by the DNS intervention. What does \emph{not} hold, at
+the pre-registered bar, is that this mechanism translates into the
+user-visible placement, availability, and dose-response advantages the
+hypotheses predicted. The discussion (\S\ref{sec:decoupling}) develops this as
+the study's central finding: a real mechanism, rigorously bounded in reach.
+
+\section{H6 --- direction transfer (not attempted)}\label{sec:h6}
+
+H6 (an exploratory, non-family secondary on iptables-mode direction transfer)
+was \textbf{not attempted}: the cluster ran the IPVS proxier rather than the
+iptables mode the hypothesis presumes, so the comparison was de-scoped before
+collection (recorded in the deviations log). It supports no claim and is
+reported here only for completeness of the registered set.
