@@ -72,8 +72,13 @@ Kubernetes scheduler), \texttt{colocate} (all services on the target's node),
 \texttt{spread} (services distributed across workers, deterministic per-service
 pinning), \texttt{adversarial} (a worst-fit resource hotspot), \texttt{random} (seeded, so
 reproducible), \texttt{best-fit} (bin-packing onto the fewest nodes), and
-\texttt{dependency-aware} (a BFS partition of the service dependency graph; \S\ref{sec:scheduler-lineage}
-gives each strategy's literature anchor). Because a \texttt{nodeSelector} is a
+\texttt{dependency-aware} (a BFS partition of the service dependency graph).
+These eight are the framework's general-purpose placement primitives; the
+pre-registered study does not select among them directly but drives placement
+through the two continuous knobs --- the cross-node fraction $f$ and the
+replication degree $r$ --- that \S\ref{sec:scheduler-lineage} anchors to the
+scheduler literature, with the solver realizing the per-service pinning that hits
+each target $f$. Because a \texttt{nodeSelector} is a
 request to the scheduler, not a guarantee of the realized state, the mutator
 verifies the outcome: each iteration records per-service
 \textbf{\texttt{placementMatchRates}} --- the fraction of pods that actually landed where
