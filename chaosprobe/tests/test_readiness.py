@@ -354,6 +354,43 @@ class TestSustainedGateLoad:
         ), "every loader burst must use the configured gate_load_concurrency"
 
 
+class TestGateRequiresWgetPod:
+    """The gate must discover a wget-capable probe pod (``require_wget=True``).
+
+    Guards the exact fix for the hotel 0/5 timeout: without it the gate picks
+    the alphabetically-first shell pod (``chaos-exporter``), which has no wget,
+    so every probe fails 'wget: not found'.  The readiness tests mock
+    ``find_probe_pod`` by return value, so this asserts the call ARGUMENT — a
+    dropped ``require_wget=True`` would otherwise regress silently.
+    """
+
+    def test_every_probe_pod_discovery_requires_wget(self):
+        find_mock = MagicMock(return_value="probe-pod")
+        exec_mock = MagicMock(side_effect=_exec_http_fail)  # gate fails fast; irrelevant
+        fake_time = MagicMock()
+        fake_time.time.side_effect = itertools.count(0, 1)
+        fake_time.sleep.return_value = None
+        with (
+            patch("chaosprobe.metrics.base.find_probe_pod", find_mock),
+            patch("chaosprobe.metrics.base.exec_in_pod", exec_mock),
+            patch.object(readiness, "time", fake_time),
+            patch.object(readiness, "warmup_application"),
+            patch.object(readiness.k8s_client, "CoreV1Api", return_value=MagicMock()),
+        ):
+            readiness.wait_for_app_ready(
+                "ns",
+                "frontend",
+                timeout=4,
+                http_routes=HTTP_ROUTE,
+                service_routes=None,
+                required_consecutive=5,
+            )
+        assert find_mock.call_args_list, "gate must discover a probe pod"
+        assert all(
+            c.kwargs.get("require_wget") is True for c in find_mock.call_args_list
+        ), "every gate probe-pod discovery must pass require_wget=True"
+
+
 class TestWarmupConcurrency:
     """warmup_application builds ``concurrency`` parallel wget loops per route."""
 

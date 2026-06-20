@@ -87,6 +87,35 @@ def _pod_has_python3(core_api: Any, namespace: str, pod_name: str) -> bool:
         return False
 
 
+def _pod_has_wget(core_api: Any, namespace: str, pod_name: str) -> bool:
+    """Check whether *pod_name* has a usable ``wget`` binary.
+
+    HTTP probes and the warm-up loader shell out to ``wget``; a pod with a
+    shell but no ``wget`` (e.g. the LitmusChaos subscriber-infra pods
+    ``chaos-exporter`` / ``chaos-operator-ce`` / ``event-tracker``, or the
+    ``mongodb-*`` images) silently fails every probe with "wget: not found",
+    which the readiness gate reads as a hard failure and times out at 0/5.
+    Verifying ``wget`` up front keeps such pods from being chosen.
+    """
+    try:
+        from kubernetes.stream import stream
+
+        out = stream(
+            core_api.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            command=["sh", "-c", "command -v wget >/dev/null 2>&1 && echo ok"],
+            stderr=True,
+            stdout=True,
+            stdin=False,
+            tty=False,
+        )
+        return "ok" in out
+    except Exception as exc:
+        logger.debug("pod capability probe failed: %s", exc, exc_info=True)
+        return False
+
+
 def _is_chaos_infra_pod(pod: Any) -> bool:
     """True if *pod* is a LitmusChaos / Argo-workflow infrastructure pod.
 
@@ -112,19 +141,26 @@ def find_probe_pod(
     namespace: str,
     require_python3: bool = False,
     exclude_prefixes: Optional[List[str]] = None,
+    require_wget: bool = False,
 ) -> Optional[str]:
     """Find a pod suitable for running probe commands.
 
     Discovers running pods in the namespace and tests whether they have
     a usable shell.  When *require_python3* is True the selected pod
-    must also have a working ``python3`` interpreter.  If no pod satisfies
-    that constraint, falls back to any pod with a shell.
+    must also have a working ``python3`` interpreter; if no pod satisfies
+    that, falls back to any pod with a shell (the python3-only TCP probe is
+    optional).  When *require_wget* is True the pod must have a ``wget``
+    binary — a HARD requirement with no fallback, because a wget-less pod
+    cannot run the HTTP probe/warm-up at all and would only false-fail every
+    check (this is what made the readiness gate time out at 0/5 on
+    hotelReservation: the alphabetically-first pod ``chaos-exporter`` has a
+    shell but no wget).
 
     Pods matching *exclude_prefixes* (e.g. the chaos target deployment)
     are skipped — they may be killed during experiments.
 
     Pods are checked in alphabetical order; the first pod with a shell
-    (and python3 if required) is returned.
+    (and wget/python3 if required) is returned.
     """
     try:
         pods = core_api.list_namespaced_pod(
@@ -157,15 +193,21 @@ def find_probe_pod(
 
     shell_pods: List[str] = []
     for name in ready_pods:
-        if pod_has_shell(core_api, namespace, name):
-            if require_python3:
-                if _pod_has_python3(core_api, namespace, name):
-                    return name
-                shell_pods.append(name)  # remember for fallback
-            else:
+        if not pod_has_shell(core_api, namespace, name):
+            continue
+        # wget is a HARD requirement (no fallback): a wget-less pod cannot run
+        # the HTTP probe/warm-up, so picking one only false-fails every check.
+        if require_wget and not _pod_has_wget(core_api, namespace, name):
+            continue
+        if require_python3:
+            if _pod_has_python3(core_api, namespace, name):
                 return name
+            shell_pods.append(name)  # remember for python3 soft-fallback
+            continue
+        return name
 
-    # Fallback: any pod with a shell (even without python3)
+    # Fallback: a pod with a shell (and wget if required) but no python3 — the
+    # TCP probe is optional, so a wget-capable shell pod is still usable.
     if require_python3 and shell_pods:
         logger.warning(
             "No pod with python3 found; falling back to %s",
