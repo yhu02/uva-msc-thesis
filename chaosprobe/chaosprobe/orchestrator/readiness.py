@@ -84,6 +84,7 @@ def warmup_application(
     urls_to_check: List[Tuple[str, str]],
     *,
     duration_s: int = 10,
+    concurrency: int = 1,
 ) -> None:
     """Pump concurrent HTTP load on every probed route for ``duration_s``.
 
@@ -100,15 +101,30 @@ def warmup_application(
     issuing one request per route is nowhere near the load profile
     chaos + Locust will apply, so warmup-sensitive failure modes only
     surfaced under chaos and showed up as bimodal scores.
+
+    ``concurrency`` is the number of parallel wget loops *per route* (≥1,
+    default 1).  One loop per route keeps a single request in flight at a
+    time — enough to warm pools, but NOT enough to keep a deep gRPC
+    fan-out's every stream continuously active.  hotelReservation's
+    ``/hotels`` (frontend→search→{geo,rate}) needs several concurrent
+    in-flight requests to suppress the ``too_many_pings``/GoAway keepalive
+    storm: a measurement (2/2 trials) showed 1 loop/route never settles it
+    while 6 loops/route settles it in ~15s.  Raise this for the
+    sustained-during-gate loader on such workloads; leave it at 1 for the
+    pre/post-gate warmups (Online Boutique needs no extra concurrency).
     """
     from chaosprobe.metrics.base import exec_in_pod
 
-    # Build a parallel wget loop per route, all running for duration_s.
-    # `wget -q -O /dev/null -T 2` makes each request bounded and silent.
-    # `while true; do ... done` loops continuously; killed by `timeout`.
+    if concurrency < 1:
+        concurrency = 1
+
+    # Build ``concurrency`` parallel wget loops per route, all running for
+    # duration_s.  `wget -q -O /dev/null -T 2` makes each request bounded and
+    # silent.  `while true; do ... done` loops continuously; killed below.
     routes_block = " ".join(
         f"(while true; do wget -q -O /dev/null -T 2 '{shell_escape(url)}' || true; done) &"
         for _path, url in urls_to_check
+        for _ in range(concurrency)
     )
     cmd = (
         f"set +e; "
@@ -137,6 +153,7 @@ def wait_for_app_ready(
     gate_east_west: bool = False,
     pre_gate_warmup_s: int = 0,
     sustained_gate_load: bool = False,
+    gate_load_concurrency: int = 6,
 ) -> bool:
     """Wait until all probed routes respond successfully and stay stable.
 
@@ -345,7 +362,12 @@ def wait_for_app_ready(
     # keepalive storm re-triggers, /hotels flaps, and the consecutive-OK count
     # never builds.  A daemon thread pumps short warm-up bursts until the gate
     # exits, so the gate's probes land on a continuously-exercised app.  Off by
-    # default (Online Boutique does not need it).
+    # default (Online Boutique does not need it).  Each burst uses
+    # ``gate_load_concurrency`` parallel loops per route: a single loop keeps
+    # only one request in flight and does NOT settle hotelReservation's gRPC
+    # keepalive storm (measured: 1 loop/route never passed the gate in 420s;
+    # ~6 loops/route settled it in ~15s).  Bursts stay short (6s) so the loop
+    # checks ``_gate_stop`` often and the finally's join returns promptly.
     _gate_stop = threading.Event()
     _gate_loader: Optional[threading.Thread] = None
     if sustained_gate_load and urls_to_check:
@@ -353,13 +375,23 @@ def wait_for_app_ready(
         def _pump_gate_load() -> None:
             while not _gate_stop.is_set():
                 assert pod is not None  # narrowed in the main body; never re-None'd
-                warmup_application(core, namespace, pod, urls_to_check, duration_s=6)
+                warmup_application(
+                    core,
+                    namespace,
+                    pod,
+                    urls_to_check,
+                    duration_s=6,
+                    concurrency=gate_load_concurrency,
+                )
 
         _gate_loader = threading.Thread(
             target=_pump_gate_load, name="gate-sustained-load", daemon=True
         )
         _gate_loader.start()
-        click.echo("    Sustained-gate load: keeping routes hot during the readiness gate...")
+        click.echo(
+            f"    Sustained-gate load: keeping routes hot during the readiness "
+            f"gate ({gate_load_concurrency} concurrent/route)..."
+        )
 
     try:
         consecutive_ok = 0

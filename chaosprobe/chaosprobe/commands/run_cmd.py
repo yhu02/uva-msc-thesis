@@ -1355,6 +1355,21 @@ def _acquire_run_lock() -> None:
     ),
 )
 @click.option(
+    "--gate-load-concurrency",
+    default=6,
+    type=click.IntRange(min=1, max=64),
+    help=(
+        "Parallel warm-up loops PER ROUTE for --gate-sustained-load (default 6, "
+        "max 64; no effect unless --gate-sustained-load is set).  A single loop "
+        "per route keeps only one request in flight, which does NOT settle a deep "
+        "gRPC fan-out's keepalive storm: measured on hotelReservation, 1 loop/route "
+        "never passed the gate in 420s while 6 loops/route settled /hotels in "
+        "~15s.  Raise for workloads whose deepest route needs more concurrent "
+        "in-flight requests to keep every stream active.  Capped at 64/route so a "
+        "typo cannot spawn enough wget processes to exhaust the probe pod."
+    ),
+)
+@click.option(
     "--experiment",
     "-e",
     multiple=True,
@@ -1590,6 +1605,7 @@ def run(
     app_ready_timeout: int,
     pre_gate_warmup: int,
     gate_sustained_load: bool,
+    gate_load_concurrency: int,
     experiment: Tuple[str, ...],
     iterations: int,
     load_profile: Optional[str],
@@ -1851,6 +1867,7 @@ def run(
             app_ready_timeout=app_ready_timeout,
             pre_gate_warmup_s=pre_gate_warmup,
             sustained_gate_load=gate_sustained_load,
+            gate_load_concurrency=gate_load_concurrency,
             iterations=iterations,
             baseline_duration=baseline_duration,
             measure_latency=measure_latency,
