@@ -23,10 +23,13 @@ logger = logging.getLogger(__name__)
 
 # The managed ChaosCenter admin password is resolved at runtime, never
 # committed.  Override with this env var, or let ChaosProbe generate one.
-# Resolution itself is READ-ONLY (see _resolve_managed_password): the value is
-# generated/persisted to the file only AFTER a successful rotation actually sets
-# it on ChaosCenter (see _chaoscenter_login), so the file never gets ahead of
-# the live instance.  Once written, it is stable across runs for that instance.
+# Resolution itself is READ-ONLY (see _resolve_managed_password): a fresh value
+# is generated/persisted only by _chaoscenter_login, which writes the file BEFORE
+# changing the password on ChaosCenter (write-ahead).  That ordering is the
+# orphan fix: the live instance can never hold a password the file has not already
+# recorded.  The file MAY briefly lead the instance (if the change fails after the
+# write), but that self-heals — the factory default still works and re-rotates to
+# the recorded target.  Once a rotation completes, the file is stable across runs.
 CHAOSCENTER_PASSWORD_ENV = "CHAOSPROBE_CHAOSCENTER_PASSWORD"
 CHAOSCENTER_PASSWORD_FILE = Path.home() / ".chaosprobe" / "chaoscenter-admin-password"
 
@@ -81,13 +84,13 @@ def _resolve_managed_password() -> Optional[str]:
     not), else ``None``.  This function NEVER generates or rewrites the file.
 
     Why read-only: the persisted file is the record of the password a live
-    ChaosCenter was actually rotated to.  Silently regenerating it (the previous
+    ChaosCenter was rotated to.  Silently regenerating it on read (the previous
     behaviour, e.g. "migrating" a non-compliant value) mints a value the running
-    instance was never set to, orphaning its admin password — the file and the
-    live instance drift apart and every subsequent login 401s.  A fresh or
-    upgraded password is therefore generated and persisted ONLY after a
-    successful rotation actually sets it on ChaosCenter (see
-    ``_chaoscenter_login``), so the file can never get ahead of the instance.
+    instance was never set to, orphaning its admin password.  A fresh or upgraded
+    password is therefore generated and persisted ONLY by a rotation in
+    ``_chaoscenter_login``, which writes the file BEFORE changing the instance
+    (write-ahead) so the instance can never hold a value the file lacks; a file
+    that leads the instance after a failed change self-heals via the default.
     """
     env = os.environ.get(CHAOSCENTER_PASSWORD_ENV)
     if env:
@@ -118,16 +121,13 @@ def _resolve_managed_password() -> Optional[str]:
 def _persist_managed_password(pwd: str) -> None:
     """Persist the managed password to ``~/.chaosprobe`` with ``0600`` perms.
 
-    Call this ONLY after ChaosCenter's admin password has been successfully set
-    to ``pwd`` (a successful rotation), so the file always matches the live
-    instance and can never orphan it.
-
-    The managed password is RANDOM, so a failed persist is NOT recoverable by
-    re-derivation: if this fails right after a rotation and no
-    ``CHAOSPROBE_CHAOSCENTER_PASSWORD`` env var is set, future runs cannot know
-    the live instance's password and will fail to authenticate (a reinstall or
-    a manually-supplied password is then required).  The failure is therefore
-    logged at WARNING, not silently swallowed.
+    Call this BEFORE changing ChaosCenter's admin password to ``pwd`` (see
+    :meth:`_chaoscenter_login`), so the file can never lag behind the live
+    instance: the instance must never be set to a value the file has not already
+    recorded.  ``pwd`` is RANDOM and unrecoverable, so on any IO failure this
+    **raises** ``OSError`` (after logging at WARNING) — the caller MUST then abort
+    the rotation and leave the instance on its current (default) password, rather
+    than change it to a value no future run can reproduce (the orphaning 401).
     """
     try:
         CHAOSCENTER_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -156,12 +156,14 @@ def _persist_managed_password(pwd: str) -> None:
         os.chmod(CHAOSCENTER_PASSWORD_FILE, 0o600)
     except OSError:
         logger.warning(
-            "could not persist managed ChaosCenter password to %s; if a rotation "
-            "just succeeded, future runs may be unable to authenticate unless %s is set",
+            "could not persist managed ChaosCenter password to %s; skipping the "
+            "rotation so the live instance is not orphaned behind an unrecorded "
+            "password (set %s to override)",
             CHAOSCENTER_PASSWORD_FILE,
             CHAOSCENTER_PASSWORD_ENV,
             exc_info=True,
         )
+        raise
 
 
 def _extract_token(resp: dict) -> str:
@@ -185,9 +187,9 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
         Resolved once per instance: env var → persisted file → a freshly
         generated compliant secret.  The generated case is NOT persisted here —
         :func:`_resolve_managed_password` is read-only; the value is persisted
-        only after a rotation actually sets it on ChaosCenter (see
-        :meth:`_chaoscenter_login`), so the file never gets ahead of the live
-        instance.  Never a source-committed default.
+        only by a rotation in :meth:`_chaoscenter_login`, which writes the file
+        BEFORE changing it on ChaosCenter (write-ahead) so the instance can never
+        hold a password the file lacks.  Never a source-committed default.
         """
         cached: Optional[str] = getattr(self, "_managed_pass", None)
         if cached is None:
@@ -390,6 +392,25 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                     if not _is_policy_compliant(target):
                         target = _generate_compliant_password()
                         self._managed_pass = target
+                    # Persist `target` BEFORE changing it on ChaosCenter.  The
+                    # change-then-persist order orphans the instance: if the
+                    # change APPLIES on the server but the call then raises (a
+                    # read timeout on the response, a 200-with-error body) — or
+                    # the file write fails — the instance ends up on `target`
+                    # while the file still holds the old value.  `target` is
+                    # RANDOM, so no later run can authenticate (the "tried N
+                    # passwords" 401).  Writing the file first guarantees the
+                    # instance can never hold a password the file has not already
+                    # recorded; the only residual state, "file ahead of instance"
+                    # (the change failed), SELF-HEALS — the factory default still
+                    # works and re-rotates to the same recorded target.
+                    try:
+                        _persist_managed_password(target)
+                    except OSError:
+                        # Already logged at WARNING.  Do NOT touch the live
+                        # instance — leave it on the default so the next run
+                        # retries cleanly instead of orphaning it.
+                        return token, project_id
                     try:
                         self._chaoscenter_change_password(
                             auth_url,
@@ -398,11 +419,7 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                             target,
                             token=token,
                         )
-                        # Persist ONLY after ChaosCenter's admin password is
-                        # actually set to `target`, so the file can never get
-                        # ahead of the live instance (the orphaning bug).
-                        _persist_managed_password(target)
-                        # Re-login with the new password
+                        # Re-login with the new password to refresh the token.
                         resp2 = self._chaoscenter_authenticate(
                             auth_url,
                             username,
@@ -412,8 +429,15 @@ class _ChaosCenterAPIMixin(_LitmusSetupBase):
                         project_id = resp2.get("projectID", project_id)
                         print("  ChaosCenter: default password rotated to managed password")
                     except Exception:
-                        # keep using the default-password token
-                        logger.debug("re-login after password rotation failed", exc_info=True)
+                        # The change may or may not have applied, but the file
+                        # already records `target`, so a later run authenticates
+                        # with it (or with the still-working default, which
+                        # re-rotates to the same recorded target).  No orphan.
+                        logger.debug(
+                            "password rotation/verify after persist failed; "
+                            "file already records the target",
+                            exc_info=True,
+                        )
 
                 return token, project_id
             except Exception as exc:

@@ -738,10 +738,15 @@ class TestChaoscenterLogin:
         # process serves the new compliant value (no re-rotation loop).
         assert setup.CHAOSCENTER_MANAGED_PASS == target
 
-    def test_login_does_not_persist_when_rotation_fails(self, tmp_path, monkeypatch):
-        # change_password failing (e.g. policy/transport error) must NOT persist
-        # a password the live instance was never set to — otherwise the file
-        # drifts from the instance (the orphaning bug).
+    def test_login_persists_target_before_change_so_a_failed_change_cannot_orphan(
+        self, tmp_path, monkeypatch
+    ):
+        # The orphan fix: the target is persisted to the file BEFORE it is changed
+        # on ChaosCenter.  So even when change_password fails — including the nasty
+        # "the server applied the change but the call then raised" case — the file
+        # already records the target and the instance is never left on a random
+        # password no run can reproduce.  A genuinely-failed change self-heals: the
+        # default still works next run and re-rotates to the recorded target.
         pwfile = tmp_path / "pw"
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", pwfile)
         setup = _make_setup()
@@ -753,11 +758,13 @@ class TestChaoscenterLogin:
 
         with patch.object(setup, "_chaoscenter_authenticate", side_effect=fake_auth):
             with patch.object(
-                setup, "_chaoscenter_change_password", side_effect=RuntimeError("policy")
+                setup,
+                "_chaoscenter_change_password",
+                side_effect=RuntimeError("applied-then-raised"),
             ):
                 token, _pid = setup._chaoscenter_login("http://localhost:9003")
         assert token == "tok"  # falls back to the default-password token
-        assert not pwfile.exists()  # nothing persisted
+        assert pwfile.read_text() == "Test1managed!"  # target persisted BEFORE the change
 
     def test_login_with_managed_does_not_rotate_or_persist(self, tmp_path, monkeypatch):
         # When the managed (persisted) password works, the live instance is
@@ -1808,25 +1815,28 @@ class TestResolveManagedPassword:
     )
     def test_persist_does_not_follow_symlink(self, tmp_path, monkeypatch):
         # O_NOFOLLOW: a symlink planted at the password path must NOT be followed
-        # — the open is refused (ELOOP -> OSError, tolerated) so the link's target
-        # is never clobbered by the O_TRUNC write.
+        # — the open is refused (ELOOP -> OSError).  _persist now RE-RAISES on IO
+        # error (so the rotation caller aborts rather than orphaning the instance),
+        # but the link's target must still never be clobbered by the O_TRUNC write.
         victim = tmp_path / "victim"
         victim.write_text("important")
         link = tmp_path / "pw"
         link.symlink_to(victim)
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", link)
-        chaoscenter_api._persist_managed_password("New1pass!")  # no raise
+        with pytest.raises(OSError):
+            chaoscenter_api._persist_managed_password("New1pass!")
         assert victim.read_text() == "important"  # target untouched
 
-    def test_persist_io_error_is_tolerated(self, tmp_path, monkeypatch):
+    def test_persist_raises_on_io_error(self, tmp_path, monkeypatch):
         a_dir = tmp_path / "iam_a_dir"
         a_dir.mkdir()
-        # Opening a directory for write raises OSError; persistence must swallow
-        # it (logged at WARNING) rather than crash. Note: a failed persist is not
-        # recoverable by re-derivation — the managed password is random — but
-        # that is the caller's lockout risk, not this function's to raise on.
+        # Opening a directory for write raises OSError.  _persist now logs at
+        # WARNING and RE-RAISES so the rotation caller aborts (leaving the live
+        # instance on its current password) instead of changing it to a value the
+        # file failed to record — the orphan the persist-before-change order fixes.
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", a_dir)
-        chaoscenter_api._persist_managed_password("Persisted9!")  # no raise
+        with pytest.raises(OSError):
+            chaoscenter_api._persist_managed_password("Persisted9!")
 
     def test_no_committed_credential_in_source(self):
         from pathlib import Path as _Path
@@ -1926,3 +1936,94 @@ class TestPasswordPolicy:
         monkeypatch.setattr(chaoscenter_api, "CHAOSCENTER_PASSWORD_FILE", tmp_path / "nope")
         monkeypatch.setenv(chaoscenter_api.CHAOSCENTER_PASSWORD_ENV, "EnvP4ss!word")
         assert chaoscenter_api._resolve_managed_password() == "EnvP4ss!word"
+
+
+# ---------------------------------------------------------------------------
+# _chaoscenter_login — the default→managed rotation must NEVER orphan the instance
+# ---------------------------------------------------------------------------
+class TestLoginRotationNeverOrphans:
+    """Regression for the ChaosCenter password-orphan bug.
+
+    The rotation must persist the target to the managed-password file BEFORE
+    changing it on ChaosCenter, and abort if the persist fails — so the live
+    instance can never end up on a (random) password the file never recorded,
+    which produced the unrecoverable "tried N passwords" 401.
+    """
+
+    DEFAULT = LitmusSetup.CHAOSCENTER_DEFAULT_PASS  # "litmus"
+    MANAGED = "Test1managed!"  # the _make_setup() pre-seeded managed password
+
+    def _auth_only(self, ok_passwords):
+        def auth(auth_url, username, pwd):
+            if pwd in ok_passwords:
+                return {"accessToken": f"tok-{pwd}", "projectID": "proj-1"}
+            raise RuntimeError(f"401 for {pwd!r}")
+
+        return auth
+
+    def test_persists_target_before_changing_the_instance(self):
+        """change_password APPLIES then RAISES → the file already holds the
+        target (persist ran first), so the next run can still authenticate."""
+        setup = _make_setup()
+        order = []
+        # instance is on the default: default authenticates, managed does not.
+        setup._chaoscenter_authenticate = MagicMock(side_effect=self._auth_only({self.DEFAULT}))
+
+        def change(*a, **k):
+            order.append("change")
+            raise RuntimeError("server applied the change but the response timed out")
+
+        setup._chaoscenter_change_password = MagicMock(side_effect=change)
+        persist = MagicMock(side_effect=lambda pwd: order.append(("persist", pwd)))
+        with patch.object(chaoscenter_api, "_persist_managed_password", persist):
+            token, _project = setup._chaoscenter_login("http://auth")
+
+        persist.assert_called_once_with(self.MANAGED)
+        # the target was persisted BEFORE the (raising) change — no orphan
+        assert order[0] == ("persist", self.MANAGED), order
+        assert order.index(("persist", self.MANAGED)) < order.index("change")
+        # login still returns a usable token (the default-password one)
+        assert token == f"tok-{self.DEFAULT}"
+
+    def test_aborts_rotation_when_persist_fails(self):
+        """If the file write fails, the live instance is NOT changed (left on the
+        default), so it is never orphaned behind an unrecorded password."""
+        setup = _make_setup()
+        setup._chaoscenter_authenticate = MagicMock(side_effect=self._auth_only({self.DEFAULT}))
+        setup._chaoscenter_change_password = MagicMock()
+        with patch.object(
+            chaoscenter_api,
+            "_persist_managed_password",
+            MagicMock(side_effect=OSError("disk full")),
+        ):
+            token, _project = setup._chaoscenter_login("http://auth")
+
+        setup._chaoscenter_change_password.assert_not_called()
+        assert token == f"tok-{self.DEFAULT}"
+
+    def test_happy_path_persists_then_changes_then_relogs(self):
+        """Normal rotation: persist first, change, re-login with the new password."""
+        setup = _make_setup()
+        order = []
+        changed = {"done": False}
+
+        def auth(auth_url, username, pwd):
+            if pwd == self.DEFAULT:
+                return {"accessToken": "tok-default", "projectID": "proj-1"}
+            if pwd == self.MANAGED and changed["done"]:
+                return {"accessToken": "tok-managed", "projectID": "proj-1"}
+            raise RuntimeError(f"401 for {pwd!r}")
+
+        setup._chaoscenter_authenticate = MagicMock(side_effect=auth)
+
+        def change(*a, **k):
+            order.append("change")
+            changed["done"] = True
+
+        setup._chaoscenter_change_password = MagicMock(side_effect=change)
+        persist = MagicMock(side_effect=lambda pwd: order.append("persist"))
+        with patch.object(chaoscenter_api, "_persist_managed_password", persist):
+            token, _project = setup._chaoscenter_login("http://auth")
+
+        assert order == ["persist", "change"]
+        assert token == "tok-managed"
