@@ -11,6 +11,7 @@ from a probe pod.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import List, Optional, Tuple
 
@@ -135,6 +136,7 @@ def wait_for_app_ready(
     latency_budget_ms: int = 5000,
     gate_east_west: bool = False,
     pre_gate_warmup_s: int = 0,
+    sustained_gate_load: bool = False,
 ) -> bool:
     """Wait until all probed routes respond successfully and stay stable.
 
@@ -336,131 +338,159 @@ def wait_for_app_ready(
         )
         warmup_application(core, namespace, pod, urls_to_check, duration_s=pre_gate_warmup_s)
 
-    consecutive_ok = 0
-    deadline = time.time() + timeout
-    attempt = 0
-    sustained_until: Optional[float] = None  # absolute time
+    # Sustained-during-gate load: keep the probed routes (and the gRPC streams
+    # they drive) hot THROUGHOUT the gate, not just before it.  A one-shot
+    # pre-gate warm-up is undone by the gate's own intermittent probing: between
+    # the 3s single-route probes the gRPC streams go idle, the too_many_pings
+    # keepalive storm re-triggers, /hotels flaps, and the consecutive-OK count
+    # never builds.  A daemon thread pumps short warm-up bursts until the gate
+    # exits, so the gate's probes land on a continuously-exercised app.  Off by
+    # default (Online Boutique does not need it).
+    _gate_stop = threading.Event()
+    _gate_loader: Optional[threading.Thread] = None
+    if sustained_gate_load and urls_to_check:
 
-    while time.time() < deadline:
-        all_ok = _check_all_routes()
+        def _pump_gate_load() -> None:
+            while not _gate_stop.is_set():
+                assert pod is not None  # narrowed in the main body; never re-None'd
+                warmup_application(core, namespace, pod, urls_to_check, duration_s=6)
 
-        if all_ok:
-            if sustained_until is None:
-                consecutive_ok += 1
-                if consecutive_ok >= required_consecutive:
-                    sustained_until = time.time() + sustained_period_s
-                    click.echo(
-                        f"    App reachable ({consecutive_ok} consecutive OK); "
-                        f"verifying stability for {sustained_period_s}s..."
-                    )
-            else:
-                # In sustained-clean phase — wait until the period elapses.
-                if time.time() >= sustained_until:
-                    # Warmup phase: pump concurrent load on every probed
-                    # route for ~20s to warm gRPC connection pools, JVM
-                    # JIT caches, and CoreDNS resolution before the
-                    # iteration's pre-chaos baseline starts.  Without
-                    # this, frontend's outbound connection pool to
-                    # productcatalog is at cold-start size when chaos
-                    # hits, which sometimes triggers a thundering-herd
-                    # retry cascade and produces a 33-mode score on an
-                    # iteration that would otherwise score 75 with the
-                    # same placement.
-                    #
-                    # Increased from 10s→20s: under colocate (11 services
-                    # on 1 node), 10s was insufficient to warm all pools
-                    # because CPU contention slows connection establishment.
-                    # 20s ensures ≥5 full request cycles per route at the
-                    # typical 3-4s response time under colocate pressure.
-                    warmup_application(
-                        core,
-                        namespace,
-                        pod,
-                        urls_to_check,
-                        duration_s=20,
-                    )
+        _gate_loader = threading.Thread(
+            target=_pump_gate_load, name="gate-sustained-load", daemon=True
+        )
+        _gate_loader.start()
+        click.echo("    Sustained-gate load: keeping routes hot during the readiness gate...")
 
-                    # Post-warmup latency convergence check: verify that
-                    # response times have stabilised below a threshold.
-                    # Without this, strategies that place services across
-                    # nodes (adversarial, spread) can start chaos with
-                    # elevated baseline latency because gRPC connection
-                    # pools inside Go/Java services warm slowly even after
-                    # wget has warmed the Service VIP path.  The fix:
-                    # take 3 quick latency samples; if any route exceeds
-                    # the convergence threshold, run another 10s warmup
-                    # burst and re-check (up to 2 extra rounds).
-                    convergence_threshold_ms = 300
-                    for _warmup_round in range(2):
-                        converged = True
-                        for _path, url in urls_to_check:
-                            # Time a single request to check latency
-                            safe_url = shell_escape(url)
-                            cmd = (
-                                f"S=$(date +%s%N 2>/dev/null); "
-                                f"wget -q -O /dev/null --timeout=5 '{safe_url}'; "
-                                f"E=$(date +%s%N 2>/dev/null); "
-                                f"echo $(( (E - S) / 1000000 ))"
-                            )
-                            out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
-                            try:
-                                lat_ms = int(out.strip())
-                                if lat_ms > convergence_threshold_ms:
-                                    converged = False
-                                    break
-                            except (ValueError, TypeError):
-                                converged = False
-                                break
-                        if converged:
-                            break
-                        # Not converged — run another warmup burst
+    try:
+        consecutive_ok = 0
+        deadline = time.time() + timeout
+        attempt = 0
+        sustained_until: Optional[float] = None  # absolute time
+
+        while time.time() < deadline:
+            all_ok = _check_all_routes()
+
+            if all_ok:
+                if sustained_until is None:
+                    consecutive_ok += 1
+                    if consecutive_ok >= required_consecutive:
+                        sustained_until = time.time() + sustained_period_s
                         click.echo(
-                            f"    Latency not converged (>{convergence_threshold_ms}ms), "
-                            f"extending warmup..."
+                            f"    App reachable ({consecutive_ok} consecutive OK); "
+                            f"verifying stability for {sustained_period_s}s..."
                         )
+                else:
+                    # In sustained-clean phase — wait until the period elapses.
+                    if time.time() >= sustained_until:
+                        # Warmup phase: pump concurrent load on every probed
+                        # route for ~20s to warm gRPC connection pools, JVM
+                        # JIT caches, and CoreDNS resolution before the
+                        # iteration's pre-chaos baseline starts.  Without
+                        # this, frontend's outbound connection pool to
+                        # productcatalog is at cold-start size when chaos
+                        # hits, which sometimes triggers a thundering-herd
+                        # retry cascade and produces a 33-mode score on an
+                        # iteration that would otherwise score 75 with the
+                        # same placement.
+                        #
+                        # Increased from 10s→20s: under colocate (11 services
+                        # on 1 node), 10s was insufficient to warm all pools
+                        # because CPU contention slows connection establishment.
+                        # 20s ensures ≥5 full request cycles per route at the
+                        # typical 3-4s response time under colocate pressure.
                         warmup_application(
                             core,
                             namespace,
                             pod,
                             urls_to_check,
-                            duration_s=10,
+                            duration_s=20,
                         )
 
-                    click.echo(
-                        f"    App ready after {attempt} checks "
-                        f"({len(urls_to_check)} routes, "
-                        f"{required_consecutive} consecutive + "
-                        f"{sustained_period_s}s sustained + warmup)"
+                        # Post-warmup latency convergence check: verify that
+                        # response times have stabilised below a threshold.
+                        # Without this, strategies that place services across
+                        # nodes (adversarial, spread) can start chaos with
+                        # elevated baseline latency because gRPC connection
+                        # pools inside Go/Java services warm slowly even after
+                        # wget has warmed the Service VIP path.  The fix:
+                        # take 3 quick latency samples; if any route exceeds
+                        # the convergence threshold, run another 10s warmup
+                        # burst and re-check (up to 2 extra rounds).
+                        convergence_threshold_ms = 300
+                        for _warmup_round in range(2):
+                            converged = True
+                            for _path, url in urls_to_check:
+                                # Time a single request to check latency
+                                safe_url = shell_escape(url)
+                                cmd = (
+                                    f"S=$(date +%s%N 2>/dev/null); "
+                                    f"wget -q -O /dev/null --timeout=5 '{safe_url}'; "
+                                    f"E=$(date +%s%N 2>/dev/null); "
+                                    f"echo $(( (E - S) / 1000000 ))"
+                                )
+                                out = exec_in_pod(core, namespace, pod, ["sh", "-c", cmd])
+                                try:
+                                    lat_ms = int(out.strip())
+                                    if lat_ms > convergence_threshold_ms:
+                                        converged = False
+                                        break
+                                except (ValueError, TypeError):
+                                    converged = False
+                                    break
+                            if converged:
+                                break
+                            # Not converged — run another warmup burst
+                            click.echo(
+                                f"    Latency not converged (>{convergence_threshold_ms}ms), "
+                                f"extending warmup..."
+                            )
+                            warmup_application(
+                                core,
+                                namespace,
+                                pod,
+                                urls_to_check,
+                                duration_s=10,
+                            )
+
+                        click.echo(
+                            f"    App ready after {attempt} checks "
+                            f"({len(urls_to_check)} routes, "
+                            f"{required_consecutive} consecutive + "
+                            f"{sustained_period_s}s sustained + warmup)"
+                        )
+                        return True
+            else:
+                if sustained_until is not None:
+                    click.echo("    App stability check failed — restarting consecutive-OK count")
+                    # The probe pod may have been evicted during the sustained
+                    # check (e.g. rollout of another service completed and K8s
+                    # reclaimed resources).  Re-discover to avoid exec'ing into
+                    # a dead pod for the remaining timeout.
+                    new_pod = find_probe_pod(
+                        core,
+                        namespace,
+                        require_python3=False,
+                        exclude_prefixes=[target_deployment],
                     )
-                    return True
+                    if new_pod and new_pod != pod:
+                        pod = new_pod
+                consecutive_ok = 0
+                sustained_until = None
+
+            attempt += 1
+            time.sleep(3)
+
+        if sustained_until is not None:
+            click.echo("    Warning: app-ready timed out in sustained phase — proceeding anyway")
         else:
-            if sustained_until is not None:
-                click.echo("    App stability check failed — restarting consecutive-OK count")
-                # The probe pod may have been evicted during the sustained
-                # check (e.g. rollout of another service completed and K8s
-                # reclaimed resources).  Re-discover to avoid exec'ing into
-                # a dead pod for the remaining timeout.
-                new_pod = find_probe_pod(
-                    core,
-                    namespace,
-                    require_python3=False,
-                    exclude_prefixes=[target_deployment],
-                )
-                if new_pod and new_pod != pod:
-                    pod = new_pod
-            consecutive_ok = 0
-            sustained_until = None
-
-        attempt += 1
-        time.sleep(3)
-
-    if sustained_until is not None:
-        click.echo("    Warning: app-ready timed out in sustained phase — proceeding anyway")
-    else:
-        click.echo(
-            f"    Warning: app-ready check timed out after {timeout}s — "
-            f"only {consecutive_ok}/{required_consecutive} consecutive OK. "
-            f"Iteration may start with degraded system."
-        )
-    # Gate timed out: signal the caller so it can taint the iteration.
-    return False
+            click.echo(
+                f"    Warning: app-ready check timed out after {timeout}s — "
+                f"only {consecutive_ok}/{required_consecutive} consecutive OK. "
+                f"Iteration may start with degraded system."
+            )
+        # Gate timed out: signal the caller so it can taint the iteration.
+        return False
+    finally:
+        if _gate_loader is not None:
+            _gate_stop.set()
+            _gate_loader.join(timeout=10)

@@ -244,3 +244,64 @@ class TestPreGateWarmup:
         """pre_gate_warmup_s=0 (default) does not pump pre-gate load."""
         warm_mock = _run_gate_warmup(pre_gate_warmup_s=0)
         assert warm_mock.call_count == 0
+
+
+class TestSustainedGateLoad:
+    """The --gate-sustained-load loader pumps warm-up DURING the gate and is
+    always stopped on exit (no leaked thread)."""
+
+    def _run(self, sustained, exec_fn=_exec_http_fail):
+        import threading
+        import time as real_time
+
+        warm_mock = MagicMock()
+        pumped = threading.Event()
+
+        def warm_side_effect(*a, **k):
+            pumped.set()
+            real_time.sleep(0.01)
+
+        warm_mock.side_effect = warm_side_effect
+
+        def gated_exec(core, ns, pod, cmd):
+            # The gate's first route check can't return until the loader has
+            # pumped at least once (when enabled), making call counting
+            # deterministic regardless of thread scheduling.
+            if sustained:
+                pumped.wait(timeout=5)
+            return exec_fn(core, ns, pod, cmd)
+
+        exec_mock = MagicMock(side_effect=gated_exec)
+        fake_time = MagicMock()
+        fake_time.time.side_effect = itertools.count(0, 1)
+        fake_time.sleep.return_value = None
+        with (
+            patch("chaosprobe.metrics.base.find_probe_pod", return_value="probe-pod"),
+            patch("chaosprobe.metrics.base.exec_in_pod", exec_mock),
+            patch.object(readiness, "time", fake_time),
+            patch.object(readiness, "warmup_application", warm_mock),
+            patch.object(readiness.k8s_client, "CoreV1Api", return_value=MagicMock()),
+        ):
+            readiness.wait_for_app_ready(
+                "ns",
+                "frontend",
+                timeout=4,
+                http_routes=HTTP_ROUTE,
+                service_routes=None,
+                required_consecutive=5,
+                sustained_gate_load=sustained,
+            )
+        alive = [t.name for t in threading.enumerate() if t.name == "gate-sustained-load"]
+        return warm_mock, alive
+
+    def test_sustained_load_pumps_during_gate_and_is_stopped(self):
+        warm_mock, alive = self._run(sustained=True)
+        assert warm_mock.call_count >= 1, "loader should pump warm-up during the gate"
+        assert alive == [], "the gate-sustained-load thread must be stopped on exit"
+
+    def test_off_by_default_no_loader_thread(self):
+        warm_mock, alive = self._run(sustained=False)
+        # Gate always fails, so the post-gate warmup is unreachable and no loader
+        # runs → warmup_application is never called.
+        assert warm_mock.call_count == 0
+        assert alive == []

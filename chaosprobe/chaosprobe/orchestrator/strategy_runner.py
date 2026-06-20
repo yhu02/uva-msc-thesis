@@ -526,6 +526,8 @@ class RunContext:
     app_ready_timeout: int = 240
     #: Opt-in pre-gate warm-up seconds (0 = off); see wait_for_app_ready.
     pre_gate_warmup_s: int = 0
+    #: Opt-in sustained-during-gate load (keeps routes hot through the gate).
+    sustained_gate_load: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -889,6 +891,7 @@ def _run_single_iteration(
         ctx.target_deployment,
         timeout=ctx.app_ready_timeout,
         pre_gate_warmup_s=ctx.pre_gate_warmup_s,
+        sustained_gate_load=ctx.sustained_gate_load,
         http_routes=http_routes or None,
         service_routes=service_routes or None,
     )
