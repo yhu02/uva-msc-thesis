@@ -1340,6 +1340,21 @@ def _acquire_run_lock() -> None:
     ),
 )
 @click.option(
+    "--gate-sustained-load/--no-gate-sustained-load",
+    default=False,
+    help=(
+        "Keep sustained warm-up load flowing on the probed routes THROUGHOUT the "
+        "app-readiness gate, not just before it (default off).  A one-shot "
+        "--pre-gate-warmup is undone by the gate's own intermittent probing: "
+        "between the 3s probes a traffic-dependent app (hotelReservation's gRPC "
+        "keepalive storm) goes idle and re-destabilises, so the consecutive-OK "
+        "count never builds.  This pumps load via a background thread for the "
+        "whole gate window so its probes land on a continuously-exercised app.  "
+        "Pair with --pre-gate-warmup for a head start.  Online Boutique leaves "
+        "it off."
+    ),
+)
+@click.option(
     "--experiment",
     "-e",
     multiple=True,
@@ -1574,6 +1589,7 @@ def run(
     settle_time: int,
     app_ready_timeout: int,
     pre_gate_warmup: int,
+    gate_sustained_load: bool,
     experiment: Tuple[str, ...],
     iterations: int,
     load_profile: Optional[str],
@@ -1834,6 +1850,7 @@ def run(
             settle_time=settle_time,
             app_ready_timeout=app_ready_timeout,
             pre_gate_warmup_s=pre_gate_warmup,
+            sustained_gate_load=gate_sustained_load,
             iterations=iterations,
             baseline_duration=baseline_duration,
             measure_latency=measure_latency,
