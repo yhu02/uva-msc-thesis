@@ -524,6 +524,8 @@ class RunContext:
     # after a restart — need a larger budget so the clean-baseline restart does
     # not false-taint every iteration with ``app_ready_timeout``.
     app_ready_timeout: int = 240
+    #: Opt-in pre-gate warm-up seconds (0 = off); see wait_for_app_ready.
+    pre_gate_warmup_s: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -886,6 +888,7 @@ def _run_single_iteration(
         ctx.namespace,
         ctx.target_deployment,
         timeout=ctx.app_ready_timeout,
+        pre_gate_warmup_s=ctx.pre_gate_warmup_s,
         http_routes=http_routes or None,
         service_routes=service_routes or None,
     )
