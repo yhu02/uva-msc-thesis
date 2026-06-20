@@ -528,6 +528,9 @@ class RunContext:
     pre_gate_warmup_s: int = 0
     #: Opt-in sustained-during-gate load (keeps routes hot through the gate).
     sustained_gate_load: bool = False
+    #: Parallel warm-up loops per route for the sustained-gate loader (≥1).
+    #: 1/route does not settle a deep gRPC fan-out's keepalive storm; ~6 does.
+    gate_load_concurrency: int = 6
 
 
 # ---------------------------------------------------------------------------
@@ -892,6 +895,7 @@ def _run_single_iteration(
         timeout=ctx.app_ready_timeout,
         pre_gate_warmup_s=ctx.pre_gate_warmup_s,
         sustained_gate_load=ctx.sustained_gate_load,
+        gate_load_concurrency=ctx.gate_load_concurrency,
         http_routes=http_routes or None,
         service_routes=service_routes or None,
     )

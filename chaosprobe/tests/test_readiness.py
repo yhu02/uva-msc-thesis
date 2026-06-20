@@ -239,18 +239,56 @@ class TestPreGateWarmup:
         # The single call is the PRE-gate one (the post-gate warmup uses 20s and
         # is unreachable here because the gate never passes).
         assert warm_mock.call_args.kwargs["duration_s"] == 45
+        # The pre-gate warm-up must NOT inherit the gate's per-route concurrency —
+        # it stays at the default 1 (only the sustained-during-gate loader cranks it).
+        assert warm_mock.call_args.kwargs.get("concurrency", 1) == 1
 
     def test_no_pre_gate_warmup_by_default(self):
         """pre_gate_warmup_s=0 (default) does not pump pre-gate load."""
         warm_mock = _run_gate_warmup(pre_gate_warmup_s=0)
         assert warm_mock.call_count == 0
 
+    def test_post_gate_warmups_stay_at_concurrency_one(self):
+        """The post-gate + convergence warmups must NOT inherit the gate's
+        per-route concurrency — only the sustained-during-gate loader cranks it.
+
+        Drive a PASSING gate (so the post-gate warmup + convergence bursts run)
+        with a non-default gate_load_concurrency=9; every warmup_application call
+        on this path must still default to concurrency=1.
+        """
+        warm_mock = MagicMock(return_value=None)
+        exec_mock = MagicMock(side_effect=_exec_http_ok_tcp_ok)
+        fake_time = MagicMock()
+        fake_time.time.side_effect = itertools.count(0, 1)
+        fake_time.sleep.return_value = None
+        with (
+            patch("chaosprobe.metrics.base.find_probe_pod", return_value="probe-pod"),
+            patch("chaosprobe.metrics.base.exec_in_pod", exec_mock),
+            patch.object(readiness, "time", fake_time),
+            patch.object(readiness, "warmup_application", warm_mock),
+            patch.object(readiness.k8s_client, "CoreV1Api", return_value=MagicMock()),
+        ):
+            readiness.wait_for_app_ready(
+                "ns",
+                "frontend",
+                timeout=60,
+                http_routes=HTTP_ROUTE,
+                service_routes=None,
+                required_consecutive=1,
+                sustained_period_s=0,
+                gate_load_concurrency=9,  # would leak in if a warmup were wired wrong
+            )
+        assert warm_mock.call_count >= 1, "post-gate warm-up should run on a passing gate"
+        assert all(
+            c.kwargs.get("concurrency", 1) == 1 for c in warm_mock.call_args_list
+        ), "post-gate/convergence warmups must stay at concurrency=1"
+
 
 class TestSustainedGateLoad:
     """The --gate-sustained-load loader pumps warm-up DURING the gate and is
     always stopped on exit (no leaked thread)."""
 
-    def _run(self, sustained, exec_fn=_exec_http_fail):
+    def _run(self, sustained, exec_fn=_exec_http_fail, gate_load_concurrency=6):
         import threading
         import time as real_time
 
@@ -290,6 +328,7 @@ class TestSustainedGateLoad:
                 service_routes=None,
                 required_consecutive=5,
                 sustained_gate_load=sustained,
+                gate_load_concurrency=gate_load_concurrency,
             )
         alive = [t.name for t in threading.enumerate() if t.name == "gate-sustained-load"]
         return warm_mock, alive
@@ -305,3 +344,45 @@ class TestSustainedGateLoad:
         # runs → warmup_application is never called.
         assert warm_mock.call_count == 0
         assert alive == []
+
+    def test_loader_passes_gate_load_concurrency(self):
+        """The sustained-gate loader pumps at the configured per-route concurrency."""
+        warm_mock, _ = self._run(sustained=True, gate_load_concurrency=9)
+        assert warm_mock.call_count >= 1
+        assert all(
+            c.kwargs.get("concurrency") == 9 for c in warm_mock.call_args_list
+        ), "every loader burst must use the configured gate_load_concurrency"
+
+
+class TestWarmupConcurrency:
+    """warmup_application builds ``concurrency`` parallel wget loops per route."""
+
+    def _capture_cmd(self, concurrency):
+        exec_mock = MagicMock(return_value="done")
+        with patch("chaosprobe.metrics.base.exec_in_pod", exec_mock):
+            readiness.warmup_application(
+                MagicMock(),
+                "ns",
+                "probe-pod",
+                [("/a", "http://svc.ns/a"), ("/b", "http://svc.ns/b")],
+                duration_s=1,
+                concurrency=concurrency,
+            )
+        # exec_in_pod(core, ns, pod, ["sh", "-c", cmd]) → cmd is args[3][2]
+        cmd = exec_mock.call_args.args[3][2]
+        return cmd
+
+    def test_default_one_loop_per_route(self):
+        cmd = self._capture_cmd(1)
+        assert cmd.count("http://svc.ns/a") == 1
+        assert cmd.count("http://svc.ns/b") == 1
+
+    def test_concurrency_replicates_loops_per_route(self):
+        cmd = self._capture_cmd(3)
+        assert cmd.count("http://svc.ns/a") == 3
+        assert cmd.count("http://svc.ns/b") == 3
+
+    def test_concurrency_below_one_is_clamped(self):
+        cmd = self._capture_cmd(0)
+        assert cmd.count("http://svc.ns/a") == 1
+        assert cmd.count("http://svc.ns/b") == 1
