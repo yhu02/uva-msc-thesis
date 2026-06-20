@@ -43,7 +43,11 @@ from chaosprobe.orchestrator.run_phases import (
     summarise_placement_match_rates,
     write_run_results,
 )
-from chaosprobe.orchestrator.strategy_runner import RunContext, execute_strategy
+from chaosprobe.orchestrator.strategy_runner import (
+    RunContext,
+    _adjacent_topology_path,
+    execute_strategy,
+)
 from chaosprobe.orchestrator.v2_session import (
     PACKED_ASSIGNMENT_ROUND_ROBIN,
     PACKED_ASSIGNMENT_SOLVER,
@@ -60,6 +64,7 @@ from chaosprobe.orchestrator.v2_session import (
 )
 from chaosprobe.placement import affinity_engine
 from chaosprobe.placement import dns_cache as dns_cache_engine
+from chaosprobe.placement.fraction_solver import load_static_topology
 from chaosprobe.placement.mutator import PlacementMutator
 from chaosprobe.placement.strategy import DEFAULT_RUN_STRATEGIES, PlacementStrategy
 from chaosprobe.probes.builder import (
@@ -1115,6 +1120,7 @@ def _init_v2_session(
     namespace: str,
     mutator: PlacementMutator,
     service_routes: Optional[List[Tuple[str, str, str, str, str]]],
+    scenario: Optional[Dict[str, Any]] = None,
 ) -> V2Session:
     """Build the live session: discover services, derive the solver graph,
     and bind the affinity-engine API.  Raises ``click.ClickException`` when
@@ -1122,6 +1128,25 @@ def _init_v2_session(
     services = discover_services(mutator)
     edges = edges_from_routes(service_routes or [], services)
     try:
+        if not edges and scenario is not None:
+            # Workloads with no `*_SERVICE_ADDR` env-var dependencies (e.g.
+            # hotelReservation, which resolves its gRPC backends through Consul)
+            # yield no env-derived edges.  Fall back to the hand-curated static
+            # `topology.json` adjacent to the scenario — the same edge set the
+            # fraction-solver gate consumes via load_static_topology — so the v2
+            # cross-node fraction is defined.  Online Boutique keeps its
+            # env-derived edges (this branch is skipped when edges are present).
+            topo_path = _adjacent_topology_path(scenario)
+            if topo_path:
+                static_edges, _ = load_static_topology(topo_path)
+                # Keep only edges whose endpoints are live discovered services.
+                # A topology that names a not-yet-deployed, scaled-to-zero, or
+                # excluded endpoint then degrades to the helpful "no inter-service
+                # edges" error below (and is normalized to a ClickException),
+                # instead of raising a raw ValueError mid-run when the solver
+                # later validates edges against the live service set.
+                live = set(services)
+                edges = [e for e in static_edges if e[0] in live and e[1] in live]
         session = build_session(
             namespace,
             levels=args.levels,
@@ -1766,7 +1791,7 @@ def run(
     # ── v2 session: discover services, derive the solver graph, bind the API ──
     v2_state: Optional[V2Session] = None
     if v2_args is not None:
-        v2_state = _init_v2_session(v2_args, namespace, mutator, service_routes)
+        v2_state = _init_v2_session(v2_args, namespace, mutator, service_routes, shared_scenario)
         # Self-heal a DNS-cache override a prior aborted C3 run may have left:
         # reset to the cluster default before this run measures anything, so a
         # stale cache-off path cannot corrupt the cache-on baseline. Symmetric

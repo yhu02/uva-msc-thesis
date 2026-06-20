@@ -9,6 +9,7 @@ conditions ride the strategy loop in their randomized order and that
 ``summary.json`` gains the ``v2Session`` block.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -222,6 +223,83 @@ class TestInitV2Session:
         )
         with pytest.raises(click.ClickException, match="no inter-service edges"):
             _init_v2_session(self._args(), "ns", self._mutator(), None)
+
+    def test_falls_back_to_static_topology_when_no_env_edges(self, monkeypatch, tmp_path):
+        # Consul/gRPC workloads (hotelReservation) have no *_SERVICE_ADDR env
+        # deps → edges_from_routes is empty; the v2 session must fall back to the
+        # static topology.json adjacent to the scenario so the fraction is defined.
+        api = MagicMock()
+        monkeypatch.setattr(
+            run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: api)
+        )
+        (tmp_path / "topology.json").write_text(
+            json.dumps({"services": ["a", "b", "c"], "edges": [["a", "b"], ["b", "c"]]})
+        )
+        session = _init_v2_session(
+            self._args(),
+            "ns",
+            self._mutator(),
+            None,  # no env-var routes
+            {"path": str(tmp_path / "pod-delete.yaml")},
+        )
+        assert session.edges == [("a", "b", 1.0), ("b", "c", 1.0)]
+
+    def test_env_edges_take_precedence_over_static_topology(self, monkeypatch, tmp_path):
+        # When env-var routes already yield edges, the static fallback is NOT used
+        # (Online Boutique keeps its measured/env graph).
+        api = MagicMock()
+        monkeypatch.setattr(
+            run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: api)
+        )
+        # A topology.json with DIFFERENT edges — must be ignored when env edges exist.
+        (tmp_path / "topology.json").write_text(
+            json.dumps({"services": ["a", "b", "c"], "edges": [["a", "c"]]})
+        )
+        routes = [("a", "b", "b:1", "grpc", "a->b"), ("b", "c", "c:1", "tcp", "b->c")]
+        session = _init_v2_session(
+            self._args(), "ns", self._mutator(), routes, {"path": str(tmp_path / "x.yaml")}
+        )
+        assert session.edges == [("a", "b", 1.0), ("b", "c", 1.0)]
+
+    def test_no_routes_and_no_adjacent_topology_still_raises(self, monkeypatch, tmp_path):
+        # Scenario dir without a topology.json → the helpful error is preserved.
+        monkeypatch.setattr(
+            run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: MagicMock())
+        )
+        with pytest.raises(click.ClickException, match="no inter-service edges"):
+            _init_v2_session(
+                self._args(), "ns", self._mutator(), None, {"path": str(tmp_path / "x.yaml")}
+            )
+
+    def test_static_edges_filtered_to_live_services(self, monkeypatch, tmp_path):
+        # An edge endpoint that is not a live discovered service (mutator yields
+        # a,b,c) is dropped, so the solver never validates against a phantom and
+        # raises mid-run. Here b->d is dropped, a->b survives.
+        api = MagicMock()
+        monkeypatch.setattr(
+            run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: api)
+        )
+        (tmp_path / "topology.json").write_text(
+            json.dumps({"services": ["a", "b", "c", "d"], "edges": [["a", "b"], ["b", "d"]]})
+        )
+        session = _init_v2_session(
+            self._args(), "ns", self._mutator(), None, {"path": str(tmp_path / "x.yaml")}
+        )
+        assert session.edges == [("a", "b", 1.0)]
+
+    def test_malformed_adjacent_topology_raises_click_exception(self, monkeypatch, tmp_path):
+        # A structurally unsound topology.json must surface as a ClickException
+        # (normalized like every other failure here), not a raw ValueError traceback.
+        monkeypatch.setattr(
+            run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: MagicMock())
+        )
+        (tmp_path / "topology.json").write_text(
+            json.dumps({"services": ["a", "b"], "edges": []})  # empty edges → ValueError
+        )
+        with pytest.raises(click.ClickException):
+            _init_v2_session(
+                self._args(), "ns", self._mutator(), None, {"path": str(tmp_path / "x.yaml")}
+            )
 
 
 class TestRestoreV2Placements:
