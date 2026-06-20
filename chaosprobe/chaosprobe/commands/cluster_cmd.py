@@ -198,7 +198,15 @@ def cluster_vagrant():
     help="CPUs for ALL VMs (overrides --cp-cpus/--worker-cpus)",
 )
 @click.option("--cp-memory", default=12288, type=int, help="Memory for control plane VMs in MB")
-@click.option("--cp-cpus", default=2, type=int, help="CPUs for control plane VMs")
+@click.option(
+    "--cp-cpus",
+    default=6,
+    type=int,
+    help="CPUs for control plane VMs. Higher than workers because ChaosCenter "
+    "(LitmusChaos' control plane, including its 3-node MongoDB replica set) is "
+    "pinned to the control-plane node; 2 vCPUs starve the MongoDB replica-set "
+    "initial-sync and leave it crash-looping.",
+)
 @click.option("--worker-memory", default=4096, type=int, help="Memory for worker VMs in MB")
 @click.option("--worker-cpus", default=2, type=int, help="CPUs for worker VMs")
 @click.option("--box", default="generic/ubuntu2204", help="Vagrant box image")
