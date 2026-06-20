@@ -202,6 +202,9 @@ def wait_for_app_ready(
         namespace,
         require_python3=False,
         exclude_prefixes=[target_deployment],
+        # The gate probes and warms up via wget; a wget-less pod (e.g. the
+        # litmus subscriber-infra pods) would false-fail every probe → 0/5.
+        require_wget=True,
     )
     if not pod:
         click.echo("    Warning: no probe pod for app-ready check, skipping")
@@ -316,6 +319,7 @@ def wait_for_app_ready(
                         namespace,
                         require_python3=False,
                         exclude_prefixes=[target_deployment],
+                        require_wget=True,
                     )
                     if new_pod and new_pod != pod:
                         pod = new_pod
@@ -503,6 +507,7 @@ def wait_for_app_ready(
                         namespace,
                         require_python3=False,
                         exclude_prefixes=[target_deployment],
+                        require_wget=True,
                     )
                     if new_pod and new_pod != pod:
                         pod = new_pod
