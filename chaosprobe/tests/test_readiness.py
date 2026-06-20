@@ -193,3 +193,54 @@ class TestAppReadyReturnValue:
             patch.object(readiness.k8s_client, "CoreV1Api", return_value=MagicMock()),
         ):
             assert readiness.wait_for_app_ready("ns", "frontend", http_routes=HTTP_ROUTE) is True
+
+
+def _exec_http_fail(core, ns, pod, cmd):
+    """Every probe fails, so the consecutive-OK gate never passes."""
+    return "FAIL"
+
+
+def _run_gate_warmup(pre_gate_warmup_s, exec_fn=_exec_http_fail, timeout=4):
+    """Drive wait_for_app_ready capturing the (patched) warmup_application mock.
+
+    With an always-failing exec the gate never reaches the consecutive-OK
+    threshold, so the POST-gate warmup (duration_s=20) is never invoked --
+    isolating the pre-gate warm-up call.
+    """
+    exec_mock = MagicMock(side_effect=exec_fn)
+    warm_mock = MagicMock()
+    fake_time = MagicMock()
+    fake_time.time.side_effect = itertools.count(0, 1)
+    fake_time.sleep.return_value = None
+    with (
+        patch("chaosprobe.metrics.base.find_probe_pod", return_value="probe-pod"),
+        patch("chaosprobe.metrics.base.exec_in_pod", exec_mock),
+        patch.object(readiness, "time", fake_time),
+        patch.object(readiness, "warmup_application", warm_mock),
+        patch.object(readiness.k8s_client, "CoreV1Api", return_value=MagicMock()),
+    ):
+        readiness.wait_for_app_ready(
+            "ns",
+            "frontend",
+            timeout=timeout,
+            http_routes=HTTP_ROUTE,
+            service_routes=None,
+            required_consecutive=5,
+            pre_gate_warmup_s=pre_gate_warmup_s,
+        )
+    return warm_mock
+
+
+class TestPreGateWarmup:
+    def test_pre_gate_warmup_runs_before_a_gate_that_never_passes(self):
+        """pre_gate_warmup_s>0 pumps sustained load even if the gate times out."""
+        warm_mock = _run_gate_warmup(pre_gate_warmup_s=45)
+        assert warm_mock.call_count == 1, "pre-gate warm-up should run exactly once"
+        # The single call is the PRE-gate one (the post-gate warmup uses 20s and
+        # is unreachable here because the gate never passes).
+        assert warm_mock.call_args.kwargs["duration_s"] == 45
+
+    def test_no_pre_gate_warmup_by_default(self):
+        """pre_gate_warmup_s=0 (default) does not pump pre-gate load."""
+        warm_mock = _run_gate_warmup(pre_gate_warmup_s=0)
+        assert warm_mock.call_count == 0

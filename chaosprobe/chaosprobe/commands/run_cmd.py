@@ -1323,6 +1323,23 @@ def _acquire_run_lock() -> None:
     ),
 )
 @click.option(
+    "--pre-gate-warmup",
+    default=0,
+    type=click.IntRange(min=0),
+    help=(
+        "Seconds of sustained warm-up load to pump on the probed routes "
+        "BEFORE the app-readiness gate starts counting (default 0 = off).  "
+        "Some workloads only become reachable under sustained traffic -- "
+        "hotelReservation's gRPC clients enter a too_many_pings/GoAway "
+        "keepalive storm in the no-traffic window after a restart that only "
+        "settles once traffic keeps the streams active.  The post-gate "
+        "warm-up cannot help (it runs only after the gate passes, which the "
+        "storm prevents), so set this for such workloads (e.g. 90) to let "
+        "the gate pass cleanly instead of false-tainting every iteration "
+        "with 'app_ready_timeout'.  Fast-recovering apps leave it at 0."
+    ),
+)
+@click.option(
     "--experiment",
     "-e",
     multiple=True,
@@ -1556,6 +1573,7 @@ def run(
     seeds: Optional[str],
     settle_time: int,
     app_ready_timeout: int,
+    pre_gate_warmup: int,
     experiment: Tuple[str, ...],
     iterations: int,
     load_profile: Optional[str],
@@ -1815,6 +1833,7 @@ def run(
             seed=seed,
             settle_time=settle_time,
             app_ready_timeout=app_ready_timeout,
+            pre_gate_warmup_s=pre_gate_warmup,
             iterations=iterations,
             baseline_duration=baseline_duration,
             measure_latency=measure_latency,

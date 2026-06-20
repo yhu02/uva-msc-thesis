@@ -134,6 +134,7 @@ def wait_for_app_ready(
     sustained_period_s: int = 15,
     latency_budget_ms: int = 5000,
     gate_east_west: bool = False,
+    pre_gate_warmup_s: int = 0,
 ) -> bool:
     """Wait until all probed routes respond successfully and stay stable.
 
@@ -314,6 +315,26 @@ def wait_for_app_ready(
                 if not result:
                     return False
         return True
+
+    # Pre-gate warm-up (opt-in, default off): some workloads only become
+    # reachable under SUSTAINED traffic.  hotelReservation's gRPC clients
+    # enter a `too_many_pings`/GoAway keepalive reconnection storm in the
+    # no-traffic window after a restart; it settles only once traffic keeps
+    # the gRPC streams active.  The post-gate warmup below cannot help -- it
+    # runs only after the consecutive-OK gate passes, which the storm
+    # prevents (the gate's intermittent single probes never sustain traffic).
+    # When `pre_gate_warmup_s` > 0, pump sustained load on the probed routes
+    # BEFORE the gate so such workloads settle and the gate can then pass
+    # cleanly, turning a spurious `app_ready_timeout` taint into a real ready
+    # signal.  Fast-recovering workloads (Online Boutique) leave it at 0.
+    # Runs before the deadline is set, so it never eats the gate's budget.
+    if pre_gate_warmup_s > 0 and urls_to_check:
+        click.echo(
+            f"    Pre-gate warm-up: pumping sustained load on "
+            f"{len(urls_to_check)} route(s) for {pre_gate_warmup_s}s to "
+            f"settle traffic-dependent recovery..."
+        )
+        warmup_application(core, namespace, pod, urls_to_check, duration_s=pre_gate_warmup_s)
 
     consecutive_ok = 0
     deadline = time.time() + timeout
