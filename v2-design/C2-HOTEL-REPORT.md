@@ -9,8 +9,10 @@ on V2-H1 (C1-hotel) or the conntrack mechanism.
 **Provenance.** Data: 24 node-drain sessions (3 cells × 8), hotelReservation,
 collected 2026-06-21/22 on `main` commit `bdf1ccb` (all 24 sessions
 `runMetadata.git.dirty = false`). Frozen pre-analysis manifest:
-`c1-c2-hotel-manifest.sha256`. All 24 sessions `doctor --strict` clean (0
-errors), 0 tainted iterations (each session is 1 condition × 1 iteration).
+`c1-c2-hotel-manifest.sha256`; deposited DOI
+[10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129). All 24
+sessions `doctor --strict` clean (0 errors), 0 tainted iterations (each session
+is 1 condition × 1 iteration).
 
 ## Campaign as run
 

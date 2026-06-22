@@ -6,7 +6,9 @@ replication of the online-boutique studies, reported **outside the frozen Holm
 family**. Reports: [`C1-HOTEL-REPORT.md`](C1-HOTEL-REPORT.md),
 [`C2-HOTEL-REPORT.md`](C2-HOTEL-REPORT.md).
 
-**DOI:** _pending — minted at deposit (user-owned)._
+**DOI:** [10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129)
+(version DOI; concept DOI 10.5281/zenodo.20792128). Published 2026-06-22,
+record [zenodo.org/record/20792129](https://zenodo.org/record/20792129).
 
 **Provenance.**
 - Code: `main` commit `bdf1ccb` (all readiness/topology fixes merged: #317–#324).
@@ -37,17 +39,14 @@ family**. Reports: [`C1-HOTEL-REPORT.md`](C1-HOTEL-REPORT.md),
   user-error 0.0 vs 0.21) but below the registered margins (depth 0.044 < 0.053,
   error 0.212 < 0.302); packing controls pass. Mirrors OB.
 
-## Depositing (user-owned — outward-facing, mints the DOI)
+## Deposited (2026-06-22)
 
-1. Verify the manifest against the live files:
-   `cd chaosprobe && sha256sum -c ../v2-design/c1-c2-hotel-manifest.sha256`
-   (paths are relative to `chaosprobe/`).
-2. Create a Zenodo record. Title: _"ChaosProbe — C1+C2 hotelReservation
-   external-validity campaign"_. Mark as a dataset; link `isSupplementTo` the
-   pre-registration (zenodo.20690836) and `isContinuationOf` the OB C1/C2 records.
-3. Upload `/tmp/c1-c2-hotel-deposit.tar.gz`, publish, then record the minted DOI
-   back into this file and the two reports (the `_pending_` placeholders).
+Published to Zenodo as a dataset (CC-BY-4.0): the 254 MB
+`c1-c2-hotel-deposit.tar.gz` (md5 `e9b75fba4c2d6404c1143f1d37870955`, verified
+post-upload), `isSupplementTo` the pre-registration (10.5281/zenodo.20690836) and
+`continues` the OB C1/C2 records (10.5281/zenodo.20690737, 10.5281/zenodo.20726729).
+DOI [10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129) (resolves).
 
-> The upload is token-gated and outward-facing, so it is yours to run — pasting a
-> Zenodo token into the agent prompt is the recurring plaintext-secret hazard;
-> better to run the upload yourself. I have everything else staged and verified.
+To re-verify the archive integrity against the live tree:
+`cd chaosprobe && sha256sum -c ../v2-design/c1-c2-hotel-manifest.sha256`
+(paths are relative to `chaosprobe/`).

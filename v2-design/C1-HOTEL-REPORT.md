@@ -11,8 +11,9 @@ dose-response (V2-H3 is the C2-hotel report).
 **Provenance.** Data: 8 complete-block sessions, hotelReservation, collected
 2026-06-20/21 on `main` commit `bdf1ccb` (all 32 C1+C2 sessions
 `runMetadata.git.dirty = false`). Frozen pre-analysis manifest:
-`c1-c2-hotel-manifest.sha256` (raw `summary.json` + per-condition files). All 8
-sessions `doctor --strict` clean (0 errors); **1 of 120 churn iterations** (one
+`c1-c2-hotel-manifest.sha256` (raw `summary.json` + per-condition files);
+deposited DOI [10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129).
+All 8 sessions `doctor --strict` clean (0 errors); **1 of 120 churn iterations** (one
 iteration of session order-seed 8) carried an `app_ready_timeout` taint and is
 excluded by the analysis per the registered healthy-only rule.
 
