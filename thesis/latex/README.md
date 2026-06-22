@@ -32,10 +32,11 @@ cosmetics). Treat the first compile as a review pass.
 
 The figures are **not** copied into this directory: `main.tex` sets
 `\graphicspath{{../figures/}}`, so the project must contain
-`thesis/figures/*.png` alongside `thesis/latex/`. The figure files map to
-in-text numbers via `thesis/figures/MANIFEST.md` (fig-01 = Fig 3.1,
-fig-02…fig-09 = Figs 5.1…5.8); the chapter files embed them in that order so
-the report-class auto-numbering reproduces the manuscript's figure numbers.
+`thesis/figures/*.png` alongside `thesis/latex/`. The figures use descriptive
+names (`fig-01-workflow`, `fig-h1-dose-response` … `fig-h5-scorecard-icc`,
+`fig-hotel-external-validity`) wired to the LaTeX by the `\label{fig:...}` map in
+`thesis/figures/MANIFEST.md`, which is the single source of truth for the figure
+set and its regeneration commands.
 
 ## Layout
 

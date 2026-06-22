@@ -71,7 +71,8 @@ aggregate resilience scores obscure that effect. This thesis presents
 framework. It manipulates placement through two orthogonal knobs --- the
 cross-node dependency-edge fraction $f$ (packing to spreading) and the
 replication degree $r$ (packed vs anti-affine) --- plus two interventional arms
-(a NodeLocal DNSCache toggle and the kube-proxy mode), and reads every outcome
+(a NodeLocal DNSCache toggle, executed, and the kube-proxy mode, de-scoped to
+ipvs and not run), and reads every outcome
 simultaneously at three layers: the aggregate resilience score, the
 kernel/network mechanism, and the user-visible route. The study runs on the
 Online Boutique benchmark (ten polyglot gRPC microservices plus Redis) on a
@@ -119,6 +120,7 @@ component is unreliable or undefined exactly where it matters.
 \end{abstract}
 
 \tableofcontents
+\listoffigures
 
 % ------------------------------ Chapters --------------------------------
 \input{chapters/01-introduction}
