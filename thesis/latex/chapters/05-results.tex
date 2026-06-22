@@ -52,6 +52,25 @@ two-regime step that would have triggered the distinct registered
 the dose-response is real and statistically significant but practically
 negligible at the registered bar (Figure~\ref{fig:h1}).
 
+\textbf{A disclosed deviation governs this analysis.} H1 (and H5,
+\S\ref{sec:h5}) is computed with the registered D3 pre-window UDP-slope taint
+\emph{withdrawn} from the C1 latency analyses --- the study's only
+\emph{outcome-aware} (non-blind) deviation, logged as D-2026-06-14-02 and decided
+after observing that the registered taint, applied to C1, flags \emph{every}
+iteration at $f{=}0.25$ and $f{=}0.5$: zero complete blocks, so under the gate
+exactly as registered Page's $L$ is uncomputable and \textbf{H1 is unrunnable}.
+The withdrawal rests on protocol-independent grounds: the slope band was
+calibrated on a low-churn affinity-only block and gates the DNS/UDP conntrack
+pool --- a \emph{different} protocol from the TCP/gRPC east-west latency outcome,
+for which the tainted levels are in fact the \emph{cleanest} baselines --- and it
+reproduces exactly the placement-coupled pre-window transient the M2 preparation
+had pre-flagged. The result is reported taint-off; the registered taint-on run is
+available as a sensitivity check but, for H1, yields \emph{no} result rather than
+a different one. This asymmetry matters: H5's FAIL verdict is robust to the
+choice (it fails either way, \S\ref{sec:h5}), whereas H1 has a verdict only with
+the taint off. Being non-blind, this is the one deviation a reader may weigh
+differently; it is recorded in full in the deviations log.
+
 \begin{figure}[tb]
   \centering
   \includegraphics[width=0.78\textwidth]{fig-h1-dose-response.png}

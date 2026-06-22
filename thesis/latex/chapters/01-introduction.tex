@@ -86,7 +86,8 @@ produces the findings at all.
 The study at a glance: placement is manipulated through two orthogonal knobs ---
 the cross-node dependency-edge fraction $f$ (packing to spreading) and the
 replication degree $r$ (packed vs anti-affine) --- plus two interventional arms
-(a NodeLocal DNSCache toggle and the kube-proxy mode), realized by
+(a NodeLocal DNSCache toggle, executed, and the kube-proxy mode, de-scoped to
+ipvs and not run), realized by
 deployment-level mutation on the Online Boutique benchmark (ten polyglot gRPC
 microservices plus Redis) on a pinned cluster of eight 2-vCPU/4-GiB workers
 (Kubernetes v1.28.6, kube-proxy in ipvs mode). The evidence is three

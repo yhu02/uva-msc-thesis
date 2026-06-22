@@ -114,7 +114,9 @@ C2-hotel replication rescue & H3 & three cells (r1-packed, r3-packed, r3-anti-af
 
 Both arms were collected and analyzed on \texttt{main} commit \texttt{bdf1ccb}
 (\texttt{git.dirty: false}). All 32 sessions are \texttt{doctor --strict} clean;
-1 of the 144 churn iterations (one iteration of C1-hotel order-seed 8, collected
+1 of the 144 C1/C2-hotel iterations (120 C1-hotel \texttt{pod-delete} churn
+iterations $+$ 24 C2-hotel \texttt{node-drain} sessions; the excluded one is an
+iteration of C1-hotel order-seed 8, collected
 after a deliberate pause/restart) carried an \texttt{app\_ready\_timeout} taint
 and is excluded by the registered healthy-only rule. The raw data are deposited
 as a single CC-BY-4.0 dataset, DOI

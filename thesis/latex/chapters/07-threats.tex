@@ -49,6 +49,8 @@ threat-by-threat detail.
 \textbf{Metric-availability gaps} & Missing PromQL queries can manufacture fake zeros. & \texttt{metricAvailability} distinguishes ``not collected'' from ``collected zero'' (e.g.\ kube-proxy programming latency is recorded as \emph{uncollected} here, anchoring the mechanism only conceptually). \\
 \addlinespace
 \textbf{Overclaiming causality} & Run-level slowness can confound correlations. & Dependent-vs-control routes + within-run correlation; TOST for equivalence claims; causal language reserved for the manipulated variable (placement) and the controlled DNS intervention. \\
+\addlinespace
+\textbf{Outcome-aware deviation} & One deviation (D-2026-06-14-02, withdrawing the registered D3 UDP-slope taint from the C1 H1/H5 latency analyses) was decided \emph{after} observing it made H1 unrunnable --- the study's only non-blind deviation. & Disclosed in the H1 result (\S\ref{sec:h1}); justified on protocol-independent grounds (the band gates DNS/UDP, a different protocol than the latency outcome, and discards the cleanest levels); the taint-on sensitivity run is available, and H5's verdict is shown robust to the choice while H1's dependence is stated explicitly. \\
 \bottomrule
 \end{tabular}
 \end{center}
