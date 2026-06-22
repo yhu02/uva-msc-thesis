@@ -1,14 +1,11 @@
 % =========================================================================
 % main.tex — Overleaf-ready LaTeX port of the UvA MSc thesis manuscript.
 %
-% COMPILE-UNVERIFIED: this scaffold was hand-converted from the canonical
-% Markdown manuscript (thesis/*.md) on a machine with no TeX toolchain.
-% It has NOT been compiled. Expect minor fixups on the first Overleaf
-% compile. See thesis/latex/README.md for import instructions.
+% Compiles cleanly with tectonic/XeLaTeX (PDF committed as
+% Yvo-Hu-MSc-thesis.pdf). Originally hand-converted from the canonical Markdown
+% manuscript; see thesis/latex/README.md for import instructions.
 %
-% Source of truth: thesis/00-abstract.md … thesis/09-appendix-provenance.md
-% (wording is governed by chaosprobe/docs/explanation/scope-of-claims.md;
-% no content changes were made in this port).
+% Wording is governed by chaosprobe/docs/explanation/scope-of-claims.md.
 % =========================================================================
 \documentclass[11pt,a4paper]{report}
 
@@ -138,8 +135,8 @@ component is unreliable or undefined exactly where it matters.
 \input{appendix/a-provenance}
 
 % ---------------------------- Bibliography ------------------------------
-% \nocite{*} prints the full annotated-bibliography source (references.md):
-% entries referenced only by inline \href identifiers still appear.
+% \nocite{*} prints the full bibliography from references.bib so entries
+% referenced only by inline \href identifiers still appear.
 \nocite{*}
 \bibliography{references}
 
