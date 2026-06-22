@@ -300,6 +300,74 @@ user-visible placement, availability, and dose-response advantages the
 hypotheses predicted. The discussion (\S\ref{sec:decoupling}) develops this as
 the study's central finding: a real mechanism, rigorously bounded in reach.
 
+\section{External validity --- a second workload}\label{sec:external-validity}
+
+\textbf{Motivation.} The single largest threat to these results
+(\S\ref{sec:generalizes}) is that they come from one workload. As an exploratory
+check --- \emph{outside} the frozen confirmatory family, so no multiplicity
+correction is owed --- the two placement-bearing studies (H1 dose-response and
+H3 replication rescue) were replicated on a second, deliberately different
+application: DeathStarBench hotelReservation, a deep frontend fan-out with
+per-service datastore pairs and Go gRPC over Consul service discovery, against
+online-boutique's flatter topology and ClusterIP routing.
+
+\textbf{Campaign.} The protocols were identical: 8 H1 complete-block sessions
+(\texttt{pod-delete} on the search path, $r{=}1$, five $f$-levels $\times$ 3
+iterations) and 24 H3 sessions (\texttt{node-drain}; cells r1-packed,
+r3-packed, r3-anti-affine $\times$ 8). All 32 sessions were
+\texttt{doctor --strict} clean with pristine provenance; 1 of 144 iterations was
+excluded on an \texttt{app\_ready\_timeout} taint.\footnote{Measuring
+hotelReservation required general ChaosProbe fixes, not changes to the
+experimental design or the system under test: a wget-capable readiness-probe
+pod, a static-topology fallback for the cross-node fraction on Consul/gRPC
+services that expose no service-address environment dependencies, and sustained
+warm-up load through the readiness gate. A prior scoping attempt mis-attributed
+the resulting gate timeouts to the workload's gRPC keepalive recovery; the cause
+was these tooling gaps, and once closed the campaign ran clean.}
+
+\textbf{Result --- both arms corroborate online-boutique.}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+study & registered bar & hotelReservation outcome \\
+\midrule
+H1 dose-response & monotone east-west p95 increase, $\geq 15\,\%$ SESOI &
+  Page's $L$ $p = 0.99$ --- \textbf{no increase} \\
+H3 replication rescue & $r{\times}$mode interaction + rescue $\geq$ margins &
+  \texttt{CONJUNCTION = False} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+H1 on hotelReservation shows \emph{no} dose-response of the east-west tail: the
+registered one-sided trend test is non-significant ($p = 0.99$) and the per-level
+medians ($9.34 / 6.44 / 6.32 / 7.10 / 5.40$\,ms) sit in a tight band with, if
+anything, a mild \emph{decrease}. This is the same negative reading as
+online-boutique's sub-SESOI H1 (\S\ref{sec:h1}), slightly strengthened --- no
+increase at all on the deeper topology. H3 reaches online-boutique's top-line
+verdict (\texttt{CONJUNCTION = False}) by the same route --- a \emph{significant}
+$r{\times}$mode interaction on both co-primaries ($p \approx 0$) with anti-affine
+$r{=}3$ the directionally best arm on every measure (trough recovery $15$\,s
+versus $r{=}1$'s $45$\,s, during-chaos user-error $0.0$ versus $0.21$) and the
+packing controls holding --- though the conjunction fails more broadly here:
+where online-boutique cleared the user-error margin and failed only on trough
+depth (\S\ref{sec:h3}), hotelReservation clears \emph{neither} margin (depth
+$0.044 < 0.053$, error $0.212 < 0.302$).
+
+\textbf{Reading.} The cross-workload picture mirrors the within-workload one
+(\S\ref{sec:family-holm}): the \emph{mechanism} --- spreading replicas across
+failure domains shrinks the node-drain blast radius and speeds recovery --- is
+robust and visible on both applications, while the \emph{strong placement and
+margin-clearing claims} hold on neither. That a second, structurally different
+workload reproduces both the below-SESOI dose-response and the
+significant-but-margin-short rescue is the strongest available evidence that the
+study's central finding --- a real mechanism, rigorously bounded in reach --- is
+not an artifact of one application's topology. This arm is exploratory and its
+verdicts are not folded into the Holm family; its full numbers, per-session
+provenance, and frozen integrity manifest are recorded in the committed C1/C2
+hotelReservation campaign reports alongside the deposited raw dataset.
+
 \section{H6 --- direction transfer (not attempted)}\label{sec:h6}
 
 H6 (an exploratory, non-family secondary on iptables-mode direction transfer)
