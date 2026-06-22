@@ -1,14 +1,29 @@
-# hotelReservation external validity — attempted, deferred (with the tooling banked)
+# hotelReservation external validity — RESOLVED and RUN (2026-06-22)
 
-**Status: DEFERRED.** The second-workload (hotelReservation) external-validity
-replication of C1 (V2-H1 dose-response) and C2 (V2-H3 replication-rescue) was
-attempted but **not run to data**: a fundamental mismatch between
-hotelReservation's slow post-restart recovery and ChaosProbe's
-restart-for-clean-baseline methodology makes every iteration's readiness gate
-time out (the system is genuinely unavailable at each iteration's start), which
-the v2 analysis correctly excludes. The confirmatory family (V2-H1/H2/H3/H5) +
-V2-H4/H6 are complete and unaffected; this was the optional exploratory
-extension.
+**Status: COMPLETE.** The second-workload (hotelReservation) external-validity
+replication of C1 (V2-H1 dose-response, 8 sessions) and C2 (V2-H3
+replication-rescue, 24 sessions) **was run to data** — all 32 sessions
+`doctor --strict` clean, provenance pristine (`git.dirty=false`, commit
+`bdf1ccb`), 1 excluded tainted iteration of 144. Results in
+[`C1-HOTEL-REPORT.md`](C1-HOTEL-REPORT.md) and
+[`C2-HOTEL-REPORT.md`](C2-HOTEL-REPORT.md); both **corroborate online-boutique**
+(C1: no dose-response, p=0.99; C2: `CONJUNCTION=False`, but a significant
+interaction with anti-affine directionally rescuing). Deposit staged
+(`c1-c2-hotel-manifest.sha256`).
+
+> **⚠️ Correction (2026-06-22).** The "fundamental blocker" diagnosis below was
+> **wrong**. The per-iteration `app_ready_timeout` was NOT hotel's slow gRPC
+> recovery (that storm is real but intermittent and was never the gate's
+> problem). The actual cause was **two tooling bugs**: (1) the readiness gate
+> probed via `wget` from a pod `find_probe_pod` selected by shell-presence only —
+> hotel's alphabetically-first pod `chaos-exporter` has a shell but **no wget**,
+> so every probe failed `wget: not found` → 0/5 timeout (fixed: `require_wget`,
+> **#322**); and (2) the v2 cross-node fraction had no edges because hotel's
+> Consul/gRPC services expose no `*_SERVICE_ADDR` env deps (fixed: static
+> `topology.json` fallback, **#324**). With both fixed the gate passes in ~57 s
+> and the campaign ran clean — the "restart-vs-recovery research-validity
+> decision" the original text said was needed turned out **not** to be needed.
+> The historical analysis below is retained for the record but is superseded.
 
 ## What works (validated live, tooling merged)
 
