@@ -21,8 +21,9 @@ import single_study_figures as ssf  # noqa: E402
 
 
 def test_all_figures_registry() -> None:
-    # One schematic + one figure per confirmatory/descriptive hypothesis H1–H5.
-    assert ssf.ALL_FIGURES == ("workflow", "h1", "h2", "h3", "h4", "h5")
+    # One schematic + one figure per confirmatory/descriptive hypothesis H1–H5,
+    # plus the exploratory hotelReservation external-validity figure.
+    assert ssf.ALL_FIGURES == ("workflow", "h1", "h2", "h3", "h4", "h5", "hotel")
 
 
 def test_parse_figures_all() -> None:

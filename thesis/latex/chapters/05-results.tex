@@ -340,13 +340,29 @@ H3 replication rescue & $r{\times}$mode interaction + rescue $\geq$ margins &
 \end{tabular}
 \end{center}
 
-H1 on hotelReservation shows \emph{no} dose-response of the east-west tail: the
-registered one-sided trend test is non-significant ($p = 0.99$) and the per-level
-medians ($9.34 / 6.44 / 6.32 / 7.10 / 5.40$\,ms) sit in a tight band with, if
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-hotel-external-validity.png}
+  \caption{\textbf{External validity on hotelReservation} (exploratory, outside
+    the Holm family). \textbf{(a)} H1 dose-response: east-west p95 latency shows
+    no monotone increase in the cross-node fraction $f$ (Page's $L$ $p = 0.99$),
+    a tight $\sim$5--9\,ms band trending mildly downward --- not supported.
+    \textbf{(b)} H3 replication rescue: anti-affine $r{=}3$ drives the
+    during-chaos user-route error to zero (from $r{=}1$'s $0.21$) with a
+    significant $r{\times}$mode interaction, but the rescue stays below the
+    registered $0.302$ margin --- not met. Both arms corroborate online-boutique.}
+  \label{fig:hotel}
+\end{figure}
+
+H1 on hotelReservation shows \emph{no} dose-response of the east-west tail
+(Figure~\ref{fig:hotel}a): the registered one-sided trend test is non-significant
+($p = 0.99$) and the per-level medians ($9.34 / 6.44 / 6.32 / 7.10 / 5.40$\,ms)
+sit in a tight band with, if
 anything, a mild \emph{decrease}. This is the same negative reading as
 online-boutique's sub-SESOI H1 (\S\ref{sec:h1}), slightly strengthened --- no
 increase at all on the deeper topology. H3 reaches online-boutique's top-line
-verdict (\texttt{CONJUNCTION = False}) by the same route --- a \emph{significant}
+verdict (\texttt{CONJUNCTION = False}; Figure~\ref{fig:hotel}b) by the same route
+--- a \emph{significant}
 $r{\times}$mode interaction on both co-primaries ($p \approx 0$) with anti-affine
 $r{=}3$ the directionally best arm on every measure (trough recovery $15$\,s
 versus $r{=}1$'s $45$\,s, during-chaos user-error $0.0$ versus $0.21$) and the

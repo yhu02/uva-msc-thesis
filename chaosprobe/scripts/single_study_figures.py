@@ -60,6 +60,8 @@ DEFAULT_C1 = "results/c1-online-boutique"
 DEFAULT_C2 = "results/c2-roundrobin"
 DEFAULT_C3 = "results/c3-dns"
 DEFAULT_RESULTS_ROOT = "results"
+DEFAULT_C1_HOTEL = "results/c1-hotel"
+DEFAULT_C2_HOTEL = "results/c2-hotel"
 
 
 def _annotate(ax, text: str) -> None:
@@ -371,7 +373,82 @@ def fig_h5_icc(c1_dir: str, out_dir: str) -> str:
     return _save(fig, out_dir, "fig-h5-scorecard-icc.png")
 
 
-ALL_FIGURES = ("workflow", "h1", "h2", "h3", "h4", "h5")
+# ── External validity — hotelReservation (C1 dose-response + C2 rescue) ──────────
+def fig_hotel(c1_hotel_dir: str, c2_hotel_dir: str, out_dir: str) -> str:
+    """Two-panel external-validity figure: (a) H1 dose-response and (b) H3
+    user-error rescue, both on hotelReservation. Reuses the same analysis
+    drivers as the online-boutique figures, pointed at the hotel campaign dirs."""
+    c1: Any = c1_h1_trend.analyze(c1_hotel_dir)
+    c2: Any = c2_h3_anova.analyze(c2_hotel_dir)
+
+    fig, (axa, axb) = plt.subplots(1, 2, figsize=(8.6, 4.0))
+
+    # (a) H1 dose-response — east-west p95 vs f (no increase on hotel).
+    pl = c1["sesoi"]["perLevelGrandMedian"]
+    levels = [f for _, f in c1_h1_trend.LEVELS]
+    y = [pl[cond] for cond, _ in c1_h1_trend.LEVELS]
+    page = c1["pageTrendTest"]
+    axa.plot(levels, y, marker="o", color=ACCENT, lw=2, zorder=3)
+    for x, yy in zip(levels, y):
+        axa.annotate(
+            f"{yy:.1f}",
+            (x, yy),
+            textcoords="offset points",
+            xytext=(0, 8),
+            ha="center",
+            fontsize=8,
+            color=DARK,
+        )
+    axa.set_xlabel("cross-node fraction $f$ (packing $\\rightarrow$ spreading)")
+    axa.set_ylabel("east-west p95 latency (ms), pre-chaos")
+    axa.set_xticks(levels)
+    axa.set_title("(a) H1 dose-response")
+    _annotate(
+        axa,
+        f"Page's $L$={page['l_statistic']:.0f}, $p$={page['p_one_sided']:.2f}\n"
+        f"no monotone increase $\\rightarrow$ not supported",
+    )
+
+    # (b) H3 user-error rescue by cell (anti-affine reaches 0, but below margin).
+    error = c2["userErrorRate"]
+    cells = ["r1", "r3_packed", "r3_anti"]
+    labels = ["$r{=}1$\npacked", "$r{=}3$\npacked", "$r{=}3$\nanti-affine"]
+    colors = [BAR_NO, PACKED_C, SPREAD_C]
+    ev = [error["median"][c] for c in cells]
+    rescue = error.get("rescueObserved", error["median"]["r1"] - error["median"]["r3_anti"])
+    axb.bar(labels, ev, color=colors, width=0.6, zorder=3)
+    for i, v in enumerate(ev):
+        axb.annotate(
+            f"{v:.3f}",
+            (i, v),
+            textcoords="offset points",
+            xytext=(0, 4),
+            ha="center",
+            fontsize=8,
+            color=DARK,
+        )
+    axb.axhline(
+        c2_h3_anova.ERROR_MARGIN,
+        ls="--",
+        color=MARGIN_C,
+        lw=1.4,
+        label=f"rescue margin ({c2_h3_anova.ERROR_MARGIN})",
+    )
+    axb.set_ylabel("user-route error rate (during chaos)")
+    axb.set_title("(b) H3 replication rescue")
+    axb.legend(loc="upper right", fontsize=8)
+    _annotate(
+        axb,
+        f"interaction $p \\approx 0$ (sig)\n"
+        f"rescue {rescue:.3f} $<$ margin $\\rightarrow$ not met",
+    )
+
+    fig.suptitle("External validity --- hotelReservation (exploratory)")
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    return _save(fig, out_dir, "fig-hotel-external-validity.png")
+
+
+ALL_FIGURES = ("workflow", "h1", "h2", "h3", "h4", "h5", "hotel")
 
 
 def parse_figures(spec: str) -> List[str]:
@@ -387,7 +464,14 @@ def parse_figures(spec: str) -> List[str]:
 
 
 def generate(
-    figures: Sequence[str], out_dir: str, c1: str, c2: str, c3: str, results_root: str
+    figures: Sequence[str],
+    out_dir: str,
+    c1: str,
+    c2: str,
+    c3: str,
+    results_root: str,
+    c1_hotel: str = DEFAULT_C1_HOTEL,
+    c2_hotel: str = DEFAULT_C2_HOTEL,
 ) -> Dict[str, str]:
     apply_thesis_style()
     written: Dict[str, str] = {}
@@ -403,6 +487,8 @@ def generate(
         written["h4"] = fig_h4_frontier(results_root, out_dir)
     if "h5" in figures:
         written["h5"] = fig_h5_icc(c1, out_dir)
+    if "hotel" in figures:
+        written["hotel"] = fig_hotel(c1_hotel, c2_hotel, out_dir)
     return written
 
 
@@ -419,6 +505,8 @@ def main(argv: List[str] | None = None) -> int:
     ap.add_argument("--c1-dir", default=DEFAULT_C1)
     ap.add_argument("--c2-dir", default=DEFAULT_C2)
     ap.add_argument("--c3-dir", default=DEFAULT_C3)
+    ap.add_argument("--c1-hotel-dir", default=DEFAULT_C1_HOTEL)
+    ap.add_argument("--c2-hotel-dir", default=DEFAULT_C2_HOTEL)
     ap.add_argument(
         "--results-root",
         default=DEFAULT_RESULTS_ROOT,
@@ -432,6 +520,8 @@ def main(argv: List[str] | None = None) -> int:
         args.c2_dir,
         args.c3_dir,
         args.results_root,
+        args.c1_hotel_dir,
+        args.c2_hotel_dir,
     )
     for key, path in written.items():
         print(f"  {key:9s} -> {path}")
