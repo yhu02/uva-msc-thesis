@@ -85,6 +85,8 @@ The layered-scorecard reliability finding (H5) & \textbf{This regime} & The mech
 \addlinespace
 The dose-response of the east-west tail (H1) & \textbf{This regime, sub-SESOI} & Detected and Holm-significant but below the 15\,\% SESOI on this cluster; a detectable-but-negligible trend, not a transferable magnitude. \\
 \addlinespace
+The placement findings across \emph{workloads} (H1, H3) & \textbf{Corroborated on a 2nd workload} & Both replicated on DeathStarBench hotelReservation (a deep Consul/gRPC fan-out): same below-SESOI dose-response verdict (sub-SESOI on online-boutique, null on hotel) and the same \texttt{CONJUNCTION = False} with a significant-but-margin-short rescue (\S\ref{sec:external-validity}). The mechanism-without-margin pattern is not an artifact of one topology; second \emph{cluster}/infrastructure still untested. \\
+\addlinespace
 Anything about multi-replica / HA failover & \textbf{Partly (node-drain only)} & H3 reaches $r{=}3$ under node-drain; broader HA-failover behaviour is out of scope (\S\ref{sec:future-work}). \\
 \bottomrule
 \end{tabular}
@@ -92,9 +94,10 @@ Anything about multi-replica / HA failover & \textbf{Partly (node-drain only)} &
 
 The asymmetry of this table is deliberate. The portable row is the first: the
 measurement design, the pre-registered campaign protocol, and the analysis
-scripts transfer to any cluster and workload unchanged, and a replication on
-different infrastructure --- and on a second workload --- is the most valuable
-follow-up this study could receive (\S\ref{sec:future-work}). Everything below
+scripts transfer to any cluster and workload unchanged: a second-workload
+replication (\S\ref{sec:external-validity}) corroborates both placement studies,
+and a replication on different infrastructure is now the most valuable remaining
+follow-up (\S\ref{sec:future-work}). Everything below
 degrades gracefully from ``direction only'' to ``not in scope,'' and where a row
 says environment-contingent, the archived manifests make the contingency
 checkable rather than vague: a reader can compare their kube-proxy mode,

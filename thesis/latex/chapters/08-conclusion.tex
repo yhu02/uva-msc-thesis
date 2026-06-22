@@ -52,22 +52,21 @@ a strict bar, and which do not.''
 
 \section{Future work}\label{sec:future-work}
 
-\subsection*{Second-workload external validity (the highest-value next step)}
+\subsection*{Beyond the second workload}
 
-The single largest threat (\S\ref{sec:generalizes}) is that all results come from
-one workload. The natural next step is to replicate the confirmatory family on a
-second microservice application (e.g.\ a Consul/gRPC workload such as
-DeathStarBench hotelReservation). A scoping attempt surfaced a concrete blocker
-worth recording: that workload's inter-service gRPC clients enter a keepalive
-reconnection storm (server-side \texttt{too\_many\_pings} GoAway responses) after
-the per-iteration clean-baseline restart, leaving the search path unavailable
-for many minutes and false-tainting every iteration's readiness gate, even
-though the latency data collected once it recovers is clean. The
-restart-for-clean-baseline protocol is thus incompatible with workloads prone to
-such storms without one of: a much longer readiness budget, a per-workload skip
-of the per-iteration restart (a documented protocol deviation), or tuning the
-workload's gRPC keepalive (a change to the system under test). Resolving that
-choice is the prerequisite for clean second-workload data.
+The single largest threat (\S\ref{sec:generalizes}) --- that all confirmatory
+results come from one workload --- has been \emph{partly addressed}: the two
+placement-bearing studies were replicated on DeathStarBench hotelReservation, a
+deep Consul/gRPC fan-out, and both arms corroborate online-boutique
+(\S\ref{sec:external-validity}) --- a null dose-response and a
+significant-but-margin-short replication rescue --- the strongest available
+evidence that the central finding is not an artifact of one topology. That
+replication is exploratory (a second workload, not a second cluster), so the
+highest-value next steps now lie elsewhere: replicating the family on
+\emph{different infrastructure} (a managed cluster, a different kube-proxy mode,
+non-virtualized nodes), extending to \emph{more} workloads and faults to map how
+far the mechanism-without-margin pattern holds, and the margin-construction fixes
+below that would let the depth and dose-response faces be tested on their merits.
 
 \subsection*{Decomposing and extending the mechanism}
 
