@@ -98,11 +98,16 @@ $n=7$ floor, $p = 0.0225$). Co-locating a service's replicas on one node
 that node, producing a \emph{larger} during-churn UDP drop than spread
 placement, which distributes the same replicas across nodes. Placement
 \emph{does} matter for the conntrack drop --- significantly, but in the opposite
-direction to the registered prediction. A registered secondary confirms the
-mechanism's generality: the packed placement's cache-off drop (median 11153.4)
-also collapses to $\approx 0$ with the cache on (median $-105.2$;
-$p = 0.01125$) --- the intervention removes the drop under \emph{both}
-placements (Figure~\ref{fig:h2}).
+direction to the registered prediction. A registered secondary prediction is
+\emph{not} borne out, and in failing it sharpens the mechanism: the secondary
+held that the packed ($f{=}0$) arm, which has no cross-node dependency edges,
+would show only a near-floor cache effect \emph{if} the drop were specifically
+cross-node DNS. Instead the packed cache-off drop is large (median 11153.4) and
+\emph{also} collapses to $\approx 0$ with the cache on (median $-105.2$;
+$p = 0.01125$). The intervention thus removes the drop under \emph{both}
+placements (Figure~\ref{fig:h2}), so the floodable pool is the \emph{general}
+per-node DNS/UDP conntrack churn rather than specifically cross-node DNS
+resolution --- consistent with the reversed arm-(a) direction.
 
 \begin{figure}[tb]
   \centering
@@ -244,6 +249,11 @@ naive aggregate baseline & 0.066 & [0.027, 0.343] & --- \\
 \end{tabular}
 \end{center}
 
+The scorecard's third layer, the user-tail sub-score (ICC 0.741,
+Figure~\ref{fig:h5}), is reported for completeness but is not part of the
+registered required conjunction, which is over the availability and mechanism
+sub-scores only.
+
 \textbf{Required conjunction: FAIL; H5 is not supported.} This is a sensible
 registered falsification, not a method failure: \texttt{pod-delete} churn
 produces no sustained endpoint outage, so the availability layer has little
@@ -369,7 +379,7 @@ versus $r{=}1$'s $45$\,s, during-chaos user-error $0.0$ versus $0.21$) and the
 packing controls holding --- though the conjunction fails more broadly here:
 where online-boutique cleared the user-error margin and failed only on trough
 depth (\S\ref{sec:h3}), hotelReservation clears \emph{neither} margin (depth
-$0.044 < 0.053$, error $0.212 < 0.302$).
+$0.044 < 0.0526$, error $0.212 < 0.302$).
 
 \textbf{Reading.} The cross-workload picture mirrors the within-workload one
 (\S\ref{sec:family-holm}): the \emph{mechanism} --- spreading replicas across

@@ -75,10 +75,14 @@ drives DNS re-resolution.
 
 The DNS intervention (H2 arm b) settles which component placement controls.
 Enabling the NodeLocal DNSCache shrinks the during-churn drop by a 78\,\% median
-under the spread placement and collapses it to $\approx 0$ under the packed
-placement (a registered secondary): removing the UDP/DNS conntrack churn removes
-the drop under \emph{both} placements. The drop is therefore dominated by the
-DNS/UDP pool, exactly the traffic class the documented UDP-only cleanup targets.
+under the spread placement and \emph{also} collapses it to $\approx 0$ under the
+packed placement. The registered secondary predicted that the packed arm, which
+has no cross-node edges, would show no such cache effect if the drop were
+specifically cross-node DNS; that prediction fails (packed's effect is large),
+which pins the drop on the \emph{general} UDP/DNS pool rather than cross-node
+resolution and removes the drop under \emph{both} placements. The drop is
+therefore dominated by the DNS/UDP pool, exactly the traffic class the documented
+UDP-only cleanup targets.
 This also explains the \emph{reversed} placement direction (H2 arm a): the
 registered prediction was that spreading dependencies across nodes would drive
 more cross-node DNS churn and thus a larger drop, but the data shows the

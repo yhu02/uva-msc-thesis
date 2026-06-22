@@ -28,7 +28,7 @@ to its freeze commit \texttt{20097c1}); all three campaign datasets
 \toprule
 \textbf{campaign} & \textbf{tests} & \textbf{design} & \textbf{sess.} & \textbf{data commit} & \textbf{DOI} \\
 \midrule
-C1 dose-response & H1, H5 & complete-block $f \in \{0, 0.25, 0.5, 0.75, 1.0\}$, $r{=}1$, \texttt{pod-delete} churn; each session visits all five levels in seeded-random order, $5\times3 = 15$ iterations & 8 (s01--s08) & \texttt{2ec934f} & \href{https://doi.org/10.5281/zenodo.20690737}{20690737} \\
+C1 dose-response & H1, H4, H5 & complete-block $f \in \{0, 0.25, 0.5, 0.75, 1.0\}$, $r{=}1$, \texttt{pod-delete} churn; each session visits all five levels in seeded-random order, $5\times3 = 15$ iterations & 8 (s01--s08) & \texttt{2ec934f} & \href{https://doi.org/10.5281/zenodo.20690737}{20690737} \\
 \addlinespace
 C2 replication rescue & H3 & between-subjects $r \in \{1,3\} \times \text{mode} \in \{\text{packed}, \text{anti-affine}\}$, three non-degenerate cells (r1-packed, r3-packed, r3-anti-affine) $\times\,8$, \texttt{node-drain} at $f{=}0.5$ & 24 & \texttt{e533d5b} & \href{https://doi.org/10.5281/zenodo.20726729}{20726729} \\
 \addlinespace
@@ -87,3 +87,42 @@ manifest; representative anchors are
 C1~s01 \texttt{b2282cce\ldots f2301456},
 C2~\#1 (r1-packed) \texttt{e4b3c50f\ldots 504f408}, and
 C3~\#1 (cache-off) \texttt{83169d79\ldots f7fc6a82}.
+
+\section{External-validity campaign (exploratory)}\label{sec:hotel-provenance}
+
+The second-workload replication (\S\ref{sec:external-validity}) is
+\textbf{exploratory and outside the frozen Holm family}; it is deposited and
+provenance-gated to the same bar as the confirmatory campaigns but tests no
+pre-registered hypothesis, so it is recorded separately here. Workload:
+DeathStarBench \texttt{hotelReservation} (namespace \texttt{hotel-reservation}),
+a deep frontend fan-out with per-service datastore pairs and Go gRPC over Consul
+service discovery, on the same eight-worker cluster.
+
+\begin{center}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.16\textwidth}p{0.08\textwidth}p{0.34\textwidth}p{0.06\textwidth}p{0.09\textwidth}p{0.11\textwidth}}
+\toprule
+\textbf{arm} & \textbf{test} & \textbf{design} & \textbf{sess.} & \textbf{data commit} & \textbf{DOI} \\
+\midrule
+C1-hotel dose-response & H1 & complete-block $f \in \{0,0.25,0.5,0.75,1.0\}$, $r{=}1$, \texttt{pod-delete} on the search path, $5\times3$ iterations & 8 & \texttt{bdf1ccb} & \href{https://doi.org/10.5281/zenodo.20792129}{20792129} \\
+\addlinespace
+C2-hotel replication rescue & H3 & three cells (r1-packed, r3-packed, r3-anti-affine) $\times\,8$, \texttt{node-drain} at $f{=}0.5$, round-robin assignment & 24 & \texttt{bdf1ccb} & (same) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Both arms were collected and analyzed on \texttt{main} commit \texttt{bdf1ccb}
+(\texttt{git.dirty: false}). All 32 sessions are \texttt{doctor --strict} clean;
+1 of the 144 churn iterations (one iteration of C1-hotel order-seed 8, collected
+after a deliberate pause/restart) carried an \texttt{app\_ready\_timeout} taint
+and is excluded by the registered healthy-only rule. The raw data are deposited
+as a single CC-BY-4.0 dataset, DOI
+\href{https://doi.org/10.5281/zenodo.20792129}{10.5281/zenodo.20792129}
+(\texttt{isSupplementTo} the pre-registration, \texttt{continues} the C1/C2
+records); the pre-analysis SHA-256 integrity manifest is committed as
+\texttt{c1-c2-hotel-manifest.sha256}. Measuring this workload required general
+tooling fixes (a wget-capable readiness-probe pod, a static-topology fallback for
+the cross-node fraction on Consul/gRPC services, and sustained warm-up load
+through the readiness gate), none of which alter the experimental design or the
+system under test.
