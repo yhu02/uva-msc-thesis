@@ -28,7 +28,7 @@ archives mirror.
 | C2 replication rescue (24 sessions, `node-drain`, `r`×mode) | `results/c2-roundrobin/` | H3 | [10.5281/zenodo.20726729](https://doi.org/10.5281/zenodo.20726729) |
 | C3 placement + DNS (14 sessions, `pod-delete`, cache off/on) | `results/c3-dns/` | H2 | [10.5281/zenodo.20748970](https://doi.org/10.5281/zenodo.20748970) |
 | **hotelReservation external validity** (exploratory; 8 C1 + 24 C2 sessions) | `results/c1-hotel/`, `results/c2-hotel/` | H1, H3 (2nd workload) | [10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129) |
-| **C4 node-drain dose-response** (exploratory design-fix; 8 sessions) | `results/c4-nodedrain-dose/` | H3/H4/H5 availability axis | _staged (DOI pending)_ |
+| **C4 node-drain dose-response** (exploratory design-fix; 8 sessions) | `results/c4-nodedrain-dose/` | H3/H4/H5 availability axis | [10.5281/zenodo.20818800](https://doi.org/10.5281/zenodo.20818800) |
 
 ## Figures
 
