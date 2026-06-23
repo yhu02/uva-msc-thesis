@@ -182,7 +182,10 @@ registered one-pod margin --- the metric's dynamic range coincides with the bar
 it must beat, leaving no room for a rescue to register. The depth co-primary is
 reported exactly as registered (not retuned); the substantive result is the
 error face, where replication rescues user-visible availability when replicas
-are spread (Figure~\ref{fig:h3}).
+are spread (Figure~\ref{fig:h3}). A design-corrected re-analysis
+(\S\ref{sec:design-fix}) shows the rescue effect is real once this construction
+artifact is removed: anti-affine halves the trough depth and eliminates the
+user-route error.
 
 \begin{figure}[tb]
   \centering
@@ -233,7 +236,10 @@ latency$\leftrightarrow$availability trade-off the frontier was designed to
 reveal is \textbf{not realizable from the collected data}: the fault that varies
 the availability face (node-drain) has no latency face, and the fault with a
 latency face (pod-delete) produces no availability-face variation
-(Figure~\ref{fig:h4}).
+(Figure~\ref{fig:h4}). A design-corrected follow-up (\S\ref{sec:design-fix})
+re-draws this frontier under a node-drain dose-response, where the availability
+face \emph{does} vary ($1.0 \rightarrow 0.36$ across placements) and a real
+trade-off appears.
 
 \begin{figure}[tb]
   \centering
@@ -277,7 +283,8 @@ sub-scores only.
 registered falsification, not a method failure: \texttt{pod-delete} churn
 produces no sustained endpoint outage, so the availability layer has little
 reproducible between-condition signal to estimate (that face is fault-matched
-to node-drain). The mechanism layer is the headline reliability result --- ICC
+to node-drain --- and indeed, recomputed under node-drain it is highly reliable,
+\S\ref{sec:design-fix}). The mechanism layer is the headline reliability result --- ICC
 0.994 versus the naive aggregate's 0.066: the layered scorecard's
 conntrack-reconvergence sub-score is far more test-retest reliable than a single
 aggregate score. The verdict is robust to the analysis's taint-handling choice
@@ -413,6 +420,85 @@ verdicts are not folded into the Holm family; its full numbers, per-session
 provenance, and frozen integrity manifest are recorded in the committed C1/C2
 hotelReservation campaign reports alongside the deposited raw dataset
 (DOI \texttt{10.5281/zenodo.20792129}).
+
+\section{Design-corrected re-analysis of the availability axis}\label{sec:design-fix}
+
+\textbf{Motivation.} Three of the availability-side tests are
+\emph{construction-limited} in the confirmatory regime, all for one reason:
+\texttt{pod-delete} at $r{=}1$ removes a service's only replica, so the
+availability trough is $\approx 1$ pod for \emph{every} placement and the
+availability axis cannot move. This makes H3's trough-depth co-primary
+un-passable (its 1-pod margin equals the realized $r{=}1$ depth, \S\ref{sec:h3}),
+H4's availability face degenerate (constant, \S\ref{sec:h4}), and H5's
+availability-sub-score ICC a measurement of noise (\S\ref{sec:h5}). As an
+exploratory, pre-declared follow-up --- \emph{outside} the frozen Holm family ---
+the three are recomputed under \texttt{node-drain}, whose blast radius is the set
+of services co-located with the drained node and therefore varies with placement.
+Criteria were fixed before the new data were examined (a design-corrected
+analogue of the deposit-before-analysis rule). The new campaign is C4: a
+node-drain dose-response, 8 complete-block sessions ($f \in \{0,0.25,0.5,0.75,
+1.0\}$, $r{=}1$), all \texttt{doctor --strict} clean.
+
+\textbf{The availability axis is now live (corrects H4).} The node-drain trough
+depth varies strongly and monotonically with placement, and a genuine
+latency$\times$availability trade-off appears:
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+$f$ (packing $\rightarrow$ spreading) & avail.\ trough (median) & east-west p95 (ms) \\
+\midrule
+$f{=}0$ (packed) & \textbf{1.00} (all endpoints lost) & 35.5 \\
+$f{=}0.25$ & 0.82 & 36.3 \\
+$f{=}0.50$ & 0.64 & 51.3 \\
+$f{=}0.75$ & 0.64 & 36.2 \\
+$f{=}1$ (spread) & \textbf{0.36} & 41.0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The availability face spans $1.0 \rightarrow 0.36$ (against the degenerate
+$\approx 1$-pod-everywhere of \texttt{pod-delete}): spreading buys a large
+availability gain at a small ($\sim$35$\rightarrow$41\,ms, sub-SESOI) latency
+cost. The latency face rises mildly and monotonically except at $f{=}0.5$, whose
+$51.3$\,ms median is a noise-dominated outlier (two of eight sessions at
+$\sim$78\,ms); read with that caveat the curve is monotone. The corrected
+frontier is non-degenerate and spreading is the availability-dominant region ---
+replacing H4's degenerate ``all five non-dominated.''
+
+\textbf{The availability layer carries reliable signal (corrects H5).} Computed
+on the node-drain sessions, the availability sub-score's test-retest
+$\text{ICC} = 1.0$ versus $0.180$ under \texttt{pod-delete} --- the $0.180$ was
+\emph{absent signal}, not an unreliable scorecard. The $1.0$ is, however,
+$1.0$ \emph{by construction}: the fraction-solver placement is deterministic, so
+every session's blast radius is identical (between-session variance is
+identically zero) and the ICC carries no test-retest information. The honest
+claim is therefore the weaker one --- under a fault that produces an outage the
+availability layer has large, well-defined signal --- not a noise-limited
+reliability estimate.
+
+\textbf{The replication-rescue effect is real (corrects H3's artifact).}
+Re-analysing the C2 node-drain data, anti-affine $r{=}3$ \emph{halves} the trough
+depth ($0.091 \rightarrow 0.046$; $r{\times}$mode interaction $p{=}0.0065$) and
+drives the user-route error to \emph{zero} ($0.63 \rightarrow 0.0$; $p \approx
+0$). H3's registered \texttt{CONJUNCTION = False} was an artifact of the 1-pod
+margin (which demanded a $>100\,\%$ depth reduction); with it removed, the rescue
+is real and significant on both faces. On the unrounded medians the depth
+reduction is \emph{exactly} $50\,\%$ ($r{=}1$ loses one pod, anti-affine half a
+pod-equivalent), so it meets the pre-declared range-relative bar --- but
+knife-edge: at $n{=}8$ the anti-affine session depths are bimodal, so the median
+landing on the half-pod is a coincidence and the bar is not robustly cleared. The
+substantive, robust evidence is therefore the significant interaction and the
+user-error elimination, not the threshold itself.
+
+\textbf{Reading.} This does not re-open the frozen confirmatory verdicts; it shows
+that H3's \emph{not-supported} and H4's \emph{degenerate} results were partly
+\emph{construction artifacts} whose underlying effects are real once availability
+can move, and that H5's reliability gap was a fault-regime mismatch. The corrected
+arm is exploratory; its numbers, the reproducible driver
+(\texttt{scripts/design\_fix\_analysis.py}), and the frozen pre-analysis manifest
+are in the committed design-fix report, and the C4 raw data is staged for the same
+Zenodo deposit as the other campaigns.
 
 \section{H6 --- direction transfer (not attempted)}\label{sec:h6}
 

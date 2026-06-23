@@ -128,3 +128,19 @@ tooling fixes (a wget-capable readiness-probe pod, a static-topology fallback fo
 the cross-node fraction on Consul/gRPC services, and sustained warm-up load
 through the readiness gate), none of which alter the experimental design or the
 system under test.
+
+\section{Design-corrected re-analysis (exploratory)}\label{sec:designfix-provenance}
+
+The availability-axis re-analysis (\S\ref{sec:design-fix}) is likewise
+\textbf{exploratory and outside the Holm family}. Its corrected criteria were
+pre-declared (in \texttt{DESIGN-FIX-SCOPE.md}) before the new data were examined.
+New data: campaign \textbf{C4}, a \texttt{node-drain} dose-response on
+online-boutique --- 8 complete-block sessions ($f \in \{0,0.25,0.5,0.75,1.0\}$,
+$r{=}1$, $5\times3$ iterations), \texttt{results/c4-nodedrain-dose/}, collected on
+\texttt{main} (\texttt{git.dirty: false}; sessions 1--2 commit \texttt{445c5bc},
+3--8 commit \texttt{71c545d} --- identical run-path code, the intervening merge was
+thesis-docs only). All 8 sessions \texttt{doctor --strict} clean. The H3 correction
+re-uses the existing, deposited C2 node-drain data (no new run --- the fault was the
+criterion). Pre-analysis manifest: \texttt{c4-nodedrain-manifest.sha256}; the
+reproducible driver is \texttt{scripts/design\_fix\_analysis.py}; the C4 raw data is
+deposited as a standalone dataset.
