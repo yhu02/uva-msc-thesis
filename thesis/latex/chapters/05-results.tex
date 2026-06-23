@@ -283,8 +283,9 @@ sub-scores only.
 registered falsification, not a method failure: \texttt{pod-delete} churn
 produces no sustained endpoint outage, so the availability layer has little
 reproducible between-condition signal to estimate (that face is fault-matched
-to node-drain --- and indeed, recomputed under node-drain it is highly reliable,
-\S\ref{sec:design-fix}). The mechanism layer is the headline reliability result --- ICC
+to node-drain --- and indeed, recomputed under node-drain the availability layer
+carries large, well-defined signal, though its ICC is $1.0$ \emph{by
+construction}, \S\ref{sec:design-fix}). The mechanism layer is the headline reliability result --- ICC
 0.994 versus the naive aggregate's 0.066: the layered scorecard's
 conntrack-reconvergence sub-score is far more test-retest reliable than a single
 aggregate score. The verdict is robust to the analysis's taint-handling choice
@@ -463,8 +464,24 @@ availability gain at a small ($\sim$35$\rightarrow$41\,ms, sub-SESOI) latency
 cost. The latency face rises mildly and monotonically except at $f{=}0.5$, whose
 $51.3$\,ms median is a noise-dominated outlier (two of eight sessions at
 $\sim$78\,ms); read with that caveat the curve is monotone. The corrected
-frontier is non-degenerate and spreading is the availability-dominant region ---
-replacing H4's degenerate ``all five non-dominated.''
+frontier is non-degenerate and spreading is the availability-optimal region (at a
+small latency cost --- so not Pareto-dominant, but a real trade-off) --- replacing
+H4's degenerate ``all five non-dominated'' (Figure~\ref{fig:design-fix}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-design-fix-availability.png}
+  \caption{\textbf{Design-corrected re-analysis --- the availability axis made
+    live} (C4, \texttt{node-drain}, exploratory). \textbf{(a)} The availability
+    trough now varies monotonically with placement, $1.0$ (packed) $\rightarrow$
+    $0.36$ (spread), against the $\approx$1-pod-everywhere degeneracy of
+    \texttt{pod-delete} that made H4's availability face flat and H5's
+    availability ICC a measurement of noise. \textbf{(b)} The corrected two-face
+    frontier: spreading lowers the blast radius at a small east-west latency cost
+    --- a real trade-off ($f{=}0.5$ is a noise-dominated latency outlier). The
+    arm is exploratory and outside the Holm family.}
+  \label{fig:design-fix}
+\end{figure}
 
 \textbf{The availability layer carries reliable signal (corrects H5).} Computed
 on the node-drain sessions, the availability sub-score's test-retest
