@@ -10,7 +10,7 @@ The workflow schematic (`fig-01-workflow.png`) is reused from `thesis_figures.py
 
 - **Run all commands from `chaosprobe/`** (the data paths below are relative to it).
 - Full set: `uv run python scripts/single_study_figures.py --out-dir ../thesis/figures --figure all`
-- Subset: append `--figure h1,h5` (choices: `workflow,h1,h2,h3,h4,h5,hotel`).
+- Subset: append `--figure h1,h5` (choices: `workflow,h1,h2,h3,h4,h5,hotel,design-fix`).
 - The `hotel` figure reads the exploratory external-validity campaign via
   `--c1-hotel-dir results/c1-hotel --c2-hotel-dir results/c2-hotel`.
 - The ICC bootstrap is seeded (`seed=42`), so regeneration is deterministic for
@@ -28,6 +28,7 @@ archives mirror.
 | C2 replication rescue (24 sessions, `node-drain`, `r`×mode) | `results/c2-roundrobin/` | H3 | [10.5281/zenodo.20726729](https://doi.org/10.5281/zenodo.20726729) |
 | C3 placement + DNS (14 sessions, `pod-delete`, cache off/on) | `results/c3-dns/` | H2 | [10.5281/zenodo.20748970](https://doi.org/10.5281/zenodo.20748970) |
 | **hotelReservation external validity** (exploratory; 8 C1 + 24 C2 sessions) | `results/c1-hotel/`, `results/c2-hotel/` | H1, H3 (2nd workload) | [10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129) |
+| **C4 node-drain dose-response** (exploratory design-fix; 8 sessions) | `results/c4-nodedrain-dose/` | H3/H4/H5 availability axis | _staged (DOI pending)_ |
 
 ## Figures
 
@@ -44,3 +45,4 @@ second-workload external-validity figure (`hotel`); wired into the LaTeX by the
 | `fig-h4-frontier.png` — two-face placement frontier; all 5 C1 placements non-dominated, latency face varies but availability face degenerate | `h4` | C1 (`v2_h4_frontier`) | Fig. `fig:h4` |
 | `fig-h5-scorecard-icc.png` — layered-scorecard ICC (mechanism 0.994, availability 0.180, user-tail 0.741) vs naive aggregate 0.066, with 95 % bootstrap CIs and the ICC ≥ 0.5 bar | `h5` | C1 (`scorecard`) | Fig. `fig:h5` |
 | `fig-hotel-external-validity.png` — (a) H1 dose-response on hotelReservation (no monotone increase, Page's `L` p=0.99); (b) H3 user-route error rescue (anti-affine r=3 → 0, but below the 0.302 margin). Exploratory, outside the Holm family | `hotel` | C1/C2-hotel (`c1_h1_trend`, `c2_h3_anova`) | Fig. `fig:hotel` |
+| `fig-design-fix-availability.png` — (a) availability dose-response under node-drain (trough 1.0 packed → 0.36 spread — the live axis); (b) corrected two-face frontier (availability trough vs east-west p95, a real trade-off). Exploratory design-corrected re-analysis, outside the Holm family | `design-fix` | C4 node-drain (`design_fix_analysis`) | Fig. `fig:design-fix` |

@@ -62,6 +62,7 @@ DEFAULT_C3 = "results/c3-dns"
 DEFAULT_RESULTS_ROOT = "results"
 DEFAULT_C1_HOTEL = "results/c1-hotel"
 DEFAULT_C2_HOTEL = "results/c2-hotel"
+DEFAULT_C4 = "results/c4-nodedrain-dose"
 
 
 def _annotate(ax, text: str) -> None:
@@ -448,7 +449,72 @@ def fig_hotel(c1_hotel_dir: str, c2_hotel_dir: str, out_dir: str) -> str:
     return _save(fig, out_dir, "fig-hotel-external-validity.png")
 
 
-ALL_FIGURES = ("workflow", "h1", "h2", "h3", "h4", "h5", "hotel")
+# ── Design-corrected re-analysis — the availability axis made live (C4) ─────────
+def fig_design_fix(c4_dir: str, out_dir: str) -> str:
+    """Two-panel design-fix figure: (a) the availability dose-response (trough
+    depth vs f, now live under node-drain) and (b) the corrected two-face
+    frontier (availability trough vs east-west p95). Reuses the design-fix
+    analysis driver so on-figure numbers match the results table."""
+    import design_fix_analysis as dfa
+
+    avail, lat, _ = dfa._per_level(c4_dir)
+    levels = [0.0, 0.25, 0.5, 0.75, 1.0]
+    import statistics as _st
+
+    a = [(_st.median(avail[c]) if avail[c] else None) for c in dfa.LEVELS]
+    p = [(_st.median(lat[c]) if lat[c] else None) for c in dfa.LEVELS]
+
+    fig, (axa, axb) = plt.subplots(1, 2, figsize=(8.6, 4.0))
+
+    # (a) availability dose-response — trough depth vs f (live axis).
+    axa.plot(levels, a, marker="o", color=ACCENT, lw=2, zorder=3)
+    for x, yy in zip(levels, a):
+        axa.annotate(
+            f"{yy:.2f}",
+            (x, yy),
+            textcoords="offset points",
+            xytext=(0, 8),
+            ha="center",
+            fontsize=8,
+            color=DARK,
+        )
+    axa.set_xlabel("cross-node fraction $f$ (packing $\\rightarrow$ spreading)")
+    axa.set_ylabel("availability trough (fraction of app endpoints lost)")
+    axa.set_xticks(levels)
+    axa.set_ylim(0, 1.08)
+    axa.set_title("(a) availability dose-response (node-drain)")
+    _annotate(
+        axa,
+        "the axis is now live: $1.0$ (packed) $\\rightarrow$ $0.36$ (spread)\n"
+        "vs $\\approx$1-pod-everywhere under pod-delete",
+    )
+
+    # (b) corrected two-face frontier — availability trough vs east-west p95.
+    axb.plot(a, p, color="#999999", lw=1.0, ls="--", zorder=1)
+    axb.scatter(a, p, c=[SPREAD_C if x < 0.5 else PACKED_C for x in levels], s=60, zorder=3)
+    for ax_, py_, fr in zip(a, p, levels):
+        axb.annotate(
+            f"$f{{=}}{fr:g}$",
+            (ax_, py_),
+            textcoords="offset points",
+            xytext=(6, 4),
+            fontsize=8,
+            color=DARK,
+        )
+    axb.set_xlabel("availability trough (lower = better)")
+    axb.set_ylabel("east-west p95 latency (ms)")
+    axb.set_title("(b) corrected two-face frontier")
+    _annotate(
+        axb,
+        "spreading lowers the blast radius at a\nsmall latency cost --- a real trade-off",
+    )
+
+    fig.suptitle("Design-corrected re-analysis --- the availability axis (exploratory)")
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    return _save(fig, out_dir, "fig-design-fix-availability.png")
+
+
+ALL_FIGURES = ("workflow", "h1", "h2", "h3", "h4", "h5", "hotel", "design-fix")
 
 
 def parse_figures(spec: str) -> List[str]:
@@ -472,6 +538,7 @@ def generate(
     results_root: str,
     c1_hotel: str = DEFAULT_C1_HOTEL,
     c2_hotel: str = DEFAULT_C2_HOTEL,
+    c4: str = DEFAULT_C4,
 ) -> Dict[str, str]:
     apply_thesis_style()
     written: Dict[str, str] = {}
@@ -489,6 +556,8 @@ def generate(
         written["h5"] = fig_h5_icc(c1, out_dir)
     if "hotel" in figures:
         written["hotel"] = fig_hotel(c1_hotel, c2_hotel, out_dir)
+    if "design-fix" in figures:
+        written["design-fix"] = fig_design_fix(c4, out_dir)
     return written
 
 
@@ -507,6 +576,7 @@ def main(argv: List[str] | None = None) -> int:
     ap.add_argument("--c3-dir", default=DEFAULT_C3)
     ap.add_argument("--c1-hotel-dir", default=DEFAULT_C1_HOTEL)
     ap.add_argument("--c2-hotel-dir", default=DEFAULT_C2_HOTEL)
+    ap.add_argument("--c4-dir", default=DEFAULT_C4)
     ap.add_argument(
         "--results-root",
         default=DEFAULT_RESULTS_ROOT,
@@ -522,6 +592,7 @@ def main(argv: List[str] | None = None) -> int:
         args.results_root,
         args.c1_hotel_dir,
         args.c2_hotel_dir,
+        args.c4_dir,
     )
     for key, path in written.items():
         print(f"  {key:9s} -> {path}")
