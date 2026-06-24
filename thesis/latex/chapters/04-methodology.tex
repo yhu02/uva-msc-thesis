@@ -8,9 +8,9 @@ statistical methods and multiplicity control (\S\ref{sec:statistics}), and the
 pinned cluster environment every claim is scoped to (\S\ref{sec:environment}).
 The defining methodological choice is that the confirmatory hypotheses, their
 smallest effect sizes of interest (SESOIs), the per-cell sample sizes, the
-outcome operationalizations, and the analysis code were all \emph{frozen and
-publicly deposited before any confirmatory data was collected}; the design that
-follows is reported as registered, with every later deviation logged.
+outcome operationalizations, and the analysis code were all \emph{frozen before
+any confirmatory data was collected}; the design that follows is reported as
+registered, with every later deviation logged.
 
 \section{Three-layer measurement design}\label{sec:three-layer}
 
@@ -85,14 +85,13 @@ DNSCache toggle (H2's DNS arm) and the kube-proxy mode (H6, not attempted ---
 
 \textbf{Pre-registration and provenance discipline.} The hypotheses, SESOIs,
 per-cell $n$, outcome operationalizations, and analysis code were frozen at a
-tagged commit and deposited under a DOI \emph{before} any confirmatory data was
-collected; each campaign's raw data was likewise deposited \emph{before} its
-analysis was written. Every session records a provenance fingerprint and must
-pass a \texttt{doctor --strict} gate (clean working tree, complete metadata)
-to be admissible; the registered exclusion rule discards any rejected or
-fully-tainted session. This protocol --- pre-registration, deposit-before-analysis,
-and a strict provenance gate --- is one of the thesis's contributions, not just
-its hygiene.
+tagged commit \emph{before} any confirmatory data was collected; each campaign's
+raw data was likewise archived and hash-stamped \emph{before} its analysis was
+written. Every session records a provenance fingerprint and must pass a
+\texttt{doctor --strict} gate (clean working tree, complete metadata) to be
+admissible; the registered exclusion rule discards any rejected or fully-tainted
+session. This protocol --- pre-registration, freeze-before-analysis, and a strict
+provenance gate --- is one of the thesis's contributions, not just its hygiene.
 
 \textbf{The confirmatory family and the descriptive deliverables.} Four
 hypotheses form the confirmatory family corrected together (\S\ref{sec:statistics}):

@@ -80,13 +80,12 @@ pinned cluster of eight 2-vCPU/4-GiB workers (Kubernetes v1.28.6, kube-proxy
 ipvs).
 
 The evidence is three pre-registered campaigns under churn (\texttt{pod-delete})
-and node failure (\texttt{node-drain}), each deposited under a DOI before its
-analysis was written: C1 (eight complete-block dose-response sessions), C2 (24
-node-drain replication-rescue sessions), and C3 (14 placement-and-DNS sessions).
-The hypotheses, the smallest effect sizes of interest, the per-cell sample
-sizes, and the analysis code were frozen and deposited before any confirmatory
-data was collected, and the four confirmatory hypotheses are Holm-corrected as
-one family.
+and node failure (\texttt{node-drain}): C1 (eight complete-block dose-response
+sessions), C2 (24 node-drain replication-rescue sessions), and C3 (14
+placement-and-DNS sessions). The hypotheses, the smallest effect sizes of
+interest, the per-cell sample sizes, and the analysis code were frozen before
+any confirmatory data was collected, and the four confirmatory hypotheses are
+Holm-corrected as one family.
 
 The central finding is a real mechanism whose reach is rigorously bounded.
 Placement reproducibly moves a UDP-conntrack reconvergence signature ---
@@ -107,14 +106,29 @@ latency$\leftrightarrow$availability frontier the design sought is corresponding
 not realizable from these data, because \texttt{pod-delete} varies the latency
 face but not the availability face (H4).
 
+This last result exposed a \textbf{construction limitation in the design itself}:
+at a single replica, \texttt{pod-delete} cannot move availability. Reported as an
+\emph{in-development, iterative design study}, the design was therefore
+\textbf{modified} --- the availability tests were recomputed under
+\texttt{node-drain}, whose blast radius is placement-dependent --- and the
+corrected design resolves the limitation exploratorily: placement governs the
+blast radius strongly and monotonically (all app endpoints lost under packing,
+roughly a third under spreading), and the latency$\leftrightarrow$availability
+trade-off the original frontier could not express reappears. The original
+iteration's valid findings (the latency dose-response and the conntrack
+mechanism) stand and are reported in full; the construction-limited availability
+results are reported \emph{with} their limitation, not removed; and a
+pre-registered confirmatory re-run of the corrected design is underway.
+
 Placement moves the kernel/network mechanism; at the pre-registered bar it does
 not move the user-visible placement, availability, and dose-response outcomes the
 hypotheses predicted. The thesis contributes a reproducible, pre-registered
-measurement methodology, a positively-established but precisely-bounded
-mechanism, and a deposit-before-analysis campaign protocol in which every quoted
+measurement methodology that surfaces and corrects its own construction
+limitations, a positively-established but precisely-bounded mechanism, and a
+freeze-before-analysis, provenance-gated campaign protocol in which every quoted
 number traces to an archived, hash-stamped run. The methodological point is that
 chaos evaluation of placement needs layered measurement, pre-registration, and
-provenance-gated replication, not a single score: each fault class deposits its
+provenance-gated replication, not a single score: each fault class leaves its
 placement signal in a specific layer, and a one-number instrument's availability
 component is unreliable or undefined exactly where it matters.
 \end{abstract}

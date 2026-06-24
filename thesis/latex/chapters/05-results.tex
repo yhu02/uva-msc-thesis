@@ -419,8 +419,8 @@ study's central finding --- a real mechanism, rigorously bounded in reach --- is
 not an artifact of one application's topology. This arm is exploratory and its
 verdicts are not folded into the Holm family; its full numbers, per-session
 provenance, and frozen integrity manifest are recorded in the committed C1/C2
-hotelReservation campaign reports alongside the deposited raw dataset
-(DOI \texttt{10.5281/zenodo.20792129}).
+hotelReservation campaign reports, with the raw dataset archived and available on
+request.
 
 \section{Design-corrected re-analysis of the availability axis}\label{sec:design-fix}
 
@@ -436,7 +436,7 @@ exploratory, pre-declared follow-up --- \emph{outside} the frozen Holm family --
 the three are recomputed under \texttt{node-drain}, whose blast radius is the set
 of services co-located with the drained node and therefore varies with placement.
 Criteria were fixed before the new data were examined (a design-corrected
-analogue of the deposit-before-analysis rule). The new campaign is C4: a
+analogue of the freeze-before-analysis rule). The new campaign is C4: a
 node-drain dose-response, 8 complete-block sessions ($f \in \{0,0.25,0.5,0.75,
 1.0\}$, $r{=}1$), all \texttt{doctor --strict} clean.
 
@@ -514,11 +514,11 @@ that H3's \emph{not-supported} and H4's \emph{degenerate} results were partly
 can move, and that H5's reliability gap was a fault-regime mismatch. The corrected
 arm is exploratory; its numbers, the reproducible driver
 (\texttt{scripts/design\_fix\_analysis.py}), and the frozen pre-analysis manifest
-are in the committed design-fix report, and the C4 raw data is deposited as a
-standalone CC-BY-4.0 dataset, DOI
-\href{https://doi.org/10.5281/zenodo.20818800}{10.5281/zenodo.20818800}
-(\texttt{continues} the concept record, \texttt{isSupplementTo} the
-pre-registration).
+(\texttt{c4-nodedrain-manifest.sha256}) are in the committed design-fix report,
+with the C4 raw data archived and available on request. A pre-registered
+confirmatory re-run that would elevate this corrected design from exploratory to
+confirmatory is specified in \texttt{AX-PREREGISTRATION-DRAFT.md} and was in
+calibration at the time of writing (\S\ref{sec:future-work}).
 
 \section{H6 --- direction transfer (not attempted)}\label{sec:h6}
 

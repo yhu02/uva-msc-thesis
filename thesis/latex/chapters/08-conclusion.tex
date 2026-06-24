@@ -36,14 +36,25 @@ boundary of Chapter~\ref{ch:threats}. The empirical finding --- a real,
 DNS-mediated, placement-dependent conntrack mechanism whose user-visible reach is
 bounded --- is a statement about a single-replica baseline on one small
 virtualized v1.28.6/ipvs cluster (\S\ref{sec:generalizes}), never ``spread is
-worse'' or a best strategy. ChaosProbe and the deposit-before-analysis campaign
+worse'' or a best strategy. ChaosProbe and the freeze-before-analysis campaign
 protocol are the portable parts: any cluster and workload can rerun this design,
 and every number traces to an archived, hash-stamped run
 (Appendix~\ref{app:provenance}).
 
+Reported as an in-development, iterative design study, this thesis also
+demonstrates the method correcting itself: a first design iteration's
+single-replica \texttt{pod-delete} could not move the availability axis, the
+limitation was diagnosed and the design modified to \texttt{node-drain}
+(\S\ref{sec:design-fix}), and the corrected design --- exploratory here, with a
+pre-registered confirmatory re-run underway --- recovers the
+latency$\leftrightarrow$availability trade-off the original could not express.
+Nothing from the first iteration is discarded; surfacing the construction limit
+and correcting it under the same pre-registered, provenance-gated discipline is
+the part of the methodology a thesis is meant to show.
+
 The methodological point is the one we would have the field retain. Chaos
 evaluation of placement needs \textbf{layered measurement, pre-registration, and
-provenance-gated replication, not a single score}: each fault class deposited
+provenance-gated replication, not a single score}: each fault class left
 its placement signal in a specific layer, a one-number instrument's availability
 component was unreliable or undefined exactly where it mattered, and freezing the
 hypotheses and effect-size bars before collection is what turned ``we observed
