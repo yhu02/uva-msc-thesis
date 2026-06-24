@@ -16,19 +16,19 @@ The workflow schematic (`fig-01-workflow.png`) is reused from `thesis_figures.py
 - The ICC bootstrap is seeded (`seed=42`), so regeneration is deterministic for
   identical inputs.
 
-## Source campaigns → deposited archives
+## Source campaigns → archived sessions
 
-Each campaign was deposited as a standalone dataset under its own DOI before
-analysis; the figure data is read from the local session directories that those
-archives mirror.
+Each campaign was frozen at a tagged commit before its analysis; the figure data
+is read from the local session directories below (raw archives retained with the
+project materials, available on request).
 
-| Campaign | Local session dir (under `chaosprobe/`) | Tests | DOI |
-|---|---|---|---|
-| C1 dose-response (8 sessions, `pod-delete` churn, `f` sweep) | `results/c1-online-boutique/s01`–`s08` | H1, H4, H5 | [10.5281/zenodo.20690737](https://doi.org/10.5281/zenodo.20690737) |
-| C2 replication rescue (24 sessions, `node-drain`, `r`×mode) | `results/c2-roundrobin/` | H3 | [10.5281/zenodo.20726729](https://doi.org/10.5281/zenodo.20726729) |
-| C3 placement + DNS (14 sessions, `pod-delete`, cache off/on) | `results/c3-dns/` | H2 | [10.5281/zenodo.20748970](https://doi.org/10.5281/zenodo.20748970) |
-| **hotelReservation external validity** (exploratory; 8 C1 + 24 C2 sessions) | `results/c1-hotel/`, `results/c2-hotel/` | H1, H3 (2nd workload) | [10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129) |
-| **C4 node-drain dose-response** (exploratory design-fix; 8 sessions) | `results/c4-nodedrain-dose/` | H3/H4/H5 availability axis | [10.5281/zenodo.20818800](https://doi.org/10.5281/zenodo.20818800) |
+| Campaign | Local session dir (under `chaosprobe/`) | Tests |
+|---|---|---|
+| C1 dose-response (8 sessions, `pod-delete` churn, `f` sweep) | `results/c1-online-boutique/s01`–`s08` | H1, H4, H5 |
+| C2 replication rescue (24 sessions, `node-drain`, `r`×mode) | `results/c2-roundrobin/` | H3 |
+| C3 placement + DNS (14 sessions, `pod-delete`, cache off/on) | `results/c3-dns/` | H2 |
+| **hotelReservation external validity** (exploratory; 8 C1 + 24 C2 sessions) | `results/c1-hotel/`, `results/c2-hotel/` | H1, H3 (2nd workload) |
+| **C4 node-drain dose-response** (exploratory design-fix; 8 sessions) | `results/c4-nodedrain-dose/` | H3/H4/H5 availability axis |
 
 ## Figures
 

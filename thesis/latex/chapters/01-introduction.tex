@@ -58,7 +58,7 @@ agree --- so the contribution is establishing \emph{at which layer} an effect
 appears under a given fault class, and whether it reaches the user. To answer it
 without the freedom to choose tests after seeing the data, the study is
 \textbf{pre-registered}: the hypotheses, the smallest effect sizes of interest,
-the per-cell sample sizes, and the analysis code were frozen and deposited
+the per-cell sample sizes, and the analysis code were frozen
 before any confirmatory data was collected (\S\ref{sec:campaign}).
 
 The question is decomposed into a pre-registered confirmatory family plus a
@@ -93,10 +93,25 @@ microservices plus Redis) on a pinned cluster of eight 2-vCPU/4-GiB workers
 (Kubernetes v1.28.6, kube-proxy in ipvs mode). The evidence is three
 pre-registered campaigns --- C1 (eight complete-block \texttt{pod-delete} dose
 sessions), C2 (24 \texttt{node-drain} sessions), C3 (14 \texttt{pod-delete}
-cache-off/on sessions) --- each deposited under a DOI before analysis. Every
-quoted number traces to an archived run (Appendix~\ref{app:provenance}), and the
-single-replica baseline --- which makes \texttt{pod-delete} a pure churn fault
---- is carried explicitly through every claim (Chapter~\ref{ch:threats}).
+cache-off/on sessions). Every quoted number traces to an archived run
+(Appendix~\ref{app:provenance}), and the single-replica baseline --- which makes
+\texttt{pod-delete} a pure churn fault --- is carried explicitly through every
+claim (Chapter~\ref{ch:threats}).
+
+\textbf{This thesis is reported as an in-development, iterative design study.} A
+first design iteration surfaced a construction limitation on the availability
+axis: at a single replica, \texttt{pod-delete} produces a total but
+placement-independent outage, so the availability tests (H3, H4, and H5's
+availability sub-score) cannot move regardless of placement. The design was
+\textbf{modified in response to this limitation} --- the availability axis was
+recomputed under \texttt{node-drain}, whose blast radius is placement-dependent
+--- and the corrected design resolves it (\S\ref{sec:design-fix}), with a
+pre-registered confirmatory re-run underway. \emph{Nothing from the original
+iteration is removed}: its valid findings (the latency dose-response and the
+conntrack mechanism) are reported in full, and the construction-limited
+availability results are reported together with their limitation. This
+iterate-and-disclose trajectory is itself part of the methodological
+contribution.
 
 \section{Contributions}\label{sec:contributions}
 
@@ -110,9 +125,10 @@ The thesis makes three contributions, in priority order:
   dependent-vs-control confound split, EndpointSlice availability snapshots),
   Locust load, and a Neo4j dependency graph from which the cross-node fraction
   is computed --- run under a frozen pre-registration, a \texttt{doctor
-  --strict} provenance gate, and deposit-before-analysis. The method and its
-  discipline are reusable on any cluster/workload and stand independent of the
-  empirical outcome.
+  --strict} provenance gate, and freeze-before-analysis, and able to
+  \emph{surface and correct its own construction limitations}
+  (\S\ref{sec:design-fix}). The method and its discipline are reusable on any
+  cluster/workload and stand independent of the empirical outcome.
 
 \item \textbf{A positively-established, precisely-bounded mechanism.} Placement
   reproducibly moves a UDP-conntrack reconvergence signature --- individually
@@ -124,11 +140,11 @@ The thesis makes three contributions, in priority order:
   how far a real mechanism reaches --- and converting ``we observed effects''
   into ``here is what survives a strict bar'' --- is the empirical contribution.
 
-\item \textbf{A reproducible campaign protocol with deposited artifacts.}
+\item \textbf{A reproducible campaign protocol with archived artifacts.}
   Independent single-commit sessions as the unit of analysis, each gated by
-  \texttt{doctor --strict}, with every campaign's raw data deposited under a DOI
-  before its analysis was written and every quoted number traceable to an
-  archived run (Appendix~\ref{app:provenance}).
+  \texttt{doctor --strict}, with every campaign's raw data frozen before its
+  analysis was written and every quoted number traceable to an archived run
+  (Appendix~\ref{app:provenance}).
 \end{enumerate}
 
 \textbf{What the candidate did versus what the tooling did.} \emph{Authored for
@@ -136,7 +152,7 @@ this thesis}: the placement solver and the two-knob design; the three-layer
 measurement design with its dependent-vs-control route confound check; the
 cross-node-fraction metric and the EndpointSlice trough measurement; the layered
 scorecard; the pre-registration, the \texttt{doctor --strict} provenance gate,
-the discard-not-patch rule, and the deposit-before-analysis protocol; the
+the discard-not-patch rule, and the freeze-before-analysis protocol; the
 churn-vs-node-failure fault-class framing; and every committed analysis script
 (the per-hypothesis drivers, the family Holm correction, figure generation).
 \emph{Integrated off-the-shelf}: LitmusChaos (fault execution),
