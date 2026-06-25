@@ -125,7 +125,7 @@ the experiment design and the inferences are mine.
 **"Where are the raw data?"**
 Seventeen tamper-evident archives (SHA-256 manifests, environment
 fingerprints, scenario hashes), one per quoted run, mapped claim-by-claim
-in Appendix A; the deposit bundle is staged for a public DOI. Every figure
+in Appendix A. Every figure
 states its regeneration command.
 
 **"What would change your conclusions?"**

@@ -1,6 +1,6 @@
 % Run provenance for the single pre-registered study (campaigns C1/C2/C3).
 % Self-contained: provenance is anchored to the in-document tables, the
-% committed pre-registration / integrity manifests / analysis code, and the
+% committed pre-registration / analysis code, and the
 % per-run hash-stamped archives (retained with the project materials).
 
 \chapter{Run provenance}\label{app:provenance}
@@ -13,8 +13,8 @@ in every session's \texttt{runMetadata} and in each archive's
 Kubernetes \textbf{v1.28.6}, kube-proxy mode \textbf{ipvs}, containerd 1.7.11,
 Calico CNI, eight 2-vCPU/4-GiB workers, namespace \texttt{online-boutique}, git
 \texttt{dirty: false}, \texttt{provenanceWarnings: []}. The frozen
-pre-registration (commit \texttt{20097c1}), the SHA-256 integrity manifests, and
-the analysis code are committed to the project repository; its hypotheses,
+pre-registration (commit \texttt{20097c1}) and the analysis code are
+committed to the project repository; its hypotheses,
 smallest effect sizes of interest, and per-cell sample sizes are also stated
 bar-first in Chapter~\ref{ch:results}. The raw per-run session archives are
 retained with the project materials and available on request.
@@ -75,14 +75,13 @@ Each session directory carries \texttt{summary.json}, its per-condition raw JSON
 (\texttt{f-*.json}), \texttt{charts/}, and an \texttt{artifact-manifest.json}
 pinning run identity, git provenance, the SHA-256 of the exact scenario YAML
 injected, and a SHA-256 of every file in the session. Every campaign additionally
-carries a root \texttt{SHA256SUMS}; C2's and C3's raw checksums are pinned in the
-committed manifests \texttt{c2-roundrobin-manifest.sha256} and
-\texttt{c3-dns-manifest.sha256} (computed pre-analysis). All sessions passed
+carries a root \texttt{SHA256SUMS}; C2's and C3's raw checksums were computed
+pre-analysis. All sessions passed
 \texttt{archive\_run.py --strict} (clean tree, scenario hashes present,
 \texttt{runMetadata} present): C1 8/8, C2 24/24 (all accepted, untainted, 8 per
 cell), C3 14/14 (all accepted, untainted, 7 per cache mode). Per-session
-\texttt{summary.json} SHA-256 anchors are tabulated in each campaign's committed
-integrity manifest; representative anchors are
+\texttt{summary.json} SHA-256 anchors were computed pre-analysis and retained
+with the project materials; representative anchors are
 C1~s01 \texttt{b2282cce\ldots f2301456},
 C2~\#1 (r1-packed) \texttt{e4b3c50f\ldots 504f408}, and
 C3~\#1 (cache-off) \texttt{83169d79\ldots f7fc6a82}.
@@ -117,9 +116,8 @@ Both arms were collected and analyzed on \texttt{main} commit \texttt{bdf1ccb}
 iterations $+$ 24 C2-hotel \texttt{node-drain} sessions; the excluded one is an
 iteration of C1-hotel order-seed 8, collected after a deliberate pause/restart)
 carried an \texttt{app\_ready\_timeout} taint and is excluded by the registered
-healthy-only rule. The pre-analysis SHA-256 integrity manifest
-(\texttt{c1-c2-hotel-manifest.sha256}) is committed to the project repository;
-the raw data is archived and available on request. Measuring this workload
+healthy-only rule. The C1/C2-hotel raw checksums were computed pre-analysis; the raw data is
+archived and available on request. Measuring this workload
 required general tooling fixes (a wget-capable readiness-probe pod, a
 static-topology fallback for the cross-node fraction on Consul/gRPC services, and
 sustained warm-up load through the readiness gate), none of which alter the
@@ -137,8 +135,8 @@ $r{=}1$, $5\times3$ iterations), \texttt{results/c4-nodedrain-dose/}, collected 
 3--8 commit \texttt{71c545d} --- identical run-path code, the intervening merge was
 thesis-docs only). All 8 sessions \texttt{doctor --strict} clean. The H3
 correction re-uses the existing C2 node-drain data (no new run --- the fault was
-the criterion). Pre-analysis manifest \texttt{c4-nodedrain-manifest.sha256} and
-the reproducible driver \texttt{scripts/design\_fix\_analysis.py} are committed to
-the project repository; the C4 raw data is archived and available on request. A
+the criterion). The reproducible driver \texttt{scripts/design\_fix\_analysis.py} is committed
+to the project repository; C4's checksums were computed pre-analysis and the C4
+raw data is archived and available on request. A
 confirmatory follow-up that would elevate this corrected design from exploratory
 to pre-registered is left as future work (\S\ref{sec:future-work}).

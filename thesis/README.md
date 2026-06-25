@@ -62,8 +62,7 @@ LaTeX/Overleaf port.
 
 1. **Every quoted number must trace to an archived run.** A figure quoted as a
    *finding* must come from a `doctor --strict`-clean run archived under
-   `chaosprobe/dist/` — published publicly at
-   [DOI 10.5281/zenodo.20639146](https://doi.org/10.5281/zenodo.20639146) —
+   `chaosprobe/dist/`
    and must appear in the provenance appendix's
    claims→runs mapping ([`09-appendix-provenance.md`](09-appendix-provenance.md)).
    No archive, no number.
