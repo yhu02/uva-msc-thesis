@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# C2 / V2-H3 re-run on the round-robin packed instrument (PRs #293, #294, #295).
+# C2 / H3 re-run on the round-robin packed instrument (PRs #293, #294, #295).
 # 3 cells × 8 replicate sessions = 24 node-drain sessions into results/c2-roundrobin/.
 # Blocked by cell, matching the c2-rerun2 structure. Each session: 1 condition
-# (f-050), 1 iteration, --v2-packed-assignment round-robin.
+# (f-050), 1 iteration, --packed-assignment round-robin.
 set -u
 
 export KUBECONFIG="$HOME/.kube/config-chaosprobe"
@@ -23,9 +23,9 @@ run_cell() {
     echo "=== CELL r=$r mode=$mode session $i/8 ($(date -u +%H:%M:%S)) ==="
     uv run chaosprobe run -n online-boutique \
       -e scenarios/online-boutique/node-drain.yaml \
-      --v2-levels 0.5 --v2-replicas "$r" --v2-mode "$mode" \
-      --v2-packed-assignment round-robin \
-      --v2-workers "$WORKERS" --v2-solver-seed 0 --v2-order-seed 1 \
+      --fraction-levels 0.5 --replica-degree "$r" --placement-mode "$mode" \
+      --packed-assignment round-robin \
+      --worker-nodes "$WORKERS" --solver-seed 0 --order-seed 1 \
       -i 1 -o "$OUT" || echo "RUN FAILED: r=$r mode=$mode i=$i"
   done
 }

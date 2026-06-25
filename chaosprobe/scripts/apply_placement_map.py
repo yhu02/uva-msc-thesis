@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Apply an explicit service→node placement map (v2 / M1a live-validation helper).
+"""Apply an explicit service→node placement map (M1a live-validation helper).
 
-The M1a exit criterion (``v2-design/02-WORKPLAN.md``) validates the analytical
+The M1a exit criterion (``design/02-WORKPLAN.md``) validates the analytical
 reachable-fraction enumerator against live reality on the 4-worker cluster:
 solve → **apply** → schedule → verify.  This script is the *apply + verify*
 half of that loop:
@@ -9,7 +9,7 @@ half of that loop:
 - ``--map`` / ``--map-file`` supply ``{"service": "workerN", ...}`` — e.g. a
   :mod:`chaosprobe.placement.fraction_solver` assignment with node indices
   mapped to real node names.
-- Each Deployment is pinned via the v1 mutator's own nodeSelector patching
+- Each Deployment is pinned via the base mutator's own nodeSelector patching
   (``kubernetes.io/hostname`` + the managed annotation, Recreate rollout) so
   the conventions stay identical to ``chaosprobe placement apply``.
 - ``--wait`` blocks until the rollouts are ready, then the live pod placements
@@ -67,7 +67,7 @@ def parse_map(map_json: str | None, map_file: str | None) -> Dict[str, str]:
 
 
 def apply_map(mutator: PlacementMutator, mapping: Dict[str, str], wait: bool, timeout: int) -> None:
-    """Pin each deployment to its mapped node using the v1 mutator's patching."""
+    """Pin each deployment to its mapped node using the base mutator's patching."""
     for svc, node in sorted(mapping.items()):
         mutator._patch_deployment_placement(svc, node, STRATEGY_NAME)
     if wait:

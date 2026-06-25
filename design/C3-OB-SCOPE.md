@@ -1,13 +1,13 @@
-# C3 — implementation scope (V2-H2: placement-dependence + DNS intervention)
+# C3 — implementation scope (H2: placement-dependence + DNS intervention)
 
 **Status:** code **built + converged**; the cluster run is user-gated. The
-hypothesis is frozen in [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §V2-H2
+hypothesis is frozen in [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §H2
 and [`00-DESIGN.md`](00-DESIGN.md) §10 (Arm 1); nothing here changes the
 registered hypothesis, test, SESOI, or n.
 
 **Build status (2026-06-17):**
 - ✅ DNS-cache toggle — `chaosprobe/placement/dns_cache.py` (PR #300).
-- ✅ `--v2-dns-cache` session knob + wiring + startup self-heal (PRs #301/#302).
+- ✅ `--dns-cache` session knob + wiring + startup self-heal (PRs #301/#302).
 - ✅ Analysis driver — `scripts/c3_h2_dns.py` (PR #303), converged over 4
   review rounds (#304/#305/#306 fixed pairing-alignment + rank-consistent
   direction gates on both arms).
@@ -32,7 +32,7 @@ order**:
 **Outcome:** during-churn **absolute** UDP-conntrack drop (cluster, per-node
 phase) — the registered `udp_conntrack_drop_entries`.
 
-**Tests** (prereg §V2-H2):
+**Tests** (prereg §H2):
 - **(a) placement-dependence:** paired Wilcoxon signed-rank on per-session
   `(spread − packed)` cache-off UDP drops; one-sided, spread > packed.
 - **(b) mechanism:** one-sided Wilcoxon signed-rank of spread's per-session
@@ -56,7 +56,7 @@ running.**
   per-protocol, 5 s, windows in `summary.json`).
 - Registered UDP-drop extraction — `scripts/m2_aa_analysis.py`
   (`udp_conntrack_drop_entries`, `udp_cluster_phase_mean`).
-- `pod-delete` churn scenario; the v2 session f-axis (f ∈ {0,1}, r = 1) — same
+- `pod-delete` churn scenario; the placement session f-axis (f ∈ {0,1}, r = 1) — same
   complete-block machinery as C1.
 - CoreDNS cache hit/miss metrics — `chaosprobe/metrics/prometheus.py`
   (`coredns_cache_hit_rate_per_sec` / `_miss_rate_per_sec`) to verify cache state.
@@ -77,9 +77,9 @@ running.**
    registered randomized-order paired design; pods still resolve through the
    node-local cache, so the mechanism (cross-node UDP DNS removal) is preserved."
    The one-time `nodelocaldns` DaemonSet install may be user-owned (cluster-level).
-2. **Cache-axis session knob** — e.g. `--v2-dns-cache {on,off}` threaded through
-   the v2 session (mirroring `--v2-packed-assignment`), recorded in
-   `v2Session`; plus paired-session + randomized-cache-order bookkeeping (record
+2. **Cache-axis session knob** — e.g. `--dns-cache {on,off}` threaded through
+   the placement session (mirroring `--packed-assignment`), recorded in
+   `session`; plus paired-session + randomized-cache-order bookkeeping (record
    the order seed).
 3. **C3 analysis driver** — `scripts/c3_h2_dns.py`, mirroring `c2_h3_anova.py`:
    paired Wilcoxon (a), one-sided shrinkage Wilcoxon vs 50 % (b), secondary

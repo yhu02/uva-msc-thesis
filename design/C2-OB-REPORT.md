@@ -1,12 +1,12 @@
 # C2 report — replication rescue under node-drain, **online-boutique** (preliminary)
 
-Confirmatory results for **V2-H3** (replication rescue under node-drain),
+Confirmatory results for **H3** (replication rescue under node-drain),
 workload online-boutique. **Preliminary** in the same strict sense as C1: the
-registered confirmatory family (V2-H1, V2-H2, V2-H3, V2-H5) is corrected
+registered confirmatory family (H1, H2, H3, H5) is corrected
 together by **Holm across all campaigns**, so the per-hypothesis p-values below
 are *uncorrected* and final significance waits on the full family. C2 tests
-**V2-H3**; it does not bear on V2-H1 (C1 dose-response) or the conntrack
-mechanism (V2-H2, C3).
+**H3**; it does not bear on H1 (C1 dose-response) or the conntrack
+mechanism (H2, C3).
 
 **Provenance.** Data: 24 node-drain sessions (3 cells × 8), online-boutique,
 collected on the **round-robin packed instrument** at commit `e533d5b` on a
@@ -15,7 +15,7 @@ collected on the **round-robin packed instrument** at commit `e533d5b` on a
 files (24 `summary.json` + 24 `f-050.json`) was computed **before** analysis and
 is committed at
 [`c2-roundrobin-manifest.sha256`](c2-roundrobin-manifest.sha256). Pre-registration
-frozen at tag `v2-prereg-freeze`, DOI
+frozen at tag `prereg-freeze`, DOI
 [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)
 ([`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md)). Analysis: `scripts/c2_h3_anova.py` at
 `e533d5b`. Deposit DOI
@@ -42,7 +42,7 @@ result from a rejected or fully-tainted session" rule.
 ## Instrument: round-robin packed assignment (deviation D-2026-06-16-01)
 
 The packed cells use the **capacity-feasible round-robin** packed assignment
-registered in [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §V2-H3
+registered in [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §H3
 (per-service replica packing; each service's replicas on one node, services
 round-robin distributed across nodes) and verified at the M1b gate.
 
@@ -51,12 +51,12 @@ cells on the fraction-solver assignment, which at `f=0.50` concentrates 11
 services onto ~2 nodes; ×3 replicas = 33 pods on 2 nodes, **unschedulable** on
 the 8×(2 CPU / 4 GiB) cluster — all 8 r3-packed sessions there were
 placement-rejected. The orchestrator was corrected to use the round-robin
-assignment for the V2-H3 cells (PRs #293/#294/#295; deviation **D-2026-06-16-01**),
+assignment for the H3 cells (PRs #293/#294/#295; deviation **D-2026-06-16-01**),
 the driver now excludes rejected/tainted sessions, and this campaign was
 collected fresh on the corrected instrument. See [`DEVIATIONS.md`](DEVIATIONS.md)
 D-2026-06-16-01.
 
-## V2-H3 — replication rescue under node-drain
+## H3 — replication rescue under node-drain
 
 Registered primary test: **ART ANOVA** with factors `r × mode`; the registered
 effect is the **interaction** — replication rescues availability only when
@@ -84,7 +84,7 @@ faces:
   "replication does not rescue when replicas share the failure domain" control
   holds — the instrument behaves as designed.
 - **User-route error rate** gives strong, significant support for the *direction*
-  of V2-H3: anti-affine `r=3` fully rescues the user-facing error rate (0.0 vs
+  of H3: anti-affine `r=3` fully rescues the user-facing error rate (0.0 vs
   r1's 0.632; interaction p ≈ 0; rescue 0.632 ≫ the 0.302 margin).
 - **Trough depth** shows a significant interaction (p = 0.0065) but the
   anti-affine rescue (0.0455) falls **below** the 0.0909 margin — which, on this
@@ -104,7 +104,7 @@ rescue ≫ margin), with both packing controls passing. Honest summary:
 *replication rescues user-visible availability under node-drain when replicas
 are spread; the trough-depth face could not adjudicate rescue on this placement,
 so the strict both-faces conjunction is not satisfied* — directional support for
-V2-H3, not a refutation. (The depth-margin construction limit is a lesson for a
+H3, not a refutation. (The depth-margin construction limit is a lesson for a
 future pre-registration — e.g. a depth margin defined relative to the realized
 r=1 depth — not a post-hoc retune of this frozen, analyzed criterion.)
 
@@ -125,14 +125,14 @@ transparency only): anti-affine trough depth (0.0455) is **50.1 % of r1's**
 face *descriptively* shows anti-affinity halving the trough, directionally
 consistent with the error face's full rescue; the registered absolute 1-pod
 margin simply could not express it. This is exploratory and carries **no
-confirmatory weight** — the pre-registered V2-H3 verdict remains `CONJUNCTION =
+confirmatory weight** — the pre-registered H3 verdict remains `CONJUNCTION =
 False` exactly as computed; retuning the frozen margin to flip it would be
 p-hacking and is not done.
 
 ## Limitations
 
-- **Preliminary pending Holm** across the confirmatory family (V2-H1/H2/H3/H5);
-  final significance of the V2-H3 interaction p-values waits on the full family
+- **Preliminary pending Holm** across the confirmatory family (H1/H2/H3/H5);
+  final significance of the H3 interaction p-values waits on the full family
   once C3 lands.
 - **Single workload.** hotelReservation C2 is not collected; external validity
   across workloads is unestablished.
@@ -142,7 +142,7 @@ p-hacking and is not done.
 - **Deposited** at DOI
   [10.5281/zenodo.20726729](https://doi.org/10.5281/zenodo.20726729) (raw run,
   before write-up); provenance also anchored by commit `e533d5b`, tag
-  `v2-prereg-freeze`, and the committed raw manifest.
+  `prereg-freeze`, and the committed raw manifest.
 - **Depth-margin construction limit** (above): the registered absolute-1-pod
   depth margin is near-unmeetable under the round-robin spread; a reader may
   weigh the depth co-primary's "not met" in that light. The error co-primary

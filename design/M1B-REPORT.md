@@ -1,7 +1,7 @@
 # M1b report — engine build + live GO/NO-GO gate at N=8: **PASS**
 
 > Status: M1b complete (2026-06-11). The committed verification artifact is
-> [`m1b-gate-artifact.json`](m1b-gate-artifact.json) (schema v2, gate run 3).
+> [`m1b-gate-artifact.json`](m1b-gate-artifact.json) (`chaosprobe/m1b-gate-artifact/v2` schema, gate run 3).
 > Code: PRs #265 (affinity engine + gate script), #266 (conntrack prober),
 > #267 (gate-instrument fixes). Cluster: the M0 fallback **N=8 × 4 GiB**
 > (1 cp 6 GiB), Kubernetes v1.28.6.
@@ -17,8 +17,8 @@ All M1b exit criteria pass on the pinned-N cluster:
 | r=3 **packed** control (each service's replicas on exactly 1 node) | ✅ 11/11 services, **43 s** |
 | Capacity ≥30 % headroom on both resources at the heaviest cell | ✅ CPU 57 %, memory 79 % |
 
-The anti-affine result is the milestone the whole redesign hinged on: the
-capability v1 structurally lacked (replica-level anti-affinity — the reason
+The anti-affine result is the milestone the whole design hinged on: the
+capability the earlier study structurally lacked (replica-level anti-affinity — the reason
 E1 was skipped) now demonstrably works at campaign scale.
 
 ## Deliverables
@@ -52,13 +52,13 @@ with zero restarts while the in-gate attempts timed out):
    *per-service* packing with services distributed; fixed to round-robin (#267).
 2. **No quiescence between churn cycles**: Phase B fired into a cluster still
    digesting ~30 back-to-back Recreate rollouts from Phase A; the nested-virt
-   1 s gRPC probe-timeout cascade (the documented v1 capacity signature) kept
+   1 s gRPC probe-timeout cascade (the documented earlier capacity signature) kept
    8/11 deployments flapping past even a 600 s budget. Fixed with a
    churn-resetting 60 s quiescence window after every restore (#267).
 
 With the fixes, the previously failing arms pass in 53 s/43 s — confirming
 the diagnosis. Failed-run artifacts are preserved off-repo; the committed
-artifact is the passing run with the v2 schema (settle records included).
+artifact is the passing run with the `chaosprobe/m1b-gate-artifact/v2` schema (settle records included).
 
 ## Pre-freeze amendments (allowed until the M2 freeze)
 

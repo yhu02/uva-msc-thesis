@@ -1,6 +1,6 @@
 # ChaosProbe — C1 + C2 hotelReservation external-validity campaign deposit manifest
 
-**Campaign:** C1 (V2-H1 dose-response, 8 sessions) + C2 (V2-H3 replication-rescue,
+**Campaign:** C1 (H1 dose-response, 8 sessions) + C2 (H3 replication-rescue,
 24 sessions) on **hotelReservation** — the exploratory external-validity
 replication of the online-boutique studies, reported **outside the frozen Holm
 family**. Reports: [`C1-HOTEL-REPORT.md`](C1-HOTEL-REPORT.md),
@@ -31,10 +31,10 @@ record [zenodo.org/record/20792129](https://zenodo.org/record/20792129).
 
 ## Verdicts (computed after the freeze)
 
-- **C1 / V2-H1:** Page's L p(1-sided) = 0.9882 — **no dose-response** of the
+- **C1 / H1:** Page's L p(1-sided) = 0.9882 — **no dose-response** of the
   east-west p95 tail (per-level medians 9.34/6.44/6.32/7.10/5.40 ms; trend mildly
   downward). Corroborates OB (which showed a sub-SESOI increase).
-- **C2 / V2-H3:** `CONJUNCTION = False`. Significant r×mode interaction on both
+- **C2 / H3:** `CONJUNCTION = False`. Significant r×mode interaction on both
   co-primaries; anti-affine r=3 directionally rescues (trough 15 s vs r1 45 s,
   user-error 0.0 vs 0.21) but below the registered margins (depth 0.044 < 0.053,
   error 0.212 < 0.302); packing controls pass. Mirrors OB.
@@ -48,5 +48,5 @@ post-upload), `isSupplementTo` the pre-registration (10.5281/zenodo.20690836) an
 DOI [10.5281/zenodo.20792129](https://doi.org/10.5281/zenodo.20792129) (resolves).
 
 To re-verify the archive integrity against the live tree:
-`cd chaosprobe && sha256sum -c ../v2-design/c1-c2-hotel-manifest.sha256`
+`cd chaosprobe && sha256sum -c ../design/c1-c2-hotel-manifest.sha256`
 (paths are relative to `chaosprobe/`).

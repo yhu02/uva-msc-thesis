@@ -1,15 +1,15 @@
-"""Pod-level DNS-cache intervention for the C3 / V2-H2 campaign.
+"""Pod-level DNS-cache intervention for the C3 / H2 campaign.
 
 The thesis cluster runs **NodeLocal DNSCache** (kubelet ``clusterDNS`` is the
 link-local cache IP ``169.254.25.10``), so pods resolve through the node-local
 cache **by default** — i.e. *cache-on* is the cluster's standing state, and the
 node-local cache forwards upstream to CoreDNS over TCP, which is precisely why
-it removes the cross-node **UDP** DNS conntrack that V2-H2 is about.
+it removes the cross-node **UDP** DNS conntrack that H2 is about.
 
 This module toggles, per session and per app deployment, whether pods *bypass*
 that cache:
 
-- **cache-off** (the v1 cross-node-UDP baseline): patch ``dnsPolicy: None`` +
+- **cache-off** (the cross-node-UDP baseline): patch ``dnsPolicy: None`` +
   ``dnsConfig`` pointing at the CoreDNS clusterIP, so resolution goes
   pod → CoreDNS over UDP (the cross-node conntrack flows).
 - **cache-on** (cluster default / the intervention): clear the override,

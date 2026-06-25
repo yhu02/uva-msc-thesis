@@ -35,8 +35,8 @@ if _SCRIPTS_DIR not in sys.path:
 import c1_h1_trend  # noqa: E402
 import c2_h3_anova  # noqa: E402
 import c3_h2_dns  # noqa: E402
+import h4_frontier  # noqa: E402
 import scorecard  # noqa: E402
-import v2_h4_frontier  # noqa: E402
 
 # Pull `plt` from thesis_figures (it calls matplotlib.use("Agg") *before*
 # importing pyplot) so the Agg backend is selected before pyplot is touched.
@@ -271,7 +271,7 @@ def fig_h3_rescue(c2_dir: str, out_dir: str) -> str:
 
 # ── H4 — placement frontier (descriptive; C1 pod-delete placements) ─────────────
 def fig_h4_frontier(results_root: str, out_dir: str) -> str:
-    fr: Any = v2_h4_frontier.build_frontier(results_root)
+    fr: Any = h4_frontier.build_frontier(results_root)
     pts = [p for p in fr["placements"] if p["role"] == "frontier" and p["campaign"] == "C1"]
     pts.sort(key=lambda p: p["f"])
     xs = [p["stats"]["ew_p95_pre_ms"]["point"] for p in pts]
@@ -307,7 +307,7 @@ def fig_h4_frontier(results_root: str, out_dir: str) -> str:
 def fig_h5_icc(c1_dir: str, out_dir: str) -> str:
     res: Any = scorecard.analyze(c1_dir)
     subs = {row["subscore"]: row for row in res["subscores"]}
-    v1 = res["iccV1"]
+    aggregate = res["iccAggregate"]
     bar = res["absoluteIccBar"]
 
     # Order top-to-bottom: mechanism (passes), availability (fails),
@@ -337,7 +337,14 @@ def fig_h5_icc(c1_dir: str, out_dir: str) -> str:
             "#56B4E9",
             "exploratory",
         ),
-        ("naive aggregate", v1["icc"], v1["ciLow"], v1["ciHigh"], "#bbbbbb", "baseline"),
+        (
+            "naive aggregate",
+            aggregate["icc"],
+            aggregate["ciLow"],
+            aggregate["ciHigh"],
+            "#bbbbbb",
+            "baseline",
+        ),
     ]
     ypos = list(range(len(rows)))[::-1]
 

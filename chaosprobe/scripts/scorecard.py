@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""V2-H5 layered scorecard — three sub-scores + the reliability evaluation.
+"""H5 layered scorecard — three sub-scores + the reliability evaluation.
 
 Implements the layered scorecard registered as DESIGN §5 / pre-registration
-§V2-H5, with the aggregation formulas specified post-freeze (blind to all
-campaign data) in ``v2-design/DEVIATIONS.md`` entry **D-2026-06-13-01**. The
+§H5, with the aggregation formulas specified post-freeze (blind to all
+campaign data) in ``design/DEVIATIONS.md`` entry **D-2026-06-13-01**. The
 constituent signals and the evaluation rule are frozen at the M2 commit
-(tag ``v2-prereg-freeze``); only the scalar aggregation is added here.
+(tag ``prereg-freeze``); only the scalar aggregation is added here.
 
-The scorecard replaces the v1 aggregate ``score`` with **three per-layer
+The scorecard replaces the aggregate ``score`` with **three per-layer
 sub-scores**, each a single scalar per session-condition, higher = better,
 range ``[0, 100]``:
 
@@ -45,19 +45,19 @@ top-level ``anomalyLabels[*].parameters.duration_s`` (recorded
 ``TOTAL_CHAOS_DURATION``); falling back to the during-chaos sample span
 (EndpointSlice time series, then conntrack UDP series).
 
-Reliability evaluation (frozen §V2-H5)
+Reliability evaluation (frozen §H5)
 --------------------------------------
 Across a set of **campaign** sessions (NOT the A/A pairs): condition-level
-ICC for each sub-score AND for the v1 aggregate ``score`` (ICC_old), using
+ICC for each sub-score AND for the aggregate ``score`` (ICC_old), using
 :func:`chaosprobe.metrics.statistics.icc_bootstrap` on cells
 ``{(session-condition, session): [session-condition median]}`` (one
 single-element cell per condition×session, per D-2026-06-13-01) — the
 "strategy" role is the session-condition whose sub-score should reproduce,
 the "run" role is the session (the test-retest replicate). For each
 **required** sub-score (availability, mechanism): the bootstrap CI on
-``ICC_sub - ICC_v1`` must exclude 0, AND ``ICC_sub ≥ 0.5`` with its CI
-excluding ICC_v1. The two are combined as a **conjunction** (both must pass);
-V2-H5's single Holm input is ``max(p_availability, p_mechanism)``. user-tail
+``ICC_sub - ICC_old`` must exclude 0, AND ``ICC_sub ≥ 0.5`` with its CI
+excluding ICC_old. The two are combined as a **conjunction** (both must pass);
+H5's single Holm input is ``max(p_availability, p_mechanism)``. user-tail
 is computed and reported identically but flagged **exploratory** and excluded
 from the decision.
 
@@ -67,10 +67,10 @@ Graceful degradation: on the frozen A/A block (no EndpointSlice time series ->
 
 Usage
 -----
-    uv run python scripts/scorecard.py --results-dir results/v2-c1 \\
+    uv run python scripts/scorecard.py --results-dir results/c1 \\
         [--json out.json] [--confidence 0.95] [--n-resamples 2000] [--seed 42]
 
-Exit codes: 0 when both required sub-scores pass (V2-H5 PASS); 1 when V2-H5
+Exit codes: 0 when both required sub-scores pass (H5 PASS); 1 when H5
 is not evaluable or fails; 2 when fewer than the minimum sessions/conditions
 needed for an ICC are present.
 """
@@ -117,7 +117,7 @@ SUBSCORES = ("availability", "mechanism", "user_tail")
 REQUIRED_SUBSCORES = ("availability", "mechanism")
 EXPLORATORY_SUBSCORES = ("user_tail",)
 
-#: The frozen absolute reliability bar (pre-registration §V2-H5).
+#: The frozen absolute reliability bar (pre-registration §H5).
 ABSOLUTE_ICC_BAR = 0.5
 
 #: Fewer than this many distinct session-conditions (the ICC "strategy"
@@ -344,7 +344,7 @@ def availability_subscore(it: Dict[str, Any], app_services: Sequence[str]) -> Op
         return None
     duration_real = es_trough_duration_real(m.get("endpointSliceTimeSeries") or {}, app_services)
     if duration_real is None:
-        return None  # V2-H5 runs only on C1 sessions that have the sampler
+        return None  # H5 runs only on C1 sessions that have the sampler
     window = chaos_window_seconds(it)
     if window is None or window <= 0:
         return None
@@ -417,7 +417,7 @@ def iteration_subscores(
 
 @dataclass
 class ConditionObs:
-    """One session-condition: per-iteration sub-score + v1-score rows.
+    """One session-condition: per-iteration sub-score + aggregate-score rows.
 
     ``None`` rows are taint-excluded (or unmeasurable) iterations, kept so the
     nested ICC's between-iteration component sees the real per-iteration spread.
@@ -428,7 +428,7 @@ class ConditionObs:
     subscores: Dict[str, List[Optional[float]]] = field(
         default_factory=lambda: {key: [] for key in SUBSCORES}
     )
-    v1_score: List[Optional[float]] = field(default_factory=list)
+    aggregate_score: List[Optional[float]] = field(default_factory=list)
 
 
 def load_condition_subscores(
@@ -438,7 +438,7 @@ def load_condition_subscores(
     taints: List[str],
     slope_band_taint: bool = False,
 ) -> Optional[ConditionObs]:
-    """Per-iteration sub-score + v1-score rows for one condition's raw file.
+    """Per-iteration sub-score + aggregate-score rows for one condition's raw file.
 
     Mirrors :func:`m2_aa_analysis.load_condition_outcomes`: loads the
     ``<condition>.json``, folds ``preChaosTaintReasons`` into ``tainted`` in
@@ -469,7 +469,7 @@ def load_condition_subscores(
         if (condition, iteration) in tainted:
             for key in SUBSCORES:
                 obs.subscores[key].append(None)
-            obs.v1_score.append(None)
+            obs.aggregate_score.append(None)
             continue
         metrics = it.get("metrics") or {}
         if slope_band_taint and udp_preslope_out_of_band(
@@ -479,14 +479,14 @@ def load_condition_subscores(
             tainted.add((condition, iteration))
             for key in SUBSCORES:
                 obs.subscores[key].append(None)
-            obs.v1_score.append(None)
+            obs.aggregate_score.append(None)
             continue
         row = iteration_subscores(it, app_services)
         for key in SUBSCORES:
             obs.subscores[key].append(row[key])
         score = it.get("resilienceScore")
         score_valid = isinstance(score, (int, float)) and it.get("verdict") != "ERROR"
-        obs.v1_score.append(float(score) if score_valid else None)
+        obs.aggregate_score.append(float(score) if score_valid else None)
     del raw  # one raw file in memory at a time
     return obs
 
@@ -497,7 +497,7 @@ def collect_conditions(
 ) -> Tuple[List[ConditionObs], List[str], List[str]]:
     """Every campaign session-condition's per-iteration sub-scores.
 
-    Discovers ``<results-dir>/*/summary.json`` v2 sessions (via
+    Discovers ``<results-dir>/*/summary.json`` placement sessions (via
     :func:`m2_aa_analysis.parse_session`), reads each accepted condition's raw
     file, and returns ``(conditions, warnings, taints)``.  Rejected / not-
     accepted conditions are skipped with a warning — registered-invalid data
@@ -550,7 +550,7 @@ def _clean_iterations(values: Sequence[Optional[float]]) -> List[float]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Condition-level ICC + the V2-H5 evaluation (frozen §V2-H5)
+# Condition-level ICC + the H5 evaluation (frozen §H5)
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -572,17 +572,17 @@ def condition_icc(
 
 def _diff_bootstrap_excludes_zero(
     sub_cells: Dict[Tuple[str, str], List[float]],
-    v1_cells: Dict[Tuple[str, str], List[float]],
+    aggregate_cells: Dict[Tuple[str, str], List[float]],
     confidence: float,
     n_resamples: int,
     seed: Optional[int],
 ) -> Dict[str, Any]:
-    """Paired bootstrap on ``ICC_sub - ICC_v1`` over the shared resample draw.
+    """Paired bootstrap on ``ICC_sub - ICC_old`` over the shared resample draw.
 
     Both ICCs are recomputed on the SAME resampled set of conditions/sessions
     each iteration, so the difference is paired (cancels the shared sampling
     noise).  Returns the point difference, the CI, whether the CI excludes 0,
-    and a two-sided bootstrap p-value for ``diff = 0`` (frozen §V2-H5: the CI
+    and a two-sided bootstrap p-value for ``diff = 0`` (frozen §H5: the CI
     on ICC_new − ICC_old must exclude zero).
     """
 
@@ -596,7 +596,7 @@ def _diff_bootstrap_excludes_zero(
             return ia - ib
         return None
 
-    point = _point_diff(dict(sub_cells), dict(v1_cells))
+    point = _point_diff(dict(sub_cells), dict(aggregate_cells))
 
     # Group both metrics by the shared (condition -> sessions) structure so a
     # single resample draws the same conditions/sessions for both ICCs.
@@ -611,7 +611,7 @@ def _diff_bootstrap_excludes_zero(
         n_cond = len(conditions)
         for _ in range(n_resamples):
             resampled_sub: Dict[Tuple[Any, Any], List[float]] = {}
-            resampled_v1: Dict[Tuple[Any, Any], List[float]] = {}
+            resampled_aggregate: Dict[Tuple[Any, Any], List[float]] = {}
             for ci in range(n_cond):
                 cond = conditions[rng.randrange(n_cond)]
                 sessions = cond_to_sessions[cond]
@@ -619,8 +619,8 @@ def _diff_bootstrap_excludes_zero(
                 for sj in range(len(sessions)):
                     sess = sessions[rng.randrange(len(sessions))]
                     resampled_sub[(synth, (sess, sj))] = sub_cells[(cond, sess)]
-                    resampled_v1[(synth, (sess, sj))] = v1_cells[(cond, sess)]
-            diff = _point_diff(resampled_sub, resampled_v1)
+                    resampled_aggregate[(synth, (sess, sj))] = aggregate_cells[(cond, sess)]
+            diff = _point_diff(resampled_sub, resampled_aggregate)
             if diff is not None:
                 boot.append(diff)
 
@@ -651,22 +651,22 @@ def _diff_bootstrap_excludes_zero(
 def evaluate_subscore(
     name: str,
     sub_cells: Dict[Tuple[str, str], List[float]],
-    v1_cells: Dict[Tuple[str, str], List[float]],
+    aggregate_cells: Dict[Tuple[str, str], List[float]],
     confidence: float,
     n_resamples: int,
     seed: Optional[int],
 ) -> Dict[str, Any]:
-    """The full per-sub-score evaluation row (frozen §V2-H5 test rule).
+    """The full per-sub-score evaluation row (frozen §H5 test rule).
 
-    Pass requires BOTH: (1) the bootstrap CI on ``ICC_sub - ICC_v1`` excludes
-    0, AND (2) ``ICC_sub ≥ 0.5`` with its own CI excluding ICC_v1.  The
-    comparator ICC_v1 is computed on the SAME (aligned) cells as the sub-score,
+    Pass requires BOTH: (1) the bootstrap CI on ``ICC_sub - ICC_old`` excludes
+    0, AND (2) ``ICC_sub ≥ 0.5`` with its own CI excluding ICC_old.  The
+    comparator ICC_old is computed on the SAME (aligned) cells as the sub-score,
     so the head-to-head is fully paired.  ``evaluable`` is False when the
     sub-score has too few conditions / no measurable values (then pass is
     None — "not evaluable", never a crash).
     """
     icc_sub = condition_icc(sub_cells, confidence, n_resamples, seed)
-    icc_v1 = condition_icc(v1_cells, confidence, n_resamples, seed)
+    icc_aggregate = condition_icc(aggregate_cells, confidence, n_resamples, seed)
     n_conditions = icc_sub["n_strategies"]
     # A condition observed in <2 sessions has no test-retest replicate to
     # disagree, so it inflates ICC toward 1.0 (a degenerate, silently
@@ -675,19 +675,23 @@ def evaluate_subscore(
     # off-nominal inflation visible instead of silent.
     thin_replication = _thin_replication_conditions(sub_cells)
     evaluable = (
-        n_conditions >= MIN_CONDITIONS and icc_sub["icc"] is not None and icc_v1["icc"] is not None
+        n_conditions >= MIN_CONDITIONS
+        and icc_sub["icc"] is not None
+        and icc_aggregate["icc"] is not None
     )
     diff: Optional[Dict[str, Any]] = None
     abs_bar_ok: Optional[bool] = None
-    ci_excludes_v1: Optional[bool] = None
+    ci_excludes_aggregate: Optional[bool] = None
     passed: Optional[bool] = None
     p_value: Optional[float] = None
     if evaluable:
-        diff = _diff_bootstrap_excludes_zero(sub_cells, v1_cells, confidence, n_resamples, seed)
-        icc_old = float(icc_v1["icc"])
+        diff = _diff_bootstrap_excludes_zero(
+            sub_cells, aggregate_cells, confidence, n_resamples, seed
+        )
+        icc_old = float(icc_aggregate["icc"])
         abs_bar_ok = float(icc_sub["icc"]) >= ABSOLUTE_ICC_BAR
-        ci_excludes_v1 = icc_sub["ci_low"] is not None and float(icc_sub["ci_low"]) > icc_old
-        passed = bool(diff["excludesZero"] and abs_bar_ok and ci_excludes_v1)
+        ci_excludes_aggregate = icc_sub["ci_low"] is not None and float(icc_sub["ci_low"]) > icc_old
+        passed = bool(diff["excludesZero"] and abs_bar_ok and ci_excludes_aggregate)
         p_value = diff["pValue"]
     return {
         "subscore": name,
@@ -697,10 +701,10 @@ def evaluate_subscore(
         "iccSub": icc_sub["icc"],
         "iccSubCiLow": icc_sub["ci_low"],
         "iccSubCiHigh": icc_sub["ci_high"],
-        "iccV1Aligned": icc_v1["icc"],
-        "diffVsV1": diff,
+        "iccAggregateAligned": icc_aggregate["icc"],
+        "diffVsAggregate": diff,
         "absBarOk": abs_bar_ok,
-        "ciExcludesV1": ci_excludes_v1,
+        "ciExcludesAggregate": ci_excludes_aggregate,
         "pass": passed,
         "pValue": p_value,
         "thinReplicationConditions": thin_replication,
@@ -744,12 +748,12 @@ def _metric_cells(
     return cells
 
 
-def _v1_cells_aligned(
+def _aggregate_cells_aligned(
     conditions: Sequence[ConditionObs], keep: set
 ) -> Dict[Tuple[str, str], List[float]]:
-    """v1-score ICC cells (session medians) restricted to the cells a sub-score has.
+    """aggregate-score ICC cells (session medians) restricted to the cells a sub-score has.
 
-    The paired ICC difference must compare the SAME cells, so the v1 cells are
+    The paired ICC difference must compare the SAME cells, so the aggregate cells are
     aligned to the sub-score's measurable cells.
     """
     cells: Dict[Tuple[str, str], List[float]] = {}
@@ -757,7 +761,7 @@ def _v1_cells_aligned(
         key = (obs.condition, obs.run)
         if key not in keep:
             continue
-        median = _cell_median(obs.v1_score)
+        median = _cell_median(obs.aggregate_score)
         if median is not None:
             cells[key] = [median]
     return cells
@@ -770,7 +774,7 @@ def analyze(
     seed: Optional[int] = 42,
     slope_band_taint: bool = False,
 ) -> Dict[str, Any]:
-    """The full V2-H5 scorecard reliability analysis as one JSON-ready dict.
+    """The full H5 scorecard reliability analysis as one JSON-ready dict.
 
     ``slope_band_taint`` defaults OFF (deviation D-2026-06-14-02): the C1
     diagnosis showed the frozen D3 UDP-slope band (D-2026-06-14-01) does not
@@ -784,21 +788,21 @@ def analyze(
         results_dir, slope_band_taint=slope_band_taint
     )
 
-    # v1 aggregate ICC over all measurable cells (ICC_old comparator).
-    v1_all = _metric_cells_v1(conditions)
-    icc_v1 = condition_icc(v1_all, confidence, n_resamples, seed)
+    # aggregate ICC over all measurable cells (ICC_old comparator).
+    aggregate_all = _metric_cells_aggregate(conditions)
+    icc_aggregate = condition_icc(aggregate_all, confidence, n_resamples, seed)
 
     subscore_rows: List[Dict[str, Any]] = []
     for name in SUBSCORES:
         sub_cells = _metric_cells(conditions, name)
-        v1_aligned = _v1_cells_aligned(conditions, set(sub_cells))
-        # Restrict the sub-score cells to those the v1 score also covers, so
+        aggregate_aligned = _aggregate_cells_aligned(conditions, set(sub_cells))
+        # Restrict the sub-score cells to those the aggregate score also covers, so
         # the paired difference is over a common, fully-paired set.
-        common = set(sub_cells) & set(v1_aligned)
+        common = set(sub_cells) & set(aggregate_aligned)
         sub_cells = {k: v for k, v in sub_cells.items() if k in common}
-        v1_aligned = {k: v for k, v in v1_aligned.items() if k in common}
+        aggregate_aligned = {k: v for k, v in aggregate_aligned.items() if k in common}
         subscore_rows.append(
-            evaluate_subscore(name, sub_cells, v1_aligned, confidence, n_resamples, seed)
+            evaluate_subscore(name, sub_cells, aggregate_aligned, confidence, n_resamples, seed)
         )
 
     by_name = {row["subscore"]: row for row in subscore_rows}
@@ -806,7 +810,7 @@ def analyze(
     all_evaluable = all(row["evaluable"] for row in required_rows)
     if all_evaluable:
         conjunction_pass = all(bool(row["pass"]) for row in required_rows)
-        # Holm input = max(p_availability, p_mechanism) (frozen §V2-H5).
+        # Holm input = max(p_availability, p_mechanism) (frozen §H5).
         p_values = [row["pValue"] for row in required_rows if row["pValue"] is not None]
         holm_input = max(p_values) if len(p_values) == len(required_rows) else None
         verdict = "PASS" if conjunction_pass else "FAIL"
@@ -827,12 +831,12 @@ def analyze(
         "nSessions": len({obs.run for obs in conditions}),
         "nConditionSessionCells": len(conditions),
         "taintedIterations": taints,
-        "iccV1": {
-            "icc": icc_v1["icc"],
-            "ciLow": icc_v1["ci_low"],
-            "ciHigh": icc_v1["ci_high"],
-            "nConditions": icc_v1["n_strategies"],
-            "nObservations": icc_v1["n_obs"],
+        "iccAggregate": {
+            "icc": icc_aggregate["icc"],
+            "ciLow": icc_aggregate["ci_low"],
+            "ciHigh": icc_aggregate["ci_high"],
+            "nConditions": icc_aggregate["n_strategies"],
+            "nObservations": icc_aggregate["n_obs"],
         },
         "subscores": subscore_rows,
         "decision": {
@@ -845,13 +849,13 @@ def analyze(
     }
 
 
-def _metric_cells_v1(
+def _metric_cells_aggregate(
     conditions: Sequence[ConditionObs],
 ) -> Dict[Tuple[str, str], List[float]]:
-    """ICC cells (session medians) for the v1 aggregate score, all measurable cells."""
+    """ICC cells (session medians) for the aggregate score, all measurable cells."""
     cells: Dict[Tuple[str, str], List[float]] = {}
     for obs in conditions:
-        median = _cell_median(obs.v1_score)
+        median = _cell_median(obs.aggregate_score)
         if median is not None:
             cells[(obs.condition, obs.run)] = [median]
     return cells
@@ -870,7 +874,7 @@ def _fmt(value: Optional[float], digits: int = 4) -> str:
 def print_report(result: Dict[str, Any]) -> None:
     """Human-readable rendering of the analysis dict."""
     print(
-        f"V2-H5 layered scorecard reliability — {result['resultsDir']} "
+        f"H5 layered scorecard reliability — {result['resultsDir']} "
         f"(deviation {result['deviation']}, absolute ICC bar {result['absoluteIccBar']})"
     )
     print(
@@ -887,17 +891,17 @@ def print_report(result: Dict[str, Any]) -> None:
         for taint in result["taintedIterations"]:
             print(f"  TAINTED (excluded): {taint}")
 
-    v1 = result["iccV1"]
+    aggregate = result["iccAggregate"]
     print(
-        f"\nv1 aggregate ICC_old = {_fmt(v1['icc'])} "
-        f"[{_fmt(v1['ciLow'])}, {_fmt(v1['ciHigh'])}]  "
-        f"(conditions={v1['nConditions']}, obs={v1['nObservations']})"
+        f"\naggregate ICC_old = {_fmt(aggregate['icc'])} "
+        f"[{_fmt(aggregate['ciLow'])}, {_fmt(aggregate['ciHigh'])}]  "
+        f"(conditions={aggregate['nConditions']}, obs={aggregate['nObservations']})"
     )
 
     print("\n=== Sub-scores ===")
     print(
         f"  {'sub-score':<14}{'role':<12}{'ICC':>8}{'CI':>20}"
-        f"{'>=0.5?':>8}{'CI>v1?':>8}{'diff!=0?':>10}{'p':>9}  verdict"
+        f"{'>=0.5?':>8}{'CI>agg?':>8}{'diff!=0?':>10}{'p':>9}  verdict"
     )
     for row in result["subscores"]:
         if not row["evaluable"]:
@@ -906,7 +910,7 @@ def print_report(result: Dict[str, Any]) -> None:
                 f"{'-':>8}{'-':>8}{'-':>10}{'-':>9}  NOT EVALUABLE"
             )
             continue
-        diff = row["diffVsV1"] or {}
+        diff = row["diffVsAggregate"] or {}
         ci = f"[{_fmt(row['iccSubCiLow'])},{_fmt(row['iccSubCiHigh'])}]"
         excl = diff.get("excludesZero")
         verdict = "PASS" if row["pass"] else "FAIL"
@@ -914,7 +918,7 @@ def print_report(result: Dict[str, Any]) -> None:
         print(
             f"  {row['subscore']:<14}{row['role']:<12}{_fmt(row['iccSub']):>8}{ci:>20}"
             f"{('Y' if row['absBarOk'] else 'N'):>8}"
-            f"{('Y' if row['ciExcludesV1'] else 'N'):>8}"
+            f"{('Y' if row['ciExcludesAggregate'] else 'N'):>8}"
             f"{('Y' if excl else 'N'):>10}{_fmt(row['pValue']):>9}  {verdict}{tag}"
         )
         thin = row.get("thinReplicationConditions") or []
@@ -925,7 +929,7 @@ def print_report(result: Dict[str, Any]) -> None:
             )
 
     decision = result["decision"]
-    print("\n=== V2-H5 decision (required conjunction; user-tail excluded) ===")
+    print("\n=== H5 decision (required conjunction; user-tail excluded) ===")
     print(f"  conjunction pass: {decision['conjunctionPass']}")
     print(f"  Holm input (max p of required): {_fmt(decision['holmInput'])}")
     print(f"  VERDICT: {decision['verdict']}")
@@ -935,18 +939,18 @@ def build_parser() -> argparse.ArgumentParser:
     """The CLI surface (also exercised by tests)."""
     parser = argparse.ArgumentParser(
         description=(
-            "V2-H5 layered scorecard: computes the three per-iteration sub-scores "
+            "H5 layered scorecard: computes the three per-iteration sub-scores "
             "(availability, mechanism-reconvergence, user-tail), aggregates each to "
             "the session-condition median over untainted iterations, and runs the "
-            "frozen V2-H5 reliability evaluation (condition-level ICC per sub-score "
-            "vs the v1 aggregate; required conjunction; user-tail exploratory). "
+            "frozen H5 reliability evaluation (condition-level ICC per sub-score "
+            "vs the aggregate; required conjunction; user-tail exploratory). "
             "Aggregation formulas per DEVIATIONS.md D-2026-06-13-01."
         ),
     )
     parser.add_argument(
         "--results-dir",
-        default="results/v2-c1",
-        help="directory of <run>/summary.json v2 campaign sessions (default results/v2-c1)",
+        default="results/c1",
+        help="directory of <run>/summary.json placement campaign sessions (default results/c1)",
     )
     parser.add_argument(
         "--json",

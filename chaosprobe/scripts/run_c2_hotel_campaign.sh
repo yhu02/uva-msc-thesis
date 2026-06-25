@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# C2 / V2-H3 replication-rescue — EXTERNAL VALIDITY replication on hotelReservation.
+# C2 / H3 replication-rescue — EXTERNAL VALIDITY replication on hotelReservation.
 # Mirrors the frozen online-boutique round-robin C2 design (run_c2_rr_campaign.sh):
 # 3 cells × 8 replicate sessions = 24 node-drain sessions. Each session: 1 condition
-# (f-050), 1 iteration, --v2-packed-assignment round-robin (spreads r=3 across the 8
+# (f-050), 1 iteration, --packed-assignment round-robin (spreads r=3 across the 8
 # workers so the f=0.5 placement is feasible at hotel's service count).
 # Exploratory — reported OUTSIDE the frozen Holm family.
 #
@@ -28,9 +28,9 @@ run_cell() {
     echo "=== C2-HOTEL CELL r=$r mode=$mode session $i/8 ($(date -u +%H:%M:%S)) ==="
     uv run chaosprobe run -n hotel-reservation \
       -e scenarios/hotel-reservation/node-drain.yaml \
-      --v2-levels 0.5 --v2-replicas "$r" --v2-mode "$mode" \
-      --v2-packed-assignment round-robin \
-      --v2-workers "$WORKERS" --v2-solver-seed 0 --v2-order-seed 1 \
+      --fraction-levels 0.5 --replica-degree "$r" --placement-mode "$mode" \
+      --packed-assignment round-robin \
+      --worker-nodes "$WORKERS" --solver-seed 0 --order-seed 1 \
       --gate-sustained-load --gate-load-concurrency 6 --pre-gate-warmup 30 \
       -i 1 -o "$OUT" || echo "RUN FAILED: r=$r mode=$mode i=$i"
   done

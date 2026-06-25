@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Confirmatory-family capstone: Holm correction over V2-H1/H2/H3/H5.
+"""Confirmatory-family capstone: Holm correction over H1/H2/H3/H5.
 
 The pre-registration (``01-PREREGISTRATION.md`` §"Confirmatory family and
 multiplicity") fixes a **four-member** confirmatory family — the single primary
-test of each of V2-H1, V2-H2, V2-H3, V2-H5 — **Holm-corrected** across the
+test of each of H1, H2, H3, H5 — **Holm-corrected** across the
 family at α = 0.05. This script is the capstone: it reads each hypothesis's
 registered *family-input p-value* from that hypothesis's own analysis-driver
 JSON (so nothing is transcribed by hand), applies Holm, and prints the family
@@ -11,15 +11,15 @@ table.
 
 **Each family-input p comes from the registered primary test, verbatim:**
 
-- **V2-H1** (dose-response, Page's L): ``pageTrendTest.p_one_sided`` from
+- **H1** (dose-response, Page's L): ``pageTrendTest.p_one_sided`` from
   ``c1_h1_trend.py``.
-- **V2-H2** (placement + DNS conjunction): ``familyInputMaxP`` = max(p_a, p_b)
+- **H2** (placement + DNS conjunction): ``familyInputMaxP`` = max(p_a, p_b)
   from ``c3_h2_dns.py`` (the registered conjunction input).
-- **V2-H3** (replication rescue conjunction): max of the two co-primary ART
+- **H3** (replication rescue conjunction): max of the two co-primary ART
   interaction p-values (``troughDepthFraction.artInteraction.p`` and
   ``userErrorRate.artInteraction.p``) from ``c2_h3_anova.py`` — matching the
   both-must-pass rule (the family input is the larger).
-- **V2-H5** (scorecard ICC conjunction): ``decision.holmInput`` =
+- **H5** (scorecard ICC conjunction): ``decision.holmInput`` =
   max(p_availability, p_mechanism) from ``scorecard.py``.
 
 **Holm significance is necessary but not sufficient for support.** Each
@@ -30,7 +30,7 @@ Holm-significant **and** its registered bar is met; this script reports both so
 the distinction is explicit (a statistically significant but sub-SESOI trend,
 or a significant interaction that misses the rescue margin, is *not* support).
 
-V2-H4 is descriptive and V2-H6 exploratory — neither is in the family.
+H4 is descriptive and H6 exploratory — neither is in the family.
 """
 
 import argparse
@@ -98,8 +98,8 @@ def _load(path: str) -> Any:
 
 
 def h1_input(doc: Any) -> Tuple[float, bool, str]:
-    """V2-H1: Page's L one-sided p; bar = effect meets SESOI (≥ 15 %)."""
-    p = _float_p(doc, "V2-H1", "pageTrendTest", "p_one_sided")
+    """H1: Page's L one-sided p; bar = effect meets SESOI (≥ 15 %)."""
+    p = _float_p(doc, "H1", "pageTrendTest", "p_one_sided")
     meets_sesoi = bool(_get(doc, "sesoi", "meetsSesoi"))
     pct = _get(doc, "sesoi", "pctChange")
     sesoi_pct = _get(doc, "sesoi", "sesoiPct")
@@ -109,17 +109,17 @@ def h1_input(doc: Any) -> Tuple[float, bool, str]:
 
 
 def h2_input(doc: Any) -> Tuple[float, bool, str]:
-    """V2-H2: max(p_a, p_b); bar = the two-part conjunction passes."""
-    p = _float_p(doc, "V2-H2", "familyInputMaxP")
+    """H2: max(p_a, p_b); bar = the two-part conjunction passes."""
+    p = _float_p(doc, "H2", "familyInputMaxP")
     conj = bool(_get(doc, "conjunction"))
     note = "placement-dependence ∧ DNS-shrinkage conjunction"
     return p, conj, note
 
 
 def h3_input(doc: Any) -> Tuple[float, bool, str]:
-    """V2-H3: max of the two co-primary ART interaction p's; bar = rescue conjunction."""
-    p_depth = _float_p(doc, "V2-H3", "troughDepthFraction", "artInteraction", "p")
-    p_err = _float_p(doc, "V2-H3", "userErrorRate", "artInteraction", "p")
+    """H3: max of the two co-primary ART interaction p's; bar = rescue conjunction."""
+    p_depth = _float_p(doc, "H3", "troughDepthFraction", "artInteraction", "p")
+    p_err = _float_p(doc, "H3", "userErrorRate", "artInteraction", "p")
     p = max(p_depth, p_err)
     conj = bool(_get(doc, "conjunctionRescue"))
     note = f"co-primary interactions max(depth {p_depth}, err {p_err}); anti-affine rescue margin"
@@ -127,8 +127,8 @@ def h3_input(doc: Any) -> Tuple[float, bool, str]:
 
 
 def h5_input(doc: Any) -> Tuple[float, bool, str]:
-    """V2-H5: max(p_availability, p_mechanism); bar = required-subscore conjunction."""
-    p = _float_p(doc, "V2-H5", "decision", "holmInput")
+    """H5: max(p_availability, p_mechanism); bar = required-subscore conjunction."""
+    p = _float_p(doc, "H5", "decision", "holmInput")
     conj = bool(_get(doc, "decision", "conjunctionPass"))
     note = "availability ∧ mechanism ICC ≥ 0.5 conjunction"
     return p, conj, note
@@ -136,10 +136,10 @@ def h5_input(doc: Any) -> Tuple[float, bool, str]:
 
 #: Family members in registered order, each with its driver-JSON extractor.
 MEMBERS = [
-    ("V2-H1", "dose-response (Page's L)", h1_input),
-    ("V2-H2", "placement + DNS intervention", h2_input),
-    ("V2-H3", "replication rescue (node-drain)", h3_input),
-    ("V2-H5", "layered scorecard ICC", h5_input),
+    ("H1", "dose-response (Page's L)", h1_input),
+    ("H2", "placement + DNS intervention", h2_input),
+    ("H3", "replication rescue (node-drain)", h3_input),
+    ("H5", "layered scorecard ICC", h5_input),
 ]
 
 
@@ -177,7 +177,7 @@ def _fmt_p(p: float) -> str:
 
 def render(result: Dict[str, Any]) -> str:
     lines = [
-        "V2 confirmatory family — Holm correction "
+        "Confirmatory family — Holm correction "
         f"(m={result['familySize']}, α={result['alpha']})",
         "",
         f"  {'hyp':6} {'p_input':>9} {'holm_adj':>9} {'sig?':>5} "
@@ -205,7 +205,7 @@ def render(result: Dict[str, Any]) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Holm correction over the V2 confirmatory family")
+    ap = argparse.ArgumentParser(description="Holm correction over the confirmatory family")
     ap.add_argument("--h1", required=True, help="c1_h1_trend.py --json output")
     ap.add_argument("--h2", required=True, help="c3_h2_dns.py --json output")
     ap.add_argument("--h3", required=True, help="c2_h3_anova.py --json output")
@@ -215,7 +215,7 @@ def main() -> None:
     args = ap.parse_args()
 
     result = analyze(
-        {"V2-H1": args.h1, "V2-H2": args.h2, "V2-H3": args.h3, "V2-H5": args.h5}, args.alpha
+        {"H1": args.h1, "H2": args.h2, "H3": args.h3, "H5": args.h5}, args.alpha
     )
     print(render(result))
     if args.json:

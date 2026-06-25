@@ -1,4 +1,4 @@
-"""Tests for chaosprobe/placement/fraction_solver.py (v2 / M1a).
+"""Tests for chaosprobe/placement/fraction_solver.py (M1a).
 
 Anti-self-verification (WORKPLAN M1a exit criterion): `independent_fraction`
 below is a SECOND, independently written implementation of the cross-node

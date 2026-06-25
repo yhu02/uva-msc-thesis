@@ -1,4 +1,4 @@
-"""Tests for scripts/holm_family.py (V2 confirmatory-family Holm capstone)."""
+"""Tests for scripts/holm_family.py (confirmatory-family Holm capstone)."""
 
 import importlib.util
 import sys
@@ -91,7 +91,7 @@ def test_holm_stepdown_stops_at_first_failure():
 
 
 def test_holm_family_actual_values():
-    # The real V2 family: H1=.0002, H2=.98875, H3=.0065, H5=.2501 (input order H1,H2,H3,H5).
+    # The real family: H1=.0002, H2=.98875, H3=.0065, H5=.2501 (input order H1,H2,H3,H5).
     adj, rej = hf.holm([0.0002, 0.98875, 0.0065, 0.2501], alpha=0.05)
     assert adj[0] == pytest.approx(0.0008)  # H1
     assert adj[2] == pytest.approx(0.0195)  # H3
@@ -150,7 +150,7 @@ def test_get_raises_with_path_on_miss():
 
 
 def test_h2_null_p_raises_named_error():
-    with pytest.raises(ValueError, match="V2-H2 family-input p is null"):
+    with pytest.raises(ValueError, match="H2 family-input p is null"):
         hf.h2_input({"familyInputMaxP": None, "conjunction": False})
 
 
@@ -161,18 +161,18 @@ def test_h3_null_coprimary_raises_before_max():
         "userErrorRate": {"artInteraction": {"p": 0.1}},
         "conjunctionRescue": False,
     }
-    with pytest.raises(ValueError, match="V2-H3 family-input p is null"):
+    with pytest.raises(ValueError, match="H3 family-input p is null"):
         hf.h3_input(doc)
 
 
 def test_h1_null_p_raises_named_error():
     doc = {"pageTrendTest": {"p_one_sided": None}, "sesoi": {"meetsSesoi": False}}
-    with pytest.raises(ValueError, match="V2-H1 family-input p is null"):
+    with pytest.raises(ValueError, match="H1 family-input p is null"):
         hf.h1_input(doc)
 
 
 def test_h5_null_p_raises_named_error():
-    with pytest.raises(ValueError, match="V2-H5 family-input p is null"):
+    with pytest.raises(ValueError, match="H5 family-input p is null"):
         hf.h5_input({"decision": {"holmInput": None, "conjunctionPass": False}})
 
 
@@ -183,17 +183,17 @@ def _family_docs(tmp_path, h1_meets=False, h3_conj=False):
     import json
 
     docs = {
-        "V2-H1": {
+        "H1": {
             "pageTrendTest": {"p_one_sided": 0.0002},
             "sesoi": {"meetsSesoi": h1_meets, "pctChange": 13.35, "sesoiPct": 15.0},
         },
-        "V2-H2": {"familyInputMaxP": 0.98875, "conjunction": False},
-        "V2-H3": {
+        "H2": {"familyInputMaxP": 0.98875, "conjunction": False},
+        "H3": {
             "troughDepthFraction": {"artInteraction": {"p": 0.0065}},
             "userErrorRate": {"artInteraction": {"p": 0.0}},
             "conjunctionRescue": h3_conj,
         },
-        "V2-H5": {"decision": {"holmInput": 0.2501, "conjunctionPass": False}},
+        "H5": {"decision": {"holmInput": 0.2501, "conjunctionPass": False}},
     }
     paths = {}
     for hyp, doc in docs.items():
@@ -206,26 +206,26 @@ def _family_docs(tmp_path, h1_meets=False, h3_conj=False):
 def test_analyze_none_supported(tmp_path):
     res = hf.analyze(_family_docs(tmp_path))
     by = {r["hyp"]: r for r in res["members"]}
-    assert by["V2-H1"]["holmSignificant"] is True and by["V2-H1"]["supported"] is False  # sub-SESOI
-    assert by["V2-H3"]["holmSignificant"] is True and by["V2-H3"]["supported"] is False  # margin
-    assert by["V2-H2"]["holmSignificant"] is False and by["V2-H2"]["supported"] is False
-    assert by["V2-H5"]["holmSignificant"] is False and by["V2-H5"]["supported"] is False
+    assert by["H1"]["holmSignificant"] is True and by["H1"]["supported"] is False  # sub-SESOI
+    assert by["H3"]["holmSignificant"] is True and by["H3"]["supported"] is False  # margin
+    assert by["H2"]["holmSignificant"] is False and by["H2"]["supported"] is False
+    assert by["H5"]["holmSignificant"] is False and by["H5"]["supported"] is False
     assert res["anySupported"] is False
     # Pin the headline family-adjusted p-values end-to-end (driver-JSON → analyze),
     # not just the boolean flags — a rounding/precision regression in the reported
     # holmAdjusted field must fail here (reject is computed from full precision, so
     # the booleans alone would not catch it).
-    assert by["V2-H1"]["holmAdjusted"] == pytest.approx(0.0008)
-    assert by["V2-H3"]["holmAdjusted"] == pytest.approx(0.0195)
-    assert by["V2-H5"]["holmAdjusted"] == pytest.approx(0.5002)
-    assert by["V2-H2"]["holmAdjusted"] == pytest.approx(0.98875)
+    assert by["H1"]["holmAdjusted"] == pytest.approx(0.0008)
+    assert by["H3"]["holmAdjusted"] == pytest.approx(0.0195)
+    assert by["H5"]["holmAdjusted"] == pytest.approx(0.5002)
+    assert by["H2"]["holmAdjusted"] == pytest.approx(0.98875)
 
 
 def test_analyze_support_requires_both_sig_and_bar(tmp_path):
     # If H3's rescue conjunction passed, its significant interaction would make it supported.
     res = hf.analyze(_family_docs(tmp_path, h3_conj=True))
     by = {r["hyp"]: r for r in res["members"]}
-    assert by["V2-H3"]["supported"] is True
+    assert by["H3"]["supported"] is True
     assert res["anySupported"] is True
 
 
@@ -239,12 +239,12 @@ def test_analyze_bar_without_significance_not_supported(tmp_path):
         "pageTrendTest": {"p_one_sided": 0.9},
         "sesoi": {"meetsSesoi": True, "pctChange": 20.0, "sesoiPct": 15.0},
     }
-    (tmp_path / "V2-H1.json").write_text(json.dumps(doc))
+    (tmp_path / "H1.json").write_text(json.dumps(doc))
     res = hf.analyze(paths)
     by = {r["hyp"]: r for r in res["members"]}
-    assert by["V2-H1"]["barMet"] is True
-    assert by["V2-H1"]["holmSignificant"] is False
-    assert by["V2-H1"]["supported"] is False
+    assert by["H1"]["barMet"] is True
+    assert by["H1"]["holmSignificant"] is False
+    assert by["H1"]["supported"] is False
 
 
 def test_render_verifies_per_row_data(tmp_path):
@@ -252,10 +252,10 @@ def test_render_verifies_per_row_data(tmp_path):
     out = hf.render(res)
     assert "NO confirmatory hypothesis is supported" in out
     # The H1 row must show significant (Y) but not supported (no) — sub-SESOI.
-    h1_row = next(ln for ln in out.splitlines() if ln.strip().startswith("V2-H1 "))
+    h1_row = next(ln for ln in out.splitlines() if ln.strip().startswith("H1 "))
     assert " Y " in h1_row and " no " in h1_row
     # The H2 row must show not-significant (N) and not supported.
-    h2_row = next(ln for ln in out.splitlines() if ln.strip().startswith("V2-H2 "))
+    h2_row = next(ln for ln in out.splitlines() if ln.strip().startswith("H2 "))
     assert " N " in h2_row and " no " in h2_row
 
 
@@ -264,7 +264,7 @@ def test_render_supported_path(tmp_path):
     res = hf.analyze(_family_docs(tmp_path, h3_conj=True))
     out = hf.render(res)
     assert "at least one hypothesis is SUPPORTED" in out
-    h3_row = next(ln for ln in out.splitlines() if ln.strip().startswith("V2-H3 "))
+    h3_row = next(ln for ln in out.splitlines() if ln.strip().startswith("H3 "))
     assert "SUPPORTED" in h3_row
 
 
@@ -281,13 +281,13 @@ def test_main_round_trips_analyze(tmp_path, monkeypatch, capsys):
         [
             "holm_family.py",
             "--h1",
-            paths["V2-H1"],
+            paths["H1"],
             "--h2",
-            paths["V2-H2"],
+            paths["H2"],
             "--h3",
-            paths["V2-H3"],
+            paths["H3"],
             "--h5",
-            paths["V2-H5"],
+            paths["H5"],
             "--json",
             str(out_json),
         ],

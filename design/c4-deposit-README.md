@@ -16,7 +16,7 @@ depth, H4 frontier, H5 availability sub-score) under `node-drain`, whose blast
 radius is placement-dependent — unlike the confirmatory `pod-delete` regime,
 where removing a service's only replica makes the availability trough ≈ 1 pod
 for every placement. Its corrected criteria were **pre-declared** (in
-`v2-design/DESIGN-FIX-SCOPE.md`) before the new data were examined — a
+`design/DESIGN-FIX-SCOPE.md`) before the new data were examined — a
 design-corrected analogue of the deposit-before-analysis rule.
 
 The result: the availability trough varies monotonically with placement

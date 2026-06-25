@@ -1,4 +1,4 @@
-"""Tests for scripts/c2_h3_anova.py (V2-H3 replication-rescue analysis)."""
+"""Tests for scripts/c2_h3_anova.py (H3 replication-rescue analysis)."""
 
 import importlib.util
 import json
@@ -55,8 +55,8 @@ def _latency(err_rate):
     return {"phases": {"during-chaos": {"routes": {"/": {"errorCount": e, "sampleCount": s}}}}}
 
 
-def _v2(replicas, mode, *, accepted=True, taints=None, per_iter_taints=None):
-    """A v2Session block with one accepted (by default) node-drain condition.
+def _session_meta(replicas, mode, *, accepted=True, taints=None, per_iter_taints=None):
+    """A session block with one accepted (by default) node-drain condition.
 
     ``taints`` sets a single iteration's taintReasons; ``per_iter_taints`` (a
     list of reason-lists) builds an N-iteration condition, one entry per
@@ -82,11 +82,11 @@ def _v2(replicas, mode, *, accepted=True, taints=None, per_iter_taints=None):
     }
 
 
-def _write_session(d, name, replicas, mode, pre, during, err_rate, *, v2=None):
+def _write_session(d, name, replicas, mode, pre, during, err_rate, *, session=None):
     run = Path(d) / name
     run.mkdir(parents=True)
     (run / "summary.json").write_text(
-        json.dumps({"runId": name, "v2Session": v2 or _v2(replicas, mode)})
+        json.dumps({"runId": name, "session": session or _session_meta(replicas, mode)})
     )
     (run / "f-050.json").write_text(
         json.dumps(
@@ -180,14 +180,16 @@ def test_analyze_fractional_margin_and_rescue(tmp_path):
     assert isinstance(out["conjunctionRescue"], bool)
 
 
-def test_collect_skips_non_v2_and_missing_condition(tmp_path):
-    (tmp_path / "nonv2").mkdir()
-    (tmp_path / "nonv2" / "summary.json").write_text(json.dumps({"runId": "x"}))
+def test_collect_skips_non_placement_and_missing_condition(tmp_path):
+    (tmp_path / "non-session").mkdir()
+    (tmp_path / "non-session" / "summary.json").write_text(json.dumps({"runId": "x"}))
     (tmp_path / "nocond").mkdir()
-    (tmp_path / "nocond" / "summary.json").write_text(json.dumps({"v2Session": _v2(1, "packed")}))
+    (tmp_path / "nocond" / "summary.json").write_text(
+        json.dumps({"session": _session_meta(1, "packed")})
+    )
     sessions, warnings = c2.collect_sessions(str(tmp_path))
     assert sessions == []
-    assert any("not a v2" in w for w in warnings) and any(
+    assert any("not a placement" in w for w in warnings) and any(
         "no condition file" in w for w in warnings
     )
 
@@ -195,7 +197,10 @@ def test_collect_skips_non_v2_and_missing_condition(tmp_path):
 def test_collect_excludes_rejected_and_tainted(tmp_path):
     # A rejected placement (accepted=False) and a fully-tainted session are
     # both excluded per the registered "no result from a rejected session" rule.
-    _write_session(tmp_path, "rej", 3, "packed", 6, 0, 1.0, v2=_v2(3, "packed", accepted=False))
+    _write_session(
+        tmp_path, "rej", 3, "packed", 6, 0, 1.0,
+        session=_session_meta(3, "packed", accepted=False),
+    )
     _write_session(
         tmp_path,
         "tainted",
@@ -204,10 +209,13 @@ def test_collect_excludes_rejected_and_tainted(tmp_path):
         2,
         1,
         0.4,
-        v2=_v2(1, "packed", taints=["v2_condition_rejected"]),
+        session=_session_meta(1, "packed", taints=["condition_rejected"]),
     )
-    # A v2 session carrying no perLevel record at all is also excluded.
-    _write_session(tmp_path, "norec", 3, "packed", 6, 0, 1.0, v2={"replicas": 3, "mode": "packed"})
+    # A placement session carrying no perLevel record at all is also excluded.
+    _write_session(
+        tmp_path, "norec", 3, "packed", 6, 0, 1.0,
+        session={"replicas": 3, "mode": "packed"},
+    )
     _write_session(tmp_path, "ok", 1, "packed", 2, 1, 0.4)  # accepted, untainted
     sessions, warnings = c2.collect_sessions(str(tmp_path))
     assert [s.run for s in sessions] == ["ok"]
@@ -228,7 +236,7 @@ def test_collect_multi_iteration_taint_boundary(tmp_path):
         6,
         5,
         0.01,
-        v2=_v2(3, "anti-affine", per_iter_taints=[[], ["app_ready_timeout"]]),
+        session=_session_meta(3, "anti-affine", per_iter_taints=[[], ["app_ready_timeout"]]),
     )
     _write_session(
         tmp_path,
@@ -238,7 +246,10 @@ def test_collect_multi_iteration_taint_boundary(tmp_path):
         6,
         3,
         0.4,
-        v2=_v2(3, "packed", per_iter_taints=[["app_ready_timeout"], ["v2_live_fraction_drifted"]]),
+        session=_session_meta(
+            3, "packed",
+            per_iter_taints=[["app_ready_timeout"], ["live_fraction_drifted"]],
+        ),
     )
     sessions, warnings = c2.collect_sessions(str(tmp_path))
     assert [s.run for s in sessions] == ["partial"]  # kept: not EVERY iteration tainted
@@ -251,7 +262,7 @@ def test_main_smoke(tmp_path, capsys):
     rc = c2.main(["--results-dir", str(tmp_path), "--json", str(out_json)])
     assert rc == 0
     printed = capsys.readouterr().out
-    assert "V2-H3" in printed and "CONJUNCTION" in printed
+    assert "H3" in printed and "CONJUNCTION" in printed
     assert json.loads(out_json.read_text())["depthMarginFraction"] == 0.125
 
 

@@ -1,28 +1,28 @@
-"""Replica-level affinity placement engine (v2 / M1b).
+"""Replica-level affinity placement engine (M1b).
 
-Implements DESIGN §2.2 / Knob B of ``v2-design/00-DESIGN.md``: placement is
+Implements DESIGN §2.2 / Knob B of ``design/00-DESIGN.md``: placement is
 expressed as **replica-level affinity constraints** the scheduler satisfies —
 never assumed — for ``r ∈ {1, 3}`` replicas crossed with a binary packing
-mode (``v2-design/02-WORKPLAN.md`` M1b build item):
+mode (``design/02-WORKPLAN.md`` M1b build item):
 
 - **r = 1** — nodeAffinity ``requiredDuringSchedulingIgnoredDuringExecution``
-  pin to the assigned node: the v1 nodeSelector semantics expressed as
+  pin to the assigned node: the nodeSelector semantics expressed as
   affinity (the comparability anchor).  The packing mode is recorded but the
   patch is the pin either way — with a single replica the two modes are
   physically identical.
 - **r = 3 packed** — the same nodeAffinity pin with ``replicas: 3``: all
-  replicas co-scheduled on one node, deliberately reproducing v1's
+  replicas co-scheduled on one node, deliberately reproducing the packed
   structural behaviour as the control arm.
 - **r = 3 anti-affine** — required ``podAntiAffinity`` on
   ``kubernetes.io/hostname`` against the service's own ``app`` label and
   **no node pin**: the scheduler must put the 3 replicas on 3 distinct
-  nodes of its own choosing.  This is the contrast the skipped v1 E1 pilot
+  nodes of its own choosing.  This is the contrast the skipped E1 pilot
   could not realize (DESIGN §2.1).
 
 **r = 2 is deliberately unsupported** (DESIGN §2.3: no registered hypothesis
 samples it, so a middle level would only inflate the M1b acceptance burden).
 
-The v1 mutator's managed-annotation convention
+The base mutator's managed-annotation convention
 (``chaosprobe.io/placement-strategy``) is kept so existing restore tooling
 recognises engine-managed deployments; the engine's values are namespaced as
 ``affinity-r<r>-<mode>``.  Verification (:func:`verify_placement`) reads the
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 #: Replica counts the engine supports (DESIGN §2.3 — r = 2 deliberately omitted).
 SUPPORTED_REPLICAS = (1, 3)
 
-#: All replicas co-scheduled on one node (v1's structural behaviour, the control).
+#: All replicas co-scheduled on one node (the packed structural behaviour, the control).
 MODE_PACKED = "packed"
 #: Replicas forced onto distinct nodes via required podAntiAffinity (E1-enabling).
 MODE_ANTI_AFFINE = "anti-affine"
@@ -151,10 +151,10 @@ def _is_pinned(r: int, mode: str) -> bool:
 def packed_round_robin(services: Sequence[str], workers: Sequence[str]) -> Dict[str, str]:
     """Capacity-feasible packed assignment: sorted service *i* → worker *i mod W*.
 
-    The C2 / V2-H3 **per-service** packing semantics — every service's replicas
+    The C2 / H3 **per-service** packing semantics — every service's replicas
     co-scheduled on ONE node — with services distributed ACROSS nodes, *not*
     all services stacked on one node.  The fraction solver's f = 0 assignment
-    (which the V2-H1 dose-response sweep needs, but V2-H3 does not) satisfies a
+    (which the H1 dose-response sweep needs, but H3 does not) satisfies a
     low cut fraction by stacking services on a single worker, which at r = 3
     needs ~3× the whole app's requests on one node — unschedulable by
     arithmetic on this cluster's 4 GiB workers.  Round-robin minimises the
@@ -163,7 +163,7 @@ def packed_round_robin(services: Sequence[str], workers: Sequence[str]) -> Dict[
     on exactly its pinned node) from live pods.
 
     This is the single source for the round-robin packing registered in the
-    pre-registration (§V2-H3 packed-cell semantics) and verified by the M1b
+    pre-registration (§H3 packed-cell semantics) and verified by the M1b
     gate; the gate and the live session orchestrator both call it.
     """
     if not workers:
@@ -182,7 +182,7 @@ def build_patch(
 
     Every patch sets ``replicas``, the managed annotation, a ``Recreate``
     rollout (old pods terminate before new ones schedule, so the verified
-    placement is never a mixed generation), and deletes any stale v1
+    placement is never a mixed generation), and deletes any stale
     ``kubernetes.io/hostname`` nodeSelector pin.
 
     Args:
@@ -251,7 +251,7 @@ def build_patch(
             "strategy": {"type": "Recreate", "rollingUpdate": None},
             "template": {
                 "spec": {
-                    # Delete only the hostname key a v1 pin may have left behind.
+                    # Delete only the hostname key a prior pin may have left behind.
                     "nodeSelector": {PLACEMENT_LABEL_KEY: None},
                     "affinity": affinity,
                 }
@@ -269,7 +269,7 @@ def _ready_pod_nodes(api: K8sApi, namespace: str, dep: Any) -> List[str]:
     """Node names of the deployment's Running+Ready pods (one entry per pod).
 
     Selects pods by the deployment's own ``spec.selector.matchLabels``
-    (falling back to ``app=<name>``), the same convention as the v1
+    (falling back to ``app=<name>``), the same convention as the base
     mutator's ``observe_pod_placements``.
     """
     match_labels = (dep.spec.selector.match_labels or {}) if dep.spec.selector else {}
@@ -418,7 +418,7 @@ def apply_placement(
             solve→apply→schedule→verify cycle).
         timeout: Rollout wait deadline in seconds.
         poll_seconds: Rollout poll interval.
-        services: Explicit service set for the r=3 anti-affine cell (the v2
+        services: Explicit service set for the r=3 anti-affine cell (the
             session driver passes its own discovered set so a deliberately
             scaled-to-zero deployment is not resurrected at ``replicas: 3``).
             ``None`` falls back to namespace discovery; ignored for pinned
@@ -544,9 +544,9 @@ def restore(
 ) -> List[str]:
     """Clear engine patches back to single-replica unpinned scheduling.
 
-    Extends the v1 mutator's managed-annotation discovery: any deployment
+    Extends the base mutator's managed-annotation discovery: any deployment
     carrying the ``chaosprobe.io/placement-strategy`` annotation (engine- or
-    v1-applied) or a stale ``kubernetes.io/hostname`` nodeSelector is reset
+    base-applied) or a stale ``kubernetes.io/hostname`` nodeSelector is reset
     to ``replicas: 1``, affinity removed, hostname pin deleted, annotation
     cleared, and the default RollingUpdate strategy restored.  Chaos-infra
     deployments are never touched.

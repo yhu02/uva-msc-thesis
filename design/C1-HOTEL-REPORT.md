@@ -1,12 +1,12 @@
 # C1 report — dose-response, **hotelReservation** (external validity, exploratory)
 
-**Scope.** Exploratory **external-validity** replication of C1 / **V2-H1**
+**Scope.** Exploratory **external-validity** replication of C1 / **H1**
 (east-west dose-response) on a second, structurally different workload —
 DeathStarBench **hotelReservation** (deep frontend fan-out, per-service
 datastore pairs, Go gRPC over **Consul** service discovery). Reported **outside
 the frozen confirmatory Holm family** (which is closed on online-boutique); it
-adjusts no confirmatory verdict. V2-H2/V2-H3 do not apply to pod-delete
-dose-response (V2-H3 is the C2-hotel report).
+adjusts no confirmatory verdict. H2/H3 do not apply to pod-delete
+dose-response (H3 is the C2-hotel report).
 
 **Provenance.** Data: 8 complete-block sessions, hotelReservation, collected
 2026-06-20/21 on `main` commit `bdf1ccb` (all 32 C1+C2 sessions
@@ -29,16 +29,16 @@ deep `/hotels` path: frontend→search→{geo,rate}) + host-side Locust. 8 sessi
 ChaosProbe fixes, not study-specific knobs): a **wget-capable probe pod** for the
 readiness gate (`require_wget`, #322 — the litmus subscriber-infra pod that sorts
 first in hotel's namespace has a shell but no wget, which had silently failed
-every gate probe), a **static-`topology.json` fallback** for the v2 cross-node
+every gate probe), a **static-`topology.json` fallback** for the cross-node
 fraction (#324 — Consul/gRPC services expose no `*_SERVICE_ADDR` env deps so the
 env-derived dependency graph is empty), and the **sustained-during-gate warm-up**
 (`--gate-sustained-load --gate-load-concurrency 6 --pre-gate-warmup 30`, #317/#318/#321).
 With these, the gate passes untainted on hotel's stack (validated: 0 taints
 across all but one of the 144 C1+C2 iterations).
 
-## V2-H1 — dose-response of the east-west tail
+## H1 — dose-response of the east-west tail
 
-Registered primary test (`01-PREREGISTRATION.md` §V2-H1): a **Page's L trend
+Registered primary test (`01-PREREGISTRATION.md` §H1): a **Page's L trend
 test** over the five ordered levels, predicting a **monotone increase** in median
 east-west p95 latency (`ew_p95_pre_ms`, per-iteration median over inter-service
 routes of the route p95, pre-chaos window, loadgen→ excluded). Unit = the
@@ -53,7 +53,7 @@ session-condition median over untainted iterations. D3 UDP-slope taint OFF
 | per-level median `ew_p95_pre_ms` (ms) | 9.34 / 6.44 / 6.32 / 7.10 / 5.40 |
 | SESOI effect f0→f1 | 9.34 → 5.40, **Δ = −42.2 %** (SESOI ≥ 15 %) |
 
-**Outcome: V2-H1 is NOT supported on hotelReservation.** The registered
+**Outcome: H1 is NOT supported on hotelReservation.** The registered
 one-sided test for a monotone *increase* is non-significant (p = 0.99); the
 observed trend is, if anything, mildly **downward** (the z statistic is negative,
 and the f=0 level carries the highest median tail). The east-west p95 baseline
@@ -66,7 +66,7 @@ all).
 online-boutique C1**, and slightly strengthens its negative reading: OB detected
 a statistically significant but **sub-SESOI** monotone increase (p = 0.0002,
 13.35 % < 15 % SESOI) — a real but trivially small effect. hotelReservation shows
-**no increase at all** on a deeper, Consul/gRPC topology. The v1 "spread reduces
+**no increase at all** on a deeper, Consul/gRPC topology. The earlier "spread reduces
 east-west latency" intuition does not generalize to a second workload: across two
 structurally different applications the placement→east-west-latency dose-response
 is absent or negligible.

@@ -1,7 +1,7 @@
 # hotelReservation external validity — RESOLVED and RUN (2026-06-22)
 
 **Status: COMPLETE.** The second-workload (hotelReservation) external-validity
-replication of C1 (V2-H1 dose-response, 8 sessions) and C2 (V2-H3
+replication of C1 (H1 dose-response, 8 sessions) and C2 (H3
 replication-rescue, 24 sessions) **was run to data** — all 32 sessions
 `doctor --strict` clean, provenance pristine (`git.dirty=false`, commit
 `bdf1ccb`), 1 excluded tainted iteration of 144. Results in
@@ -18,7 +18,7 @@ interaction with anti-affine directionally rescuing). Deposit staged
 > probed via `wget` from a pod `find_probe_pod` selected by shell-presence only —
 > hotel's alphabetically-first pod `chaos-exporter` has a shell but **no wget**,
 > so every probe failed `wget: not found` → 0/5 timeout (fixed: `require_wget`,
-> **#322**); and (2) the v2 cross-node fraction had no edges because hotel's
+> **#322**); and (2) the cross-node fraction had no edges because hotel's
 > Consul/gRPC services expose no `*_SERVICE_ADDR` env deps (fixed: static
 > `topology.json` fallback, **#324**). With both fixed the gate passes in ~57 s
 > and the campaign ran clean — the "restart-vs-recovery research-validity
@@ -30,7 +30,7 @@ interaction with anti-affine directionally rescuing). Deposit staged
 hotelReservation is deployed and the full measurement pipeline was validated on
 it — the data ChaosProbe collects is clean once the app has recovered:
 
-- **East-west latency face** (the registered V2-H1 primary outcome `ew_p95`):
+- **East-west latency face** (the registered H1 primary outcome `ew_p95`):
   11 inter-service routes measured with real p95 (e.g. `frontend->search` ~5 ms,
   `search->geo`, `*->mongodb/memcached`). hotelReservation uses Consul + gRPC and
   exposes no `*_SERVICE_ADDR` env vars, so the new **static-`topology.json`
@@ -50,7 +50,7 @@ re-resolve its gRPC backends through Consul for **~2–4 minutes** (measured:
 only later). ChaosProbe restarts all app services before **every** iteration to
 establish a clean baseline, so each iteration begins with hotel down. The
 app-ready gate (correctly) times out (240 s) and records an `app_ready_timeout`
-taint; the v2 analysis excludes tainted iterations. The gate is doing its job —
+taint; the analysis excludes tainted iterations. The gate is doing its job —
 the system really is not ready — so this is not fixable by relaxing the gate
 without measuring chaos on a not-yet-recovered system.
 

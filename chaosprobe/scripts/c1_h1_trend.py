@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""V2-H1 confirmatory analysis: dose-response of the east-west tail in f.
+"""H1 confirmatory analysis: dose-response of the east-west tail in f.
 
-Runs the registered V2-H1 primary test (`01-PREREGISTRATION.md` §V2-H1): a
+Runs the registered H1 primary test (`01-PREREGISTRATION.md` §H1): a
 **Page's L trend test** over the five ordered cross-node-fraction levels
 `f ∈ {0, 0.25, 0.5, 0.75, 1.0}`, predicting a monotone *increase* in median
 east-west p95 latency.  Each C1 session is a complete ordered block; the unit
@@ -17,13 +17,13 @@ derived from the low-churn A/A block) does not generalize to C1's per-level
 re-placement regime — it taints every f-025/f-050 iteration — while the
 east-west latency baseline at those levels is in fact the *cleanest* of all
 levels.  The pre-window UDP/DNS conntrack pool is not a validity precondition
-for this TCP/gRPC latency outcome, so the slope-taint is removed from V2-H1.
+for this TCP/gRPC latency outcome, so the slope-taint is removed from H1.
 ``--slope-band-taint`` re-enables it for the sensitivity report.
 
 Alongside the test it reports the registered **SESOI** effect size: the % change
 in the per-level grand-median east-west p95 from f = 0 to f = 1 (the bar is a
 ≥15 % increase). A statistically significant Page's L with a < 15 % effect is
-reported as *below the SESOI*, not as support (prereg §V2-H1).
+reported as *below the SESOI*, not as support (prereg §H1).
 
 The Spearman-over-designed-levels sensitivity check is non-confirmatory and is
 not computed here.
@@ -55,7 +55,7 @@ from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
     load_condition_outcomes,
 )
 
-#: The registered V2-H1 design: the five f-levels in predicted-increasing order.
+#: The registered H1 design: the five f-levels in predicted-increasing order.
 LEVELS: Tuple[Tuple[str, float], ...] = (
     ("f-000", 0.0),
     ("f-025", 0.25),
@@ -64,17 +64,17 @@ LEVELS: Tuple[Tuple[str, float], ...] = (
     ("f-100", 1.0),
 )
 
-#: Registered V2-H1 SESOI: ≥15 % increase in east-west p95 from f = 0 to f = 1.
+#: Registered H1 SESOI: ≥15 % increase in east-west p95 from f = 0 to f = 1.
 SESOI_PCT = 15.0
 
-#: The D4-pinned V2-H1 outcome (median east-west p95, pre-chaos).
+#: The D4-pinned H1 outcome (median east-west p95, pre-chaos).
 OUTCOME = "ew_p95_pre_ms"
 
 
 def collect_blocks(
     results_dir: str, slope_band_taint: bool = False
 ) -> Tuple[List[List[float]], List[str]]:
-    """Per-session complete ordered blocks of the V2-H1 outcome.
+    """Per-session complete ordered blocks of the H1 outcome.
 
     Returns ``(blocks, warnings)``.  ``blocks`` has one entry per session that
     contributed a value for **all five** levels (Page's L requires complete
@@ -86,7 +86,7 @@ def collect_blocks(
     the reported effect describe one cohort.
 
     ``slope_band_taint`` (default ``False`` — deviation D-2026-06-14-02) adds
-    the frozen D3 UDP-slope taint; left off for the primary V2-H1 analysis.
+    the frozen D3 UDP-slope taint; left off for the primary H1 analysis.
     """
     sessions, warnings = discover_sessions(results_dir)
     blocks: List[List[float]] = []
@@ -107,7 +107,7 @@ def collect_blocks(
         else:
             missing = [cond for cond, _ in LEVELS if row[cond] is None]
             warnings.append(
-                f"{session.run}: incomplete V2-H1 block (no value for {', '.join(missing)}) "
+                f"{session.run}: incomplete H1 block (no value for {', '.join(missing)}) "
                 "— excluded from Page's L"
             )
     return blocks, warnings
@@ -141,7 +141,7 @@ def sesoi_effect(blocks: List[List[float]]) -> Dict[str, object]:
 
 
 def analyze(results_dir: str, slope_band_taint: bool = False) -> Dict[str, object]:
-    """The full V2-H1 dose-response analysis as one JSON-ready dict.
+    """The full H1 dose-response analysis as one JSON-ready dict.
 
     ``slope_band_taint`` defaults OFF (deviation D-2026-06-14-02); set it for
     the sensitivity run that re-applies the frozen D3 UDP-slope taint.
@@ -162,7 +162,7 @@ def analyze(results_dir: str, slope_band_taint: bool = False) -> Dict[str, objec
 def print_report(result: Dict[str, object]) -> None:
     page = result["pageTrendTest"]
     sesoi = result["sesoi"]
-    print("V2-H1 — dose-response of the east-west tail (Page's L trend test)")
+    print("H1 — dose-response of the east-west tail (Page's L trend test)")
     print(f"  outcome:           {result['outcome']} (median east-west p95, pre-chaos)")
     taint = "ON (D3 sensitivity)" if result.get("slopeBandTaint") else "OFF (D-2026-06-14-02)"
     print(f"  D3 slope-taint:    {taint}")

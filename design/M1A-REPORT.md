@@ -2,7 +2,7 @@
 
 > Status: M1a complete (2026-06-11). All four exit criteria met. This report
 > is the input to the **M0 hardware decision (user-owned)**. Code: PR #263
-> (`6b3a631`); live validation run from the existing v1 4-worker cluster and
+> (`6b3a631`); live validation run from the existing 4-worker cluster and
 > fully restored afterwards (zero nodeSelectors left, all pods Running).
 
 ## Verdict
@@ -22,7 +22,7 @@ level — far inside the ±0.02 fidelity criterion).
 | Unit + property tests in CI, green before any live gate; achieved-fraction validated against an independent second implementation | ✅ exact agreement on all 70 cross-checks (40 random graphs + 30 direct); 100 % line+branch coverage on the new module; suite 2051 green |
 | Analytical enumerator matches live achieved-f at N=4 within ±0.02 | ✅ **exact** (Δ = 0.0000 at all five levels; see table) |
 | Quantization report (reachable f per N) delivered for M0 | ✅ this document |
-| Measured request sums (live v1 cluster, ×3 projection) for the M0 vCPU contingency | ✅ below trigger; see M0 inputs |
+| Measured request sums (live earlier cluster, ×3 projection) for the M0 vCPU contingency | ✅ below trigger; see M0 inputs |
 
 ## Quantization: reachable fractions per N (exhaustive)
 
@@ -43,7 +43,7 @@ N=8**, so the N=6-vs-8 choice is unconstrained by solver reachability.
 ## Live validation at N=4 (solve → apply → schedule → verify)
 
 Solver placements applied to the live cluster via nodeSelector pinning
-(`scripts/apply_placement_map.py`, the v1 mutator's own conventions),
+(`scripts/apply_placement_map.py`, the earlier mutator's own conventions),
 rollouts awaited, achieved fraction recomputed from **live pod placements**
 with the same `achieved_fraction` implementation:
 
@@ -77,16 +77,16 @@ specified; no contingency triggered.**
 
 ## Caveats (carried into M1b / M2)
 
-1. **Edge weights are uniform-1.0** in this graph: v1's east-west route
+1. **Edge weights are uniform-1.0** in this graph: the earlier east-west route
    records carry no per-edge call volumes, so `load_dependency_graph` used
    its documented fallback. The *unweighted* and *weighted* fractions
    coincide under uniform weights; if M1b's prober adds real volumes, the
    quantization grid becomes non-uniform and the enumeration must be
    re-run with weights before the M2 freeze (cheap: <1 s).
 2. Live validation ran at **r=1 with per-service nodeSelector pinning**
-   (the v1 mechanism). The replica-level affinity engine — and hence
+   (the earlier mechanism). The replica-level affinity engine — and hence
    anti-affine r=3 scheduling — is M1b scope, on the pinned-N cluster.
 3. The measured graph has **15 inter-service edges** (the ~16 used during
-   plan review was an estimate and appears in no v2-design document — no
+   plan review was an estimate and appears in no design document — no
    sync needed); 15 is now the canonical figure and fixes the quantization
    grid at k/15.

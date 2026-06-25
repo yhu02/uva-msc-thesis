@@ -1,7 +1,7 @@
-# ChaosProbe v2 — deviations from the frozen pre-registration
+# ChaosProbe — deviations from the frozen pre-registration
 
 Per [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §Deviations policy: the
-pre-registration was **frozen 2026-06-13** at git tag `v2-prereg-freeze`.
+pre-registration was **frozen 2026-06-13** at git tag `prereg-freeze`.
 After that commit, **every** deviation from the registered plan — a changed
 per-cell n, a dropped or added cell, a modified or substituted test, a
 revised threshold/SESOI/margin, an instrumentation change that affects an
@@ -23,21 +23,21 @@ pre-registration's §M2 freeze amendments. This file is for changes made
 
 ## Deviations log
 
-### D-2026-06-13-01 — V2-H5 sub-score aggregation formulas specified
+### D-2026-06-13-01 — H5 sub-score aggregation formulas specified
 
 - **date:** 2026-06-13
-- **what:** the M2 freeze (tag `v2-prereg-freeze`) froze V2-H5's evaluation and
+- **what:** the M2 freeze (tag `prereg-freeze`) froze H5's evaluation and
   the *constituent signals* of each sub-score but did not pin the *aggregation
   formulas*. They are specified here exactly (below). No registered hypothesis
   statement, falsification rule, SESOI, or n changes.
 - **why:** the prereg claimed "sub-score definitions frozen at the M2 commit";
   the commit froze signals + evaluation but not the scalar formulas. Closing
   that gap.
-- **blind?:** YES — fixed before any C1 reliability data exists; the only v2
+- **blind?:** YES — fixed before any C1 reliability data exists; the only
   data is the M2 A/A null (same-placement) block, and the formulas were NOT
   tuned against it. This preserves the circularity-guard intent (definitions
   fixed before reliability data).
-- **decision ID:** ties to V2-H5 (pre-registration §V2-H5) and DESIGN §5; this
+- **decision ID:** ties to H5 (pre-registration §H5) and DESIGN §5; this
   is the formula-level completion of the frozen signal/evaluation set.
 - **formulas:** one scalar per session-condition, higher = better, range
   `[0, 100]`. Per ITERATION each sub-score is computed; the session-condition
@@ -45,7 +45,7 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   iterations excluded via the existing `scripts/m2_aa_analysis.py` taint
   handling). Each constituent is a `[0, 1]` "loss" (clamped to `[0, 1]`); a
   sub-score is `100 × (1 − mean(losses))`. Direction: all three higher = better
-  (100 = no degradation). The v1 aggregate `score` outcome (already defined in
+  (100 = no degradation). The aggregate `score` outcome (already defined in
   `m2_aa_analysis.py`) is the ICC_old comparator and is unchanged.
 
   **A) availability (required)** — mean of three losses:
@@ -58,7 +58,7 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   - `duration_loss = trough_duration_real_s / chaos_window_seconds`, using the
     **real** trough duration (`es_trough_duration_real`, from the
     `endpointSliceTimeSeries` added in #280). If the real series is **absent**
-    (e.g. frozen A/A data) → availability sub-score = `None` (V2-H5 runs only on
+    (e.g. frozen A/A data) → availability sub-score = `None` (H5 runs only on
     C1 sessions that have the sampler).
   - `error_loss = user_route_error_rate during chaos` (the existing
     `user_err_during` outcome).
@@ -69,7 +69,7 @@ pre-registration's §M2 freeze amendments. This file is for changes made
     window (the existing `udp_cluster_phase_mean(..., "pre-chaos")` that the UDP
     drop extractor already uses). `pool ≤ 0` → `disturbance_loss = 0.0` (no pool
     to flush). (The ratio is used here only for sub-score scaling — NOT for the
-    V2-H2 hypothesis test, which is registered on absolute UDP drops.)
+    H2 hypothesis test, which is registered on absolute UDP drops.)
   - `reconverg_loss = conntrack_reconvergence_time_s / chaos_window_seconds`,
     from a NEW extractor over the `conntrackProtocolSamples` UDP series:
     reconvergence time = (first during/post-chaos sample whose summed-UDP-over-
@@ -143,14 +143,14 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   (`D3_UDP_SLOPE_BANDS_EPM`) and applied via
   `load_condition_outcomes(..., slope_band_taint=True)` — **C1 analysis only**;
   the A/A block that defined them is never gated by them.
-  `chaosprobe/scripts/d3_slope_bands.py` re-derives them from `results/v2-aa/`
+  `chaosprobe/scripts/d3_slope_bands.py` re-derives them from `results/aa/`
   (a parity test asserts the committed constants still match the raw data).
 
-### D-2026-06-14-02 — D3 UDP-slope taint removed from the C1 V2-H1 / V2-H5 analyses
+### D-2026-06-14-02 — D3 UDP-slope taint removed from the C1 H1 / H5 analyses
 
 - **date:** 2026-06-14
 - **what:** the frozen D3 pre-window UDP-slope taint (D-2026-06-14-01) is **not
-  applied** to the C1 V2-H1 (`scripts/c1_h1_trend.py`) and V2-H5
+  applied** to the C1 H1 (`scripts/c1_h1_trend.py`) and H5
   (`scripts/scorecard.py`) analyses — both now default `slope_band_taint=False`,
   with `--slope-band-taint` retained for a sensitivity run. The band/constants
   are unchanged; only their application to these two analyses is withdrawn. No
@@ -166,7 +166,7 @@ pre-registration's §M2 freeze amendments. This file is for changes made
      DNS/UDP conntrack burst *draining* at every non-zero level (slope ≈ −9000).
      The A/A-derived band does not describe the C1 regime — the exact
      "placement-coupled transient" instability the M2 report pre-flagged (F2).
-  3. **The taint discards the cleanest data** — the V2-H1 latency baseline
+  3. **The taint discards the cleanest data** — the H1 latency baseline
      (`ew_p95_pre_ms`) at the tainted levels is the *most* stable of all levels
      (f-050 CV ≈ 2 %, f-025 ≈ 12 %; the *passing* f-075 is the noisiest at
      ≈ 18 %). The east-west p95 is TCP/gRPC latency; the pre-window UDP pool is
@@ -176,21 +176,21 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   facts (identical sampling; latency baseline cleanest at the tainted levels;
   the gated signal is a different protocol from the outcome) and on the M2 F2
   pre-flag, not on the hypothesis outcome. **Reported transparently both ways:**
-  the primary V2-H1/V2-H5 results run with the slope-taint OFF; the
-  slope-taint-ON result (unrunnable for V2-H1) is reported as the limitation.
+  the primary H1/H5 results run with the slope-taint OFF; the
+  slope-taint-ON result (unrunnable for H1) is reported as the limitation.
 - **decision ID:** ties to **D3** and to D-2026-06-14-01 (the band whose
   application is withdrawn here).
-- **scope:** the withdrawal is limited to the C1 V2-H1 / V2-H5 latency-side
+- **scope:** the withdrawal is limited to the C1 H1 / H5 latency-side
   analyses. The slope-taint remains applicable where the UDP/DNS conntrack pool
-  *is* the measurement (V2-H2, the conntrack-mechanism hypothesis, C3). The
+  *is* the measurement (H2, the conntrack-mechanism hypothesis, C3). The
   forward fix — lengthening the post-(re)placement settle so the pre-chaos
   window starts after the conntrack burst drains — is recorded for C2/C3 as a
   protocol change, not applied retroactively to C1.
 
-### D-2026-06-15-01 — V2-H3 trough-depth operationalized as a fraction
+### D-2026-06-15-01 — H3 trough-depth operationalized as a fraction
 
 - **date:** 2026-06-15
-- **what:** the V2-H3 EndpointSlice trough-depth co-primary is computed as a
+- **what:** the H3 EndpointSlice trough-depth co-primary is computed as a
   **fraction of app ready-endpoints lost** (`(baseline − min during/post) /
   baseline`, over the app services in the 15s series, infra excluded), not as
   an absolute pod count. The registered **1.0-pod** rescue margin / TOST band is
@@ -208,28 +208,28 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   absolute depth r1 8 / packed 17 / anti 1.5 (scales with r) vs fractional
   r1 0.57 / packed 0.63 / anti 0.04 (packed ≈ r1, anti rescues).
 - **blind?:** the choice rests on a **structural/mechanical** property of
-  absolute pod depth (it scales with r by construction), not on the V2-H3
+  absolute pod depth (it scales with r by construction), not on the H3
   verdict; the first C2 campaign whose depth values illustrate it is being
   **discarded and re-run** (its error co-primary was invalid — port-forward bug,
   PR #288/#289), so no hypothesis outcome from valid data informed this. The
   fractional margin and verdict are insensitive to the exact band (the observed
   rescue ≈ 0.5 dwarfs the ≈ 0.09 margin).
-- **decision ID:** ties to **V2-H3** (pre-registration §V2-H3); the trough-depth
+- **decision ID:** ties to **H3** (pre-registration §H3); the trough-depth
   margin was registered as "1.0 pod" — this fixes its operationalization for the
   r-varying node-drain design.
 
-### D-2026-06-16-01 — V2-H3 packed cells use the registered round-robin assignment (orchestrator wiring fixed)
+### D-2026-06-16-01 — H3 packed cells use the registered round-robin assignment (orchestrator wiring fixed)
 
 - **date:** 2026-06-16
-- **what:** the live run orchestrator (`orchestrator/v2_session.apply_condition`)
-  now builds the **pinned** V2-H3 cells (r = 1 and r = 3 packed) from the
+- **what:** the live run orchestrator (`orchestrator/session.apply_condition`)
+  now builds the **pinned** H3 cells (r = 1 and r = 3 packed) from the
   capacity-feasible **round-robin** packed assignment registered in the
-  pre-registration (§V2-H3 packed-cell semantics) and verified at the M1b gate,
+  pre-registration (§H3 packed-cell semantics) and verified at the M1b gate,
   instead of the **fraction solver's f-targeted** assignment it had been using.
-  A `--v2-packed-assignment {solver,round-robin}` knob selects this (default
-  `solver`, so the C1 / V2-H1 dose-response sweep is untouched — there the
-  solver *is* the f knob); the C2 / V2-H3 campaign passes `round-robin`. All
-  three V2-H3 cells (r1, r3-packed, r3-anti) now share the same round-robin
+  A `--packed-assignment {solver,round-robin}` knob selects this (default
+  `solver`, so the C1 / H1 dose-response sweep is untouched — there the
+  solver *is* the f knob); the C2 / H3 campaign passes `round-robin`. All
+  three H3 cells (r1, r3-packed, r3-anti) now share the same round-robin
   service→node base, so only the replica structure differs. The hypothesis
   statement, the test (ART interaction), the co-primary outcomes, the margins,
   and the n are unchanged. Also: `scripts/c2_h3_anova.py` now **excludes
@@ -241,7 +241,7 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   onto ~2 nodes; ×3 replicas = 33 pods on 2 nodes — **unschedulable** on the
   8×(2 CPU / 4 GiB) cluster. **All 8** r3-packed sessions of the first valid
   C2 campaign (`results/c2-rerun2`) were placement-rejected (`accepted = false`,
-  `placement_verification_failed`, `v2_condition_rejected`): currency /
+  `placement_verification_failed`, `condition_rejected`): currency /
   recommendation / payment never reached ready, and in 4/8 the user route was
   already 100 % erroring **pre-chaos**. The driver, not honoring the
   registered no-rejected-session rule, quoted all 8 anyway, producing a spurious
@@ -254,32 +254,32 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   `affinity_engine.packed_round_robin`; the gate delegates to it.)
 - **blind?:** the fix rests on a **structural/mechanical infeasibility** (33 pods
   cannot pack onto 2 nodes; established from placement-rejection metadata and the
-  M1b feasibility gate), not on any V2-H3 verdict — the `c2-rerun2` r3-packed cell
+  M1b feasibility gate), not on any H3 verdict — the `c2-rerun2` r3-packed cell
   carries **no valid measurement** to be biased by, and is being **discarded and
   re-run** on the fixed instrument. The r = 1 baseline moving to round-robin (so
   service placement is held constant across the interaction's cells) was decided
   before the re-run produced any outcome.
-- **decision ID:** ties to **V2-H3** (pre-registration §V2-H3 packed-cell
+- **decision ID:** ties to **H3** (pre-registration §H3 packed-cell
   semantics + §taint) and to the **M1b** feasibility gate (`packedAssignmentMethod
   = round-robin`, verified 11/11 schedulable). Implemented in
-  `fix/v2-h3-round-robin-packed`.
+  `fix/h3-round-robin-packed`.
 
-### D-2026-06-17-01 — V2-H2 NodeLocal DNSCache realized via pod `dnsConfig`
+### D-2026-06-17-01 — H2 NodeLocal DNSCache realized via pod `dnsConfig`
 
 - **date:** 2026-06-17
-- **what:** the C3 / V2-H2 DNS-cache intervention (cache on/off) is applied
+- **what:** the C3 / H2 DNS-cache intervention (cache on/off) is applied
   **per app deployment via pod `dnsConfig`**, not via the kubelet
   `--cluster-dns` default. The thesis cluster already runs NodeLocal DNSCache
   (kubelet `clusterDNS = 169.254.25.10`, the link-local cache; it forwards
   upstream to CoreDNS `10.233.0.3` over `force_tcp`), so pods are **cache-on by
   default**. The C3 toggle therefore is: **cache-off** = patch
   `dnsPolicy: None` + `dnsConfig.nameservers = [CoreDNS clusterIP]` (resolution
-  over UDP, bypassing the node-local cache — the v1 cross-node-UDP baseline),
+  over UDP, bypassing the node-local cache — the cross-node-UDP baseline),
   replicating the ClusterFirst search domains + `ndots:5`; **cache-on** = clear
   the override, restoring the kubelet-default node-local cache. The registered
   hypothesis statement, the two-part test, the SESOI/50 % bar, and the n are
   unchanged.
-- **why:** the pre-registration (§V2-H2) and DESIGN §10 (Arm 1) name "NodeLocal
+- **why:** the pre-registration (§H2) and DESIGN §10 (Arm 1) name "NodeLocal
   DNSCache on/off" but do not pin the *application mechanism*. The kubelet
   `--cluster-dns` route is node-level (sudo + kubelet restart per node) and is
   **not cleanly per-session reversible**, which the registered design requires
@@ -293,26 +293,26 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   cache-off's, and spread's cache-on UDP drop shrank **78 %** vs cache-off
   (registered bar 50 %).
 - **corollary recorded:** because the cluster is cache-on by default, **C1 and
-  C2 were collected cache-on**; C3's cache-off arm reproduces the v1
+  C2 were collected cache-on**; C3's cache-off arm reproduces the
   cross-node-UDP baseline via the override. This does not affect C1/C2's
   registered outcomes (neither tests the conntrack-DNS path), but it is recorded
   for transparency.
 - **blind?:** the realization choice was fixed at C3 *scoping*
   ([`C3-OB-SCOPE.md`](C3-OB-SCOPE.md)) from the cluster's standing configuration
   (cache-on default) and the per-session-reversibility requirement — **before**
-  the confirmatory campaign produced any V2-H2 outcome. The go/no-go smoke
+  the confirmatory campaign produced any H2 outcome. The go/no-go smoke
   (n = 1, directional) confirmed feasibility/direction but is **not** the
   confirmatory n = 7 paired test (not yet run when this was logged), so no
   confirmatory result informed the choice.
-- **decision ID:** ties to **V2-H2** (pre-registration §V2-H2) and DESIGN §10
+- **decision ID:** ties to **H2** (pre-registration §H2) and DESIGN §10
   Arm 1. Implemented in `chaosprobe/placement/dns_cache.py` (PR #300) + the
-  `--v2-dns-cache` session axis (PRs #301/#302); campaign driver
+  `--dns-cache` session axis (PRs #301/#302); campaign driver
   `scripts/run_c3_dns_campaign.sh` (#307).
 
-### D-2026-06-18-01 — V2-H4 frontier excludes C2 (no east-west latency face)
+### D-2026-06-18-01 — H4 frontier excludes C2 (no east-west latency face)
 
 - **date:** 2026-06-18
-- **what:** the descriptive V2-H4 placement frontier is built from the **C1
+- **what:** the descriptive H4 placement frontier is built from the **C1
   dose-response cells** (latency + availability faces, pod-delete) with the
   **C3 endpoints** overlaid as corroboration; the **C2 node-drain replication
   cells are excluded** from the two-face frontier.
@@ -322,25 +322,66 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   as a top-level fraction, not the per-iteration `es_trough_depth_pods` the
   frontier uses. C2 therefore cannot be placed on the latency axis; its
   replication results are reported on the availability face in `C2-OB-REPORT.md`
-  (V2-H3). Documented as a V2-H4 limitation in `V2-H4-H6-REPORT.md`.
-- **impact:** none on any confirmatory outcome (V2-H4 is descriptive, not in the
+  (H3). Documented as a H4 limitation in `H4-H6-REPORT.md`.
+- **impact:** none on any confirmatory outcome (H4 is descriptive, not in the
   Holm family). The plotted frontier is degenerate on the availability face
   under pod-delete (trough depth ≈ 1 pod for all placements), so no placement
   margin-dominates; reported per protocol with the δ margins stated.
-- **blind?:** V2-H4 is descriptive with a registered reporting protocol; the
+- **blind?:** H4 is descriptive with a registered reporting protocol; the
   construction follows the protocol and the data actually collected — no
   confirmatory outcome is affected.
 
-### D-2026-06-18-02 — V2-H6 (iptables direction transfer) not attempted
+### D-2026-06-18-02 — H6 (iptables direction transfer) not attempted
 
 - **date:** 2026-06-18
-- **what:** V2-H6 (exploratory secondary: spread-vs-packed UDP-drop direction
+- **what:** H6 (exploratory secondary: spread-vs-packed UDP-drop direction
   preserved under kube-proxy **iptables** mode) is **reported as not-attempted**.
 - **why:** the cluster ran kube-proxy **ipvs** throughout; no iptables-mode
-  campaign was run. V2-H6 was the **second item in the pre-declared de-scope
+  campaign was run. H6 was the **second item in the pre-declared de-scope
   order** (`02-WORKPLAN.md`), and re-provisioning a parallel iptables cluster was
   outside the realized scope. The pre-registration's exit criterion explicitly
   permits an exploratory arm to be **reported as not-attempted**.
-- **impact:** none — V2-H6 is exploratory, uncorrected, outside the confirmatory
+- **impact:** none — H6 is exploratory, uncorrected, outside the confirmatory
   family; an un-run arm neither supports nor falsifies anything. Recorded in
-  `V2-H4-H6-REPORT.md`.
+  `H4-H6-REPORT.md`.
+
+### D-2026-06-25-01 — version labels ("v1"/"v2") removed from the codebase and these frozen design documents
+
+- **date:** 2026-06-25
+- **what:** all study-iteration version labels — "v1" (the earlier
+  observational study) and "v2" (this study) — were removed from the codebase
+  **and from these frozen design / pre-registration documents**, so the work
+  reads as a single unversioned study, matching the thesis. The directory was
+  renamed `v2-design/` → `design/`; hypothesis labels `V2-H1..V2-H6` → `H1..H6`;
+  the run CLI flags `--v2-levels/--v2-mode/--v2-replicas/--v2-workers/
+  --v2-solver-seed/--v2-order-seed/--v2-packed-assignment/--v2-dns-cache` were
+  renamed to unversioned names (`--fraction-levels/--placement-mode/
+  --replica-degree/--worker-nodes/--solver-seed/--order-seed/
+  --packed-assignment/--dns-cache`), with the old spellings kept as
+  **back-compat aliases**; the `summary.json` output keys `v2Session` → `session`
+  and the per-condition `"v2"` record → `"placementMeta"`, with every analysis
+  loader reading **both** the old and new keys so previously-deposited datasets
+  still parse unchanged.
+- **why:** the thesis presents the work as one study with no version labels;
+  the code and design documents were aligned to that framing on request. This
+  is a **purely nominal** change: **no** hypothesis statement, falsification
+  rule, SESOI, dominance margin, per-cell n, test, taint rule, outcome, or any
+  quantitative value changed — only names. The full test suite, type checks,
+  and all analysis numbers are unaffected.
+- **blind?:** N/A — a nominal relabel that touches no methodology and no data,
+  so it cannot bias any outcome. (Recorded here for completeness, not because
+  it could.)
+- **research-integrity note (immutability):** this entry edits the
+  **frozen pre-registration after the freeze**, which the policy above
+  otherwise forbids for substantive change; it is logged precisely because the
+  edit, though nominal, alters the frozen text and therefore its SHA-256
+  checksums. The **immutable reference of record remains the published Zenodo
+  deposit, DOI [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)**
+  (and the original freeze commit/tag), which still carries the original
+  "v2"-labelled text and the original checksums. The checksum table in this
+  repo's `FREEZE-DEPOSIT.md` has been **regenerated** to match the relabelled
+  local files; anyone verifying against the DOI will see the original labels.
+  The local `design/` tree and the published deposit therefore **intentionally
+  diverge** by exactly this nominal relabel.
+- **decision ID:** none — out-of-band documentation/naming change, not tied to
+  any registered hypothesis or freeze decision.

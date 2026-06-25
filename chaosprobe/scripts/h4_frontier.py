@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""V2-H4 — the descriptive placement Pareto frontier (registered figure + protocol).
+"""H4 — the descriptive placement Pareto frontier (registered figure + protocol).
 
-V2-H4 is **descriptive, not a confirmatory hypothesis** (``01-PREREGISTRATION.md``
-§V2-H4; the headline objective of ``00-DESIGN.md`` §6). For each designed
+H4 is **descriptive, not a confirmatory hypothesis** (``01-PREREGISTRATION.md``
+§H4; the headline objective of ``00-DESIGN.md`` §6). For each designed
 placement ``(f, r, mode)`` it plots the **latency face** (pre-chaos east-west
 p95 tail — steady-state, placement-determined, hence comparable across
 campaigns/faults) against the **availability face** (during-chaos blast /
@@ -28,7 +28,7 @@ no east-west prober — so it has **no pre-chaos east-west latency face**, and i
 depth is recorded as a top-level fraction (a different shape and unit from the
 per-iteration ``es_trough_depth_pods`` the frontier uses). C2's replication
 results live on the availability face and are reported in ``C2-OB-REPORT.md``
-(V2-H3); the missing east-west prober is a stated V2-H4 limitation, not a hidden
+(H3); the missing east-west prober is a stated H4 limitation, not a hidden
 omission. Each point carries its fault class as a field/marker (all pod-delete
 here); the fault is appended to a point's *display identifier* only when needed
 to disambiguate a shared ``campaign:label`` (see :func:`_display_ids`).
@@ -50,7 +50,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from chaosprobe.metrics.statistics import bootstrap_ci
 
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPTS_DIR not in sys.path:  # `python scripts/v2_h4_frontier.py` adds it; imports may not
+if _SCRIPTS_DIR not in sys.path:  # `python scripts/h4_frontier.py` adds it; imports may not
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
@@ -150,14 +150,14 @@ def _is_complete(p: Placement) -> bool:
 
 
 def _placement_label(f: float, r: int, mode: str) -> str:
-    # v2Session.mode is packed|anti-affine (NOT the packedAssignment solver/round-robin).
+    # session.mode is packed|anti-affine (NOT the packedAssignment solver/round-robin).
     # Omit the mode suffix only for the canonical r=1 packed placement; show it otherwise.
     base = f"f={f:g}, r={r}"
     return base if r == 1 and mode in ("packed", "") else f"{base}, {mode}"
 
 
 def _session_dns_cache(results_dir: str, run: str) -> Optional[str]:
-    """``v2Session.dnsCache`` for one session (the m2 ``Session`` model omits it).
+    """``session.dnsCache`` for one session (the m2 ``Session`` model omits it).
 
     Only read when a ``dns_cache`` filter is in effect (C3) — the other session
     metadata the frontier needs (fault, r, mode, per-level f, per-iteration DV
@@ -166,7 +166,9 @@ def _session_dns_cache(results_dir: str, run: str) -> Optional[str]:
     path = os.path.join(results_dir, run, "summary.json")
     try:
         with open(path) as fh:
-            return ((json.load(fh) or {}).get("v2Session") or {}).get("dnsCache")
+            summary = json.load(fh) or {}
+            block = summary.get("session") or summary.get("v2Session")  # or legacy key
+            return (block or {}).get("dnsCache")
     except (OSError, ValueError):
         return None
 
@@ -180,8 +182,8 @@ def collect_campaign(
     ``obs.target_f``, and ``obs.iteration_values`` (the per-iteration DV rows, with
     taint-excluded iterations already folded to ``None``) — so the 20–100 MB raw
     condition files are parsed **once**, not re-read here. ``dns_cache`` (when set)
-    keeps only sessions whose ``v2Session.dnsCache`` matches — used to pin C3 to its
-    cache-on placement (cache is the V2-H2 intervention, not a placement dimension);
+    keeps only sessions whose ``session.dnsCache`` matches — used to pin C3 to its
+    cache-on placement (cache is the H2 intervention, not a placement dimension);
     it is the one field the m2 ``Session`` model omits, so it is read on demand.
     """
     sessions, warnings = discover_sessions(results_dir)
@@ -194,7 +196,7 @@ def collect_campaign(
                 # must not vanish from a provenance-sensitive set without a trace.
                 # A genuinely unreadable summary is already dropped upstream by
                 # discover_sessions; reaching here with cache=None means the
-                # summary parsed but had no v2Session.dnsCache field.
+                # summary parsed but had no session.dnsCache field.
                 why = "no dnsCache field" if cache is None else f"dnsCache={cache!r}"
                 warnings.append(f"{s.run}: excluded from {campaign} ({why}, want {dns_cache!r})")
                 continue
@@ -231,7 +233,7 @@ def collect_campaign(
 #: (campaign, results-subdir, role, dns_cache filter) — the frontier scope decision.
 #: C2 is intentionally absent: node-drain has no east-west latency face (see module
 #: docstring), so it cannot sit on the two-face frontier; its availability results
-#: are reported in C2-OB-REPORT.md (V2-H3).
+#: are reported in C2-OB-REPORT.md (H3).
 CAMPAIGNS: Tuple[Tuple[str, str, str, Optional[str]], ...] = (
     ("C1", "c1-online-boutique", "frontier", None),
     ("C3", "c3-dns", "corroboration", "on"),
@@ -359,7 +361,7 @@ def _fmt(v: Optional[float]) -> str:
 
 def render(result: Dict[str, Any]) -> str:
     lines = [
-        "V2-H4 placement frontier (descriptive) — non-dominated set under margins",
+        "H4 placement frontier (descriptive) — non-dominated set under margins",
         f"  δ: latency {DVS[0].delta} ms, depth {DVS[1].delta} pod, error {DVS[2].delta}",
         "",
         f"  {'placement':28} {'fault':10} {'EWp95':>9} {'depth':>8} {'err':>8} {'ND?':>4} role",
@@ -470,7 +472,7 @@ def plot(result: Dict[str, Any], out_path: str) -> Tuple[Any, Any]:
     ax.set_ylim(0, max(2.0, max_depth * 1.3))
     ax.set_xlabel(f"{DVS[0].label}  (latency face — lower better)")
     ax.set_ylabel(f"{DVS[1].label}  (availability face — lower better)")
-    ax.set_title("V2-H4 placement frontier — red ring = non-dominated · colour = user error rate")
+    ax.set_title("H4 placement frontier — red ring = non-dominated · colour = user error rate")
     if sc is not None:
         # Dedicated mappable so the colorbar is correct regardless of whether the
         # last-plotted point used the cmap (a grey "missing error" point would not).
@@ -486,7 +488,7 @@ def plot(result: Dict[str, Any], out_path: str) -> Tuple[Any, Any]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="V2-H4 descriptive placement frontier")
+    ap = argparse.ArgumentParser(description="H4 descriptive placement frontier")
     ap.add_argument(
         "--results-root",
         default="results",

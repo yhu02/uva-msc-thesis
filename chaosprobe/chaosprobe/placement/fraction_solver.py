@@ -1,7 +1,7 @@
-"""Fraction-targeting placement solver (v2 / M1a — solver-feasibility spike).
+"""Fraction-targeting placement solver (M1a — solver-feasibility spike).
 
-Implements the greedy edge-cut assignment sketched in ``v2-design/00-DESIGN.md``
-§2.3 and the quantization-study enumerator required by ``v2-design/02-WORKPLAN.md``
+Implements the greedy edge-cut assignment sketched in ``design/00-DESIGN.md``
+§2.3 and the quantization-study enumerator required by ``design/02-WORKPLAN.md``
 M1a: given the service dependency graph (inter-service edges + call-volume
 weights), choose a service→node assignment whose **cross-node call fraction**
 — the weight share of inter-service edges whose endpoints sit on different
@@ -14,7 +14,7 @@ inter-service edges parsed from the east-west route keys of
 ``aggregated.routeViewAggregate`` in a run's ``summary.json``, restricted to
 deployments that actually appear in the recorded per-iteration
 ``podPlacements``.  Edge weights use the observed Locust call volume
-(``locust.totalRequests``) where the route entry carries one; v1 summaries
+(``locust.totalRequests``) where the route entry carries one; early summaries
 record no volume for east-west (latency-prober-only) routes, so those edges
 fall back to a uniform weight of 1.0 — making the weighted fraction coincide
 with the unweighted metric ``cross_node_fraction.py`` reports.
@@ -126,8 +126,8 @@ def load_dependency_graph(summary_path: str) -> Tuple[List[Edge], List[str]]:
     ``aggregated.routeViewAggregate`` (the same parse
     ``scripts/cross_node_fraction.py`` uses).  Per strategy, an edge's weight
     is the sum of its route entries' ``locust.totalRequests`` (call volume);
-    entries without a positive request count contribute 1.0 — v1 east-west
-    routes carry no Locust volume, so in practice v1 graphs are uniform-weight.
+    entries without a positive request count contribute 1.0 — east-west
+    routes carry no Locust volume, so in practice these graphs are uniform-weight.
     Across strategies the per-edge **maximum** is kept, so a strategy whose
     fault suppressed a route cannot dilute the weight and the result does not
     scale with the number of strategies in the run.
@@ -179,7 +179,7 @@ def load_static_topology(path: str) -> Tuple[List[Edge], List[str]]:
 
     Static topologies are the M2 solver-gate stand-in for workloads that have
     no measured ``summary.json`` yet (DESIGN §7: hotelReservation is deployed
-    and solver-gated in the M2 prep window, before any v2 run data exists for
+    and solver-gated in the M2 prep window, before any placement-session run data exists for
     it — see ``scenarios/hotel-reservation/topology.json``). Expected shape::
 
         {
@@ -188,7 +188,7 @@ def load_static_topology(path: str) -> Tuple[List[Edge], List[str]]:
         }
 
     Edges are directed ``[src, dst]`` pairs and receive **uniform weight 1.0**
-    (matching v1's uniform-weight measured graphs — see
+    (matching the uniform-weight measured graphs — see
     :func:`load_dependency_graph`); any other top-level keys (``workload``,
     ``source``, ``comment``, ...) are ignored as metadata.
 
@@ -755,8 +755,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m chaosprobe.placement.fraction_solver",
         description=(
-            "v2/M1a fraction-targeting placement solver + reachable-set enumerator "
-            "(v2-design/00-DESIGN.md §2.3, 02-WORKPLAN.md M1a). Derives the weighted "
+            "M1a fraction-targeting placement solver + reachable-set enumerator "
+            "(design/00-DESIGN.md §2.3, 02-WORKPLAN.md M1a). Derives the weighted "
             "inter-service dependency graph from a run's summary.json, then either "
             "solves for a target cross-node fraction (--target) or enumerates the "
             "reachable fraction set for the given node count (--enumerate)."

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C1 / V2-H1 dose-response — EXTERNAL VALIDITY replication on hotelReservation.
+# C1 / H1 dose-response — EXTERNAL VALIDITY replication on hotelReservation.
 # Mirrors the frozen online-boutique C1 design (C1-OB-REPORT.md): complete-block,
 # every session visits all five cross-node fractions f ∈ {0,0.25,0.5,0.75,1.0} in
 # randomized order (recorded seed), r=1, pod-delete churn + host-side Locust.
@@ -27,8 +27,8 @@ for s in $(seq 1 8); do
   echo "=== C1-HOTEL session $s/8 (order-seed=$s) ($(date -u +%H:%M:%S)) ==="
   uv run chaosprobe run -n hotel-reservation \
     -e scenarios/hotel-reservation/pod-delete.yaml \
-    --v2-levels 0,0.25,0.5,0.75,1.0 --v2-replicas 1 \
-    --v2-workers "$WORKERS" --v2-solver-seed 0 --v2-order-seed "$s" \
+    --fraction-levels 0,0.25,0.5,0.75,1.0 --replica-degree 1 \
+    --worker-nodes "$WORKERS" --solver-seed 0 --order-seed "$s" \
     --gate-sustained-load --gate-load-concurrency 6 --pre-gate-warmup 30 \
     -i 3 -o "$OUT" || echo "RUN FAILED: C1 session $s"
 done

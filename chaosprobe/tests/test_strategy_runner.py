@@ -1267,7 +1267,7 @@ class TestRunIterationsRetryWiring:
                 "unknownProbeCount": 0,
             },
         )
-        ctx = SimpleNamespace(iterations=1, v2_session=None)
+        ctx = SimpleNamespace(iterations=1, session=None)
         results = strategy_runner._run_iterations(ctx, "default", {})
         assert len(results) == 1
         assert results[0]["retryCount"] == 0
@@ -1278,7 +1278,7 @@ class TestRunIterationsRetryWiring:
             raise RuntimeError("k8s down")
 
         monkeypatch.setattr(strategy_runner, "_run_single_iteration", boom)
-        ctx = SimpleNamespace(iterations=1, v2_session=None)
+        ctx = SimpleNamespace(iterations=1, session=None)
         results = strategy_runner._run_iterations(ctx, "default", {})
         assert len(results) == 1
         assert results[0]["verdict"] == "ERROR"

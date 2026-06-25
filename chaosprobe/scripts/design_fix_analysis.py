@@ -2,7 +2,7 @@
 """Design-corrected re-analysis of the availability-axis tests (H3/H4/H5).
 
 Exploratory, OUTSIDE the frozen Holm family. Criteria pre-declared in
-``v2-design/DESIGN-FIX-SCOPE.md`` before the new data were looked at. The three
+``design/DESIGN-FIX-SCOPE.md`` before the new data were looked at. The three
 registered availability tests were construction-limited because ``pod-delete`` at
 r=1 cannot move availability:
 

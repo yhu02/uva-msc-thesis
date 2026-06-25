@@ -1,6 +1,6 @@
-"""Namespace quiescence barrier (shared by the M1b gate and the v2 session driver).
+"""Namespace quiescence barrier (shared by the M1b gate and the session driver).
 
-Moved verbatim from ``scripts/m1b_gate.py`` so in-package callers — the v2
+Moved verbatim from ``scripts/m1b_gate.py`` so in-package callers — the
 complete-block session driver applies it between conditions — can import it
 without executing a script module.  ``scripts/m1b_gate.py`` now imports from
 here, keeping its CLI surface and test seams identical.
@@ -106,7 +106,7 @@ def wait_for_quiescence(
 
     On timeout the barrier does **not** abort the caller: the verify step
     still judges the attempt, and the returned settle record (embedded in
-    the gate artifact / ``v2Session`` metadata) makes an unsettled start
+    the gate artifact / ``session`` metadata) makes an unsettled start
     attributable after the fact.
     """
     started = time.monotonic()

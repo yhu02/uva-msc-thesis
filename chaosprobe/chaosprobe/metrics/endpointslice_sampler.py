@@ -1,7 +1,7 @@
-"""Continuous EndpointSlice time-series sampler — the V2-H3 availability instrument.
+"""Continuous EndpointSlice time-series sampler — the H3 availability instrument.
 
 DESIGN §4 registers a "EndpointSlice trough sampler (15s cadence)" as the
-V2-H3 availability-face instrument, measuring the outage trough's **depth and
+H3 availability-face instrument, measuring the outage trough's **depth and
 duration**.  The pre-existing instrumentation (``MetricsCollector.
 snapshot_endpoint_slices`` + the during-chaos min-snapshot loop in
 ``strategy_runner``) captures only the *worst* (fewest-ready) snapshot, so

@@ -903,7 +903,7 @@ def page_trend_test(blocks: Sequence[Sequence[float]]) -> Dict[str, object]:
     """Page's L trend test for a predicted monotone ordering across treatments.
 
     Page's L tests the ordered alternative that ``k`` related treatments rise in
-    a *predicted* order across ``n`` blocks — for V2-H1, the C1 east-west p95
+    a *predicted* order across ``n`` blocks — for H1, the C1 east-west p95
     across the ordered cross-node-fraction levels, one value per level per
     session.  Each ``blocks[i]`` is one block's ``k`` values **already in the
     predicted-increasing order** (f = 0 → 1).  Within each block the values are

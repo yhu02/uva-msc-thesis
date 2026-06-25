@@ -41,53 +41,53 @@ dependency-aware`.
 | `-t, --timeout <s>` | 300 | Timeout per experiment, seconds. |
 | `--no-visualize` | off | Skip chart generation. |
 
-### v2 complete-block sessions (`--v2-*`)
+### Complete-block placement sessions
 
-Passing `--v2-levels` switches the run from v1 named strategies to the v2
+Passing `--fraction-levels` switches the run from named strategies to the placement-session
 session driver (pre-registration §Session design / WORKPLAN C1–C3): every
 target cross-node fraction becomes one *condition* — fraction-solver
 placement realized through the replica-level affinity engine, achieved
 placement verified from live pods — executed through the same iteration
 pipeline (fault injection, all collectors including the conntrack prober,
 taint/doctor metadata) as a strategy. The session is a complete block: all
-levels are visited once, in a randomized order drawn from `--v2-order-seed`.
+levels are visited once, in a randomized order drawn from `--order-seed`.
 Between conditions the driver restores default scheduling and waits for
 namespace quiescence (the M1b barrier). Per the pre-registered rejection
 rule, a condition (or iteration) whose live fraction misses its target by
 more than 0.05 is **tainted, never dropped**; everything lands in
-`summary.json → v2Session` (levels, applied order, both seeds, the
+`summary.json → session` (levels, applied order, both seeds, the
 (r, mode, workers) cell, and per-level solver/live fractions with
 acceptance verdicts).
 
 Mutually exclusive with `-s/--strategies`, `--seeds`, and `--replicas`; a
-session runs exactly one fault (pass exactly one `-e` — the v1 multi-fault
-matrix does not combine with v2 sessions).
+session runs exactly one fault (pass exactly one `-e` — the multi-fault
+matrix does not combine with placement sessions).
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--v2-levels <list>` | — | Comma-separated target fractions, e.g. `0,0.25,0.5,0.75,1.0` (the complete block; activates the v2 driver). |
-| `--v2-order-seed <n>` | 42 | Seed for the randomized condition order (recorded as `v2Session.orderSeed` / `orderApplied`). |
-| `--v2-solver-seed <n>` | 0 | Seed for the fraction solver's placements. |
-| `--v2-replicas <1\|3>` | 1 | Replicas per service (r = 2 deliberately unsupported per DESIGN §2.3). |
-| `--v2-mode <packed\|anti-affine>` | packed | Replica packing mode; at r = 1 the modes are physically identical, at r = 3 `anti-affine` lets the scheduler pick 3 distinct nodes (no solver pin, no live fraction). |
-| `--v2-workers <list>` | — | Ordered worker node names; solver node index *i* maps to the *i*-th name (required with `--v2-levels`). |
-| `--v2-packed-assignment <solver\|round-robin>` | solver | Pinned-cell (r = 1 / r = 3 packed) assignment. `solver` targets the condition's f via the fraction solver (the V2-H1 dose-response sweep). `round-robin` uses the capacity-feasible per-service round-robin packing (V2-H3 replication-rescue; f-independent, matches the M1b-verified packed semantics — each service's replicas on one node, services spread across nodes). |
+| `--fraction-levels <list>` | — | Comma-separated target fractions, e.g. `0,0.25,0.5,0.75,1.0` (the complete block; activates the session driver). |
+| `--order-seed <n>` | 42 | Seed for the randomized condition order (recorded as `session.orderSeed` / `orderApplied`). |
+| `--solver-seed <n>` | 0 | Seed for the fraction solver's placements. |
+| `--replica-degree <1\|3>` | 1 | Replicas per service (r = 2 deliberately unsupported per DESIGN §2.3). |
+| `--placement-mode <packed\|anti-affine>` | packed | Replica packing mode; at r = 1 the modes are physically identical, at r = 3 `anti-affine` lets the scheduler pick 3 distinct nodes (no solver pin, no live fraction). |
+| `--worker-nodes <list>` | — | Ordered worker node names; solver node index *i* maps to the *i*-th name (required with `--fraction-levels`). |
+| `--packed-assignment <solver\|round-robin>` | solver | Pinned-cell (r = 1 / r = 3 packed) assignment. `solver` targets the condition's f via the fraction solver (the H1 dose-response sweep). `round-robin` uses the capacity-feasible per-service round-robin packing (H3 replication-rescue; f-independent, matches the M1b-verified packed semantics — each service's replicas on one node, services spread across nodes). |
 
-**A/A pairs.** An A/A pair is simply two runs with identical `--v2-*`
-arguments *including* `--v2-solver-seed` (identical placements per level);
-`--v2-order-seed` may differ between the two runs — the visit order may
+**A/A pairs.** An A/A pair is simply two runs with identical placement-session
+arguments *including* `--solver-seed` (identical placements per level);
+`--order-seed` may differ between the two runs — the visit order may
 differ, the placements do not. No special A/A mode exists:
 
 ```bash
 # A/A pair: identical placements, independently randomized visit order
 chaosprobe run -n online-boutique -i 3 \
     -e scenarios/online-boutique/pod-delete.yaml \
-    --v2-levels 0,0.25,0.5,0.75,1.0 --v2-solver-seed 0 --v2-order-seed 11 \
-    --v2-replicas 1 --v2-mode packed --v2-workers worker1,worker2,worker3,worker4
+    --fraction-levels 0,0.25,0.5,0.75,1.0 --solver-seed 0 --order-seed 11 \
+    --replica-degree 1 --placement-mode packed --worker-nodes worker1,worker2,worker3,worker4
 chaosprobe run -n online-boutique -i 3 \
     -e scenarios/online-boutique/pod-delete.yaml \
-    --v2-levels 0,0.25,0.5,0.75,1.0 --v2-solver-seed 0 --v2-order-seed 12 \
-    --v2-replicas 1 --v2-mode packed --v2-workers worker1,worker2,worker3,worker4
+    --fraction-levels 0,0.25,0.5,0.75,1.0 --solver-seed 0 --order-seed 12 \
+    --replica-degree 1 --placement-mode packed --worker-nodes worker1,worker2,worker3,worker4
 ```
 
 See [Run experiments](../how-to/run-experiments.md).

@@ -1,4 +1,4 @@
-# ChaosProbe v2 — C3 online-boutique report (V2-H2 + family Holm capstone)
+# ChaosProbe — C3 online-boutique report (H2 + family Holm capstone)
 
 **Campaign:** C3 placement-dependence + DNS intervention on online-boutique;
 14 sessions (7 cache-off, 7 cache-on), `r = 1`, placements `f-000` (packed
@@ -7,11 +7,11 @@ Data deposited **before** this write-up at DOI
 [10.5281/zenodo.20748970](https://doi.org/10.5281/zenodo.20748970)
 ([`C3-OB-DEPOSIT.md`](C3-OB-DEPOSIT.md)); all 14 sessions accepted, untainted,
 `git.dirty = false`, `archive_run.py --strict` 14/14. This report closes the
-confirmatory family: with C3 landed, all four members (V2-H1/H2/H3/H5) now have
+confirmatory family: with C3 landed, all four members (H1/H2/H3/H5) now have
 a primary p-value, so the registered **Holm correction across the family** is
 computed here (§Family capstone).
 
-## V2-H2 — placement-dependence + DNS intervention
+## H2 — placement-dependence + DNS intervention
 
 Registered as a **two-part, both-must-pass conjunction** over the absolute
 during-churn UDP-conntrack drop (`udp_conntrack_drop_entries` = pre-chaos −
@@ -33,7 +33,7 @@ placements.
 
 ### The placement reversal is genuine, not an artifact
 
-Unlike the V2-H3 round-robin issue (which was a true design artifact corrected
+Unlike the H3 round-robin issue (which was a true design artifact corrected
 before collection), arm (a)'s reversal is **robust and monotone**: packed
 exceeds spread in **every one of the 7 cache-off pairs**, with the two-sided
 Wilcoxon at the n = 7 floor (p = 0.0225). Co-locating a service's replicas on a
@@ -43,10 +43,10 @@ spread placement, which distributes the same replicas (and their churn) across
 nodes. The pre-registered direction — predicting spread's extra east-west DNS
 would dominate — is contradicted by the data. We report it as a directional
 finding, **not** retuned post-hoc: placement *does* matter for the conntrack
-drop (significantly), but in the opposite direction to v1-H2's reading, while
+drop (significantly), but in the opposite direction to the earlier H2's reading, while
 the DNS-cache mechanism (arm b) strongly mitigates it regardless of placement.
 
-## Family capstone — Holm across V2-H1/H2/H3/H5
+## Family capstone — Holm across H1/H2/H3/H5
 
 With C3 complete, the registered four-member confirmatory family is corrected
 together by **Holm** at α = 0.05 (`scripts/holm_family.py`, reading each
@@ -54,44 +54,44 @@ hypothesis's family-input p verbatim from its own analysis-driver JSON):
 
 | hyp | primary test | family-input p | Holm-adj p | Holm-significant? | registered bar | **supported?** |
 |---|---|---|---|---|---|---|
-| **V2-H1** | dose-response (Page's L) | 0.0002 | **0.0008** | yes | effect 13.35 % < 15 % SESOI | **no** (sub-SESOI) |
-| **V2-H2** | placement + DNS | 0.98875 | 0.98875 | no | conjunction (placement reversed) | **no** |
-| **V2-H3** | replication rescue | 0.0065 | **0.0195** | yes | anti-affine rescue margin unmet | **no** |
-| **V2-H5** | layered scorecard ICC | 0.2501 | 0.5002 | no | availability ICC < 0.5 | **no** |
+| **H1** | dose-response (Page's L) | 0.0002 | **0.0008** | yes | effect 13.35 % < 15 % SESOI | **no** (sub-SESOI) |
+| **H2** | placement + DNS | 0.98875 | 0.98875 | no | conjunction (placement reversed) | **no** |
+| **H3** | replication rescue | 0.0065 | **0.0195** | yes | anti-affine rescue margin unmet | **no** |
+| **H5** | layered scorecard ICC | 0.2501 | 0.5002 | no | availability ICC < 0.5 | **no** |
 
 **Family verdict: no confirmatory hypothesis is supported.** Two primaries
-(V2-H1's trend, V2-H3's interaction) survive Holm as statistically significant,
+(H1's trend, H3's interaction) survive Holm as statistically significant,
 but neither hypothesis is *supported*, because Holm significance is necessary
 but not sufficient: each member also carries a registered bar the p-value cannot
 speak to, and every member fails its bar or its significance —
 
-- **V2-H1**: the dose-response trend is real and Holm-significant, but the
+- **H1**: the dose-response trend is real and Holm-significant, but the
   effect (13.35 %) sits **below the 15 % SESOI** — a detectable but
   practically-negligible trend, and shaped more like a threshold than a smooth
   dose-response.
-- **V2-H2**: placement-dependence replicates with the *opposite* sign, so the
+- **H2**: placement-dependence replicates with the *opposite* sign, so the
   conjunction fails; its family-input p (0.98875) is far from significant.
-- **V2-H3**: the r × mode interaction is significant (Holm-adj 0.0195), but the
+- **H3**: the r × mode interaction is significant (Holm-adj 0.0195), but the
   anti-affine **rescue margin** on trough depth is not met — replication does
   not rescue availability to the registered degree.
-- **V2-H5**: the layered scorecard's **mechanism** sub-score is highly reliable
+- **H5**: the layered scorecard's **mechanism** sub-score is highly reliable
   (ICC 0.994), but its **availability** sub-score fails the absolute ICC ≥ 0.5
   bar (0.18), so the required conjunction fails and the family input (0.2501) is
   not significant.
 
 ## Synthesis
 
-The v2 study's headline is coherent and honest: **v1's confirmatory
+This study's headline is coherent and honest: **the earlier confirmatory
 placement / availability / dose-response claims do not replicate in their
-registered form under the stricter, pre-registered v2 design**, while the
+registered form under the stricter, pre-registered design**, while the
 **underlying conntrack mechanism is robustly real and individually significant
 in every campaign** — the DNS-cache intervention removes 78 % of the spread
 conntrack drop (and essentially all of packed's), the scorecard's mechanism
 layer is near-perfectly reliable (ICC 0.994), and both the dose-response trend
 and the replication interaction are statistically detectable. The conntrack
 signal ChaosProbe measures is real; the *placement-quality and availability
-conclusions* v1 drew from it do not survive multiplicity-corrected,
+conclusions* the earlier study drew from it do not survive multiplicity-corrected,
 effect-size-gated, direction-checked confirmation.
 
-V2-H4 (descriptive) and V2-H6 (exploratory) are reported separately and are not
+H4 (descriptive) and H6 (exploratory) are reported separately and are not
 part of the family.

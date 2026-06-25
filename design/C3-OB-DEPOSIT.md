@@ -1,8 +1,8 @@
-# ChaosProbe v2 — C3 online-boutique deposit manifest
+# ChaosProbe — C3 online-boutique deposit manifest
 
 **Campaign:** C3 placement-dependence + DNS intervention, workload
 **online-boutique** (see [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md)
-§V2-H2). Within-subjects placement contrast `f ∈ {0, 1}` (packed round-robin /
+§H2). Within-subjects placement contrast `f ∈ {0, 1}` (packed round-robin /
 spread) at `r = 1`, crossed with a between-subjects DNS-cache axis
 `dnsCache ∈ {off, on}` (NodeLocal DNSCache via pod `dnsConfig`, deviation
 **D-2026-06-17-01**); 7 cache-off + 7 cache-on sessions = **14 sessions**, each
@@ -20,22 +20,22 @@ pre-analysis) + commit `2409f35` anchor the provenance.
 
 **Provenance.**
 - **Data-collection / instrument commit:** `2409f35` (round-robin packed
-  instrument + the `--v2-dns-cache` knob, PRs #300/#303–#308) — recorded in
+  instrument + the `--dns-cache` knob, PRs #300/#303–#308) — recorded in
   every session's `runMetadata.git` with **`dirty = false`** (strict-clean
   tree). All 14 sessions share this commit and pass `archive_run.py --strict`
   (14/14).
-- **Analysis-code commit:** `scripts/c3_h2_dns.py` (V2-H2 verdict) and
+- **Analysis-code commit:** `scripts/c3_h2_dns.py` (H2 verdict) and
   `scripts/holm_family.py` (the four-member family Holm capstone), at the report
   commit.
-- **Pre-registration reference:** git tag `v2-prereg-freeze`; freeze deposit
+- **Pre-registration reference:** git tag `prereg-freeze`; freeze deposit
   [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md), DOI
   [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836).
 - **Cluster fingerprint:** k8s v1.28.6, CNI calico, kube-proxy ipvs; NodeLocal
   DNSCache deployed (kubelet `clusterDNS = 169.254.25.10`); N = 8 × (2 CPU /
   4 GiB) workers.
-- **Run parameters (all sessions):** `--v2-levels 0,1`, `--v2-replicas 1`,
-  `--v2-mode packed`, `--v2-packed-assignment round-robin`, `--v2-dns-cache
-  {off,on}`, `--v2-solver-seed 0`, `--v2-order-seed 1`, `-i 3`, workers
+- **Run parameters (all sessions):** `--fraction-levels 0,1`, `--replica-degree 1`,
+  `--placement-mode packed`, `--packed-assignment round-robin`, `--dns-cache
+  {off,on}`, `--solver-seed 0`, `--order-seed 1`, `-i 3`, workers
   worker1–8. Driver: `scripts/run_c3_dns_campaign.sh` (committed, #307), 7
   matched cache-off/cache-on pairs, within-pair cache order seeded-randomized
   (seed 20260617).
@@ -83,7 +83,7 @@ Cache assignment follows the deterministic collection order of
 `scripts/run_c3_dns_campaign.sh` (7 cache-off/cache-on pairs; within each pair
 the cache order is seeded-randomized, so the off/on sequence above is not
 strictly alternating — pairs 4–5 and 7 show the randomized order). Verified 0
-mismatches against each `summary.json`'s own `v2Session.dnsCache`.
+mismatches against each `summary.json`'s own `session.dnsCache`.
 
 ## Deposit (published)
 

@@ -16,7 +16,7 @@ _spec.loader.exec_module(aa)
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Fixture builders (synthetic v2 session summaries + raw per-condition files)
+# Fixture builders (synthetic placement session summaries + raw per-condition files)
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -100,7 +100,7 @@ def _summary(
     summary = {
         "runId": run_id,
         "timestamp": timestamp,
-        "v2Session": {
+        "session": {
             "solverSeed": solver_seed,
             "replicas": replicas,
             "mode": mode,
@@ -639,15 +639,15 @@ def test_main_taint_excluded_from_every_metric(tmp_path, capsys):
 
 
 def test_discover_skips_and_warns(tmp_path):
-    _write_run(tmp_path, "not-v2", {"runId": "x"})
-    _write_run(tmp_path, "malformed", {"v2Session": {"replicas": 1}})
+    _write_run(tmp_path, "not-session", {"runId": "x"})
+    _write_run(tmp_path, "malformed", {"session": {"replicas": 1}})
     garbage = tmp_path / "garbage"
     garbage.mkdir()
     (garbage / "summary.json").write_text("{not json")
     sessions, warnings = aa.discover_sessions(str(tmp_path))
     assert sessions == []
-    assert any("no v2Session block" in w for w in warnings)
-    assert any("malformed v2Session cell fields" in w for w in warnings)
+    assert any("no session block" in w for w in warnings)
+    assert any("malformed session cell fields" in w for w in warnings)
     assert any("unreadable summary.json" in w for w in warnings)
 
 
@@ -681,16 +681,16 @@ def test_parse_session_fault_variants():
 
 def test_parse_session_per_level_edge_cases():
     summary = _summary([("f-000", 0.0, 0.0)])
-    summary["v2Session"]["perLevel"].append({"liveAchievedF": 1.0})  # no condition: skipped
-    summary["v2Session"]["perLevel"].append({"condition": "f-100"})  # no targetF: 0.0
+    summary["session"]["perLevel"].append({"liveAchievedF": 1.0})  # no condition: skipped
+    summary["session"]["perLevel"].append({"condition": "f-100"})  # no targetF: 0.0
     session = aa.parse_session("r", summary, [])
     assert session is not None
     assert set(session.levels) == {"f-000", "f-100"}
     assert session.levels["f-100"].target_f == 0.0
     assert session.levels["f-100"].accepted is True  # absent flag defaults accepted
 
-    bare = {"v2Session": _summary([])["v2Session"]}
-    bare["v2Session"].pop("perLevel")
+    bare = {"session": _summary([])["session"]}
+    bare["session"].pop("perLevel")
     session = aa.parse_session("r", bare, [])
     assert session is not None and session.levels == {}
 
@@ -698,7 +698,7 @@ def test_parse_session_per_level_edge_cases():
 def test_cell_key_normalizes_levels_and_workers_order():
     specs = [("f-000", 0.0, 0.0), ("f-100", 1.0, 1.0)]
     reversed_order = _summary(specs, workers=("w2", "w1"))
-    reversed_order["v2Session"]["levels"] = [1.0, 0.0]
+    reversed_order["session"]["levels"] = [1.0, 0.0]
     natural = _summary(specs, workers=("w1", "w2"))
     key_a = aa.parse_session("a", reversed_order, []).key
     key_b = aa.parse_session("b", natural, []).key
@@ -882,12 +882,12 @@ def test_main_sufficient_pairs_and_warnings_printed(tmp_path, capsys):
         _write_run(
             tmp_path, f"run-{i}", _summary(spec, timestamp=f"2026-01-0{i + 1}T00:00:00+00:00"), raws
         )
-    _write_run(tmp_path, "zz-not-v2", {"runId": "x"})  # warned + printed
+    _write_run(tmp_path, "zz-not-session", {"runId": "x"})  # warned + printed
     rc = aa.main(["--results-dir", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0
     assert "3 pair(s) found vs pre-registered >= 3 — SUFFICIENT" in out
-    assert "WARNING: zz-not-v2: no v2Session block" in out
+    assert "WARNING: zz-not-session: no session block" in out
     # Identical scores: sign test drops all ties -> p = 1.0, no finding.
     assert "A/A FINDING" not in out
 
@@ -899,7 +899,7 @@ def test_levels_not_shared_warned_and_metricless_pair(tmp_path, capsys):
     summary_b = _summary(specs_b, timestamp="2026-01-02T00:00:00+00:00")
     # Same registered cell (same levels grid) but f-100 never produced a
     # perLevel record in B — the pair must drop it with a warning.
-    summary_b["v2Session"]["levels"] = [0.0, 1.0]
+    summary_b["session"]["levels"] = [0.0, 1.0]
     _write_run(tmp_path, "a", _summary(specs_a, timestamp="2026-01-01T00:00:00+00:00"), metricless)
     _write_run(tmp_path, "b", summary_b, {"f-000": [_raw_iter(1)]})
     rc = aa.main(["--results-dir", str(tmp_path)])

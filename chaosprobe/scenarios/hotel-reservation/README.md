@@ -1,13 +1,13 @@
-# DeathStarBench hotelReservation — ChaosProbe v2's second workload
+# DeathStarBench hotelReservation — ChaosProbe's second workload
 
-The second workload pinned by [v2-design/00-DESIGN.md §7](../../../v2-design/00-DESIGN.md):
+The second workload pinned by [design/00-DESIGN.md §7](../../../design/00-DESIGN.md):
 DSB `hotelReservation` is the lightest DeathStarBench application and the only
 realistic candidate at this cluster scale — a deliberately *different* topology
 (deep frontend fan-out + per-service datastore pairs) and RPC stack (Go gRPC
 with **consul-based discovery**: inter-service calls go pod-to-pod via
 consul-resolved IPs, not ClusterIP Services) from Online Boutique. Capacity and
 the fraction-solver gate for this workload are **M2 exit criteria**
-([02-WORKPLAN.md](../../../v2-design/02-WORKPLAN.md)); per the pre-declared
+([02-WORKPLAN.md](../../../design/02-WORKPLAN.md)); per the pre-declared
 de-scope order, if it fails either gate the second-workload claim is dropped
 **first**, before the iptables arm.
 
@@ -101,7 +101,7 @@ measured route-view graph replaces this one once a hotel-reservation
 Upstream ships **wrk2** Lua scripts
 (`hotelReservation/wrk2/scripts/hotel-reservation/mixed-workload_type_1.lua`:
 60 % `/hotels`, 39 % `/recommendations`, 0.5 % `/user` + 0.5 % `/reservation`
-against `frontend:5000`). ChaosProbe v2's load story is **Locust from the host**
+against `frontend:5000`). ChaosProbe's load story is **Locust from the host**
 (DESIGN §4 — the host-side generator adds nothing in-cluster); a Locust
 profile mirroring that endpoint mix is **TODO for M3** and deliberately not
 part of this M2 prep deliverable. Until then, the deploy health check

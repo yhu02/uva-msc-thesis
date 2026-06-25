@@ -1,4 +1,4 @@
-"""Tests for chaosprobe.placement.affinity_engine (v2 / M1b).
+"""Tests for chaosprobe.placement.affinity_engine (M1b).
 
 Pure-Python per CONTRIBUTING: all Kubernetes API surfaces are MagicMocks;
 no cluster is touched.  Covers patch-shape correctness for every supported
@@ -391,7 +391,7 @@ def test_apply_placement_anti_affine_discovers_app_deployments():
 
 
 def test_apply_placement_anti_affine_explicit_services_skip_discovery():
-    # The v2 session driver passes its own service set; the engine must use
+    # The session driver passes its own service set; the engine must use
     # it verbatim instead of re-discovering (and resurrecting) deployments
     # the caller excluded.
     api = _api()
@@ -559,8 +559,8 @@ def test_verify_flags_stale_mode_annotation():
 def test_verify_skips_unmanaged_and_v1_managed_deployments():
     api = _api()
     none_annotated = _dep("plain", annotations=None)
-    v1_managed = _dep("legacy", annotations={MANAGED_ANNOTATION: "colocate"})
-    _deployment_list(api, [none_annotated, v1_managed])
+    legacy_managed = _dep("legacy", annotations={MANAGED_ANNOTATION: "colocate"})
+    _deployment_list(api, [none_annotated, legacy_managed])
     result = engine.verify_placement(api, "ns", 1, engine.MODE_PACKED)
     assert result.services == []
     assert result.passed is False  # nothing managed = nothing verified = FAIL

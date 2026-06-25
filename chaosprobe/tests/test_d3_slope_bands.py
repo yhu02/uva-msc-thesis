@@ -41,7 +41,9 @@ _T0 = "2026-01-01T00:00:00+00:00"
 _T60 = "2026-01-01T00:01:00+00:00"
 
 
-def _write_session(results_dir, name, level_slopes, *, v2=True, rejected=(), missing_raw=()):
+def _write_session(
+    results_dir, name, level_slopes, *, with_session=True, rejected=(), missing_raw=()
+):
     """One session dir: summary.json (perLevel) + raw <level>.json per level.
 
     ``level_slopes`` maps condition -> list of per-iteration slopes (None = an
@@ -53,8 +55,8 @@ def _write_session(results_dir, name, level_slopes, *, v2=True, rejected=(), mis
     run.mkdir(parents=True)
     per_level = [{"condition": cond, "accepted": cond not in rejected} for cond in level_slopes]
     summary = {"runId": name}
-    if v2:
-        summary["v2Session"] = {"perLevel": per_level}
+    if with_session:
+        summary["session"] = {"perLevel": per_level}
     (run / "summary.json").write_text(json.dumps(summary))
     for cond, slopes in level_slopes.items():
         if cond in missing_raw:  # declared/accepted but no raw file on disk
@@ -96,7 +98,7 @@ def test_collect_slopes_pools_per_level_and_skips(tmp_path):
     _write_session(tmp_path, "s2", {"f-050": [700.0, None]})  # None iter skipped
     _write_session(tmp_path, "s3", {"f-050": [800.0]})
     _write_session(tmp_path, "skip-me", {"f-050": [9999.0]})  # excluded by name
-    _write_session(tmp_path, "nonv2", {"f-050": [1234.0]}, v2=False)  # no v2Session
+    _write_session(tmp_path, "non-session", {"f-050": [1234.0]}, with_session=False)  # no session
     by_level = d3.collect_slopes(str(tmp_path), exclude=["skip-me"])
     assert by_level["f-050"] == [600.0, 700.0, 800.0]
     assert by_level["f-000"] == []  # declared/accepted but raw file missing -> empty
@@ -149,12 +151,12 @@ def test_main_check_mismatch_and_insufficient_branch(tmp_path, capsys):
 # Parity against the real M2 A/A block (skipped when the data isn't present)
 # ──────────────────────────────────────────────────────────────────────
 
-_REAL_AA = Path(__file__).resolve().parent.parent / "results" / "v2-aa"
+_REAL_AA = Path(__file__).resolve().parent.parent / "results" / "aa"
 
 
 @pytest.mark.skipif(
     not (_REAL_AA.is_dir() and glob.glob(str(_REAL_AA / "*" / "summary.json"))),
-    reason="raw M2 A/A block (results/v2-aa) not present — DOI-deposited, gitignored",
+    reason="raw M2 A/A block (results/aa) not present — DOI-deposited, gitignored",
 )
 def test_frozen_bands_match_real_aa_block():
     assert d3.derive_bands(str(_REAL_AA)) == dict(aa.D3_UDP_SLOPE_BANDS_EPM)

@@ -1,5 +1,5 @@
 # Placement Experiment — node-drain on the node hosting search (hotelReservation)
-# Second-workload EXTERNAL-VALIDITY replication of the V2-H3 replication-rescue
+# Second-workload EXTERNAL-VALIDITY replication of the H3 replication-rescue
 # design (online-boutique was the frozen confirmatory workload).
 #
 # WHY: node-drain is the node-level failure that topology-spread / anti-affinity
@@ -18,7 +18,7 @@
 # drain the litmus probe-evaluation machinery runs on the very node being drained,
 # so every probe resolves to `Unknown` — a structural artifact, not a signal, and
 # it trips the runner's ">50% Unknown → retry" path (which can leave a node
-# cordoned). The V2-H3 outcomes are measured WITHOUT litmus probes: EndpointSlice
+# cordoned). The H3 outcomes are measured WITHOUT litmus probes: EndpointSlice
 # trough depth (availability), the in-cluster latency prober's user route + the
 # east-west service-dependency routes (from the adjacent topology.json, since
 # hotelReservation uses Consul, not *_SERVICE_ADDR env vars), and the conntrack

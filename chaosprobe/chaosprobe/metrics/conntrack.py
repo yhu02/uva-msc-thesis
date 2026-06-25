@@ -1,6 +1,6 @@
-"""Protocol-labeled conntrack prober — the v2 M1b first-class collector.
+"""Protocol-labeled conntrack prober — the M1b first-class collector.
 
-The v1 evidence for H2 came from an ad-hoc probe (``thesis/data/
+The earlier evidence for H2 came from an ad-hoc probe (``thesis/data/
 conntrack-probe/``): four hand-applied ``hostNetwork`` alpine pods sampling
 ``conntrack -L`` protocol counts every 5 s while two single-iteration runs
 provided the kill cycles.  That probe had two recorded defects — *i* = 1 (no
@@ -8,7 +8,7 @@ replication) and a ramp-contaminated pre-window — plus a toolchain gap: the
 ``conntrack-tools`` package was installed **unpinned** and the resolved
 version was never recorded (M1a finding I2).
 
-Per v2 design §4 the probe graduates into a built-in collector: this module
+Per the design (§4) the probe graduates into a built-in collector: this module
 creates one privileged ``hostNetwork`` sampler pod per worker node, samples
 each host's conntrack table every 5 s for the whole iteration (pre/chaos/post
 phases tracked by :class:`~chaosprobe.metrics.base.ContinuousProberBase`),
@@ -58,7 +58,7 @@ SAMPLER_NAMESPACE = "chaosprobe-system"
 
 SAMPLER_IMAGE = "alpine:3.20"
 
-# M1a finding I2: v1 installed conntrack-tools unpinned and never recorded
+# M1a finding I2: the earlier setup installed conntrack-tools unpinned and never recorded
 # the resolved version.  Pin the exact Alpine 3.20 package (resolved from the
 # v3.20/main APKINDEX on 2026-06-11); the running binary's version is
 # additionally recorded post-start via ``conntrack --version``.  If Alpine
@@ -79,8 +79,8 @@ MANAGED_LABEL_SELECTOR = ",".join(f"{k}={v}" for k, v in sorted(MANAGED_LABELS.i
 # report the node's own view, so the binding matters for analysis).
 NODE_LABEL_KEY = "chaosprobe.io/node"
 
-# The v1 probe's exact sampling command (thesis/data/conntrack-probe/
-# sampler.sh), kept verbatim so v2 samples stay comparable with the v1 CSV:
+# The original probe's exact sampling command (thesis/data/conntrack-probe/
+# sampler.sh), kept verbatim so new samples stay comparable with the original CSV:
 # one "<count> <proto>" line per protocol in the host's conntrack table.
 SAMPLE_COMMAND = [
     "sh",
@@ -144,11 +144,11 @@ def sampler_pod_name(node_name: str) -> str:
 def build_sampler_pod_manifest(node_name: str) -> Dict[str, Any]:
     """Build the sampler pod manifest for *node_name*.
 
-    Mirrors the v1 ad-hoc probe pods (``thesis/data/conntrack-probe/
+    Mirrors the original ad-hoc probe pods (``thesis/data/conntrack-probe/
     probe-pods.yaml``) — ``hostNetwork`` + privileged so ``conntrack -L``
     reads the *host's* table via netlink, tolerations for all taints so
     cordoned/tainted workers keep reporting through node-level faults —
-    plus the two v2 fixes: managed labels for selector-based cleanup and
+    plus the two added fixes: managed labels for selector-based cleanup and
     the pinned ``conntrack-tools`` install.
     """
     return {

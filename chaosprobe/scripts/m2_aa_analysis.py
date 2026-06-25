@@ -19,7 +19,7 @@ computed by one extraction and can never drift apart (the M2 report's
 What it does
 ------------
 1. **Discovery + pairing.** Loads every ``<results-dir>/*/summary.json``
-   carrying a ``v2Session`` block and groups sessions into A/A pairs by
+   carrying a ``session`` block and groups sessions into A/A pairs by
    the identical-cell key ``(fault, solverSeed, replicas, mode, levels,
    workers)`` — two runs of the same cell are an A/A pair (chronological
    chunking within a cell; odd / unpaired sessions are warned about and
@@ -78,37 +78,37 @@ What it does
 Registered delta metrics (D4 consolidation)
 -------------------------------------------
 The metric forms implement freeze decision **D4** of the M2 report
-(``v2-design/M2-AA-REPORT.md`` §Freeze decisions, §Instrumentation gaps):
+(``design/M2-AA-REPORT.md`` §Freeze decisions, §Instrumentation gaps):
 one canonical A/A extraction whose forms match the registered tests —
 the supplementary (median-over-routes, pre-chaos, taint-excluded)
-operationalization won D4, and V2-H2 is registered on **absolute** UDP
+operationalization won D4, and H2 is registered on **absolute** UDP
 drops, not the pct ratio (the prereg disclaims ratio denominators: the
 packed arm's near-zero pool makes them ill-defined).
 
-- ``ew_p95_pre_ms`` — the V2-H1 east-west outcome (D4 winner): per
+- ``ew_p95_pre_ms`` — the H1 east-west outcome (D4 winner): per
   iteration, the **median over inter-service (``a->b``) routes** of the
   route p95 in the **pre-chaos** window, read from the raw iteration's
   ``metrics.latency.phases``.  Routes containing ``loadgenerator->`` are
   excluded (DESIGN §4: the host-side load generator is excluded from
   edge accounting by construction).
-- ``udp_conntrack_drop_entries`` — V2-H2's registered **absolute** UDP
+- ``udp_conntrack_drop_entries`` — H2's registered **absolute** UDP
   conntrack drop: per iteration, cluster UDP entries (per-node phase
   mean of ``metrics.conntrackProtocolSamples`` counts, summed over
   nodes) pre-chaos minus during-chaos.
-- ``conntrack_flush_pct`` — the v1 mechanism definition, kept as v1
+- ``conntrack_flush_pct`` — the original mechanism definition, kept as-is
   context: per iteration, ``(pre_mean - during_mean) / pre_mean * 100``
   on the iteration's Prometheus phase aggregate
   ``conntrack_entries_per_node`` (the same definition
   ``scripts/mechanism_metrics.py`` computes as M1, now per iteration so
   taint exclusion applies).
-- ``score`` — the v1 aggregate resilience score: per-iteration
+- ``score`` — the aggregate resilience score: per-iteration
   ``resilienceScore`` with ERROR-verdict iterations excluded (their
   fabricated 0.0 is not a valid resilience measurement).
 
 Every metric's session-condition value is the **median over untainted
 iterations** — the registered unit ("session medians as the unit").
 Tainted iterations (``taintReasons`` recorded in ``summary.json``'s
-``v2Session.perLevel[].perIteration`` plus ``preChaosTaintReasons`` in
+``session.perLevel[].perIteration`` plus ``preChaosTaintReasons`` in
 the raw iteration records) are excluded from EVERY metric — the
 prereg's "no result is ever quoted from a tainted iteration" rule,
 which the pre-D4 script applied to ``score`` only (M2-AA-REPORT.md
@@ -120,7 +120,7 @@ pipeline check (4) above.
 
 Usage
 -----
-    uv run python scripts/m2_aa_analysis.py --results-dir results/v2-aa \\
+    uv run python scripts/m2_aa_analysis.py --results-dir results/aa \\
         [--json out.json] [--alpha 0.05]
 
 Exit codes: 0 clean and sufficient; 1 when any A/A finding or
@@ -146,7 +146,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from chaosprobe.metrics.statistics import icc_bootstrap, sign_test, wilcoxon_signed_rank
 
 #: Analysis-output schema identifier (bump on breaking shape changes).
-#: v2: D4 consolidation — per-iteration extraction, taint exclusion on
+#: D4 consolidation — per-iteration extraction, taint exclusion on
 #: every metric, ``ew_p95_pre_ms`` + ``udp_conntrack_drop_entries`` forms.
 SCHEMA = "chaosprobe/m2-aa-analysis/v2"
 
@@ -166,13 +166,13 @@ METRICS = ("ew_p95_pre_ms", "udp_conntrack_drop_entries", "conntrack_flush_pct",
 
 #: Frozen D3 per-f-level pre-window UDP-slope taint bands (entries/min),
 #: derived from the 2026-06-12 M2 A/A block (deviation D-2026-06-14-01 in
-#: v2-design/DEVIATIONS.md).  Each band is ``round(mean ± 3·SD)`` of the
+#: design/DEVIATIONS.md).  Each band is ``round(mean ± 3·SD)`` of the
 #: untainted per-iteration ``udp_preslope_epm`` at that f-level, pooled over
 #: the 6 A/A sessions, where SD is the population SD of the A/A reference
 #: iterations.  An iteration is tainted when its pre-window UDP-entry slope
 #: falls OUTSIDE its f-level's band — the registered D3 taint rule
 #: (§Session design).  ``scripts/d3_slope_bands.py`` recomputes these from
-#: ``results/v2-aa/`` and a parity test asserts they still match.  Applied to
+#: ``results/aa/`` and a parity test asserts they still match.  Applied to
 #: C1 analysis ONLY (opt-in: ``load_condition_outcomes(..., slope_band_taint=
 #: True)``); never retro-applied to the A/A block it was derived from.
 D3_UDP_SLOPE_BANDS_EPM: Dict[str, Tuple[int, int]] = {
@@ -280,7 +280,7 @@ class LevelObs:
 
 @dataclass
 class Session:
-    """One loaded v2 session summary, reduced to what the A/A analysis needs."""
+    """One loaded placement session summary, reduced to what the A/A analysis needs."""
 
     run: str
     run_id: Optional[str]
@@ -323,8 +323,8 @@ def is_user_route(route: str) -> bool:
 def east_west_p95(latency: Dict[str, Any], phase: str) -> Optional[float]:
     """Median across east-west routes of the route p95 in one phase, or None.
 
-    The D4-winning V2-H1 operationalization (median over routes — robust
-    to single-route excursions; see v2-design/M2-AA-REPORT.md D4).
+    The D4-winning H1 operationalization (median over routes — robust
+    to single-route excursions; see design/M2-AA-REPORT.md D4).
     """
     routes = (((latency or {}).get("phases") or {}).get(phase) or {}).get("routes") or {}
     vals = [
@@ -422,7 +422,7 @@ def es_trough_duration_real(
 ) -> Optional[float]:
     """Real trough DURATION (seconds) from the EndpointSlice time series, or None.
 
-    This is the V2-H3 instrument the M2 report asked for — the duration of
+    This is the H3 instrument the M2 report asked for — the duration of
     the availability trough measured directly from the 15s-cadence
     EndpointSlice samples (``metrics.endpointSliceTimeSeries``), replacing
     the mean-pod-recovery *proxy* (``trough_duration_s``) wherever the
@@ -523,7 +523,7 @@ def _iteration_phase_mean(metrics: Dict[str, Any], metric: str, phase: str) -> O
 
 
 def iteration_conntrack_flush_pct(metrics: Dict[str, Any]) -> Optional[float]:
-    """Conntrack flush percentage per the v1 mechanism definition, per iteration.
+    """Conntrack flush percentage per the original mechanism definition, per iteration.
 
     ``(pre_mean - during_mean) / pre_mean * 100`` of
     ``conntrack_entries_per_node`` (positive = entries flushed), the same
@@ -557,7 +557,7 @@ def extract_iteration(
     )
     depth, zeroed = es_trough(m.get("endpointSlices") or {}, app_services)
     # Real trough DURATION from the 15s EndpointSlice time series when the
-    # sampler produced one (V2-H3 instrument); None when the series is
+    # sampler produced one (H3 instrument); None when the series is
     # absent (e.g. frozen M2 A/A data), so the proxy below is used instead.
     duration_real = es_trough_duration_real(m.get("endpointSliceTimeSeries") or {}, app_services)
     rec = ((m.get("recovery") or {}).get("summary")) or {}
@@ -590,7 +590,7 @@ def summary_tainted_iterations(
 ) -> Tuple[Set[Tuple[str, Any]], List[str]]:
     """Tainted ``(condition, iteration)`` pairs recorded in the session summary.
 
-    Reads ``v2Session.perLevel[].perIteration[].taintReasons`` — the
+    Reads ``session.perLevel[].perIteration[].taintReasons`` — the
     engine-side taint channel; the raw files' ``preChaosTaintReasons``
     are folded in later by :func:`load_condition_outcomes`.
     """
@@ -682,9 +682,9 @@ def parse_session(run: str, summary: Dict[str, Any], warnings: List[str]) -> Opt
     per-condition files via :func:`load_session_outcomes` (so the 60+ MB
     summary dict can be freed before any raw file is opened).
     """
-    v2 = summary.get("v2Session")
-    if not isinstance(v2, dict):
-        warnings.append(f"{run}: no v2Session block — not a v2 session summary, skipped")
+    session_block = summary.get("session") or summary.get("v2Session")  # or legacy key
+    if not isinstance(session_block, dict):
+        warnings.append(f"{run}: no session block — not a placement session summary, skipped")
         return None
 
     faults = summary.get("faults") or {}
@@ -701,17 +701,17 @@ def parse_session(run: str, summary: Dict[str, Any], warnings: List[str]) -> Opt
     try:
         key = PairKey(
             fault=fault,
-            solver_seed=int(v2["solverSeed"]),
-            replicas=int(v2["replicas"]),
-            mode=str(v2["mode"]),
-            levels=tuple(sorted(float(level) for level in v2["levels"])),
-            workers=tuple(sorted(str(worker) for worker in v2["workers"])),
+            solver_seed=int(session_block["solverSeed"]),
+            replicas=int(session_block["replicas"]),
+            mode=str(session_block["mode"]),
+            levels=tuple(sorted(float(level) for level in session_block["levels"])),
+            workers=tuple(sorted(str(worker) for worker in session_block["workers"])),
         )
     except (KeyError, TypeError, ValueError) as exc:
-        warnings.append(f"{run}: malformed v2Session cell fields ({exc!r}) — skipped")
+        warnings.append(f"{run}: malformed session cell fields ({exc!r}) — skipped")
         return None
 
-    per_level = v2.get("perLevel") or []
+    per_level = session_block.get("perLevel") or []
     tainted, taints = summary_tainted_iterations(per_level)
     levels: Dict[str, LevelObs] = {}
     for record in per_level:
@@ -1234,8 +1234,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "M2 A/A calibration analysis (pre-registration §A/A, amended in #261; "
-            "metric forms per the D4 consolidation, v2-design/M2-AA-REPORT.md): "
-            "pairs identical-cell v2 sessions, computes per-level per-metric deltas "
+            "metric forms per the D4 consolidation, design/M2-AA-REPORT.md): "
+            "pairs identical-cell placement sessions, computes per-level per-metric deltas "
             "at the registered unit (session-condition medians over untainted "
             "iterations) with Wilcoxon/sign null tests (any p < alpha => 'A/A "
             "FINDING — investigate'), checks liveAchievedF exact identity within "
@@ -1245,8 +1245,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--results-dir",
-        default="results/v2-aa",
-        help="directory of <run>/summary.json v2 session outputs (default results/v2-aa)",
+        default="results/aa",
+        help="directory of <run>/placement session outputs (default results/aa)",
     )
     parser.add_argument(
         "--json",

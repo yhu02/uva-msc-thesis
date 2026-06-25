@@ -29,10 +29,10 @@ _spec.loader.exec_module(ab)
 
 
 def _aa_summary(level_specs, *, solver_seed=0, order_seed=11, taints=None, live_f=None, **kw):
-    """A v2 summary with the aa_block-specific fields (orderSeed, assignment)."""
+    """A placement summary with the aa_block-specific fields (orderSeed, assignment)."""
     summary = _summary(level_specs, solver_seed=solver_seed, taints=taints, **kw)
-    summary["v2Session"]["orderSeed"] = order_seed
-    for record in summary["v2Session"]["perLevel"]:
+    summary["session"]["orderSeed"] = order_seed
+    for record in summary["session"]["perLevel"]:
         record["assignment"] = {"svc-a": "w1", "svc-b": "w2"}
         record.setdefault(
             "perIteration",
@@ -91,13 +91,13 @@ def _write_pair(tmp_path, jitter_b=0.3):
 def test_load_session_skips_and_warns(tmp_path, capsys):
     (tmp_path / "inflight").mkdir()
     assert ab.load_session(str(tmp_path / "inflight")) is None
-    not_v2 = tmp_path / "not-v2"
-    not_v2.mkdir()
-    (not_v2 / "summary.json").write_text(json.dumps({"runId": "x"}))
-    assert ab.load_session(str(not_v2)) is None
+    not_session = tmp_path / "not-session"
+    not_session.mkdir()
+    (not_session / "summary.json").write_text(json.dumps({"runId": "x"}))
+    assert ab.load_session(str(not_session)) is None
     out = capsys.readouterr().out
     assert "[skip] inflight: no summary.json" in out
-    assert "[skip] not-v2: no v2Session block" in out
+    assert "[skip] not-session: no session block" in out
 
 
 def test_load_session_values_taints_and_missing_raw(tmp_path, capsys):
@@ -124,6 +124,19 @@ def test_load_session_values_taints_and_missing_raw(tmp_path, capsys):
     # The session-condition unit value is the median of the untainted rows.
     assert ab.cond_value(session, "f-000", "score") == 50.0
     assert ab.cond_value(session, "f-100", "score") is None
+
+
+def test_load_session_reads_legacy_v2session_key(tmp_path):
+    """Back-compat: datasets deposited under the published DOI use the old
+    top-level ``v2Session`` summary key; the loader must still parse them via the
+    ``or summary.get("v2Session")`` fallback (DEVIATIONS D-2026-06-25-01)."""
+    summary = _aa_summary(_TWO_LEVELS)
+    # Re-key the placement block under the legacy name; drop the new key entirely.
+    summary["v2Session"] = summary.pop("session")
+    _write_run(tmp_path, "legacy", summary, _raws(40.0))
+    session = ab.load_session(str(tmp_path / "legacy"))
+    assert session is not None
+    assert set(session["values"]) == {"f-000", "f-100"}
 
 
 def test_group_pairs_orders_by_seed():
@@ -293,7 +306,7 @@ def test_main_e2e_clean_pair(tmp_path, capsys):
     assert "pair-seed0: complete" in out
     assert "No tainted iterations in any banked session." in out
     assert "No statistically significant A/A finding at alpha=0.05" in out
-    assert "V2-H1 SESOI check" in out
+    assert "H1 SESOI check" in out
     assert f"JSON written to {out_json}" in out
     result = json.loads(out_json.read_text())
     assert set(result["outcomes"]) == {key for key, _, _ in ab.OUTCOMES}
@@ -316,7 +329,7 @@ def test_main_pending_extra_anomalies_and_excludes(tmp_path, capsys):
         taints={"f-000": {1: ["app_ready_timeout"]}},
         live_f={"f-100": 0.25},  # achieved f differs from s1's 1.0
     )
-    s2["v2Session"]["perLevel"][1]["assignment"] = {"svc-a": "w9"}
+    s2["session"]["perLevel"][1]["assignment"] = {"svc-a": "w9"}
     s3 = _aa_summary(_TWO_LEVELS, solver_seed=0, order_seed=13)
     s4 = _aa_summary(_TWO_LEVELS, solver_seed=1, order_seed=21)
     for name, summary in [("s1", s1), ("s2", s2), ("s3", s3), ("s4", s4)]:

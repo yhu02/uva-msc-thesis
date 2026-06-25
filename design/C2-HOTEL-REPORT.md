@@ -1,10 +1,10 @@
 # C2 report — replication rescue under node-drain, **hotelReservation** (external validity, exploratory)
 
-**Scope.** Exploratory **external-validity** replication of C2 / **V2-H3**
+**Scope.** Exploratory **external-validity** replication of C2 / **H3**
 (replication rescue) on DeathStarBench **hotelReservation** (deep gRPC fan-out,
 per-service datastore pairs, Consul discovery). Reported **outside the frozen
 confirmatory Holm family**; it adjusts no confirmatory verdict and does not bear
-on V2-H1 (C1-hotel) or the conntrack mechanism.
+on H1 (C1-hotel) or the conntrack mechanism.
 
 **Provenance.** Data: 24 node-drain sessions (3 cells × 8), hotelReservation,
 collected 2026-06-21/22 on `main` commit `bdf1ccb` (all 24 sessions
@@ -18,14 +18,14 @@ is 1 condition × 1 iteration).
 
 3 cells × 8 replicate sessions: **r1-packed**, **r3-packed**, **r3-anti-affine**,
 each at the single condition `f = 0.5`, 1 iteration, `node-drain` fault,
-`--v2-packed-assignment round-robin` (the OB C2 instrument, deviation
+`--packed-assignment round-robin` (the OB C2 instrument, deviation
 D-2026-06-16-01 — round-robin spreads r=3 across the 8 workers so the f=0.5
 placement is feasible at hotel's service count). Gate flags as in C1-hotel
 (wget-capable probe pod #322 + sustained warm-up). solver-seed 0, order-seed 1.
 
-## V2-H3 — replication rescue under node-drain
+## H3 — replication rescue under node-drain
 
-Registered test (`01-PREREGISTRATION.md` §V2-H3): an **ART ANOVA** with factors
+Registered test (`01-PREREGISTRATION.md` §H3): an **ART ANOVA** with factors
 `r ∈ {1, 3}` × `mode ∈ {packed, anti-affine}`; the registered effect is the
 **interaction** — replication rescues availability only when replicas do not
 share the failure domain (r=3 anti-affine ≪ r=1; r=3 packed ≈ r=1). Two

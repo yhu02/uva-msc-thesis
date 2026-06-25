@@ -1,4 +1,4 @@
-"""Tests for scripts/c3_h2_dns.py (V2-H2 placement-dependence + DNS intervention)."""
+"""Tests for scripts/c3_h2_dns.py (H2 placement-dependence + DNS intervention)."""
 
 import importlib.util
 import sys
@@ -230,7 +230,7 @@ def test_main_smoke(tmp_path, monkeypatch, capsys):
     rc = c3.main(["--results-dir", str(tmp_path), "--json", str(out_json)])
     assert rc == 0
     printed = capsys.readouterr().out
-    assert "V2-H2" in printed and "CONJUNCTION" in printed
+    assert "H2" in printed and "CONJUNCTION" in printed
     import json
 
     assert json.loads(out_json.read_text())["conjunction"] is True
@@ -239,7 +239,7 @@ def test_main_smoke(tmp_path, monkeypatch, capsys):
 def test_session_dns_cache_reads_and_handles_missing(tmp_path):
     run = tmp_path / "r1"
     run.mkdir()
-    (run / "summary.json").write_text('{"v2Session": {"dnsCache": "off"}}')
+    (run / "summary.json").write_text('{"session": {"dnsCache": "off"}}')
     assert c3._session_dns_cache(str(tmp_path), "r1") == "off"
     # missing summary.json → OSError → None (the except path)
     assert c3._session_dns_cache(str(tmp_path), "nope") is None

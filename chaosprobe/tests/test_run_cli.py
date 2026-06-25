@@ -1,12 +1,12 @@
-"""Tests for `chaosprobe run`'s --v2-* surface (the v2 session driver CLI).
+"""Tests for `chaosprobe run`'s placement-session surface (the session driver CLI).
 
 Pure-Python per CONTRIBUTING: every cluster seam is monkeypatched. Covers the
 argument resolution helper (mutual exclusivity with -s/--seeds/--replicas,
 parse errors, defaults, the deterministic condition block), the session
 initializer, the end-of-run restore helper, the Click parameter-source
-detection, and one fully-mocked end-to-end `run` invocation proving the v2
+detection, and one fully-mocked end-to-end `run` invocation proving the placement
 conditions ride the strategy loop in their randomized order and that
-``summary.json`` gains the ``v2Session`` block.
+``summary.json`` gains the ``session`` block.
 """
 
 import json
@@ -20,14 +20,14 @@ from click.testing import CliRunner
 
 from chaosprobe.commands import run_cmd
 from chaosprobe.commands.run_cmd import (
-    _init_v2_session,
-    _resolve_v2_args,
-    _restore_v2_placements,
-    _selfheal_v2_dns,
+    _init_placement_session,
+    _resolve_placement_args,
+    _restore_placements,
+    _selfheal_dns,
     _strategies_overridden_on_cli,
     run,
 )
-from chaosprobe.orchestrator import v2_session as v2
+from chaosprobe.orchestrator import session as session_driver
 from chaosprobe.placement import affinity_engine
 
 LEVELS = "0,0.25,0.5,0.75,1.0"
@@ -36,29 +36,29 @@ WORKERS = "w1,w2,w3"
 
 def _resolve(**overrides):
     kwargs = dict(
-        v2_levels=LEVELS,
-        v2_order_seed=None,
-        v2_solver_seed=None,
-        v2_replicas=None,
-        v2_mode=None,
-        v2_workers=WORKERS,
-        v2_packed_assignment=None,
-        v2_dns_cache=None,
+        fraction_levels=LEVELS,
+        order_seed=None,
+        solver_seed=None,
+        replica_degree=None,
+        placement_mode=None,
+        worker_nodes=WORKERS,
+        packed_assignment=None,
+        dns_cache=None,
         strategies_overridden=False,
         seeds=None,
         scale_replicas=0,
         experiments=("pod-delete.yaml",),
     )
     kwargs.update(overrides)
-    return _resolve_v2_args(
-        kwargs["v2_levels"],
-        kwargs["v2_order_seed"],
-        kwargs["v2_solver_seed"],
-        kwargs["v2_replicas"],
-        kwargs["v2_mode"],
-        kwargs["v2_workers"],
-        kwargs["v2_packed_assignment"],
-        kwargs["v2_dns_cache"],
+    return _resolve_placement_args(
+        kwargs["fraction_levels"],
+        kwargs["order_seed"],
+        kwargs["solver_seed"],
+        kwargs["replica_degree"],
+        kwargs["placement_mode"],
+        kwargs["worker_nodes"],
+        kwargs["packed_assignment"],
+        kwargs["dns_cache"],
         strategies_overridden=kwargs["strategies_overridden"],
         seeds=kwargs["seeds"],
         scale_replicas=kwargs["scale_replicas"],
@@ -66,26 +66,49 @@ def _resolve(**overrides):
     )
 
 
-class TestResolveV2Args:
-    def test_no_v2_flags_returns_none(self):
-        assert _resolve(v2_levels=None, v2_workers=None) is None
+@pytest.mark.parametrize(
+    "alias,param",
+    [
+        ("--v2-levels", "fraction_levels"),
+        ("--v2-order-seed", "order_seed"),
+        ("--v2-solver-seed", "solver_seed"),
+        ("--v2-replicas", "replica_degree"),
+        ("--v2-mode", "placement_mode"),
+        ("--v2-workers", "worker_nodes"),
+        ("--v2-packed-assignment", "packed_assignment"),
+        ("--v2-dns-cache", "dns_cache"),
+    ],
+)
+def test_legacy_v2_cli_aliases_map_to_renamed_params(alias, param):
+    """Back-compat: the old ``--v2-*`` flags remain accepted aliases of the
+    renamed placement-session flags, so pre-existing campaign scripts and the
+    reproduction commands cited in the deposits keep working
+    (DEVIATIONS D-2026-06-25-01)."""
+    by_name = {p.name: p.opts for p in run_cmd.run.params}
+    assert param in by_name, f"param {param} missing from the run command"
+    assert alias in by_name[param], f"{alias} is not registered as an alias of {param}"
+
+
+class TestResolvePlacementArgs:
+    def test_no_placement_flags_returns_none(self):
+        assert _resolve(fraction_levels=None, worker_nodes=None) is None
 
     @pytest.mark.parametrize(
         "flag,overrides",
         [
-            ("--v2-order-seed", {"v2_order_seed": 1}),
-            ("--v2-solver-seed", {"v2_solver_seed": 1}),
-            ("--v2-replicas", {"v2_replicas": 3}),
-            ("--v2-mode", {"v2_mode": "packed"}),
-            ("--v2-workers", {"v2_workers": WORKERS}),
-            ("--v2-packed-assignment", {"v2_packed_assignment": "round-robin"}),
-            ("--v2-dns-cache", {"v2_dns_cache": "off"}),
+            ("--order-seed", {"order_seed": 1}),
+            ("--solver-seed", {"solver_seed": 1}),
+            ("--replica-degree", {"replica_degree": 3}),
+            ("--placement-mode", {"placement_mode": "packed"}),
+            ("--worker-nodes", {"worker_nodes": WORKERS}),
+            ("--packed-assignment", {"packed_assignment": "round-robin"}),
+            ("--dns-cache", {"dns_cache": "off"}),
         ],
     )
-    def test_v2_flags_without_levels_raise(self, flag, overrides):
-        kwargs = {"v2_levels": None, "v2_workers": None}
+    def test_placement_flags_without_levels_raise(self, flag, overrides):
+        kwargs = {"fraction_levels": None, "worker_nodes": None}
         kwargs.update(overrides)
-        with pytest.raises(click.ClickException, match=rf"{flag}.*require\(s\) --v2-levels"):
+        with pytest.raises(click.ClickException, match=rf"{flag}.*require\(s\) --fraction-levels"):
             _resolve(**kwargs)
 
     def test_explicit_strategies_conflict(self):
@@ -101,23 +124,23 @@ class TestResolveV2Args:
             _resolve(scale_replicas=3)
 
     def test_workers_required(self):
-        with pytest.raises(click.ClickException, match="requires --v2-workers"):
-            _resolve(v2_workers=None)
+        with pytest.raises(click.ClickException, match="requires --worker-nodes"):
+            _resolve(worker_nodes=None)
 
     def test_level_parse_error_becomes_click_exception(self):
         with pytest.raises(click.ClickException, match="not a number"):
-            _resolve(v2_levels="0,x")
+            _resolve(fraction_levels="0,x")
 
     def test_worker_parse_error_becomes_click_exception(self):
         with pytest.raises(click.ClickException, match="duplicate node names"):
-            _resolve(v2_workers="w1,w1")
+            _resolve(worker_nodes="w1,w1")
 
     def test_invalid_replicas_raises(self):
-        with pytest.raises(click.ClickException, match="--v2-replicas must be one of"):
-            _resolve(v2_replicas=2)
+        with pytest.raises(click.ClickException, match="--replica-degree must be one of"):
+            _resolve(replica_degree=2)
 
     def test_multi_fault_matrix_rejected(self):
-        # A v2 session is one fault, one complete block — the per-level
+        # A placement session is one fault, one complete block — the per-level
         # records are keyed by condition, so a second fault would silently
         # overwrite the first fault's data.
         with pytest.raises(click.ClickException, match="exactly one fault per session"):
@@ -125,45 +148,45 @@ class TestResolveV2Args:
 
     def test_anti_affine_worker_arity_raises(self):
         with pytest.raises(click.ClickException, match="needs at least 3 workers"):
-            _resolve(v2_replicas=3, v2_mode="anti-affine", v2_workers="w1,w2")
+            _resolve(replica_degree=3, placement_mode="anti-affine", worker_nodes="w1,w2")
 
     def test_defaults_applied(self):
         args = _resolve()
         assert args is not None
-        assert args.order_seed == run_cmd._V2_DEFAULT_ORDER_SEED
-        assert args.solver_seed == run_cmd._V2_DEFAULT_SOLVER_SEED
-        assert args.replicas == run_cmd._V2_DEFAULT_REPLICAS
+        assert args.order_seed == run_cmd._DEFAULT_ORDER_SEED
+        assert args.solver_seed == run_cmd._DEFAULT_SOLVER_SEED
+        assert args.replicas == run_cmd._DEFAULT_REPLICAS
         assert args.mode == affinity_engine.MODE_PACKED
         assert args.levels == (0.0, 0.25, 0.5, 0.75, 1.0)
         assert args.workers == ("w1", "w2", "w3")
-        assert args.packed_assignment == run_cmd._V2_DEFAULT_PACKED_ASSIGNMENT
+        assert args.packed_assignment == run_cmd._DEFAULT_PACKED_ASSIGNMENT
         assert args.dns_cache is None  # no cache axis unless requested (C1/C2)
 
     def test_round_robin_packing_resolves(self):
-        args = _resolve(v2_packed_assignment="round-robin")
+        args = _resolve(packed_assignment="round-robin")
         assert args is not None
         assert args.packed_assignment == "round-robin"
 
     def test_invalid_packed_assignment_raises(self):
-        with pytest.raises(click.ClickException, match="--v2-packed-assignment must be one of"):
-            _resolve(v2_packed_assignment="bin-packing")
+        with pytest.raises(click.ClickException, match="--packed-assignment must be one of"):
+            _resolve(packed_assignment="bin-packing")
 
     @pytest.mark.parametrize("mode", ["on", "off"])
     def test_dns_cache_resolves(self, mode):
-        args = _resolve(v2_dns_cache=mode)
+        args = _resolve(dns_cache=mode)
         assert args is not None and args.dns_cache == mode
 
     def test_invalid_dns_cache_raises(self):
-        with pytest.raises(click.ClickException, match="--v2-dns-cache must be one of"):
-            _resolve(v2_dns_cache="warm")
+        with pytest.raises(click.ClickException, match="--dns-cache must be one of"):
+            _resolve(dns_cache="warm")
 
     def test_conditions_match_order_seed(self):
-        args = _resolve(v2_order_seed=7)
+        args = _resolve(order_seed=7)
         assert args is not None
-        assert args.conditions == v2.ordered_conditions(args.levels, 7)
+        assert args.conditions == session_driver.ordered_conditions(args.levels, 7)
 
     def test_explicit_seeds_and_cell(self):
-        args = _resolve(v2_order_seed=9, v2_solver_seed=3, v2_replicas=3, v2_mode="anti-affine")
+        args = _resolve(order_seed=9, solver_seed=3, replica_degree=3, placement_mode="anti-affine")
         assert args is not None
         assert (args.order_seed, args.solver_seed) == (9, 3)
         assert (args.replicas, args.mode) == (3, "anti-affine")
@@ -175,21 +198,21 @@ class TestStrategiesOverriddenOnCli:
 
     def test_explicit_s_flag_conflicts_via_cli(self):
         result = CliRunner().invoke(
-            run, ["--v2-levels", LEVELS, "--v2-workers", WORKERS, "-s", "spread"]
+            run, ["--fraction-levels", LEVELS, "--worker-nodes", WORKERS, "-s", "spread"]
         )
         assert result.exit_code != 0
         assert "mutually exclusive with -s" in result.output
 
     def test_default_strategies_do_not_conflict(self, monkeypatch):
-        # Without -s the v2 path proceeds past resolution (and then fails on
+        # Without -s the placement path proceeds past resolution (and then fails on
         # the worker-less follow-up validation we feed it, proving the
         # exclusivity check did not fire on the *default* strategies value).
-        result = CliRunner().invoke(run, ["--v2-levels", LEVELS])
+        result = CliRunner().invoke(run, ["--fraction-levels", LEVELS])
         assert "mutually exclusive with -s" not in result.output
-        assert "requires --v2-workers" in result.output
+        assert "requires --worker-nodes" in result.output
 
 
-class TestInitV2Session:
+class TestInitPlacementSession:
     def _args(self):
         args = _resolve()
         assert args is not None
@@ -210,7 +233,7 @@ class TestInitV2Session:
             run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: api)
         )
         routes = [("a", "b", "b:1", "grpc", "a->b"), ("b", "c", "c:1", "tcp", "b->c")]
-        session = _init_v2_session(self._args(), "ns", self._mutator(), routes)
+        session = _init_placement_session(self._args(), "ns", self._mutator(), routes)
         assert session.namespace == "ns"
         assert session.services == ["a", "b", "c"]
         assert session.edges == [("a", "b", 1.0), ("b", "c", 1.0)]
@@ -222,11 +245,11 @@ class TestInitV2Session:
             run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: MagicMock())
         )
         with pytest.raises(click.ClickException, match="no inter-service edges"):
-            _init_v2_session(self._args(), "ns", self._mutator(), None)
+            _init_placement_session(self._args(), "ns", self._mutator(), None)
 
     def test_falls_back_to_static_topology_when_no_env_edges(self, monkeypatch, tmp_path):
         # Consul/gRPC workloads (hotelReservation) have no *_SERVICE_ADDR env
-        # deps → edges_from_routes is empty; the v2 session must fall back to the
+        # deps → edges_from_routes is empty; the placement session must fall back to the
         # static topology.json adjacent to the scenario so the fraction is defined.
         api = MagicMock()
         monkeypatch.setattr(
@@ -235,7 +258,7 @@ class TestInitV2Session:
         (tmp_path / "topology.json").write_text(
             json.dumps({"services": ["a", "b", "c"], "edges": [["a", "b"], ["b", "c"]]})
         )
-        session = _init_v2_session(
+        session = _init_placement_session(
             self._args(),
             "ns",
             self._mutator(),
@@ -256,7 +279,7 @@ class TestInitV2Session:
             json.dumps({"services": ["a", "b", "c"], "edges": [["a", "c"]]})
         )
         routes = [("a", "b", "b:1", "grpc", "a->b"), ("b", "c", "c:1", "tcp", "b->c")]
-        session = _init_v2_session(
+        session = _init_placement_session(
             self._args(), "ns", self._mutator(), routes, {"path": str(tmp_path / "x.yaml")}
         )
         assert session.edges == [("a", "b", 1.0), ("b", "c", 1.0)]
@@ -267,7 +290,7 @@ class TestInitV2Session:
             run_cmd.affinity_engine.K8sApi, "from_cluster", classmethod(lambda cls: MagicMock())
         )
         with pytest.raises(click.ClickException, match="no inter-service edges"):
-            _init_v2_session(
+            _init_placement_session(
                 self._args(), "ns", self._mutator(), None, {"path": str(tmp_path / "x.yaml")}
             )
 
@@ -282,7 +305,7 @@ class TestInitV2Session:
         (tmp_path / "topology.json").write_text(
             json.dumps({"services": ["a", "b", "c", "d"], "edges": [["a", "b"], ["b", "d"]]})
         )
-        session = _init_v2_session(
+        session = _init_placement_session(
             self._args(), "ns", self._mutator(), None, {"path": str(tmp_path / "x.yaml")}
         )
         assert session.edges == [("a", "b", 1.0)]
@@ -297,17 +320,17 @@ class TestInitV2Session:
             json.dumps({"services": ["a", "b"], "edges": []})  # empty edges → ValueError
         )
         with pytest.raises(click.ClickException):
-            _init_v2_session(
+            _init_placement_session(
                 self._args(), "ns", self._mutator(), None, {"path": str(tmp_path / "x.yaml")}
             )
 
 
-class TestRestoreV2Placements:
+class TestRestorePlacements:
     def _session(self):
-        return v2.V2Session(
+        return session_driver.Session(
             namespace="ns",
             levels=(0.0,),
-            conditions=v2.ordered_conditions((0.0,), 42),
+            conditions=session_driver.ordered_conditions((0.0,), 42),
             order_seed=42,
             solver_seed=0,
             replicas=1,
@@ -322,14 +345,14 @@ class TestRestoreV2Placements:
         restore = MagicMock()
         monkeypatch.setattr(run_cmd.affinity_engine, "restore", restore)
         session = self._session()
-        _restore_v2_placements(session, "ns")
+        _restore_placements(session, "ns")
         restore.assert_called_once_with(session.api, "ns", wait=False)
 
     def test_restore_failure_is_swallowed(self, monkeypatch):
         monkeypatch.setattr(
             run_cmd.affinity_engine, "restore", MagicMock(side_effect=RuntimeError("api down"))
         )
-        _restore_v2_placements(self._session(), "ns")  # must not raise
+        _restore_placements(self._session(), "ns")  # must not raise
 
     def test_c3_session_also_resets_dns_to_cache_on(self, monkeypatch):
         monkeypatch.setattr(run_cmd.affinity_engine, "restore", MagicMock())
@@ -337,7 +360,7 @@ class TestRestoreV2Placements:
         monkeypatch.setattr(run_cmd.dns_cache_engine, "apply_dns_cache", reset)
         session = self._session()
         session.dns_cache = "off"  # a C3 session
-        _restore_v2_placements(session, "ns")
+        _restore_placements(session, "ns")
         api, ns, services, mode = reset.call_args.args[:4]
         assert ns == "ns" and mode == run_cmd.dns_cache_engine.CACHE_ON
 
@@ -345,7 +368,7 @@ class TestRestoreV2Placements:
         monkeypatch.setattr(run_cmd.affinity_engine, "restore", MagicMock())
         reset = MagicMock()
         monkeypatch.setattr(run_cmd.dns_cache_engine, "apply_dns_cache", reset)
-        _restore_v2_placements(self._session(), "ns")  # dns_cache is None
+        _restore_placements(self._session(), "ns")  # dns_cache is None
         reset.assert_not_called()
 
     def test_dns_reset_failure_is_swallowed(self, monkeypatch):
@@ -357,20 +380,20 @@ class TestRestoreV2Placements:
         )
         session = self._session()
         session.dns_cache = "off"
-        _restore_v2_placements(session, "ns")  # must not raise
+        _restore_placements(session, "ns")  # must not raise
 
 
-class TestSelfhealV2Dns:
+class TestSelfhealDns:
     """Startup DNS self-heal — recovers a cache-off override a prior aborted run left."""
 
     def _session(self):
-        return TestRestoreV2Placements._session(self)
+        return TestRestorePlacements._session(self)
 
-    def test_resets_to_cache_on_for_any_v2_session(self, monkeypatch):
+    def test_resets_to_cache_on_for_any_session(self, monkeypatch):
         reset = MagicMock()
         monkeypatch.setattr(run_cmd.dns_cache_engine, "apply_dns_cache", reset)
         session = self._session()  # dns_cache None — self-heal still runs (heals a prior leak)
-        _selfheal_v2_dns(session, "ns")
+        _selfheal_dns(session, "ns")
         api, ns, services, mode = reset.call_args.args[:4]
         assert ns == "ns" and mode == run_cmd.dns_cache_engine.CACHE_ON
         assert reset.call_args.kwargs.get("wait") is False  # don't block startup
@@ -381,10 +404,10 @@ class TestSelfhealV2Dns:
             "apply_dns_cache",
             MagicMock(side_effect=RuntimeError("api down")),
         )
-        _selfheal_v2_dns(self._session(), "ns")  # must not raise
+        _selfheal_dns(self._session(), "ns")  # must not raise
 
 
-class TestRunV2EndToEnd:
+class TestRunPlacementEndToEnd:
     """Fully-mocked `run` invocations: conditions ride the strategy loop."""
 
     def _invoke(self, tmp_path, monkeypatch, cli_args=None):
@@ -436,13 +459,13 @@ class TestRunV2EndToEnd:
         monkeypatch.setattr(run_cmd, "_prepull_probe_images_onto_workers", MagicMock())
         monkeypatch.setattr(run_cmd, "_cleanup_conntrack_samplers", MagicMock())
         restore = MagicMock()
-        monkeypatch.setattr(run_cmd, "_restore_v2_placements", restore)
+        monkeypatch.setattr(run_cmd, "_restore_placements", restore)
 
         executed = []
         contexts = []
 
         def fake_execute(ctx, strategy_name, idx, total):
-            executed.append((strategy_name, idx, total, ctx.v2_session))
+            executed.append((strategy_name, idx, total, ctx.session))
             contexts.append(ctx)
             return (
                 {
@@ -466,13 +489,13 @@ class TestRunV2EndToEnd:
 
         if cli_args is None:
             cli_args = [
-                "--v2-levels",
+                "--fraction-levels",
                 LEVELS,
-                "--v2-workers",
+                "--worker-nodes",
                 WORKERS,
-                "--v2-order-seed",
+                "--order-seed",
                 "7",
-                "--v2-solver-seed",
+                "--solver-seed",
                 "3",
             ]
         result = CliRunner().invoke(
@@ -485,16 +508,19 @@ class TestRunV2EndToEnd:
     def test_conditions_ride_strategy_loop_in_randomized_order(self, tmp_path, monkeypatch):
         result, executed, written, restore, _contexts = self._invoke(tmp_path, monkeypatch)
         assert result.exit_code == 0, result.output
-        expected = [c.name for c in v2.ordered_conditions((0.0, 0.25, 0.5, 0.75, 1.0), 7)]
+        expected = [
+            c.name
+            for c in session_driver.ordered_conditions((0.0, 0.25, 0.5, 0.75, 1.0), 7)
+        ]
         assert [name for name, _i, _t, _s in executed] == expected
         # Every condition carried the same live session on the RunContext.
         assert all(s is not None for *_x, s in executed)
         assert len({id(s) for *_x, s in executed}) == 1
 
-    def test_summary_gains_v2_session_block(self, tmp_path, monkeypatch):
+    def test_summary_gains_session_block(self, tmp_path, monkeypatch):
         result, executed, written, restore, _contexts = self._invoke(tmp_path, monkeypatch)
         assert result.exit_code == 0, result.output
-        meta = written["results"]["v2Session"]
+        meta = written["results"]["session"]
         assert meta["orderSeed"] == 7
         assert meta["solverSeed"] == 3
         assert meta["levels"] == [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -505,21 +531,21 @@ class TestRunV2EndToEnd:
         # so every per-level entry is an explicit not-executed record.
         assert all(e["rejectionReasons"] == ["condition_not_executed"] for e in meta["perLevel"])
 
-    def test_v2_restore_runs_at_cleanup(self, tmp_path, monkeypatch):
+    def test_placement_restore_runs_at_cleanup(self, tmp_path, monkeypatch):
         result, _executed, _written, restore, _contexts = self._invoke(tmp_path, monkeypatch)
         assert result.exit_code == 0, result.output
         restore.assert_called_once()
 
     def test_v1_path_is_untouched(self, tmp_path, monkeypatch):
-        # Without --v2-* flags the run takes the v1 named-strategy path:
-        # no session, no v2Session block, no engine restore.
+        # Without the placement-session flags the run takes the named-strategy path:
+        # no session, no session block, no engine restore.
         result, executed, written, restore, _contexts = self._invoke(
             tmp_path, monkeypatch, cli_args=["-s", "baseline,default"]
         )
         assert result.exit_code == 0, result.output
         assert [name for name, _i, _t, _s in executed] == ["baseline", "default"]
         assert all(s is None for *_x, s in executed)
-        assert "v2Session" not in written["results"]
+        assert "session" not in written["results"]
         restore.assert_not_called()
 
     def test_app_ready_timeout_flag_flows_to_run_context(self, tmp_path, monkeypatch):

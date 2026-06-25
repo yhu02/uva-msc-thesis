@@ -1,4 +1,4 @@
-"""Tests for scripts/v2_h4_frontier.py (V2-H4 descriptive placement frontier)."""
+"""Tests for scripts/h4_frontier.py (H4 descriptive placement frontier)."""
 
 import importlib.util
 import json
@@ -20,7 +20,7 @@ def _load(name):
 
 
 _load("m2_aa_analysis")
-h4 = _load("v2_h4_frontier")
+h4 = _load("h4_frontier")
 
 LAT, DEPTH, ERR = "ew_p95_pre_ms", "es_trough_depth_pods", "user_err_during"
 
@@ -202,7 +202,7 @@ def _write_session(results_dir, name, *, r, mode, fault, levels, dns_cache=None,
         {"condition": c, "targetF": f, "liveAchievedF": f, "accepted": acc, "rejectionReasons": []}
         for c, f, acc in levels
     ]
-    v2 = {
+    session_meta = {
         "solverSeed": 0,
         "replicas": r,
         "mode": mode,
@@ -211,11 +211,11 @@ def _write_session(results_dir, name, *, r, mode, fault, levels, dns_cache=None,
         "perLevel": per_level,
     }
     if dns_cache is not None:
-        v2["dnsCache"] = dns_cache
+        session_meta["dnsCache"] = dns_cache
     summary = {
         "runId": name,
         "timestamp": f"2026-01-01T00:00:0{name[-1]}+00:00",
-        "v2Session": v2,
+        "session": session_meta,
         "faults": {fault: {"strategies": {}}},
     }
     (run / "summary.json").write_text(json.dumps(summary))
@@ -337,7 +337,7 @@ def test_collect_campaign_dns_cache_filter(tmp_path):
 
 
 def test_collect_campaign_missing_dnscache_field_warns_not_silent(tmp_path):
-    # A C3 session whose summary parses but omits v2Session.dnsCache → cache reads
+    # A C3 session whose summary parses but omits session.dnsCache → cache reads
     # None → excluded by the filter, but the exclusion must be SURFACED, not silent.
     # (A genuinely corrupt summary is dropped upstream by discover_sessions; this
     # drives collect_campaign's OWN cache-None branch with a readable session.)
@@ -498,7 +498,7 @@ def test_main_end_to_end_writes_json_and_fig(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         "sys.argv",
         [
-            "v2_h4_frontier.py",
+            "h4_frontier.py",
             "--results-root",
             str(tmp_path / "results"),
             "--json",

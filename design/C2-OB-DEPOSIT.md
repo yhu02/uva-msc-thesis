@@ -1,7 +1,7 @@
-# ChaosProbe v2 — C2 online-boutique campaign deposit manifest
+# ChaosProbe — C2 online-boutique campaign deposit manifest
 
 **Campaign:** C2 replication-rescue under node-drain, workload **online-boutique**
-(see [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §V2-H3). Between-subjects
+(see [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §H3). Between-subjects
 design `r ∈ {1, 3}` × `mode ∈ {packed, anti-affine}`, three non-degenerate cells
 (**r1-packed, r3-packed, r3-anti-affine**) × 8 replicate sessions = 24
 node-drain sessions, nominal condition `f-050`, host-side Locust on the `/`
@@ -24,13 +24,13 @@ files, computed pre-analysis) + commit `e533d5b` anchor the provenance.
   `archive_run.py --strict` (24/24).
 - **Analysis-code commit:** same `e533d5b` (`scripts/c2_h3_anova.py`); the driver
   excludes rejected/fully-tainted sessions per the registered rule (none were).
-- **Pre-registration reference:** git tag `v2-prereg-freeze`; freeze deposit
+- **Pre-registration reference:** git tag `prereg-freeze`; freeze deposit
   [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md), DOI
   [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836).
 - **Cluster fingerprint:** k8s v1.28.6, CNI calico, kube-proxy ipvs;
   N = 8 × (2 CPU / 4 GiB) workers.
-- **Run parameters (all sessions):** `--v2-levels 0.5`, `--v2-packed-assignment
-  round-robin`, `--v2-solver-seed 0`, `--v2-order-seed 1`, `-i 1`, workers
+- **Run parameters (all sessions):** `--fraction-levels 0.5`, `--packed-assignment
+  round-robin`, `--solver-seed 0`, `--order-seed 1`, `-i 1`, workers
   worker1–8. Driver: `scripts/run_c2_rr_campaign.sh` (committed, #296).
 
 > A first collection recorded `git.dirty = true` (untracked driver script) and
@@ -87,7 +87,7 @@ and also travel inside the tarball's own `SHA256SUMS`.
 Cell assignment follows the deterministic collection order of
 `scripts/run_c2_rr_campaign.sh` (8× r1-packed, then 8× r3-packed, then 8×
 r3-anti-affine); verified 0 mismatches against each `summary.json`'s own
-`v2Session.replicas` / `.mode` / `.packedAssignment`.
+`session.replicas` / `.mode` / `.packedAssignment`.
 
 ## Deposit (published)
 

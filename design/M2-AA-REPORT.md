@@ -14,16 +14,16 @@
 The prereg registers: ≥3 identical-placement session pairs through the full
 pipeline ("same f, r, mode, fault; nothing varied"). Instantiated as complete-block
 C1-type sessions (pod-delete, r=1, packed, 5 f-levels × 3 iterations,
-randomized condition order): a pair shares `--v2-solver-seed` (identical
+randomized condition order): a pair shares `--solver-seed` (identical
 placements, verified — exact `liveAchievedF` identity and identical
-assignments within every pair); `--v2-order-seed` differs (order effects
+assignments within every pair); `--order-seed` differs (order effects
 randomize out). Two instantiation choices go beyond the prereg's A/A text
 and are to be recorded as one-sentence wording amendments at the freeze:
 (i) A/A sessions are complete blocks (all 5 levels), not single-cell
 sessions; (ii) the order seed varies within a pair while the solver seed is
 shared.
 
-| Pair | Sessions (results/v2-aa/) | solverSeed | orderSeeds |
+| Pair | Sessions (results/aa/) | solverSeed | orderSeeds |
 |---|---|---|---|
 | 1 | 20260611-184530, 20260611-213923 | 0 | 11, 12 |
 | 2 | 20260612-002516, 20260612-030816 | 1 | 21, 22 |
@@ -57,7 +57,7 @@ belongs in the D1 scope amendment. Note also these are
 the canonical
 *pipeline* metrics, not metrics registered in these forms — in particular
 `udp_conntrack_drop_pct` is a ratio form of the drop, and the prereg
-deliberately registers V2-H2(a) on **absolute** drops because the packed
+deliberately registers H2(a) on **absolute** drops because the packed
 arm's near-zero pool makes ratios ill-defined; the D4 consolidation must
 align the canonical script's metric forms with the registered tests before
 freeze. Tainted-iteration exclusion in the canonical script applies to the
@@ -83,20 +83,20 @@ in review and regenerated wholesale, see F4).
 | Pre-window UDP slope [entries/min] | 389 | 311 | 1104 | see F2 |
 | Aggregate resilience score [points] | 19.5 | 20.5 | 64 | **93 %** of 68.4 |
 
-Two readings the design predicted, now quantified: the **v1 aggregate
+Two readings the design predicted, now quantified: the **aggregate
 score's per-condition A/A band runs to ±50–67 points** (per-condition max
 paired |Δ|; pooled median 50, p95 = 64) on a ~68-point level — the
-instrument V2-H5 replaces is as unreliable on v2 data as the prereg
+instrument H5 replaces is as unreliable on this data as the prereg
 assumed; and the **user-route error rate is so noisy (band ≈ 4× its
-level)** that V2-H3's error-rate co-primary needs the margin discipline the
+level)** that H3's error-rate co-primary needs the margin discipline the
 prereg already imposes.
 
-**Proposed V2-H4 δ dominance margins (TBD fill-in, tied to D4):**
+**Proposed H4 δ dominance margins (TBD fill-in, tied to D4):**
 δ_latency = the EW-p95 A/A p95 band of the window D4 selects (4.4 ms
 pre-chaos / 2.0 ms during-chaos); δ_blast = 1.0 pod trough depth and 0.30
 user-route error rate (the availability-face bands above). The prereg ties
 the δ values to the A/A noise band without a floor rule; we propose
-adopting V2-H3's "no smaller than the A/A 95 % noise band" convention for
+adopting H3's "no smaller than the A/A 95 % noise band" convention for
 the H4 δs as well — to be recorded as a freeze wording amendment.
 
 ## Power analysis → per-cell n (recommendation)
@@ -105,32 +105,32 @@ Monte Carlo (20k reps/scenario) on the A/A variance components; both
 α=0.05 (best case) and α=0.0125 (Holm worst case). Full numbers:
 `/tmp/power_sim.py` (output `/tmp/power_sim_output.txt`), summarized:
 
-- **V2-H1 (Page's L, SESOI = 15 % EW-p95 span):** overpowered — power
+- **H1 (Page's L, SESOI = 15 % EW-p95 span):** overpowered — power
   0.89–0.92 at **n=4** sessions at α=0.0125 across the homo-/heteroscedastic
   sensitivity scenarios (0.915 primary, 0.891 heteroscedastic). Real
   resolution: a half-SESOI (7.5 %) trend needs n≈10. **Computed under the
   supplementary pre-chaos extraction** — contingent on D4 (see below).
-- **V2-H2(a) (paired Wilcoxon, spread−packed UDP drop):** the effect to
+- **H2(a) (paired Wilcoxon, spread−packed UDP drop):** the effect to
   detect (~2000 entries) is a dose-endpoint-derived planning assumption —
-  the f-100 vs f-000 drop contrast in this block, anchored to v1's measured
+  the f-100 vs f-000 drop contrast in this block, anchored to the earlier measured
   spread-vs-colocate contrast — not an observed spread-vs-packed A/B
   measurement (none exists yet). At ~2000 entries vs the 414-entry band,
   power is 1.0 at every *attainable* n; the binding constraint is
   **Wilcoxon attainability (one-sided, the registered direction): n≥5 for
   any rejection at α=0.05, n≥7 at α=0.0125** (the §Verdict floors above are
   the two-sided A/A variants — both are correct for their tests).
-- **V2-H2(b) (≥50 % shrinkage):** n=7 (α=0.0125) at true shrinkage 70–80 %;
+- **H2(b) (≥50 % shrinkage):** n=7 (α=0.0125) at true shrinkage 70–80 %;
   the fragile case is 60 % true shrinkage → **n=11**.
-- **V2-H3 (interaction MDE at n=8/cell, α=0.0125):** ~0.8 pods trough
+- **H3 (interaction MDE at n=8/cell, α=0.0125):** ~0.8 pods trough
   depth / ~0.26 error rate — both inside the prereg's "margin ≥ A/A noise
   band" rule (bands: 1.0 pod / 0.302).
 
 **Recommendation: n=8 sessions per cell** (Wilcoxon floor 7 + 1 margin;
 H3 MDE ≈ the noise-band margin at 8/cell; H1 saturated). If C1 throughput
 allows, n=11 additionally covers H2(b)'s 60 %-shrinkage case. (~3 h/session
-on this cluster.) **No V2-H5 power analysis was run** (recorded judgment,
+on this cluster.) **No H5 power analysis was run** (recorded judgment,
 not an oversight): ICC-difference power requires assumed true sub-score
-ICCs, and the sub-scores have no v2 pilot estimate to assume — their
+ICCs, and the sub-scores have no pilot estimate to assume — their
 definitions don't exist in code yet (§Instrumentation gaps). H5's n rides
 on the C1 session count; revisit if the freeze sets sub-score definitions
 that admit a pilot estimate.
@@ -160,7 +160,7 @@ that admit a pilot estimate.
 - **F3 — infrastructure wedge, session 6, condition f-100 (~14:10–14:30).**
   A transient pod-network dataplane wedge centered on one worker (libvirt/
   WSL2 flake class; diagnosed live: pod-IP TCP unreachable to worker5 while
-  all other node pairs passed; self-cleared). The pipeline's (v1-inherited)
+  all other node pairs passed; self-cleared). The pipeline's (earlier-inherited)
   taint gates caught the worst of it: iteration 3 tainted
   (`app_ready_timeout`, `pre_chaos_errors_high`) and excluded from the
   score aggregate and from every supplementary outcome (the canonical
@@ -178,7 +178,7 @@ that admit a pilot estimate.
   level, EW-pre sd) — caught by the review pass; the table above is
   regenerated wholesale from the taint-excluded artifact. The prereg's
   literal wording is "no result is ever quoted from a rejected or tainted
-  **session**"; excluding tainted *iterations* (v1 pipeline convention,
+  **session**"; excluding tainted *iterations* (the earlier pipeline convention,
   and what `m2_aa_analysis.py` implements) is an interpretation the freeze
   wording must pin — under the literal session-level reading, session 6
   would be wholly excluded and pair 3 invalid. Folded into D2.
@@ -203,7 +203,7 @@ that admit a pilot estimate.
    existing `pre_chaos_errors_high` family. The operational taint gates
    should also be enumerated in the prereg at freeze if they are to carry
    registered-rule weight in D2-style decisions.
-4. **D4:** Pin V2-H1's outcome operationalization — the prereg's "median
+4. **D4:** Pin H1's outcome operationalization — the prereg's "median
    east-west p95" doesn't pin median-over-what or the window, and the two
    implementations differ materially **at the same during-chaos window**:
    canonical #272 = mean over routes (f-025 within-pair session SD
@@ -220,7 +220,7 @@ that admit a pilot estimate.
    before the n freeze. The two scripts consolidate to whichever wins.
 5. **D5:** Per-cell n: **8** (recommended) vs 11 (covers H2(b) @ 60 %
    shrinkage).
-6. **D6:** V2-H2(b)'s planning test: literal registered form (median ≥50 %
+6. **D6:** H2(b)'s planning test: literal registered form (median ≥50 %
    + bootstrap CI excluding 0) vs the stricter Wilcoxon-vs-50 % used in the
    power analysis (conservative; n=7–11 driver).
 7. **D7:** hotelReservation gate sufficiency. What exists: solver gate
@@ -242,8 +242,8 @@ The H3 margin should not be set tighter than the band on this account.
 
 - **15 s EndpointSlice trough sampler** (DESIGN §4) is not in the collected
   data — only pre/during/post snapshots; trough *duration* is currently
-  proxied by pod recovery time. Needed before C2/node-drain (V2-H3).
-- **Layered sub-scores (V2-H5)** are not implemented in the package; their
+  proxied by pod recovery time. Needed before C2/node-drain (H3).
+- **Layered sub-scores (H5)** are not implemented in the package; their
   *definitions* freeze at M2 regardless (prereg circularity mitigation).
   The aggregate-score A/A band (±50–67 pts per condition) is banked as the
   comparator.

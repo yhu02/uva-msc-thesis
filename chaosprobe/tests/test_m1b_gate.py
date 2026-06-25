@@ -423,7 +423,7 @@ def _wire_quiescence(monkeypatch, snapshots):
     """Patch quiescence_snapshot (last entry repeats) + fake the clock.
 
     The barrier moved into ``chaosprobe.orchestrator.quiescence`` (reused by
-    the v2 session driver), so its internals are patched on that module; the
+    the session driver), so its internals are patched on that module; the
     script re-exports the public names unchanged.
     """
     clock = _FakeTime()

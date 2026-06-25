@@ -1,5 +1,5 @@
 # Placement Experiment — Pod-delete on search (hotelReservation, C1 dose-response)
-# Second-workload EXTERNAL-VALIDITY replication of the V2-H1 dose-response design
+# Second-workload EXTERNAL-VALIDITY replication of the H1 dose-response design
 # (online-boutique was the frozen confirmatory workload). The runner adds a
 # unique suffix to metadata.name automatically.
 #
@@ -11,14 +11,14 @@
 # backend with its own downstreams). Killing it degrades the /hotels route and,
 # under co-location, neighbours via node-level contention.
 #
-# Outcome note: V2-H1's registered primary outcome is the east-west p95
+# Outcome note: H1's registered primary outcome is the east-west p95
 # (ew_p95_pre_ms), measured by the in-cluster prober over the service-dependency
 # graph. hotelReservation discovers peers via Consul (no *_SERVICE_ADDR env
 # vars), so east-west routes come from the static topology.json adjacent to this
 # scenario (PlacementMutator.get_topology_dependency_routes). The httpProbes
 # below feed the north-south user-route availability (user_err) + resilience
 # score; cmdProbes are omitted (the online-boutique set is redis/cart-specific
-# and the v2 outcomes do not depend on them).
+# and the placement outcomes do not depend on them).
 #
 # Probe tiers mirror the online-boutique design (4 sensitivity tiers) over
 # hotelReservation's four verified-200 routes:

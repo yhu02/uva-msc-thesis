@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C3 / V2-H2 campaign — placement-dependence + DNS intervention (PRs #300/#301/#302).
+# C3 / H2 campaign — placement-dependence + DNS intervention (PRs #300/#301/#302).
 # Design: cache {on,off} × f {0,1} × r=1, pod-delete churn + host-side Locust.
 # A SESSION is a fixed cache mode visiting BOTH f-levels (f-000 packed, f-100
 # spread) as conditions, so it yields a packed AND a spread UDP-conntrack drop.
@@ -21,11 +21,11 @@
 #   3. confirm the spread cache-on UDP drop is materially (≥~50%) below cache-off.
 #   Only if the shrinkage is detectable is the full campaign worth its ~3 h/session.
 #
-# ⚠️ A dnsConfig-realization DEVIATION must be logged in v2-design/DEVIATIONS.md
+# ⚠️ A dnsConfig-realization DEVIATION must be logged in design/DEVIATIONS.md
 # before this campaign's results are quoted (NodeLocal DNSCache realized via pod
 # dnsConfig rather than the kubelet --cluster-dns default; see C3-OB-SCOPE.md).
 #
-# n = PAIRS (default 7, the M2 power floor for V2-H2(b); n=11 covers the
+# n = PAIRS (default 7, the M2 power floor for H2(b); n=11 covers the
 # 60%-shrinkage case — bump PAIRS to 11 for that). ~3 h/session ⇒ days of cluster
 # time; launch in the background and poll.
 set -u
@@ -52,13 +52,13 @@ echo "C3: $PAIRS pairs, iters=$ITERS, cache-order seed=$ORDER_SEED, first-movers
 run_session() {
   local cache="$1" pair="$2"
   echo "=== PAIR $pair/$PAIRS cache=$cache ($(date -u +%H:%M:%S)) ==="
-  # f-solver placement (default --v2-packed-assignment solver) hits f=0 (packed)
-  # and f=1 (spread) at r=1; --v2-dns-cache toggles the DNS resolver per session.
+  # f-solver placement (default --packed-assignment solver) hits f=0 (packed)
+  # and f=1 (spread) at r=1; --dns-cache toggles the DNS resolver per session.
   uv run chaosprobe run -n online-boutique \
     -e scenarios/online-boutique/pod-delete.yaml \
-    --v2-levels 0,1 --v2-replicas 1 --v2-mode packed \
-    --v2-dns-cache "$cache" \
-    --v2-workers "$WORKERS" --v2-solver-seed 0 --v2-order-seed 1 \
+    --fraction-levels 0,1 --replica-degree 1 --placement-mode packed \
+    --dns-cache "$cache" \
+    --worker-nodes "$WORKERS" --solver-seed 0 --order-seed 1 \
     -i "$ITERS" -o "$OUT" || echo "RUN FAILED: pair=$pair cache=$cache"
 }
 

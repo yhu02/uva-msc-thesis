@@ -43,17 +43,12 @@ from chaosprobe.orchestrator.run_phases import (
     summarise_placement_match_rates,
     write_run_results,
 )
-from chaosprobe.orchestrator.strategy_runner import (
-    RunContext,
-    _adjacent_topology_path,
-    execute_strategy,
-)
-from chaosprobe.orchestrator.v2_session import (
+from chaosprobe.orchestrator.session import (
     PACKED_ASSIGNMENT_ROUND_ROBIN,
     PACKED_ASSIGNMENT_SOLVER,
     PACKED_ASSIGNMENTS,
-    V2Condition,
-    V2Session,
+    Condition,
+    Session,
     build_session,
     discover_services,
     edges_from_routes,
@@ -61,6 +56,11 @@ from chaosprobe.orchestrator.v2_session import (
     parse_levels,
     parse_workers,
     session_metadata,
+)
+from chaosprobe.orchestrator.strategy_runner import (
+    RunContext,
+    _adjacent_topology_path,
+    execute_strategy,
 )
 from chaosprobe.placement import affinity_engine
 from chaosprobe.placement import dns_cache as dns_cache_engine
@@ -967,27 +967,27 @@ def _init_overall_results(
 
 
 # ------------------------------------------------------------------
-# v2 complete-block session plumbing (--v2-* flags)
+# complete-block session plumbing (the placement-session flags)
 # ------------------------------------------------------------------
 
-#: Defaults applied when a --v2-levels session is active but the seed flags
+#: Defaults applied when a --fraction-levels session is active but the seed flags
 #: are omitted.  Order: matches --seed's 42 convention; solver: matches the
 #: M1b gate's base seed.
-_V2_DEFAULT_ORDER_SEED = 42
-_V2_DEFAULT_SOLVER_SEED = 0
-_V2_DEFAULT_REPLICAS = 1
-_V2_DEFAULT_MODE = affinity_engine.MODE_PACKED
-#: Default pinned-cell assignment: the fraction solver (the V2-H1 dose-response
-#: sweep is the f knob). V2-H3 passes --v2-packed-assignment round-robin.
-_V2_DEFAULT_PACKED_ASSIGNMENT = PACKED_ASSIGNMENT_SOLVER
+_DEFAULT_ORDER_SEED = 42
+_DEFAULT_SOLVER_SEED = 0
+_DEFAULT_REPLICAS = 1
+_DEFAULT_MODE = affinity_engine.MODE_PACKED
+#: Default pinned-cell assignment: the fraction solver (the H1 dose-response
+#: sweep is the f knob). H3 passes --packed-assignment round-robin.
+_DEFAULT_PACKED_ASSIGNMENT = PACKED_ASSIGNMENT_SOLVER
 
 
 @dataclass(frozen=True)
-class V2RunArgs:
-    """Validated --v2-* CLI surface, resolved before the cluster is touched."""
+class RunArgs:
+    """Validated the placement-session CLI surface, resolved before the cluster is touched."""
 
     levels: Tuple[float, ...]
-    conditions: List[V2Condition]
+    conditions: List[Condition]
     order_seed: int
     solver_seed: int
     replicas: int
@@ -997,72 +997,72 @@ class V2RunArgs:
     dns_cache: Optional[str]
 
 
-def _resolve_v2_args(
-    v2_levels: Optional[str],
-    v2_order_seed: Optional[int],
-    v2_solver_seed: Optional[int],
-    v2_replicas: Optional[int],
-    v2_mode: Optional[str],
-    v2_workers: Optional[str],
-    v2_packed_assignment: Optional[str],
-    v2_dns_cache: Optional[str],
+def _resolve_placement_args(
+    fraction_levels: Optional[str],
+    order_seed: Optional[int],
+    solver_seed: Optional[int],
+    replica_degree: Optional[int],
+    placement_mode: Optional[str],
+    worker_nodes: Optional[str],
+    packed_assignment: Optional[str],
+    dns_cache: Optional[str],
     *,
     strategies_overridden: bool,
     seeds: Optional[str],
     scale_replicas: int,
     experiments: Tuple[str, ...] = (),
-) -> Optional[V2RunArgs]:
-    """Validate the v2 flag combination and build the condition block.
+) -> Optional[RunArgs]:
+    """Validate the placement-session flag combination and build the condition block.
 
-    Returns ``None`` when no ``--v2-levels`` was given (the v1 named-strategy
-    path, untouched).  The v2 surface is mutually exclusive with
+    Returns ``None`` when no ``--fraction-levels`` was given (the named-strategy
+    path, untouched).  The placement-session surface is mutually exclusive with
     ``-s/--strategies``, ``--seeds``, and ``--replicas`` — the session owns
     both the condition axis and the replica count — and a session runs
     exactly one fault (the pre-registration's session = one fault, one
     block; the per-level records are keyed by condition, so a multi-fault
     matrix would silently overwrite the first fault's data).
     """
-    if v2_levels is None:
+    if fraction_levels is None:
         leftover = [
             flag
             for flag, value in (
-                ("--v2-order-seed", v2_order_seed),
-                ("--v2-solver-seed", v2_solver_seed),
-                ("--v2-replicas", v2_replicas),
-                ("--v2-mode", v2_mode),
-                ("--v2-workers", v2_workers),
-                ("--v2-packed-assignment", v2_packed_assignment),
-                ("--v2-dns-cache", v2_dns_cache),
+                ("--order-seed", order_seed),
+                ("--solver-seed", solver_seed),
+                ("--replica-degree", replica_degree),
+                ("--placement-mode", placement_mode),
+                ("--worker-nodes", worker_nodes),
+                ("--packed-assignment", packed_assignment),
+                ("--dns-cache", dns_cache),
             )
             if value is not None
         ]
         if leftover:
-            raise click.ClickException(f"{', '.join(leftover)} require(s) --v2-levels")
+            raise click.ClickException(f"{', '.join(leftover)} require(s) --fraction-levels")
         return None
 
     if strategies_overridden:
         raise click.ClickException(
-            "--v2-levels is mutually exclusive with -s/--strategies: a v2 "
+            "--fraction-levels is mutually exclusive with -s/--strategies: a placement-session "
             "session's conditions replace the named-strategy axis"
         )
     if seeds:
         raise click.ClickException(
-            "--v2-levels is mutually exclusive with --seeds (use --v2-solver-seed "
-            "and --v2-order-seed)"
+            "--fraction-levels is mutually exclusive with --seeds (use --solver-seed "
+            "and --order-seed)"
         )
     if scale_replicas:
         raise click.ClickException(
-            "--v2-levels is mutually exclusive with --replicas: the session's "
-            "--v2-replicas owns the replica count"
+            "--fraction-levels is mutually exclusive with --replicas: the session's "
+            "--replica-degree owns the replica count"
         )
-    if not v2_workers:
+    if not worker_nodes:
         raise click.ClickException(
-            "--v2-levels requires --v2-workers (ordered worker node names; "
+            "--fraction-levels requires --worker-nodes (ordered worker node names; "
             "solver node index i maps to the i-th name)"
         )
     if len(experiments) != 1:
         raise click.ClickException(
-            f"--v2-levels runs exactly one fault per session (one complete "
+            f"--fraction-levels runs exactly one fault per session (one complete "
             f"block per fault, per the pre-registered session design) but "
             f"{len(experiments)} experiment files are selected — pass exactly "
             f"one -e/--experiment (the default selects "
@@ -1070,39 +1070,39 @@ def _resolve_v2_args(
         )
 
     try:
-        levels = parse_levels(v2_levels)
-        workers = parse_workers(v2_workers)
+        levels = parse_levels(fraction_levels)
+        workers = parse_workers(worker_nodes)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    order_seed = v2_order_seed if v2_order_seed is not None else _V2_DEFAULT_ORDER_SEED
-    solver_seed = v2_solver_seed if v2_solver_seed is not None else _V2_DEFAULT_SOLVER_SEED
-    replicas = v2_replicas if v2_replicas is not None else _V2_DEFAULT_REPLICAS
-    mode = v2_mode if v2_mode is not None else _V2_DEFAULT_MODE
+    order_seed = order_seed if order_seed is not None else _DEFAULT_ORDER_SEED
+    solver_seed = solver_seed if solver_seed is not None else _DEFAULT_SOLVER_SEED
+    replicas = replica_degree if replica_degree is not None else _DEFAULT_REPLICAS
+    mode = placement_mode if placement_mode is not None else _DEFAULT_MODE
     packed_assignment = (
-        v2_packed_assignment if v2_packed_assignment is not None else _V2_DEFAULT_PACKED_ASSIGNMENT
+        packed_assignment if packed_assignment is not None else _DEFAULT_PACKED_ASSIGNMENT
     )
     if packed_assignment not in PACKED_ASSIGNMENTS:
         raise click.ClickException(
-            f"--v2-packed-assignment must be one of {PACKED_ASSIGNMENTS}, "
+            f"--packed-assignment must be one of {PACKED_ASSIGNMENTS}, "
             f"got '{packed_assignment}'"
         )
-    if v2_dns_cache is not None and v2_dns_cache not in dns_cache_engine.CACHE_MODES:
+    if dns_cache is not None and dns_cache not in dns_cache_engine.CACHE_MODES:
         raise click.ClickException(
-            f"--v2-dns-cache must be one of {dns_cache_engine.CACHE_MODES}, got '{v2_dns_cache}'"
+            f"--dns-cache must be one of {dns_cache_engine.CACHE_MODES}, got '{dns_cache}'"
         )
     if replicas not in affinity_engine.SUPPORTED_REPLICAS:
         raise click.ClickException(
-            f"--v2-replicas must be one of {sorted(affinity_engine.SUPPORTED_REPLICAS)} "
+            f"--replica-degree must be one of {sorted(affinity_engine.SUPPORTED_REPLICAS)} "
             f"(r=2 is deliberately unsupported per DESIGN §2.3), got {replicas}"
         )
     if mode == affinity_engine.MODE_ANTI_AFFINE and replicas > 1 and len(workers) < replicas:
         raise click.ClickException(
-            f"--v2-mode anti-affine with --v2-replicas {replicas} needs at least "
+            f"--placement-mode anti-affine with --replica-degree {replicas} needs at least "
             f"{replicas} workers, got {len(workers)}"
         )
 
-    return V2RunArgs(
+    return RunArgs(
         levels=levels,
         conditions=ordered_conditions(levels, order_seed),
         order_seed=order_seed,
@@ -1111,17 +1111,17 @@ def _resolve_v2_args(
         mode=mode,
         workers=workers,
         packed_assignment=packed_assignment,
-        dns_cache=v2_dns_cache,
+        dns_cache=dns_cache,
     )
 
 
-def _init_v2_session(
-    args: V2RunArgs,
+def _init_placement_session(
+    args: RunArgs,
     namespace: str,
     mutator: PlacementMutator,
     service_routes: Optional[List[Tuple[str, str, str, str, str]]],
     scenario: Optional[Dict[str, Any]] = None,
-) -> V2Session:
+) -> Session:
     """Build the live session: discover services, derive the solver graph,
     and bind the affinity-engine API.  Raises ``click.ClickException`` when
     the scenario carries no usable dependency topology."""
@@ -1133,7 +1133,7 @@ def _init_v2_session(
             # hotelReservation, which resolves its gRPC backends through Consul)
             # yield no env-derived edges.  Fall back to the hand-curated static
             # `topology.json` adjacent to the scenario — the same edge set the
-            # fraction-solver gate consumes via load_static_topology — so the v2
+            # fraction-solver gate consumes via load_static_topology — so the placement-session
             # cross-node fraction is defined.  Online Boutique keeps its
             # env-derived edges (this branch is skipped when edges are present).
             topo_path = _adjacent_topology_path(scenario)
@@ -1167,7 +1167,7 @@ def _init_v2_session(
     # block + order are identical: same levels, same order seed).
     session.conditions = list(args.conditions)
     click.echo(
-        f"v2 session: complete block of {len(session.conditions)} condition(s) "
+        f"placement session: complete block of {len(session.conditions)} condition(s) "
         f"[{', '.join(c.name for c in session.conditions)}] "
         f"r={session.replicas} mode={session.mode} "
         f"packing={session.packed_assignment} "
@@ -1177,19 +1177,19 @@ def _init_v2_session(
     return session
 
 
-def _restore_v2_placements(session: V2Session, namespace: str) -> None:
+def _restore_placements(session: Session, namespace: str) -> None:
     """End-of-run cleanup: clear engine affinity patches back to defaults.
 
     For a C3 session (DNS-cache axis), also reset the pod DNS resolver to the
     cluster default (cache-on) — ``affinity_engine.restore`` does not touch
     ``dnsConfig``, so a cache-off override would otherwise leak past the run.
     """
-    click.echo("Cleanup: restoring v2 affinity placements to default scheduling...")
+    click.echo("Cleanup: restoring affinity placements to default scheduling...")
     try:
         affinity_engine.restore(session.api, namespace, wait=False)
-        click.echo("  v2 placements restored.")
+        click.echo("  placements restored.")
     except Exception as e:
-        click.echo(f"  Warning: v2 restore failed: {e}", err=True)
+        click.echo(f"  Warning: placement restore failed: {e}", err=True)
     if session.dns_cache is not None:
         try:
             dns_cache_engine.apply_dns_cache(
@@ -1199,22 +1199,22 @@ def _restore_v2_placements(session: V2Session, namespace: str) -> None:
                 dns_cache_engine.CACHE_ON,
                 wait=False,
             )
-            click.echo("  v2 DNS-cache reset to cluster default (cache-on).")
+            click.echo("  DNS-cache reset to cluster default (cache-on).")
         except Exception as e:
-            click.echo(f"  Warning: v2 DNS-cache reset failed: {e}", err=True)
+            click.echo(f"  Warning: DNS-cache reset failed: {e}", err=True)
 
 
-def _selfheal_v2_dns(session: V2Session, namespace: str) -> None:
+def _selfheal_dns(session: Session, namespace: str) -> None:
     """Startup self-heal: reset app DNS to the cluster default (cache-on).
 
     A C3 cache-off override is applied per condition and reset at clean
-    cleanup (:func:`_restore_v2_placements`), but an **aborted or killed** run
+    cleanup (:func:`_restore_placements`), but an **aborted or killed** run
     (Ctrl-C / SIGTERM / crash) can leave the override in place — neither
     ``affinity_engine.restore`` nor :func:`_clear_stale_placement` ever touch
     ``dnsConfig``. This clears any stale override **before** the run measures
     anything, making the DNS path symmetric with the placement self-heal so a
-    leaked cache-off override cannot silently corrupt a later v2 run's
-    cache-on baseline (the V2-H2 control assumption). Runs for **every** v2
+    leaked cache-off override cannot silently corrupt a later placement-session run's
+    cache-on baseline (the H2 control assumption). Runs for **every** placement-session
     session regardless of its own cache axis (the leak it heals is from a
     *prior* run); a no-op (no rollout) when no override is present.
     """
@@ -1227,7 +1227,7 @@ def _selfheal_v2_dns(session: V2Session, namespace: str) -> None:
             wait=False,
         )
     except Exception as e:
-        click.echo(f"  Warning: v2 DNS-cache startup self-heal failed: {e}", err=True)
+        click.echo(f"  Warning: DNS-cache startup self-heal failed: {e}", err=True)
 
 
 def _strategies_overridden_on_cli() -> bool:
@@ -1528,51 +1528,61 @@ def _acquire_run_lock() -> None:
     ),
 )
 @click.option(
+    "--fraction-levels",
     "--v2-levels",
+    "fraction_levels",
     default=None,
     help=(
         "Comma-separated target cross-node fractions (e.g. '0,0.25,0.5,0.75,1.0'). "
-        "Activates the v2 complete-block session driver: every level becomes one "
+        "Activates the complete-block session driver: every level becomes one "
         "condition (solver-targeted placement via the affinity engine) executed "
         "through the same iteration pipeline as a strategy, visited in a "
-        "randomized order drawn from --v2-order-seed. Mutually exclusive with "
+        "randomized order drawn from --order-seed. Mutually exclusive with "
         "-s/--strategies, --seeds, and --replicas; runs exactly one fault per "
         "session (pass exactly one -e). A/A pair = two runs with identical "
-        "--v2-* args incl. --v2-solver-seed (identical placements); "
-        "--v2-order-seed may differ."
+        "placement-session args incl. --solver-seed (identical placements); "
+        "--order-seed may differ. (--v2-levels: back-compat alias.)"
     ),
 )
 @click.option(
+    "--order-seed",
     "--v2-order-seed",
+    "order_seed",
     type=int,
     default=None,
     help=(
         "Seed for the randomized condition order of the complete block "
-        f"(default: {_V2_DEFAULT_ORDER_SEED}). Recorded in summary.json -> "
-        "v2Session.orderSeed/orderApplied."
+        f"(default: {_DEFAULT_ORDER_SEED}). Recorded in summary.json -> "
+        "session.orderSeed/orderApplied."
     ),
 )
 @click.option(
+    "--solver-seed",
     "--v2-solver-seed",
+    "solver_seed",
     type=int,
     default=None,
     help=(
         "Seed for the fraction solver's placements (default: "
-        f"{_V2_DEFAULT_SOLVER_SEED}). Identical-placement A/A session pairs "
-        "share this seed while --v2-order-seed may differ."
+        f"{_DEFAULT_SOLVER_SEED}). Identical-placement A/A session pairs "
+        "share this seed while --order-seed may differ."
     ),
 )
 @click.option(
+    "--replica-degree",
     "--v2-replicas",
+    "replica_degree",
     type=int,
     default=None,
     help=(
         f"Replica count per service, one of {sorted(affinity_engine.SUPPORTED_REPLICAS)} "
-        f"(default: {_V2_DEFAULT_REPLICAS}; r=2 deliberately unsupported per DESIGN §2.3)."
+        f"(default: {_DEFAULT_REPLICAS}; r=2 deliberately unsupported per DESIGN §2.3)."
     ),
 )
 @click.option(
+    "--placement-mode",
     "--v2-mode",
+    "placement_mode",
     type=click.Choice([affinity_engine.MODE_PACKED, affinity_engine.MODE_ANTI_AFFINE]),
     default=None,
     help=(
@@ -1583,35 +1593,41 @@ def _acquire_run_lock() -> None:
     ),
 )
 @click.option(
+    "--worker-nodes",
     "--v2-workers",
+    "worker_nodes",
     default=None,
     help=(
         "Ordered comma-separated worker node names; solver node index i maps "
         "to the i-th name (same convention as scripts/m1b_gate.py --workers). "
-        "Required with --v2-levels."
+        "Required with --fraction-levels. (--v2-workers: back-compat alias.)"
     ),
 )
 @click.option(
+    "--packed-assignment",
     "--v2-packed-assignment",
+    "packed_assignment",
     type=click.Choice(list(PACKED_ASSIGNMENTS)),
     default=None,
     help=(
         f"Pinned-cell (r=1 / r=3 packed) assignment (default: "
-        f"{_V2_DEFAULT_PACKED_ASSIGNMENT}). '{PACKED_ASSIGNMENT_SOLVER}' uses the "
-        f"fraction solver to hit the condition's target f (the V2-H1 dose-response "
+        f"{_DEFAULT_PACKED_ASSIGNMENT}). '{PACKED_ASSIGNMENT_SOLVER}' uses the "
+        f"fraction solver to hit the condition's target f (the H1 dose-response "
         f"sweep). '{PACKED_ASSIGNMENT_ROUND_ROBIN}' uses the capacity-feasible "
-        f"per-service round-robin packing (V2-H3 replication-rescue; f-independent, "
+        f"per-service round-robin packing (H3 replication-rescue; f-independent, "
         f"matches the M1b-verified packed semantics)."
     ),
 )
 @click.option(
+    "--dns-cache",
     "--v2-dns-cache",
+    "dns_cache",
     type=click.Choice(list(dns_cache_engine.CACHE_MODES)),
     default=None,
     help=(
-        "DNS-cache axis for the C3 / V2-H2 campaign (default: unset = cluster "
+        "DNS-cache axis for the C3 / H2 campaign (default: unset = cluster "
         "default, no override). 'off' overrides each app pod's dnsConfig to the "
-        "CoreDNS clusterIP over UDP (the v1 cross-node-UDP baseline); 'on' uses "
+        "CoreDNS clusterIP over UDP (the cross-node-UDP baseline); 'on' uses "
         "the kubelet-default NodeLocal DNSCache. Applied per condition after "
         "placement; reset to cluster default at cleanup."
     ),
@@ -1648,14 +1664,14 @@ def run(
     baseline_duration: int,
     batch_id: Optional[str],
     replicas: int,
-    v2_levels: Optional[str],
-    v2_order_seed: Optional[int],
-    v2_solver_seed: Optional[int],
-    v2_replicas: Optional[int],
-    v2_mode: Optional[str],
-    v2_workers: Optional[str],
-    v2_packed_assignment: Optional[str],
-    v2_dns_cache: Optional[str],
+    fraction_levels: Optional[str],
+    order_seed: Optional[int],
+    solver_seed: Optional[int],
+    replica_degree: Optional[int],
+    placement_mode: Optional[str],
+    worker_nodes: Optional[str],
+    packed_assignment: Optional[str],
+    dns_cache: Optional[str],
     neo4j_uri: Optional[str],
     neo4j_user: str,
     neo4j_password: str,
@@ -1668,12 +1684,12 @@ def run(
     (including pod recovery metrics), and saves everything to a
     timestamped results directory.
 
-    With --v2-levels the run becomes a v2 complete-block session instead:
+    With --fraction-levels the run becomes a complete-block session instead:
     each target cross-node fraction is one condition (fraction-solver
     placement realized through the replica-level affinity engine, achieved
     placement verified from live pods), visited in a randomized order drawn
-    from --v2-order-seed. An A/A pair is two runs with identical --v2-*
-    args including --v2-solver-seed; --v2-order-seed may differ.
+    from --order-seed. An A/A pair is two runs with identical placement-session
+    args including --solver-seed; --order-seed may differ.
 
     \b
     Example:
@@ -1683,25 +1699,25 @@ def run(
       chaosprobe run -n online-boutique -i 3  # 3 iterations per strategy
       chaosprobe run -n online-boutique -i 3 \\
           -e scenarios/online-boutique/pod-delete.yaml \\
-          --v2-levels 0,0.25,0.5,0.75,1.0 --v2-workers worker1,worker2,worker3
+          --fraction-levels 0,0.25,0.5,0.75,1.0 --worker-nodes worker1,worker2,worker3
     """
-    # ── v2 complete-block session resolution (validated before any mutation) ──
-    v2_args = _resolve_v2_args(
-        v2_levels,
-        v2_order_seed,
-        v2_solver_seed,
-        v2_replicas,
-        v2_mode,
-        v2_workers,
-        v2_packed_assignment,
-        v2_dns_cache,
+    # ── complete-block session resolution (validated before any mutation) ──
+    placement_args = _resolve_placement_args(
+        fraction_levels,
+        order_seed,
+        solver_seed,
+        replica_degree,
+        placement_mode,
+        worker_nodes,
+        packed_assignment,
+        dns_cache,
         strategies_overridden=_strategies_overridden_on_cli(),
         seeds=seeds,
         scale_replicas=replicas,
         experiments=experiment,
     )
 
-    if v2_args is None:
+    if placement_args is None:
         strategy_list = [s.strip() for s in strategies.split(",")]
         valid_strategies = {"baseline", "default"} | {s.value for s in PlacementStrategy}
         for s in strategy_list:
@@ -1713,14 +1729,14 @@ def run(
                 sys.exit(1)
     else:
         # The complete block in its randomized applied order; never re-sorted
-        # (the recorded order is what licenses Page's L for V2-H1).
-        strategy_list = [c.name for c in v2_args.conditions]
+        # (the recorded order is what licenses Page's L for H1).
+        strategy_list = [c.name for c in placement_args.conditions]
 
     # Serialize against any other active run before touching the cluster — two
     # concurrent runs corrupt each other's placement/rollout/prepull state.
     _acquire_run_lock()
 
-    if v2_args is None:
+    if placement_args is None:
         # Expand `random` into per-seed variants (when --seeds is set), then
         # order strategies by contention severity so lingering node pressure
         # from heavy strategies doesn't skew later runs. (--iterations >= 1 is
@@ -1788,15 +1804,17 @@ def run(
     mutator = PlacementMutator(namespace)
     metrics_collector = MetricsCollector(namespace)
 
-    # ── v2 session: discover services, derive the solver graph, bind the API ──
-    v2_state: Optional[V2Session] = None
-    if v2_args is not None:
-        v2_state = _init_v2_session(v2_args, namespace, mutator, service_routes, shared_scenario)
+    # ── placement session: discover services, derive the solver graph, bind the API ──
+    placement_session: Optional[Session] = None
+    if placement_args is not None:
+        placement_session = _init_placement_session(
+            placement_args, namespace, mutator, service_routes, shared_scenario
+        )
         # Self-heal a DNS-cache override a prior aborted C3 run may have left:
         # reset to the cluster default before this run measures anything, so a
         # stale cache-off path cannot corrupt the cache-on baseline. Symmetric
         # with the placement self-heal below (_clear_stale_placement).
-        _selfheal_v2_dns(v2_state, namespace)
+        _selfheal_dns(placement_session, namespace)
 
     if replicas:
         click.echo(f"Scaling app deployments to {replicas} replica(s)...")
@@ -1920,7 +1938,7 @@ def run(
             mutator=mutator,
             graph_store=graph_store,
             ts=ts,
-            v2_session=v2_state,
+            session=placement_session,
         )
 
         for strat_pos, strategy_name in enumerate(strategy_list, 1):
@@ -1958,10 +1976,10 @@ def run(
 
     # ── Final cleanup: clear placement ──
     click.echo(f"\n{'─' * 60}")
-    if v2_state is not None:
+    if placement_session is not None:
         # Engine-managed sessions also need replicas/affinity reset, which the
-        # v1 nodeSelector clear below does not touch.
-        _restore_v2_placements(v2_state, namespace)
+        # named-strategy nodeSelector clear below does not touch.
+        _restore_placements(placement_session, namespace)
     click.echo("Cleanup: Clearing placement constraints...")
     try:
         mutator.clear_placement(wait=False)
@@ -1983,11 +2001,11 @@ def run(
     if placement_match:
         overall_results["summary"]["placementMatchRates"] = placement_match
     overall_results["iterations"] = iterations
-    if v2_state is not None:
+    if placement_session is not None:
         # Everything the A/A comparison and the C1 analysis need: the block,
         # the applied order + both seeds, the (r, mode, workers) cell, and the
         # per-level solver/live fractions with acceptance verdicts.
-        overall_results["v2Session"] = session_metadata(v2_state)
+        overall_results["session"] = session_metadata(placement_session)
 
     write_run_results(
         overall_results,

@@ -1,9 +1,9 @@
-"""Tests for scripts/scorecard.py (V2-H5 layered scorecard, D-2026-06-13-01).
+"""Tests for scripts/scorecard.py (H5 layered scorecard, D-2026-06-13-01).
 
 Covers the three sub-score formulas (availability, mechanism-reconvergence,
 user-tail) incl. the None / clamp / never-recovers / never-drops edge cases,
 the UDP conntrack reconvergence extractor, chaos_window_seconds sourcing, and
-the frozen V2-H5 reliability evaluation on synthetic reliable-vs-noisy data
+the frozen H5 reliability evaluation on synthetic reliable-vs-noisy data
 (pass vs fail; conjunction; user-tail exclusion; graceful "not evaluable").
 """
 
@@ -554,7 +554,7 @@ def _full_iter(
 
 
 def _write_session(results_dir, name, conditions, *, timestamp, accepted=None, taints=None):
-    """Write one v2 session: summary.json + raw per-condition files.
+    """Write one placement session: summary.json + raw per-condition files.
 
     ``conditions`` maps condition -> list of raw iteration dicts.
     """
@@ -584,7 +584,7 @@ def _write_session(results_dir, name, conditions, *, timestamp, accepted=None, t
         "runId": name,
         "timestamp": timestamp,
         "faults": {"pod-delete": {"strategies": {}}},
-        "v2Session": {
+        "session": {
             "solverSeed": 0,
             "replicas": 1,
             "mode": "packed",
@@ -598,8 +598,8 @@ def _write_session(results_dir, name, conditions, *, timestamp, accepted=None, t
 
 # Four distinct conditions, each given a characteristic sub-score level, so the
 # between-condition variance is real.  Reliable = the same sub-score levels
-# reproduce across sessions; the v1 ``score`` is DELIBERATELY scrambled session
-# to session (the v1 aggregate is the known-unreliable comparator V2-H5 must
+# reproduce across sessions; the aggregate ``score`` is DELIBERATELY scrambled session
+# to session (the aggregate is the known-unreliable comparator H5 must
 # beat).  noisy = the sub-score levels themselves are scrambled too.
 _COND_LEVELS = {
     # condition: (depth, udp_during, dep_p95)
@@ -609,8 +609,8 @@ _COND_LEVELS = {
     "f-d": (7, 30, 320.0),
 }
 
-# Per-session v1 scores, scrambled so ICC_v1 is low while the sub-scores stay
-# reproducible (the realistic V2-H5 win condition).
+# Per-session aggregate scores, scrambled so ICC_old is low while the sub-scores stay
+# reproducible (the realistic H5 win condition).
 _SCRAMBLED_SCORES = {
     "20260101-000000": {"f-a": 20.0, "f-b": 80.0, "f-c": 40.0, "f-d": 60.0},
     "20260102-000000": {"f-a": 70.0, "f-b": 30.0, "f-c": 90.0, "f-d": 10.0},
@@ -631,7 +631,7 @@ def _reliable_session(results_dir, name, timestamp):
 
 def test_evaluation_reliable_passes(tmp_path):
     # Same condition levels reproduce across 3 sessions -> high between-condition
-    # ICC for both required sub-scores -> V2-H5 PASS.
+    # ICC for both required sub-scores -> H5 PASS.
     _reliable_session(tmp_path, "20260101-000000", "2026-01-01T00:00:00+00:00")
     _reliable_session(tmp_path, "20260102-000000", "2026-01-02T00:00:00+00:00")
     _reliable_session(tmp_path, "20260103-000000", "2026-01-03T00:00:00+00:00")
@@ -662,7 +662,7 @@ def _noisy_session(results_dir, name, timestamp, order):
 
 def test_evaluation_noisy_fails(tmp_path):
     # Each session assigns different levels to each condition -> no between-
-    # condition reproducibility -> ICC near 0 -> V2-H5 FAIL.
+    # condition reproducibility -> ICC near 0 -> H5 FAIL.
     _noisy_session(tmp_path, "20260101-000000", "2026-01-01T00:00:00+00:00", [0, 1, 2, 3])
     _noisy_session(tmp_path, "20260102-000000", "2026-01-02T00:00:00+00:00", [3, 2, 1, 0])
     _noisy_session(tmp_path, "20260103-000000", "2026-01-03T00:00:00+00:00", [1, 3, 0, 2])
@@ -708,7 +708,7 @@ def test_collect_excludes_rejected_and_missing_raw(tmp_path):
     )
     # Add a perLevel entry whose raw file does not exist.
     summary = json.loads((run_dir / "summary.json").read_text())
-    summary["v2Session"]["perLevel"].append(
+    summary["session"]["perLevel"].append(
         {
             "condition": "f-z",
             "targetF": 0.5,
@@ -724,15 +724,15 @@ def test_collect_excludes_rejected_and_missing_raw(tmp_path):
     assert any("missing" in w for w in warnings)
 
 
-def test_collect_skips_unreadable_and_non_v2(tmp_path):
+def test_collect_skips_unreadable_and_non_session(tmp_path):
     # Unreadable summary.json -> warning, skipped.
     bad = tmp_path / "20260101-000000"
     bad.mkdir()
     (bad / "summary.json").write_text("{not json")
-    # A non-v2 summary -> skipped via parse_session.
-    nonv2 = tmp_path / "20260102-000000"
-    nonv2.mkdir()
-    (nonv2 / "summary.json").write_text(json.dumps({"runId": "x"}))
+    # A non-session summary -> skipped via parse_session.
+    non_session = tmp_path / "20260102-000000"
+    non_session.mkdir()
+    (non_session / "summary.json").write_text(json.dumps({"runId": "x"}))
     conditions, warnings, _taints = sc.collect_conditions(str(tmp_path))
     assert conditions == []
     assert any("unreadable" in w for w in warnings)
@@ -792,7 +792,7 @@ def test_error_verdict_score_excluded(tmp_path):
     _write_session(tmp_path, "20260101-000000", conditions, timestamp="2026-01-01T00:00:00+00:00")
     conds, _warn, _taints = sc.collect_conditions(str(tmp_path))
     obs = conds[0]
-    assert obs.v1_score[1] is None  # ERROR verdict's fabricated 0.0 dropped
+    assert obs.aggregate_score[1] is None  # ERROR verdict's fabricated 0.0 dropped
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -861,7 +861,7 @@ def test_report_renders_all_sections(tmp_path, capsys):
     assert "Warnings" in out
     assert "Tainted iterations" in out
     assert "Sub-scores" in out
-    assert "V2-H5 decision" in out
+    assert "H5 decision" in out
 
 
 def test_report_renders_not_evaluable(tmp_path, capsys):
@@ -886,30 +886,30 @@ def test_metric_cells_skip_unmeasurable_median():
     # while the measurable one survives (exercises the median-None branch).
     measurable = sc.ConditionObs(run="r1", condition="f-a")
     measurable.subscores["availability"] = [75.0, 80.0]
-    measurable.v1_score = [50.0, 51.0]
+    measurable.aggregate_score = [50.0, 51.0]
     empty = sc.ConditionObs(run="r1", condition="f-b")
     empty.subscores["availability"] = [None, None]
-    empty.v1_score = [None, None]
+    empty.aggregate_score = [None, None]
     avail = sc._metric_cells([measurable, empty], "availability")
     assert set(avail) == {("f-a", "r1")}
-    v1 = sc._metric_cells_v1([measurable, empty])
-    assert set(v1) == {("f-a", "r1")}
+    aggregate = sc._metric_cells_aggregate([measurable, empty])
+    assert set(aggregate) == {("f-a", "r1")}
 
 
-def test_v1_cells_aligned_skips_kept_cell_with_none_median():
-    # A cell in `keep` whose v1 median is None is skipped (the alignment guard).
-    has_v1 = sc.ConditionObs(run="r1", condition="f-a")
-    has_v1.v1_score = [50.0]
-    no_v1 = sc.ConditionObs(run="r1", condition="f-b")
-    no_v1.v1_score = [None]
+def test_aggregate_cells_aligned_skips_kept_cell_with_none_median():
+    # A cell in `keep` whose aggregate median is None is skipped (the alignment guard).
+    has_aggregate = sc.ConditionObs(run="r1", condition="f-a")
+    has_aggregate.aggregate_score = [50.0]
+    no_aggregate = sc.ConditionObs(run="r1", condition="f-b")
+    no_aggregate.aggregate_score = [None]
     keep = {("f-a", "r1"), ("f-b", "r1")}
-    aligned = sc._v1_cells_aligned([has_v1, no_v1], keep)
+    aligned = sc._aggregate_cells_aligned([has_aggregate, no_aggregate], keep)
     assert set(aligned) == {("f-a", "r1")}
 
 
 def test_build_parser_defaults():
     args = sc.build_parser().parse_args([])
-    assert args.results_dir == "results/v2-c1"
+    assert args.results_dir == "results/c1"
     assert args.confidence == 0.95
     assert args.n_resamples == 2000
     assert args.seed == 42
@@ -938,8 +938,8 @@ def test_thin_replication_empty_when_all_conditions_replicated():
 def test_evaluate_subscore_reports_thin_replication():
     # one session per condition -> every condition is thin
     sub = {("f-000", "s1"): [80.0], ("f-050", "s1"): [60.0], ("f-100", "s1"): [40.0]}
-    v1 = {("f-000", "s1"): [70.0], ("f-050", "s1"): [55.0], ("f-100", "s1"): [35.0]}
-    row = sc.evaluate_subscore("availability", sub, v1, 0.95, 200, 42)
+    aggregate = {("f-000", "s1"): [70.0], ("f-050", "s1"): [55.0], ("f-100", "s1"): [35.0]}
+    row = sc.evaluate_subscore("availability", sub, aggregate, 0.95, 200, 42)
     assert row["thinReplicationConditions"] == ["f-000", "f-050", "f-100"]
 
 
@@ -1002,7 +1002,7 @@ def test_load_condition_subscores_d3_slope_band_gate(tmp_path):
     obs = sc.load_condition_subscores(run_dir, "f-050", tainted, taints, slope_band_taint=True)
     assert ("f-050", 2) in tainted
     assert any("udp_preslope_out_of_band" in t for t in taints)
-    assert obs.v1_score[1] is None  # tainted iteration -> None v1 row
+    assert obs.aggregate_score[1] is None  # tainted iteration -> None aggregate row
 
 
 def test_cli_slope_band_flag_default_off_and_enable():

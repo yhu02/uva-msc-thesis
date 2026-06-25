@@ -1,4 +1,4 @@
-"""Tests for scripts/c1_h1_trend.py (V2-H1 Page's L dose-response analysis)."""
+"""Tests for scripts/c1_h1_trend.py (H1 Page's L dose-response analysis)."""
 
 import importlib.util
 import json
@@ -47,7 +47,7 @@ def _iter(n, ew_pre, slope_epm=None):
 
 
 def _write_session(results_dir, name, level_iters, *, rejected=()):
-    """Write a v2 session: summary.json (perLevel) + raw <cond>.json per level.
+    """Write a placement session: summary.json (perLevel) + raw <cond>.json per level.
 
     ``level_iters`` maps condition -> list of raw iteration dicts (from _iter).
     """
@@ -67,7 +67,7 @@ def _write_session(results_dir, name, level_iters, *, rejected=()):
     summary = {
         "runId": name,
         "timestamp": "2026-01-01T00:00:00+00:00",
-        "v2Session": {
+        "session": {
             "solverSeed": 0,
             "replicas": 1,
             "mode": "packed",
@@ -117,7 +117,7 @@ def test_incomplete_block_excluded_with_warning(tmp_path):
     )
     out = h1.analyze(str(tmp_path))
     assert out["nCompleteBlocks"] == 2
-    assert any("incomplete V2-H1 block" in w and "f-100" in w for w in out["warnings"])
+    assert any("incomplete H1 block" in w and "f-100" in w for w in out["warnings"])
 
 
 def test_d3_slope_band_taint_optional_default_off(tmp_path):
@@ -163,7 +163,7 @@ def test_main_smoke_and_json_output(tmp_path, capsys):
     assert rc == 0
     printed = capsys.readouterr().out
     assert "Page's L" in printed and "SESOI effect" in printed
-    assert "incomplete V2-H1 block" in printed  # the warning-print path
+    assert "incomplete H1 block" in printed  # the warning-print path
     written = json.loads(out_json.read_text())
     assert written["outcome"] == "ew_p95_pre_ms" and written["nCompleteBlocks"] == 2
     assert written["slopeBandTaint"] is False  # default off (D-2026-06-14-02)

@@ -14,8 +14,8 @@ It is never written to disk. Run it as, e.g.::
 
     ZENODO_TOKEN=<your-token> uv run python scripts/deposit_zenodo.py \
         --tarball /tmp/c4-nodedrain-deposit.tar.gz \
-        --manifest ../v2-design/c4-nodedrain-manifest.sha256 \
-        --readme   ../v2-design/c4-deposit-README.md
+        --manifest ../design/c4-nodedrain-manifest.sha256 \
+        --readme   ../design/c4-deposit-README.md
 
 Use ``--sandbox`` first to dry-run against sandbox.zenodo.org with a sandbox
 token. The defaults describe campaign C4 (the design-corrected re-analysis).

@@ -288,15 +288,15 @@ Queries one or more in-cluster Prometheus instances during the run. Auto-discove
 
 `result()` returns `available`, `serverUrls`, `queries` (with `{namespace}` resolved), `metricAvailability` (per-label `bool` recording which queries returned non-empty data at least once during the run — needed to distinguish "metric returned 0" from "metric was never collected"), `timeSeries`, and per-phase `phases` aggregations (sum-across-series → mean/min/max/stdev across samples).
 
-#### conntrack.py — ConntrackProtocolProber (v2 M1b)
+#### conntrack.py — ConntrackProtocolProber (M1b)
 
 **Class: `ConntrackProtocolProber(namespace, interval=5.0, exec_fn=None, ready_timeout=120.0)`**
 
-First-class version of the ad-hoc v1 protocol probe (`thesis/data/conntrack-probe/`): samples each worker node's connection-tracking table by protocol every 5 s, for every iteration, so the H2 mechanism signal (kernel TCP teardown vs. kube-proxy's UDP-only cleanup) is collected with replication instead of the v1 one-shot.
+First-class version of the ad-hoc original protocol probe (`thesis/data/conntrack-probe/`): samples each worker node's connection-tracking table by protocol every 5 s, for every iteration, so the H2 mechanism signal (kernel TCP teardown vs. kube-proxy's UDP-only cleanup) is collected with replication instead of the original one-shot.
 
-`start()` discovers the worker nodes (control planes excluded) and calls `ensure_samplers(core_api, node_names)`, which idempotently maintains one privileged `hostNetwork` sampler pod per worker in the `chaosprobe-system` namespace (image `alpine:3.20`, tolerates all taints). The `conntrack-tools` package is **version-pinned** (`apk add conntrack-tools=1.4.8-r0`, the Alpine 3.20 release) and the running binary's version is **recorded** per node by exec'ing `conntrack --version` once the sampler is ready — closing the v1/M1a "unpinned, unrecorded toolchain" finding. Sampler pods persist across iterations (re-`start()` adopts them) and are removed once at the end of the run via `cleanup_sampler_pods(core_api)` (managed-label selector `app.kubernetes.io/managed-by=chaosprobe,app.kubernetes.io/component=conntrack-sampler`).
+`start()` discovers the worker nodes (control planes excluded) and calls `ensure_samplers(core_api, node_names)`, which idempotently maintains one privileged `hostNetwork` sampler pod per worker in the `chaosprobe-system` namespace (image `alpine:3.20`, tolerates all taints). The `conntrack-tools` package is **version-pinned** (`apk add conntrack-tools=1.4.8-r0`, the Alpine 3.20 release) and the running binary's version is **recorded** per node by exec'ing `conntrack --version` once the sampler is ready — closing the M1a "unpinned, unrecorded toolchain" finding. Sampler pods persist across iterations (re-`start()` adopts them) and are removed once at the end of the run via `cleanup_sampler_pods(core_api)` (managed-label selector `app.kubernetes.io/managed-by=chaosprobe,app.kubernetes.io/component=conntrack-sampler`).
 
-Each tick execs the v1 probe's exact command per node (`conntrack -L 2>/dev/null | awk '{print $1}' | sort | uniq -c`) over the Kubernetes exec stream API (injectable via `exec_fn` for tests). `result()` returns `{"samples": [{ts, node, proto, count, phase}, …], "meta": {available, toolVersion, toolVersionsByNode, intervalSeconds, samplerImage, packagePin, samplerNamespace, nodes[, reason][, probeErrors]}}`, which `MetricsCollector.collect()` surfaces as `conntrackProtocolSamples` / `conntrackProtocolMeta`. Samples align with the recorded chaos windows (`anomalyLabels`) by timestamp. Every cluster-facing step degrades gracefully — a failed sampler, install, or exec yields a warning plus `meta.available=false`/`probeErrors`, never a crashed run.
+Each tick execs the original probe's exact command per node (`conntrack -L 2>/dev/null | awk '{print $1}' | sort | uniq -c`) over the Kubernetes exec stream API (injectable via `exec_fn` for tests). `result()` returns `{"samples": [{ts, node, proto, count, phase}, …], "meta": {available, toolVersion, toolVersionsByNode, intervalSeconds, samplerImage, packagePin, samplerNamespace, nodes[, reason][, probeErrors]}}`, which `MetricsCollector.collect()` surfaces as `conntrackProtocolSamples` / `conntrackProtocolMeta`. Samples align with the recorded chaos windows (`anomalyLabels`) by timestamp. Every cluster-facing step degrades gracefully — a failed sampler, install, or exec yields a warning plus `meta.available=false`/`probeErrors`, never a crashed run.
 
 #### utilization.py — Per-pod utilization fractions
 
@@ -337,13 +337,13 @@ Each tick execs the v1 probe's exact command per node (`conntrack -L 2>/dev/null
 
 **Mechanism**: Patches `spec.template.spec.nodeSelector` with `kubernetes.io/hostname`. Tracks via `chaosprobe.io/placement-strategy` annotation.
 
-#### fraction_solver.py (v2 / M1a)
+#### fraction_solver.py (M1a)
 
-Fraction-targeting placement solver + reachable-set enumerator — the M1a solver-feasibility spike of the v2 design ([`v2-design/00-DESIGN.md`](../v2-design/00-DESIGN.md) §2.3, [`v2-design/02-WORKPLAN.md`](../v2-design/02-WORKPLAN.md) M1a). Single source of truth for the dependency-graph extraction and the cross-node-fraction computation (`scripts/cross_node_fraction.py` imports from here).
+Fraction-targeting placement solver + reachable-set enumerator — the M1a solver-feasibility spike of the design ([`design/00-DESIGN.md`](../design/00-DESIGN.md) §2.3, [`design/02-WORKPLAN.md`](../design/02-WORKPLAN.md) M1a). Single source of truth for the dependency-graph extraction and the cross-node-fraction computation (`scripts/cross_node_fraction.py` imports from here).
 
 | Function | Purpose |
 |---|---|
-| `load_dependency_graph(summary_path)` | Weighted inter-service edges + services from a run's `summary.json` (`routeViewAggregate` route keys × recorded `podPlacements`; `locust.totalRequests` as call-volume weight, uniform 1.0 fallback for the volume-less v1 east-west routes) |
+| `load_dependency_graph(summary_path)` | Weighted inter-service edges + services from a run's `summary.json` (`routeViewAggregate` route keys × recorded `podPlacements`; `locust.totalRequests` as call-volume weight, uniform 1.0 fallback for the volume-less east-west routes) |
 | `achieved_fraction(assignment, edges)` | Weight share of inter-service edges whose endpoints sit on different nodes |
 | `solve(edges, services, n_nodes, target_f, capacity=None, seed=0, node_capacity=None)` | Greedy edge-cut assignment toward target `f` + local search (single moves + pairwise swaps), optional requests-based capacity; returns a `Solution` with the pre-registered acceptance verdict (\|achieved − target\| ≤ 0.05) |
 | `enumerate_reachable(edges, services, n_nodes, samples, seed)` | Achievable fraction set: **exhaustive** over canonical assignments (set partitions into ≤ N blocks via restricted-growth strings — 175,275 at N = 4 for 11 services, sub-second) when the count fits the budget, else seeded sampling + solver refinement (a subset, flagged `sampled`) |
@@ -352,17 +352,17 @@ Fraction-targeting placement solver + reachable-set enumerator — the M1a solve
 
 **Live-validation helper**: `scripts/apply_placement_map.py --map '{"svc": "workerN", ...}' [-n online-boutique] [--wait] [--summary <summary.json>] [--target f]` pins each Deployment via the mutator's own nodeSelector patching, reads back live pod placements, and prints the achieved fraction using the same `achieved_fraction` implementation; `--restore` removes the pins (the M1a solve→apply→schedule→verify loop).
 
-#### affinity_engine.py (v2 / M1b)
+#### affinity_engine.py (M1b)
 
-Replica-level affinity placement engine — the M1b engine build of the v2 design ([`v2-design/00-DESIGN.md`](../v2-design/00-DESIGN.md) §2.2 / Knob B §2.3, [`v2-design/02-WORKPLAN.md`](../v2-design/02-WORKPLAN.md) M1b). Placement is expressed as scheduler constraints and the achieved placement is **verified from live pods, never assumed**. Supported cells (`r = 2` deliberately unsupported per DESIGN §2.3):
+Replica-level affinity placement engine — the M1b engine build of the design ([`design/00-DESIGN.md`](../design/00-DESIGN.md) §2.2 / Knob B §2.3, [`design/02-WORKPLAN.md`](../design/02-WORKPLAN.md) M1b). Placement is expressed as scheduler constraints and the achieved placement is **verified from live pods, never assumed**. Supported cells (`r = 2` deliberately unsupported per DESIGN §2.3):
 
 | (r, mode) | Patch emitted |
 |---|---|
-| `r=1` (either mode) | `replicas: 1` + required nodeAffinity pin to the assigned node (`kubernetes.io/hostname In [node]`) — v1 nodeSelector semantics as affinity, the comparability anchor |
-| `r=3` packed | `replicas: 3` + the same nodeAffinity pin — all replicas co-scheduled on one node (v1's structural behaviour, the C2 control) |
+| `r=1` (either mode) | `replicas: 1` + required nodeAffinity pin to the assigned node (`kubernetes.io/hostname In [node]`) — nodeSelector semantics as affinity, the comparability anchor |
+| `r=3` packed | `replicas: 3` + the same nodeAffinity pin — all replicas co-scheduled on one node (the packed structural behaviour, the C2 control) |
 | `r=3` anti-affine | `replicas: 3` + required podAntiAffinity on `kubernetes.io/hostname` against the service's own `app` label, **no node pin** — 3 replicas on 3 distinct scheduler-chosen nodes (the E1-enabling contrast) |
 
-All patches keep the v1 mutator's managed-annotation convention (`chaosprobe.io/placement-strategy`, values `affinity-r<r>-<mode>`), switch to a `Recreate` rollout, and delete any stale v1 hostname nodeSelector.
+All patches keep the base mutator's managed-annotation convention (`chaosprobe.io/placement-strategy`, values `affinity-r<r>-<mode>`), switch to a `Recreate` rollout, and delete any stale hostname nodeSelector.
 
 | Function | Purpose |
 |---|---|
@@ -1099,7 +1099,7 @@ chaosprobe/
       throughput.py          # Redis/disk throughput probers
       resources.py           # Resource usage prober (used nodes only)
       prometheus.py          # Prometheus metrics prober
-      conntrack.py           # Per-node protocol-labeled conntrack prober (v2 M1b)
+      conntrack.py           # Per-node protocol-labeled conntrack prober (M1b)
       anomaly_labels.py      # Ground-truth ML labels
       cascade.py             # Fault propagation tracking
       timeseries.py          # Time-series alignment
@@ -1147,7 +1147,7 @@ chaosprobe/
     contention_routes.py     # H4 during-load route-tail comparison (reads aggregated.routeViewAggregate)
     fault_taxonomy.py        # fault_class / is_churn helper used by the mechanism scripts
     archive_run.py           # run archiver + artifact manifest
-    apply_placement_map.py   # v2/M1a: pin an explicit service->node map + verify achieved fraction
+    apply_placement_map.py   # M1a: pin an explicit service->node map + verify achieved fraction
   scenarios/
     online-boutique/
       deploy/                # 12 microservice manifests

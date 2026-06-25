@@ -1,4 +1,4 @@
-"""Tests for the C3 / V2-H2 pod-level DNS-cache toggle (placement/dns_cache.py).
+"""Tests for the C3 / H2 pod-level DNS-cache toggle (placement/dns_cache.py).
 
 Pure-Python per CONTRIBUTING: the Kubernetes API and the rollout barrier are
 MagicMocked — no cluster is touched.

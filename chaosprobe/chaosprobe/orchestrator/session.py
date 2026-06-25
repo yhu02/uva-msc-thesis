@@ -1,19 +1,19 @@
-"""v2 complete-block session driver (M2 plumbing for the C1–C3 campaigns).
+"""Complete-block session driver (M2 plumbing for the C1–C3 campaigns).
 
 Implements the pre-registered session design of
-``v2-design/01-PREREGISTRATION.md`` §Session design on top of the v1
-iteration pipeline: ``chaosprobe run --v2-levels ...`` replaces the v1
+``design/01-PREREGISTRATION.md`` §Session design on top of the
+iteration pipeline: ``chaosprobe run --fraction-levels ...`` replaces the
 named-strategy axis with **solver-targeted cross-node-fraction conditions**.
 Every session is a complete block visiting all requested f-levels in a
-randomized order drawn from ``--v2-order-seed`` (recorded, per the
-pre-registration — v1 fixed the order, making order effects constant but
+randomized order drawn from ``--order-seed`` (recorded, per the
+pre-registration — the named-strategy path fixed the order, making order effects constant but
 unmeasurable), with each level's placement computed by
-:mod:`chaosprobe.placement.fraction_solver` under ``--v2-solver-seed`` and
+:mod:`chaosprobe.placement.fraction_solver` under ``--solver-seed`` and
 realized through the replica-level affinity engine
 (:mod:`chaosprobe.placement.affinity_engine`, r ∈ {1, 3} ×
 {packed, anti-affine} — the WORKPLAN C1/C2 cells).
 
-Each condition rides the SAME per-strategy iteration pipeline as a v1
+Each condition rides the SAME per-strategy iteration pipeline as a named-strategy
 strategy (fault injection, every collector including the conntrack prober,
 taint/doctor metadata): ``strategy_runner._apply_placement`` dispatches to
 :func:`apply_condition` when the :class:`~chaosprobe.orchestrator.strategy_runner.RunContext`
@@ -31,8 +31,8 @@ barrier) so a condition never starts on a cluster still churning from the
 previous one.
 
 **A/A convenience:** an A/A pair is simply two runs with identical
-``--v2-*`` arguments *including* ``--v2-solver-seed`` (identical placements
-per level); ``--v2-order-seed`` may differ between the two runs (the visit
+placement-session arguments *including* ``--solver-seed`` (identical placements
+per level); ``--order-seed`` may differ between the two runs (the visit
 order may differ, the placements do not).  No special mode exists.
 """
 
@@ -56,9 +56,9 @@ TOLERANCE = fs.TARGET_TOLERANCE
 #: Default per-apply rollout timeout (matches the M1b gate's default).
 DEFAULT_ROLLOUT_TIMEOUT = 300.0
 
-#: Pinned-cell assignment strategies. The V2-H1 dose-response sweep needs the
-#: fraction solver (it *is* the f knob); V2-H3 uses the capacity-feasible
-#: round-robin packing registered in the pre-registration (§V2-H3 packed-cell
+#: Pinned-cell assignment strategies. The H1 dose-response sweep needs the
+#: fraction solver (it *is* the f knob); H3 uses the capacity-feasible
+#: round-robin packing registered in the pre-registration (§H3 packed-cell
 #: semantics) — f is irrelevant to the replication-rescue design.
 PACKED_ASSIGNMENT_SOLVER = "solver"
 PACKED_ASSIGNMENT_ROUND_ROBIN = "round-robin"
@@ -66,7 +66,7 @@ PACKED_ASSIGNMENTS = (PACKED_ASSIGNMENT_SOLVER, PACKED_ASSIGNMENT_ROUND_ROBIN)
 
 
 @dataclass(frozen=True)
-class V2Condition:
+class Condition:
     """One f-level of the complete block, named for the strategy pipeline."""
 
     name: str
@@ -74,17 +74,17 @@ class V2Condition:
 
 
 @dataclass
-class V2Session:
+class Session:
     """Everything one complete-block session needs, plus its growing record.
 
     ``conditions`` is the block in its randomized *applied* order;
     ``per_level`` accumulates one record per executed condition (the
-    ``v2Session.perLevel`` entries of ``summary.json``).
+    ``session.perLevel`` entries of ``summary.json``).
     """
 
     namespace: str
     levels: Tuple[float, ...]
-    conditions: List[V2Condition]
+    conditions: List[Condition]
     order_seed: int
     solver_seed: int
     replicas: int
@@ -111,7 +111,7 @@ class V2Session:
         """
         return self.replicas == 1 or self.mode == engine.MODE_PACKED
 
-    def condition(self, name: str) -> Optional[V2Condition]:
+    def condition(self, name: str) -> Optional[Condition]:
         """The condition with this pipeline name, or ``None``."""
         for cond in self.conditions:
             if cond.name == name:
@@ -134,7 +134,7 @@ def condition_name(level: float) -> str:
 
 
 def parse_levels(spec: str) -> Tuple[float, ...]:
-    """The complete-block f-level grid from a comma-separated ``--v2-levels``.
+    """The complete-block f-level grid from a comma-separated ``--fraction-levels``.
 
     Levels must be floats in [0, 1]; duplicates (including levels closer
     than the 1%-resolution condition name can distinguish) are rejected —
@@ -142,46 +142,46 @@ def parse_levels(spec: str) -> Tuple[float, ...]:
     """
     tokens = [token.strip() for token in spec.split(",") if token.strip()]
     if not tokens:
-        raise ValueError(f"--v2-levels must list at least one fraction: '{spec}'")
+        raise ValueError(f"--fraction-levels must list at least one fraction: '{spec}'")
     levels: List[float] = []
     for token in tokens:
         try:
             level = float(token)
         except ValueError as exc:
-            raise ValueError(f"--v2-levels entry '{token}' is not a number") from exc
+            raise ValueError(f"--fraction-levels entry '{token}' is not a number") from exc
         if not 0.0 <= level <= 1.0:
-            raise ValueError(f"--v2-levels entry '{token}' is outside [0, 1]")
+            raise ValueError(f"--fraction-levels entry '{token}' is outside [0, 1]")
         levels.append(level)
     names = [condition_name(level) for level in levels]
     if len(set(names)) != len(names):
         raise ValueError(
-            f"--v2-levels contains duplicate or indistinguishable levels "
+            f"--fraction-levels contains duplicate or indistinguishable levels "
             f"(<1% apart): '{spec}' — a complete block visits each level once"
         )
     return tuple(levels)
 
 
 def parse_workers(spec: str) -> Tuple[str, ...]:
-    """Ordered worker names from a comma-separated ``--v2-workers``.
+    """Ordered worker names from a comma-separated ``--worker-nodes``.
 
     Order matters: solver node index *i* maps to the *i*-th name (the same
     convention as the M1b gate's ``--workers``).
     """
     workers = tuple(worker.strip() for worker in spec.split(",") if worker.strip())
     if not workers:
-        raise ValueError(f"--v2-workers must list at least one node name: '{spec}'")
+        raise ValueError(f"--worker-nodes must list at least one node name: '{spec}'")
     if len(set(workers)) != len(workers):
-        raise ValueError(f"--v2-workers contains duplicate node names: '{spec}'")
+        raise ValueError(f"--worker-nodes contains duplicate node names: '{spec}'")
     return workers
 
 
-def ordered_conditions(levels: Sequence[float], order_seed: int) -> List[V2Condition]:
+def ordered_conditions(levels: Sequence[float], order_seed: int) -> List[Condition]:
     """The complete block in its randomized applied order.
 
     Deterministic for a given ``order_seed`` — the order is recorded in
-    ``v2Session.orderApplied`` so Page's L (V2-H1) can model it.
+    ``session.orderApplied`` so Page's L (H1) can model it.
     """
-    block = [V2Condition(name=condition_name(level), target_f=level) for level in levels]
+    block = [Condition(name=condition_name(level), target_f=level) for level in levels]
     rng = random.Random(order_seed)
     return rng.sample(block, len(block))
 
@@ -196,7 +196,7 @@ def edges_from_routes(
     services enter the solver graph (mirroring
     :func:`fraction_solver.load_dependency_graph`'s placed-endpoint filter).
     Weights are uniform 1.0 — the manifests carry no call volume, matching
-    the v1-summary fallback the solver's graph extraction documents.
+    the summary fallback the solver's graph extraction documents.
     """
     service_set = set(services)
     seen: Set[Tuple[str, str]] = set()
@@ -213,7 +213,7 @@ def edges_from_routes(
 
 
 def discover_services(mutator: Any) -> List[str]:
-    """Deployable application services for the session, from the v1 mutator.
+    """Deployable application services for the session, from the base mutator.
 
     Chaos infrastructure and the load generator are excluded with the same
     set the affinity engine uses (replicating ``loadgenerator`` would scale
@@ -243,21 +243,21 @@ def build_session(
     rollout_timeout: float = DEFAULT_ROLLOUT_TIMEOUT,
     packed_assignment: str = PACKED_ASSIGNMENT_SOLVER,
     dns_cache: Optional[str] = None,
-) -> V2Session:
+) -> Session:
     """Validate the (r, mode, workers, graph) combination and build the session."""
     if replicas not in engine.SUPPORTED_REPLICAS:
         raise ValueError(
-            f"--v2-replicas must be one of {sorted(engine.SUPPORTED_REPLICAS)}, got {replicas}"
+            f"--replica-degree must be one of {sorted(engine.SUPPORTED_REPLICAS)}, got {replicas}"
         )
     if mode not in engine.MODES:
-        raise ValueError(f"--v2-mode must be one of {engine.MODES}, got '{mode}'")
+        raise ValueError(f"--placement-mode must be one of {engine.MODES}, got '{mode}'")
     if packed_assignment not in PACKED_ASSIGNMENTS:
         raise ValueError(
             f"packed_assignment must be one of {PACKED_ASSIGNMENTS}, got '{packed_assignment}'"
         )
     if dns_cache is not None and dns_cache not in dns.CACHE_MODES:
         raise ValueError(
-            f"--v2-dns-cache must be one of {dns.CACHE_MODES} (or unset), got '{dns_cache}'"
+            f"--dns-cache must be one of {dns.CACHE_MODES} (or unset), got '{dns_cache}'"
         )
     if mode == engine.MODE_ANTI_AFFINE and replicas > 1 and len(workers) < replicas:
         raise ValueError(
@@ -268,9 +268,9 @@ def build_session(
     if not edges:
         raise ValueError(
             "no inter-service edges in the scenario topology — the cross-node "
-            "fraction is undefined, so v2 conditions cannot be targeted"
+            "fraction is undefined, so placement conditions cannot be targeted"
         )
-    return V2Session(
+    return Session(
         namespace=namespace,
         levels=levels,
         conditions=ordered_conditions(levels, order_seed),
@@ -295,7 +295,7 @@ def build_session(
 # ──────────────────────────────────────────────────────────────────────
 
 
-def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any]:
+def apply_condition(session: Session, condition: Condition) -> Dict[str, Any]:
     """Restore → quiesce → solve → apply → verify one condition; record it.
 
     The session-level restore + M1b quiescence barrier guarantee the
@@ -315,7 +315,7 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
 
     # Committed to the session up front and mutated in place, so a step that
     # raises mid-cycle (apply timeout, verify API error) still leaves its
-    # partial evidence (settle record, solver fields) in v2Session instead of
+    # partial evidence (settle record, solver fields) in session instead of
     # the condition being mislabelled "condition_not_executed".  The
     # incomplete marker is overwritten by the real verdict at the end.
     record: Dict[str, Any] = {
@@ -342,7 +342,7 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
     if not settle["quiescent"]:
         click.echo(
             f"    WARNING: namespace not quiescent after {settle['waitedSeconds']}s "
-            f"(notReady={settle['notReady']}) — proceeding; recorded in v2Session.",
+            f"(notReady={settle['notReady']}) — proceeding; recorded in session.",
             err=True,
         )
     record["settle"] = settle
@@ -350,7 +350,7 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
     assignment: Optional[Dict[str, str]] = None
     round_robin = session.packed_assignment == PACKED_ASSIGNMENT_ROUND_ROBIN
     if session.pinned and round_robin:
-        # V2-H3 packed-cell semantics: capacity-feasible round-robin packing,
+        # H3 packed-cell semantics: capacity-feasible round-robin packing,
         # independent of the condition's f (the replication design does not
         # vary the cross-node fraction). The achieved f is recorded for the
         # record but is NOT a target to be hit, so it never rejects the cell.
@@ -403,7 +403,7 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
     record["schedulingLatencySeconds"] = round(applied.duration_seconds, 3)
     record["pendingDeployments"] = applied.pending
 
-    # C3 / V2-H2 DNS-cache axis: apply the session's cache mode to every app
+    # C3 / H2 DNS-cache axis: apply the session's cache mode to every app
     # deployment *after* placement, so this condition's measurement window
     # provably has the right cache state (a pod's resolv.conf is fixed at
     # start; the Recreate in the cache patch restarts them). The placement's
@@ -438,7 +438,7 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
             live_f = fs.achieved_fraction(
                 {svc: nodes[0] for svc, nodes in live.items()}, session.edges
             )
-            # The round-robin packing has no f target (V2-H3 does not vary the
+            # The round-robin packing has no f target (H3 does not vary the
             # cross-node fraction), so its live f is recorded but never gated;
             # acceptance rests on verify_placement / live_fraction_unverifiable.
             if not round_robin:
@@ -462,11 +462,11 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
     return {
         "strategy": condition.name,
         "description": (
-            f"v2 condition: target f={condition.target_f:.2f}, "
+            f"placement condition: target f={condition.target_f:.2f}, "
             f"r={session.replicas}, mode={session.mode}"
         ),
         "assignments": dict(assignment) if assignment else {},
-        "v2": record,
+        "placementMeta": record,
     }
 
 
@@ -476,7 +476,7 @@ def apply_condition(session: V2Session, condition: V2Condition) -> Dict[str, Any
 
 
 def iteration_live_fraction(
-    session: V2Session, pod_placements: Mapping[str, str]
+    session: Session, pod_placements: Mapping[str, str]
 ) -> Optional[float]:
     """The live cross-node fraction implied by one iteration's pod→node map.
 
@@ -510,7 +510,7 @@ def iteration_live_fraction(
 
 
 def annotate_iteration(
-    session: V2Session, condition_name_: str, iteration_result: Dict[str, Any]
+    session: Session, condition_name_: str, iteration_result: Dict[str, Any]
 ) -> None:
     """Record the iteration's live achieved fraction and apply the taint rule.
 
@@ -525,7 +525,7 @@ def annotate_iteration(
     target by more than the pre-registered tolerance.
 
     The target-drift check is skipped for the round-robin packed assignment
-    (V2-H3): that design does not target a cross-node fraction, so the live f
+    (H3): that design does not target a cross-node fraction, so the live f
     it achieves (≈0.87, not the condition's nominal target) is not a drift —
     this mirrors the acceptance gate in :func:`apply_condition`. The
     unverifiable check (each service's replicas on exactly one node) still
@@ -534,13 +534,13 @@ def annotate_iteration(
     The per-iteration record's ``taintReasons`` carries the **complete** taint
     for the iteration: the pre-chaos taints the strategy runner already set on
     ``iteration_result`` (``app_ready_timeout``, ``iteration_exception``,
-    ``pre_chaos_errors_high`` …) folded together with the v2-placement reasons
+    ``pre_chaos_errors_high`` …) folded together with the placement reasons
     judged here.  This is the only per-iteration taint channel persisted for a
     node-drain session (its ``<condition>.json`` flattens metrics to the top
     level and leaves ``iterations`` empty), so a downstream analysis that reads
     ``perIteration[].taintReasons`` (``scripts/c2_h3_anova.py``) sees every
     tainted iteration — honouring the registered "no result is ever quoted
-    from a tainted iteration" rule for both channels, not just the v2 one.
+    from a tainted iteration" rule for both channels, not just the placement one.
     """
     record = session.per_level.get(condition_name_)
     if record is None:
@@ -549,14 +549,14 @@ def annotate_iteration(
     round_robin = session.packed_assignment == PACKED_ASSIGNMENT_ROUND_ROBIN
     reasons: List[str] = []
     if not record["accepted"]:
-        reasons.append("v2_condition_rejected")
+        reasons.append("condition_rejected")
     if session.pinned:
         if live_f is None:
-            reasons.append("v2_live_fraction_unverifiable")
+            reasons.append("live_fraction_unverifiable")
         elif not round_robin and abs(live_f - record["targetF"]) > TOLERANCE:
-            reasons.append("v2_live_fraction_drifted")
+            reasons.append("live_fraction_drifted")
     # Pre-chaos taints the strategy runner set before this hook ran (the
-    # non-v2 channel) are recorded too — deduped, prior reasons first — so the
+    # non-placement channel) are recorded too — deduped, prior reasons first — so the
     # persisted perIteration record is the complete taint for the iteration.
     prior_reasons = list(iteration_result.get("preChaosTaintReasons") or [])
     for reason in iteration_result.get("taintReasons") or []:
@@ -573,7 +573,7 @@ def annotate_iteration(
     if not reasons:
         return  # nothing new to propagate back into iteration_result
     click.echo(
-        f"    WARNING: v2 rejection rule tainted iteration "
+        f"    WARNING: placement rejection rule tainted iteration "
         f"{iteration_result.get('iteration')} of {condition_name_}: {'; '.join(reasons)}",
         err=True,
     )
@@ -586,12 +586,12 @@ def annotate_iteration(
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Session metadata (summary.json → v2Session)
+# Session metadata (summary.json → session)
 # ──────────────────────────────────────────────────────────────────────
 
 
-def session_metadata(session: V2Session) -> Dict[str, Any]:
-    """The ``v2Session`` block of ``summary.json``.
+def session_metadata(session: Session) -> Dict[str, Any]:
+    """The ``session`` block of ``summary.json``.
 
     Everything the A/A comparison and the C1 analysis need: the block
     definition, the applied order (and both seeds that produced it), the

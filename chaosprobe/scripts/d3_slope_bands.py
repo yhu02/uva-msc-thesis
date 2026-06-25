@@ -4,7 +4,7 @@
 The D3 validity check (``01-PREREGISTRATION.md`` §Session design) taints a
 C1 iteration whose pre-chaos UDP-entry slope leaves its f-level's band.  The
 bands are **frozen** in :data:`m2_aa_analysis.D3_UDP_SLOPE_BANDS_EPM` (deviation
-D-2026-06-14-01, ``v2-design/DEVIATIONS.md``); this script is their audit trail
+D-2026-06-14-01, ``design/DEVIATIONS.md``); this script is their audit trail
 — it re-derives them from the 2026-06-12 M2 A/A block so anyone can verify the
 committed constants against the raw data.
 
@@ -18,8 +18,8 @@ exact definition the gate applies.
 
 Usage
 -----
-    uv run python scripts/d3_slope_bands.py --results-dir results/v2-aa
-    uv run python scripts/d3_slope_bands.py --results-dir results/v2-aa --check
+    uv run python scripts/d3_slope_bands.py --results-dir results/aa
+    uv run python scripts/d3_slope_bands.py --results-dir results/aa --check
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ MIN_SAMPLES = 2
 def collect_slopes(results_dir: str, exclude: Sequence[str] = ()) -> Dict[str, List[float]]:
     """Pool untainted per-iteration ``udp_preslope_epm`` per f-level.
 
-    Walks ``<results_dir>/*/summary.json``, skipping non-v2 sessions and any
+    Walks ``<results_dir>/*/summary.json``, skipping non-placement sessions and any
     directory name in ``exclude``, and applies the same exclusions the
     canonical M2 path does: conditions not accepted at apply time
     (``perLevel[].accepted`` false — rejected/drifted/never-run) are dropped,
@@ -66,7 +66,8 @@ def collect_slopes(results_dir: str, exclude: Sequence[str] = ()) -> Dict[str, L
             continue
         with open(summ_path) as fh:
             summary = json.load(fh)
-        per_level = (summary.get("v2Session") or {}).get("perLevel") or []
+        session_block = summary.get("session") or summary.get("v2Session")  # or legacy key
+        per_level = (session_block or {}).get("perLevel") or []
         if not per_level:
             continue
         # Mirror the canonical accept gate (m2_aa_analysis: accepted defaults
@@ -110,7 +111,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--results-dir", default="results/v2-aa", help="A/A block results directory")
+    ap.add_argument("--results-dir", default="results/aa", help="A/A block results directory")
     ap.add_argument("--exclude", nargs="*", default=[], help="session dir names to exclude")
     ap.add_argument(
         "--check",

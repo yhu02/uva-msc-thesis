@@ -4,7 +4,7 @@
 Companion to the canonical A/A analysis (``scripts/m2_aa_analysis.py``,
 which owns the registered delta metrics, the pairing, the registered-unit
 null tests and the liveAchievedF identity check).  Per the D4
-consolidation (``v2-design/M2-AA-REPORT.md`` §Freeze decisions,
+consolidation (``design/M2-AA-REPORT.md`` §Freeze decisions,
 §Instrumentation gaps) there is ONE per-iteration extraction — this
 script imports it from the canonical module
 (:func:`m2_aa_analysis.extract_iteration` /
@@ -17,8 +17,8 @@ broader scope the M2 report's variance table is sourced from:
    f-condition and pooled, plus the 95 % A/A noise band: the distribution of
    paired |A - B| differences between identical sessions (per condition,
    pooled across complete pairs). These bands feed the M2 power analysis and
-   the TBD-at-freeze numbers: the V2-H1 >=15 % SESOI must exceed the band,
-   the V2-H3 margin/TOST equivalence band, V2-H4's delta dominance margins,
+   the TBD-at-freeze numbers: the H1 >=15 % SESOI must exceed the band,
+   the H3 margin/TOST equivalence band, H4's delta dominance margins,
    and the pre-window UDP-slope taint threshold.
 
 2. **A/A-as-A/B null tests** — within each complete pair, each outcome is
@@ -34,26 +34,26 @@ shared canonical extraction; tainted iterations — ``taintReasons`` +
 ``preChaosTaintReasons`` — are excluded from every outcome, with ``None``
 rows preserving pairing alignment):
 
-- east-west p95 latency, pre-chaos (V2-H1, the D4 winner) and
+- east-west p95 latency, pre-chaos (H1, the D4 winner) and
   during-chaos (alt window): median over inter-service routes of the
   route p95 (``loadgenerator->`` routes excluded per DESIGN §4).
-- during-churn UDP conntrack-entry drop (V2-H2): cluster UDP entries
+- during-churn UDP conntrack-entry drop (H2): cluster UDP entries
   (per-node phase mean, summed over nodes) pre-chaos minus during-chaos —
   the registered **absolute** drop (no ratio denominator); the percentage
   drop is reported as context only.
-- all-protocol conntrack flush % (v1 mechanism context).
-- EndpointSlice trough depth (V2-H3) + services driven to zero (blast
+- all-protocol conntrack flush % (mechanism context).
+- EndpointSlice trough depth (H3) + services driven to zero (blast
   radius). NOTE: the banked sessions carry only pre/during/post snapshots
   (no 15 s trough time series), so trough *duration* is proxied by the
   mean pod recovery time — flagged in the output.
-- user-route error rate during fault (V2-H3/H4); the whole-iteration
+- user-route error rate during fault (H3/H4); the whole-iteration
   Locust ``errorRate`` is reported alongside.
 - pre-chaos-window UDP-entry slope (taint-threshold feed), entries/min.
-- per-iteration resilience score (V2-H5). Layered sub-scores are NOT yet
+- per-iteration resilience score (H5). Layered sub-scores are NOT yet
   implemented in the chaosprobe package (their definitions freeze at the
-  M2 commit), so only the v1 aggregate is analyzed; the script notes this.
+  M2 commit), so only the aggregate is analyzed; the script notes this.
 
-Pairs are derived from ``summary.json -> v2Session.solverSeed`` plus the
+Pairs are derived from ``summary.json -> session.solverSeed`` plus the
 cell fields (fault, replicas, mode, level grid, workers — mirroring the canonical
 module's ``PairKey``): identical placements share a solverSeed, order
 seeds differ, and a seed reused by a *different* cell never pairs.
@@ -65,8 +65,8 @@ time and reduced to per-iteration scalars immediately.
 
 Usage
 -----
-    uv run python scripts/aa_block.py --results-dir results/v2-aa
-    uv run python scripts/aa_block.py --results-dir results/v2-aa \
+    uv run python scripts/aa_block.py --results-dir results/aa
+    uv run python scripts/aa_block.py --results-dir results/aa \
         --exclude 20260612-103215 --json aa_block.json
 """
 
@@ -97,23 +97,23 @@ ALPHA = 0.05
 # canonical extraction's (m2_aa_analysis.ITERATION_OUTCOMES) — the
 # canonical registered metrics plus the broader variance outcomes.
 OUTCOMES: List[Tuple[str, str, str]] = [
-    ("ew_p95_pre_ms", "east-west p95 latency, pre-chaos (V2-H1)", "ms"),
-    ("ew_p95_during_ms", "east-west p95 latency, during-chaos (V2-H1 alt window)", "ms"),
-    ("udp_conntrack_drop_entries", "during-churn UDP conntrack drop (V2-H2)", "entries"),
+    ("ew_p95_pre_ms", "east-west p95 latency, pre-chaos (H1)", "ms"),
+    ("ew_p95_during_ms", "east-west p95 latency, during-chaos (H1 alt window)", "ms"),
+    ("udp_conntrack_drop_entries", "during-churn UDP conntrack drop (H2)", "entries"),
     ("udp_conntrack_drop_pct", "during-churn UDP drop, % of pre (context)", "%"),
-    ("conntrack_flush_pct", "all-proto conntrack flush, % of pre (v1 context)", "%"),
-    ("es_trough_depth_pods", "EndpointSlice trough depth (V2-H3)", "pods"),
+    ("conntrack_flush_pct", "all-proto conntrack flush, % of pre (context)", "%"),
+    ("es_trough_depth_pods", "EndpointSlice trough depth (H3)", "pods"),
     ("es_zero_services", "services driven to 0 ready (blast radius)", "services"),
-    ("trough_duration_s", "trough duration proxy = mean pod recovery (V2-H3)", "s"),
+    ("trough_duration_s", "trough duration proxy = mean pod recovery (H3)", "s"),
     (
         "trough_duration_real_s",
-        "trough duration from EndpointSlice time series (V2-H3; None pre-sampler)",
+        "trough duration from EndpointSlice time series (H3; None pre-sampler)",
         "s",
     ),
-    ("user_err_during", "user-route error rate, during-chaos (V2-H3/H4)", "rate"),
+    ("user_err_during", "user-route error rate, during-chaos (H3/H4)", "rate"),
     ("loadgen_err", "Locust whole-iteration error rate (context)", "rate"),
     ("udp_preslope_epm", "pre-window UDP-entry slope (taint feed)", "entries/min"),
-    ("score", "aggregate resilience score (V2-H5)", "points"),
+    ("score", "aggregate resilience score (H5)", "points"),
 ]
 
 
@@ -123,7 +123,7 @@ OUTCOMES: List[Tuple[str, str, str]] = [
 
 
 def load_session(session_dir: str) -> Optional[dict]:
-    """Load one session: v2 metadata + per-condition per-iteration outcomes.
+    """Load one session: placement metadata + per-condition per-iteration outcomes.
 
     Returns None (with a note) when the session has no usable summary.json —
     e.g. an in-flight run — so discovery can skip it instead of failing.
@@ -138,12 +138,16 @@ def load_session(session_dir: str) -> Optional[dict]:
         return None
     with open(spath) as fh:
         summary = json.load(fh)
-    v2 = summary.get("v2Session")
-    if not v2:
-        print(f"  [skip] {name}: no v2Session block (not a v2 session)")
+    session_block = summary.get("session") or summary.get("v2Session")  # or legacy key
+    if not session_block:
+        print(f"  [skip] {name}: no session block (not a placement session)")
         return None
 
-    per_level = {lvl["condition"]: lvl for lvl in v2.get("perLevel", []) if lvl.get("condition")}
+    per_level = {
+        lvl["condition"]: lvl
+        for lvl in session_block.get("perLevel", [])
+        if lvl.get("condition")
+    }
     conditions = sorted(per_level)
     tainted, taints = summary_tainted_iterations(list(per_level.values()))
     achieved: Dict[str, List[float]] = {}
@@ -156,13 +160,13 @@ def load_session(session_dir: str) -> Optional[dict]:
     session = {
         "name": name,
         "fault": faults[0] if faults else "",
-        "solverSeed": v2.get("solverSeed"),
-        "orderSeed": v2.get("orderSeed"),
-        "replicas": v2.get("replicas"),
-        "mode": v2.get("mode"),
-        "levels": sorted(float(level) for level in v2.get("levels") or []),
-        "workers": sorted(str(worker) for worker in v2.get("workers") or []),
-        "conditionOrder": v2.get("conditionOrder"),
+        "solverSeed": session_block.get("solverSeed"),
+        "orderSeed": session_block.get("orderSeed"),
+        "replicas": session_block.get("replicas"),
+        "mode": session_block.get("mode"),
+        "levels": sorted(float(level) for level in session_block.get("levels") or []),
+        "workers": sorted(str(worker) for worker in session_block.get("workers") or []),
+        "conditionOrder": session_block.get("conditionOrder"),
         "conditions": conditions,
         "achievedF": achieved,
         "assignments": assignments,
@@ -451,7 +455,7 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
     out: dict = {"sessions": [], "pairs": {}, "outcomes": {}, "anomalies": [], "alpha": alpha}
 
     print("\n=== A/A calibration block (M2) ===\n")
-    print("Sessions (pairs keyed by v2Session.solverSeed + cell fields):")
+    print("Sessions (pairs keyed by session.solverSeed + cell fields):")
     for s in sessions:
         print(
             f"  {s['name']}  solverSeed={s['solverSeed']} orderSeed={s['orderSeed']} "
@@ -495,7 +499,7 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
 
     print(
         "\nNOTE  layered sub-scores (availability / mechanism-reconvergence /"
-        "\n      user-tail, V2-H5) are not implemented in the chaosprobe package"
+        "\n      user-tail, H5) are not implemented in the chaosprobe package"
         "\n      yet; only the aggregate per-iteration resilience score is"
         "\n      analyzed here. Their definitions freeze at the M2 commit."
         "\nNOTE  EndpointSlice data has pre/during/post snapshots only (no 15 s"
@@ -588,15 +592,15 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
         print(
             f"  No statistically significant A/A finding at alpha={alpha} across all\n"
             "  outcomes, pairs, and pairing levels. The noise bands above feed the\n"
-            "  M2 power analysis and the TBD SESOIs/margins (V2-H1 >=15% SESOI,\n"
-            "  V2-H3 margin/TOST band, V2-H4 deltas, UDP-slope taint threshold)."
+            "  M2 power analysis and the TBD SESOIs/margins (H1 >=15% SESOI,\n"
+            "  H3 margin/TOST band, H4 deltas, UDP-slope taint threshold)."
         )
-    # The headline SESOI sanity line for V2-H1.
+    # The headline SESOI sanity line for H1.
     h1 = out["outcomes"]["ew_p95_pre_ms"]["noiseBand"]
     if h1.get("p95_pct_of_level") is not None:
         verdict = "EXCEEDS" if h1["p95_pct_of_level"] < 15.0 else "DOES NOT EXCEED"
         print(
-            f"\n  V2-H1 SESOI check: 15% of the mean east-west p95 level vs the A/A\n"
+            f"\n  H1 SESOI check: 15% of the mean east-west p95 level vs the A/A\n"
             f"  p95 band of {h1['p95_pct_of_level']:.1f}% -> the registered 15% SESOI "
             f"{verdict} the A/A noise band."
         )
@@ -608,7 +612,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument(
-        "--results-dir", default="results/v2-aa", help="directory of A/A session outputs"
+        "--results-dir", default="results/aa", help="directory of A/A session outputs"
     )
     ap.add_argument(
         "--exclude",

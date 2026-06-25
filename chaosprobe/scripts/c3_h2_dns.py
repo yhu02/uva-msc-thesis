@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""C3 / V2-H2 confirmatory analysis: placement-dependence + DNS intervention.
+"""C3 / H2 confirmatory analysis: placement-dependence + DNS intervention.
 
-Registered test (``01-PREREGISTRATION.md`` §V2-H2) — a **two-part, both-must-pass
+Registered test (``01-PREREGISTRATION.md`` §H2) — a **two-part, both-must-pass
 conjunction** over the registered **absolute** during-churn UDP-conntrack drop
 (``udp_conntrack_drop_entries`` = pre-chaos − during-chaos cluster UDP entries):
 
 1. **(a) placement-dependence (cache-off arms).** Paired Wilcoxon signed-rank,
    one-sided, on per-session ``(spread f=1 − packed f=0)`` UDP-drop differences,
-   cache-off only — the v1-H2 replication. Directional, no ratio denominator.
+   cache-off only — the earlier H2 replication. Directional, no ratio denominator.
 2. **(b) mechanism intervention (within-spread, paired).** One-sided Wilcoxon
    signed-rank of the per-pair **shrinkage** of spread's UDP drop (cache-on vs
    cache-off) against the **50 %** bar (freeze decision D6). Shrinkage =
@@ -23,7 +23,7 @@ verdict below is the registered *direction + bar* check, reported with the raw
 one-sided p-values).
 
 **Data model.** C3 sessions are ``r = 1``, ``dnsCache ∈ {on, off}`` (the
-``--v2-dns-cache`` axis), visiting conditions ``f-000`` (packed) and ``f-100``
+``--dns-cache`` axis), visiting conditions ``f-000`` (packed) and ``f-100``
 (spread). The per-condition outcome is the **session-condition median over
 untainted iterations** of the UDP drop, via the shared
 :func:`m2_aa_analysis.load_condition_outcomes` taint machinery — rejected or
@@ -59,14 +59,14 @@ from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
     load_condition_outcomes,
 )
 
-#: Registered V2-H2 outcome: absolute during-churn UDP-conntrack drop.
+#: Registered H2 outcome: absolute during-churn UDP-conntrack drop.
 OUTCOME = "udp_conntrack_drop_entries"
 
 #: The two placement extremes C3 visits (r=1): f=0 packed, f=1 spread.
 PACKED = "f-000"
 SPREAD = "f-100"
 
-#: Registered V2-H2(b) bar — spread's cache-on UDP drop shrinks ≥ 50 % (D6).
+#: Registered H2(b) bar — spread's cache-on UDP drop shrinks ≥ 50 % (D6).
 SHRINKAGE_BAR = 0.5
 
 
@@ -89,11 +89,13 @@ class C3Session:
 
 
 def _session_dns_cache(results_dir: str, run: str) -> Optional[str]:
-    """Read ``v2Session.dnsCache`` for a session (discover_sessions omits it)."""
+    """Read ``session.dnsCache`` for a session (discover_sessions omits it)."""
     path = os.path.join(results_dir, run, "summary.json")
     try:
         with open(path) as fh:
-            return ((json.load(fh) or {}).get("v2Session") or {}).get("dnsCache")
+            summary = json.load(fh) or {}
+            block = summary.get("session") or summary.get("v2Session")  # or legacy key
+            return (block or {}).get("dnsCache")
     except (OSError, ValueError):
         return None
 
@@ -178,7 +180,7 @@ def _block(label: str, a: List[float], b: List[float]) -> Dict[str, Any]:
 
 
 def analyze(results_dir: str) -> Dict[str, Any]:
-    """The V2-H2 conjunction verdict + components."""
+    """The H2 conjunction verdict + components."""
     sessions, warnings = collect_sessions(results_dir)
     off = _ordered(sessions, "off")
     on = _ordered(sessions, "on")
@@ -200,7 +202,7 @@ def analyze(results_dir: str) -> Dict[str, Any]:
     pairs = list(zip(off, on))
     if len(off) != len(on):
         warnings.append(
-            f"V2-H2(b): unequal session counts (off={len(off)}, on={len(on)}) "
+            f"H2(b): unequal session counts (off={len(off)}, on={len(on)}) "
             f"— paired the first {len(pairs)} by collection order"
         )
 
@@ -214,7 +216,7 @@ def analyze(results_dir: str) -> Dict[str, Any]:
         shrink.append((float(so.spread) - float(sn.spread)) / float(so.spread))
     if dropped_b:
         warnings.append(
-            f"V2-H2(b): dropped {dropped_b} of {len(pairs)} pair(s) with a missing/tainted "
+            f"H2(b): dropped {dropped_b} of {len(pairs)} pair(s) with a missing/tainted "
             "spread or non-positive cache-off drop (shrinkage denominator)"
         )
     mech = _block(
@@ -253,7 +255,7 @@ def analyze(results_dir: str) -> Dict[str, Any]:
     # claim a pass with no significance value to feed Holm.
     if family_input is None:
         warnings.append(
-            "V2-H2: a co-primary produced no directional p (no non-zero paired "
+            "H2: a co-primary produced no directional p (no non-zero paired "
             "differences) — conjunction not evaluable; reported False pending more data"
         )
     # Both co-primary gates follow the SAME signed-rank statistic as their p:
@@ -278,7 +280,7 @@ def analyze(results_dir: str) -> Dict[str, Any]:
 
 
 def _print(out: Dict[str, Any]) -> None:
-    print("V2-H2 — placement-dependence + DNS intervention (paired Wilcoxon)")
+    print("H2 — placement-dependence + DNS intervention (paired Wilcoxon)")
     print(
         f"  sessions: {out['nSessions']}  (cache-off {out['nCacheOff']}, "
         f"cache-on {out['nCacheOn']})\n"
@@ -302,7 +304,7 @@ def _print(out: Dict[str, Any]) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="V2-H2 (C3) confirmatory analysis.")
+    ap = argparse.ArgumentParser(description="H2 (C3) confirmatory analysis.")
     ap.add_argument("--results-dir", required=True)
     ap.add_argument("--json", help="write the full result object to this path")
     args = ap.parse_args(argv)

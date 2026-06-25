@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""V2-H3 confirmatory analysis: replication rescue under node-drain.
+"""H3 confirmatory analysis: replication rescue under node-drain.
 
-Registered test (`01-PREREGISTRATION.md` §V2-H3): an **ART ANOVA** with factors
+Registered test (`01-PREREGISTRATION.md` §H3): an **ART ANOVA** with factors
 ``r ∈ {1, 3}`` × ``mode ∈ {packed, anti-affine}``; the registered effect is the
 **interaction** — replication rescues availability only when replicas do not
 share the failure domain (r=3 anti-affine ≪ r=1; r=3 packed ≈ r=1).  Two
@@ -78,7 +78,7 @@ DEPTH_MARGIN_POD = 1.0  # pods (registered); fractional margin = this / r1 basel
 ERROR_MARGIN = 0.302  # user-route error-rate fraction (registered)
 MODES = ("packed", "anti-affine")
 
-#: Per-test alpha for the ART interaction.  V2-H3 is in the confirmatory family
+#: Per-test alpha for the ART interaction.  H3 is in the confirmatory family
 #: Holm-corrected across all campaigns (applied later); this is the raw per-test
 #: threshold the interaction must clear here.
 ALPHA = 0.05
@@ -154,16 +154,16 @@ class Session:
         self.error = error  # user_err_during
 
 
-def _rejection_reason(v2: Dict[str, Any]) -> Optional[str]:
-    """Why this v2 session must be excluded, or ``None`` when it is usable.
+def _rejection_reason(session_block: Dict[str, Any]) -> Optional[str]:
+    """Why this placement session must be excluded, or ``None`` when it is usable.
 
     Enforces the registered taint rule (pre-registration §taint): no result is
     quoted from a **rejected** condition (its placement failed live
     verification — e.g. an infeasible packing leaving deployments Pending) or
     from a condition whose **every** iteration is tainted. A node-drain session
-    carries one condition; its record lives in ``v2.perLevel``.
+    carries one condition; its record lives in ``session_block.perLevel``.
     """
-    per_level = v2.get("perLevel") or []
+    per_level = session_block.get("perLevel") or []
     if not per_level:
         return "no perLevel record"
     reasons: List[str] = []
@@ -187,12 +187,12 @@ def collect_sessions(results_dir: str) -> Tuple[List[Session], List[str]]:
         run = os.path.basename(session_dir)
         with open(summ_path) as fh:
             summary = json.load(fh)
-        v2 = summary.get("v2Session") or {}
-        replicas, mode = v2.get("replicas"), v2.get("mode")
+        session_block = summary.get("session") or summary.get("v2Session") or {}  # or legacy key
+        replicas, mode = session_block.get("replicas"), session_block.get("mode")
         if replicas is None or mode is None:
-            warnings.append(f"{run}: not a v2 node-drain session — skipped")
+            warnings.append(f"{run}: not a placement node-drain session — skipped")
             continue
-        rejected = _rejection_reason(v2)
+        rejected = _rejection_reason(session_block)
         if rejected is not None:
             # Registered taint rule (pre-registration §taint): "No result is
             # ever quoted from a rejected session or from a tainted iteration."
@@ -316,7 +316,7 @@ def _degenerate_warnings(sessions: List[Session]) -> List[str]:
 
 
 def analyze(results_dir: str) -> Dict[str, object]:
-    """The full V2-H3 analysis as one JSON-ready dict (both co-primaries)."""
+    """The full H3 analysis as one JSON-ready dict (both co-primaries)."""
     sessions, warnings = collect_sessions(results_dir)
     # Express the registered 1.0-pod depth margin as a fraction of the r=1 app
     # baseline (D-2026-06-15-01): 1.0 pod / median(r1 baseline ready).
@@ -334,7 +334,7 @@ def analyze(results_dir: str) -> Dict[str, object]:
             [s.duration for s in sessions if s.replicas == 3 and s.mode == "anti-affine"]
         ),
     }
-    # V2-H3 support (prereg §V2-H3): on EACH co-primary the ART interaction is
+    # H3 support (prereg §H3): on EACH co-primary the ART interaction is
     # significant AND the rescue margin is met, AND the packing control passes
     # its TOST on both (instrument valid).
     conj = bool(
@@ -357,7 +357,7 @@ def analyze(results_dir: str) -> Dict[str, object]:
 
 
 def print_report(result: Dict[str, object]) -> None:
-    print("V2-H3 — replication rescue under node-drain (ART ANOVA r × mode)")
+    print("H3 — replication rescue under node-drain (ART ANOVA r × mode)")
     print(f"  sessions: {result['nSessions']}  depth margin: {result['depthMarginFraction']}")
     for label, key in [
         ("trough depth (fraction)", "troughDepthFraction"),

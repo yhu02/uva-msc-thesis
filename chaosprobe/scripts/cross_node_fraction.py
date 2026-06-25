@@ -33,7 +33,7 @@ import json
 import statistics as st
 from typing import Dict, List, Optional, Set, Tuple
 
-# Shared with the v2/M1a fraction-targeting solver — the package module is the
+# Shared with the M1a fraction-targeting solver — the package module is the
 # single source of truth for graph extraction and the fraction computation.
 from chaosprobe.placement.fraction_solver import (
     achieved_fraction,

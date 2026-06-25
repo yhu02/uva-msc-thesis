@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""M1b live GO/NO-GO gate (v2 — pre-registered, decidable predicates).
+"""M1b live GO/NO-GO gate (pre-registered, decidable predicates).
 
-Runs the full M1b exit-criteria gate of ``v2-design/02-WORKPLAN.md`` against
+Runs the full M1b exit-criteria gate of ``design/02-WORKPLAN.md`` against
 a live cluster and emits the **committed verification artifact** the
 pre-registration's stopping rule 1 demands (per-phase, per-level,
 per-attempt outcomes with timestamps and achieved values), plus a PASS/FAIL
@@ -68,7 +68,7 @@ import chaosprobe.placement.fraction_solver as fs
 from chaosprobe.metrics.resources import parse_cpu_quantity, parse_memory_quantity
 
 # The quiescence barrier lives in ``chaosprobe.orchestrator.quiescence`` so
-# the v2 session driver can reuse it; the gate re-exports the original names
+# the session driver can reuse it; the gate re-exports the original names
 # (tests and callers keep importing them from this script).
 from chaosprobe.orchestrator.quiescence import (
     DEFAULT_SETTLE_SECONDS,
@@ -82,7 +82,7 @@ from chaosprobe.orchestrator.quiescence import (  # noqa: F401 — re-exported
 from chaosprobe.placement import affinity_engine as engine
 
 #: Artifact schema identifier (bump on breaking shape changes).
-#: v2 adds per-restore ``settle`` records, failure ``diagnostics``
+#: adds per-restore ``settle`` records, failure ``diagnostics``
 #: snapshots, and the phase-B ``packedAssignmentMethod`` field.
 SCHEMA = "chaosprobe/m1b-gate-artifact/v2"
 
@@ -399,7 +399,7 @@ def packed_assignment(services: Sequence[str], workers: Sequence[str]) -> Dict[s
     service's replicas on exactly its pinned node) from live pods.
 
     Thin wrapper over :func:`affinity_engine.packed_round_robin` — the single
-    source the live session orchestrator (V2-H3) shares with this gate.
+    source the live session orchestrator (H3) shares with this gate.
     """
     return engine.packed_round_robin(services, workers)
 
@@ -583,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
     """The gate's CLI surface (also exercised by tests)."""
     parser = argparse.ArgumentParser(
         description=(
-            "M1b live GO/NO-GO gate (v2-design/02-WORKPLAN.md M1b exit criteria). "
+            "M1b live GO/NO-GO gate (design/02-WORKPLAN.md M1b exit criteria). "
             "Phase A: solver fraction gate at r=1 (3 consecutive in-tolerance "
             "attempts per f-level, abort after 6). Phase B: r=3 anti-affine "
             "(3 distinct nodes per service) then r=3 packed (each service on 1 "

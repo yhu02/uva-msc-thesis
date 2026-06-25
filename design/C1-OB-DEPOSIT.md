@@ -1,4 +1,4 @@
-# ChaosProbe v2 — C1 online-boutique campaign deposit manifest
+# ChaosProbe — C1 online-boutique campaign deposit manifest
 
 **Campaign:** C1 dose-response, workload **online-boutique** (the first of the
 two C1 workloads; see [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §Session
@@ -19,10 +19,10 @@ host-side Locust.
   `7d6943e`** (PR #282), which adds the frozen D3 UDP-slope taint gate (a
   post-collection analysis step, so the data commit predates it by design;
   deviation **D-2026-06-14-01**, derived blind to this campaign). The D3
-  slope-taint is **OFF** for the V2-H1 / V2-H5 analyses of this campaign per
+  slope-taint is **OFF** for the H1 / H5 analyses of this campaign per
   deviation **D-2026-06-14-02** (it did not generalize from the A/A block to
   C1's per-level re-placement regime; see [`DEVIATIONS.md`](DEVIATIONS.md)).
-- **Pre-registration reference:** git tag `v2-prereg-freeze`
+- **Pre-registration reference:** git tag `prereg-freeze`
   (commit `20097c1`); the freeze deposit is [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md).
 - **Cluster fingerprint** (per session `runMetadata`): k8s v1.28.6,
   containerd 1.7.11, CNI calico, kube-proxy ipvs; N = 8 × 4 GiB workers.
@@ -73,7 +73,7 @@ To publish:
 2. Upload the tarball. (Its internal `SHA256SUMS` lets anyone verify the upload
    against the anchors above; verify with `tar --zstd -xOf … c1-online-boutique/SHA256SUMS`
    then `sha256sum -c` inside the extracted tree.)
-3. Title: "ChaosProbe v2 — C1 dose-response campaign (online-boutique)". Set the
+3. Title: "ChaosProbe — C1 dose-response campaign (online-boutique)". Set the
    publication date to the collection date (2026-06-13/14).
 4. Publish to mint the DOI, then record it in the **DOI** line above and commit
    that one-line update.

@@ -1,4 +1,4 @@
-"""Tests for the protocol-labeled conntrack prober (v2 M1b collector).
+"""Tests for the protocol-labeled conntrack prober (M1b collector).
 
 Everything runs against a ``MagicMock`` CoreV1Api and an injected exec
 callable (the prober's ``exec_fn`` seam wraps ``kubernetes.stream.stream``

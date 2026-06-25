@@ -1,4 +1,4 @@
-"""Tests for the continuous EndpointSlice time-series sampler (V2-H3 instrument).
+"""Tests for the continuous EndpointSlice time-series sampler (H3 instrument).
 
 Everything runs against a ``MagicMock`` DiscoveryV1Api injected via the
 prober's ``discovery_api`` seam (the production prober builds a real
