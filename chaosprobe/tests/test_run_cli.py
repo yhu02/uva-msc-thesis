@@ -83,7 +83,7 @@ def test_legacy_v2_cli_aliases_map_to_renamed_params(alias, param):
     """Back-compat: the old ``--v2-*`` flags remain accepted aliases of the
     renamed placement-session flags, so pre-existing campaign scripts and the
     reproduction commands cited in the deposits keep working
-    (DEVIATIONS D-2026-06-25-01)."""
+    (deviation D-2026-06-25-01)."""
     by_name = {p.name: p.opts for p in run_cmd.run.params}
     assert param in by_name, f"param {param} missing from the run command"
     assert alias in by_name[param], f"{alias} is not registered as an alias of {param}"

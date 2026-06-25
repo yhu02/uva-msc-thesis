@@ -5,7 +5,7 @@ quiescence barrier are monkeypatched/MagicMocked — no cluster is touched.
 Covers the CLI-surface parsers (levels, workers, condition names), the
 order-randomization determinism per seed, the condition→solver→engine call
 shapes for every (r, mode) cell, the live-fraction recomputation, the
-pre-registered rejection rule's taint wiring (taint, never drop), the
+rejection rule's taint wiring (taint, never drop), the
 restore+quiescence sequencing, the session summary metadata, and the
 strategy_runner dispatch hooks.
 """

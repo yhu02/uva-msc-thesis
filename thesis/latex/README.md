@@ -44,7 +44,7 @@ set and its regeneration commands.
 |---|---|
 | `main.tex` | report class (11pt, a4paper); title page (supervisor/date are `\newcommand` TODO placeholders); abstract; TOC; chapter inputs; bibliography |
 | `chapters/01-introduction.tex` … `chapters/08-conclusion.tex` | one file per chapter, ported 1:1 from `thesis/01-…md` … `thesis/08-…md` |
-| `appendix/a-provenance.tex` | run provenance for the single pre-registered study: the C1/C2/C3 campaign table, the claims→campaigns map, and integrity anchors |
+| `appendix/a-provenance.tex` | run provenance for the primary study: the C1/C2/C3 campaign table, the claims→campaigns map, and integrity anchors |
 | `references.bib` | derived from [`references.md`](../../references.md); papers as `@article`/`@inproceedings` with DOI, web/issue/KEP/blog sources as `@misc` with `howpublished` + `url` + access date 2026-06-11 |
 
 ## Porting conventions

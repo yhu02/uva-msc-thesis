@@ -1,4 +1,4 @@
-"""Tests for scripts/holm_family.py (confirmatory-family Holm capstone)."""
+"""Tests for scripts/holm_family.py (primary-hypothesis-family Holm capstone)."""
 
 import importlib.util
 import sys
@@ -250,7 +250,7 @@ def test_analyze_bar_without_significance_not_supported(tmp_path):
 def test_render_verifies_per_row_data(tmp_path):
     res = hf.analyze(_family_docs(tmp_path))
     out = hf.render(res)
-    assert "NO confirmatory hypothesis is supported" in out
+    assert "NO primary hypothesis is supported" in out
     # The H1 row must show significant (Y) but not supported (no) — sub-SESOI.
     h1_row = next(ln for ln in out.splitlines() if ln.strip().startswith("H1 "))
     assert " Y " in h1_row and " no " in h1_row

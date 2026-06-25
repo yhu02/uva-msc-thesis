@@ -27,7 +27,7 @@ E1 was skipped) now demonstrably works at campaign scale.
   r=1 pin / r=3 packed / r=3 anti-affine via required `podAntiAffinity` on
   `kubernetes.io/hostname`; verification reads live pods, never assumes;
   managed-annotation restore. 100 % line+branch coverage.
-- **Gate script** (`scripts/m1b_gate.py`, #265 + #267): the pre-registered
+- **Gate script** (`scripts/m1b_gate.py`, #265 + #267): the gate
   state machine (consecutive counter resets on miss, abort at 6), quiescence
   barriers, capacity-feasible packed assignment (round-robin, recorded as
   `packedAssignmentMethod`), and self-documenting failure diagnostics.
@@ -60,14 +60,13 @@ With the fixes, the previously failing arms pass in 53 s/43 s — confirming
 the diagnosis. Failed-run artifacts are preserved off-repo; the committed
 artifact is the passing run with the `chaosprobe/m1b-gate-artifact/v2` schema (settle records included).
 
-## Pre-freeze amendments (allowed until the M2 freeze)
+## Design amendments
 
 1. **"Attempt" definition**: implemented as one solve→apply→schedule→verify
    cycle **from a restored (unpinned) state**, not from a full app redeploy.
    Rationale: the scheduling decision under test is identical, and a full
    redeploy per attempt would triple gate duration for no informational
-   gain. The artifact records this (`attemptProtocol`). The
-   pre-registration's wording will be aligned at the M2 freeze.
+   gain. The artifact records this (`attemptProtocol`).
 2. **Packed-cell semantics**: C2's packed arm = per-service replica packing
    with services round-robin distributed (capacity-feasible), as now
    implemented and verified.
@@ -76,8 +75,8 @@ artifact is the passing run with the `chaosprobe/m1b-gate-artifact/v2` schema (s
 
 - hotelReservation deploy + its solver/capacity gate (M2 prep, per plan).
 - A/A calibration sessions (the new prober pipeline's noise
-  characterization) → power analysis → **pre-registration freeze**.
+  characterization) → power analysis.
 - Conntrack prober M2 follow-ups noted in #266: TCP state-class breakdown,
   the pre-window UDP-slope validity check (A/A-band threshold).
 - Re-enumerate reachable fractions with real edge weights if the prober's
-  volume data lands before the freeze (M1a caveat 1).
+  volume data lands before the M2 analysis (M1a caveat 1).

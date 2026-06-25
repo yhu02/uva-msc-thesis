@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""H3 confirmatory analysis: replication rescue under node-drain.
+"""H3 primary analysis: replication rescue under node-drain.
 
-Registered test (`01-PREREGISTRATION.md` §H3): an **ART ANOVA** with factors
-``r ∈ {1, 3}`` × ``mode ∈ {packed, anti-affine}``; the registered effect is the
+Test (§H3): an **ART ANOVA** with factors
+``r ∈ {1, 3}`` × ``mode ∈ {packed, anti-affine}``; the effect is the
 **interaction** — replication rescues availability only when replicas do not
 share the failure domain (r=3 anti-affine ≪ r=1; r=3 packed ≈ r=1).  Two
 co-primary outcomes, **both-must-pass**:
 
-1. **EndpointSlice trough depth** — registered margin 1.0 pod (the M2 A/A 95%
+1. **EndpointSlice trough depth** — margin 1.0 pod (the M2 A/A 95%
    noise band).  Operationalized here as a **fraction of app ready endpoints
    lost** (deviation D-2026-06-15-01): absolute pod depth scales with the
-   replica count (r=3 packed loses 3 pods vs r=1's 1) so the registered
+   replica count (r=3 packed loses 3 pods vs r=1's 1) so the
    packed≈r1 TOST control cannot hold in pod units; the fraction is r-invariant.
-   The registered 1.0-pod margin is expressed as a fraction by dividing by the
+   The 1.0-pod margin is expressed as a fraction by dividing by the
    r=1 app baseline (1.0 pod ÷ r=1 ready ≈ 0.09 for online-boutique).  Trough
    duration (s) is reported alongside.
-2. **user-route error rate** — registered margin 0.302.  The during-chaos
+2. **user-route error rate** — margin 0.302.  The during-chaos
    user-route error rate ``user_err_during`` (`user_error_rate(latency,
    'during-chaos')`), the metric the 0.302 band was calibrated on; node-drain
    now emits a user-facing route (PR #290) so it is available.
@@ -27,7 +27,7 @@ Data shape (node-drain): each session is one drain = one measurement; the
 metrics live at the **top level** of the condition file (not ``iterations[]``).
 The unit of analysis is the **session** (n=8 per cell).
 
-Operationalization notes (the prereg pins the test + margins, not every detail):
+Operationalization notes (the design pins the test + margins, not every detail):
 
 - **Trough depth** is the fractional ready-endpoint loss over the **app**
   services in the 15s EndpointSlice time series (infra services — chaos/litmus
@@ -70,15 +70,15 @@ from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
     user_error_rate,
 )
 
-#: Registered margins (M2 A/A 95% noise bands).  DEPTH_MARGIN_POD is the absolute
+#: Margins (M2 A/A 95% noise bands).  DEPTH_MARGIN_POD is the absolute
 #: 1.0-pod band; it is converted to a fraction at analysis time by dividing by
 #: the r=1 app baseline (deviation D-2026-06-15-01).  ERROR_MARGIN is already a
 #: rate so it applies directly to ``user_err_during``.
-DEPTH_MARGIN_POD = 1.0  # pods (registered); fractional margin = this / r1 baseline
-ERROR_MARGIN = 0.302  # user-route error-rate fraction (registered)
+DEPTH_MARGIN_POD = 1.0  # pods; fractional margin = this / r1 baseline
+ERROR_MARGIN = 0.302  # user-route error-rate fraction
 MODES = ("packed", "anti-affine")
 
-#: Per-test alpha for the ART interaction.  H3 is in the confirmatory family
+#: Per-test alpha for the ART interaction.  H3 is in the primary hypothesis family
 #: Holm-corrected across all campaigns (applied later); this is the raw per-test
 #: threshold the interaction must clear here.
 ALPHA = 0.05
@@ -111,7 +111,7 @@ def trough_depth_fraction(
     app services) in the last pre-chaos sample and ``fraction = (baseline −
     min(total ready over during+post)) / baseline`` (clamped to ``[0, 1]``).
     Both are ``None`` when there is no usable pre-chaos baseline; ``baseline`` is
-    returned so the r=1 cell can set the registered 1.0-pod margin as a fraction.
+    returned so the r=1 cell can set the 1.0-pod margin as a fraction.
     """
     samples = ets.get("samples") or []
     pre = [s for s in samples if s.get("phase") == "pre-chaos"]
@@ -157,7 +157,7 @@ class Session:
 def _rejection_reason(session_block: Dict[str, Any]) -> Optional[str]:
     """Why this placement session must be excluded, or ``None`` when it is usable.
 
-    Enforces the registered taint rule (pre-registration §taint): no result is
+    Enforces the taint rule (§taint): no result is
     quoted from a **rejected** condition (its placement failed live
     verification — e.g. an infeasible packing leaving deployments Pending) or
     from a condition whose **every** iteration is tainted. A node-drain session
@@ -194,7 +194,7 @@ def collect_sessions(results_dir: str) -> Tuple[List[Session], List[str]]:
             continue
         rejected = _rejection_reason(session_block)
         if rejected is not None:
-            # Registered taint rule (pre-registration §taint): "No result is
+            # Taint rule (§taint): "No result is
             # ever quoted from a rejected session or from a tainted iteration."
             warnings.append(f"{run}: rejected/tainted placement ({rejected}) — excluded")
             continue
@@ -318,7 +318,7 @@ def _degenerate_warnings(sessions: List[Session]) -> List[str]:
 def analyze(results_dir: str) -> Dict[str, object]:
     """The full H3 analysis as one JSON-ready dict (both co-primaries)."""
     sessions, warnings = collect_sessions(results_dir)
-    # Express the registered 1.0-pod depth margin as a fraction of the r=1 app
+    # Express the 1.0-pod depth margin as a fraction of the r=1 app
     # baseline (D-2026-06-15-01): 1.0 pod / median(r1 baseline ready).
     r1_baselines = [s.baseline for s in sessions if s.replicas == 1 and s.baseline]
     depth_margin = (DEPTH_MARGIN_POD / st.median(r1_baselines)) if r1_baselines else None
@@ -334,7 +334,7 @@ def analyze(results_dir: str) -> Dict[str, object]:
             [s.duration for s in sessions if s.replicas == 3 and s.mode == "anti-affine"]
         ),
     }
-    # H3 support (prereg §H3): on EACH co-primary the ART interaction is
+    # H3 support (§H3): on EACH co-primary the ART interaction is
     # significant AND the rescue margin is met, AND the packing control passes
     # its TOST on both (instrument valid).
     conj = bool(

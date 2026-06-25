@@ -4,17 +4,17 @@
 (east-west dose-response) on a second, structurally different workload —
 DeathStarBench **hotelReservation** (deep frontend fan-out, per-service
 datastore pairs, Go gRPC over **Consul** service discovery). Reported **outside
-the frozen confirmatory Holm family** (which is closed on online-boutique); it
-adjusts no confirmatory verdict. H2/H3 do not apply to pod-delete
+the primary Holm family** (which is closed on online-boutique); it
+adjusts no primary verdict. H2/H3 do not apply to pod-delete
 dose-response (H3 is the C2-hotel report).
 
 **Provenance.** Data: 8 complete-block sessions, hotelReservation, collected
 2026-06-20/21 on `main` commit `bdf1ccb` (all 32 C1+C2 sessions
-`runMetadata.git.dirty = false`). Frozen pre-analysis manifest:
+`runMetadata.git.dirty = false`). Pre-analysis manifest:
 raw `summary.json` + per-condition files.
 All 8 sessions `doctor --strict` clean (0 errors); **1 of 120 churn iterations** (one
 iteration of session order-seed 8) carried an `app_ready_timeout` taint and is
-excluded by the analysis per the registered healthy-only rule.
+excluded by the analysis per the healthy-only rule.
 
 ## Campaign as run
 
@@ -37,7 +37,7 @@ across all but one of the 144 C1+C2 iterations).
 
 ## H1 — dose-response of the east-west tail
 
-Registered primary test (`01-PREREGISTRATION.md` §H1): a **Page's L trend
+Primary test: a **Page's L trend
 test** over the five ordered levels, predicting a **monotone increase** in median
 east-west p95 latency (`ew_p95_pre_ms`, per-iteration median over inter-service
 routes of the route p95, pre-chaos window, loadgen→ excluded). Unit = the
@@ -52,7 +52,7 @@ session-condition median over untainted iterations. D3 UDP-slope taint OFF
 | per-level median `ew_p95_pre_ms` (ms) | 9.34 / 6.44 / 6.32 / 7.10 / 5.40 |
 | SESOI effect f0→f1 | 9.34 → 5.40, **Δ = −42.2 %** (SESOI ≥ 15 %) |
 
-**Outcome: H1 is NOT supported on hotelReservation.** The registered
+**Outcome: H1 is NOT supported on hotelReservation.** The
 one-sided test for a monotone *increase* is non-significant (p = 0.99); the
 observed trend is, if anything, mildly **downward** (the z statistic is negative,
 and the f=0 level carries the highest median tail). The east-west p95 baseline
@@ -72,15 +72,15 @@ is absent or negligible.
 
 ## Limitations
 
-- **Exploratory, not confirmatory.** Outside the frozen Holm family; no
+- **Exploratory, not primary.** Outside the Holm family; no
   multiplicity correction is applied and none is owed — this is a generalization
-  probe, not a registered test.
+  probe, not a primary test.
 - **Cluster scale.** Single libvirt cluster (1 control-plane + 8 workers);
   hotel is the lightest DeathStarBench app and the only realistic candidate at
   this scale. Absolute latencies (~5–9 ms) are small and may compress any
   placement effect that a larger fan-out or a more loaded cluster would expose.
 - **One excluded iteration** (session 8, post-pause restart) — a single
-  `app_ready_timeout`, 0.8 % of C1 iterations; the registered healthy-only rule
+  `app_ready_timeout`, 0.8 % of C1 iterations; the healthy-only rule
   excludes it. No other taints.
 - **D3 slope-taint OFF** mirrors the OB C1 disposition (D-2026-06-14-02); the
-  frozen low-churn D3 band does not generalize to per-level re-placement.
+  low-churn D3 band does not generalize to per-level re-placement.

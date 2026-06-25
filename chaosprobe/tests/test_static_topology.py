@@ -115,7 +115,7 @@ def test_hotel_reservation_topology_counts_and_shape():
 def test_hotel_reservation_topology_drives_the_solver():
     """M2 gate plumbing: the static graph feeds solve() end to end at the pinned N=8.
 
-    Every pre-registered f target is hit exactly (the 16 uniform edges make
+    Every f target is hit exactly (the 16 uniform edges make
     {0, .25, .5, .75, 1} multiples of the 1/16 quantum) within a small seed
     sweep — a single seed may stall in a local optimum on this tree-shaped
     graph (e.g. seed 42 alone yields 1/16 for f=0), which is the solver's

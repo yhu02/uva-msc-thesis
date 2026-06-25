@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""C3 / H2 confirmatory analysis: placement-dependence + DNS intervention.
+"""C3 / H2 primary analysis: placement-dependence + DNS intervention.
 
-Registered test (``01-PREREGISTRATION.md`` §H2) — a **two-part, both-must-pass
-conjunction** over the registered **absolute** during-churn UDP-conntrack drop
+Test (§H2) — a **two-part, both-must-pass
+conjunction** over the **absolute** during-churn UDP-conntrack drop
 (``udp_conntrack_drop_entries`` = pre-chaos − during-chaos cluster UDP entries):
 
 1. **(a) placement-dependence (cache-off arms).** Paired Wilcoxon signed-rank,
@@ -10,16 +10,16 @@ conjunction** over the registered **absolute** during-churn UDP-conntrack drop
    cache-off only — the earlier H2 replication. Directional, no ratio denominator.
 2. **(b) mechanism intervention (within-spread, paired).** One-sided Wilcoxon
    signed-rank of the per-pair **shrinkage** of spread's UDP drop (cache-on vs
-   cache-off) against the **50 %** bar (freeze decision D6). Shrinkage =
+   cache-off) against the **50 %** bar (decision D6). Shrinkage =
    ``(off − on) / off``; the denominator is spread's cache-off drop.
 
 **Combination:** (a) AND (b); the single input to the outer Holm family is
-``max(p_a, p_b)``. **Secondary (registered, not in family):** the packed (f=0)
+``max(p_a, p_b)``. **Secondary (not in family):** the packed (f=0)
 arm shows ~no cache effect (its UDP pool sits at the noise floor).
 
 Per-hypothesis p-values are **uncorrected** here — final significance waits on
-Holm across the confirmatory family once all campaigns land (so the conjunction
-verdict below is the registered *direction + bar* check, reported with the raw
+Holm across the primary hypothesis family once all campaigns land (so the
+conjunction verdict below is the *direction + bar* check, reported with the raw
 one-sided p-values).
 
 **Data model.** C3 sessions are ``r = 1``, ``dnsCache ∈ {on, off}`` (the
@@ -27,7 +27,7 @@ one-sided p-values).
 (spread). The per-condition outcome is the **session-condition median over
 untainted iterations** of the UDP drop, via the shared
 :func:`m2_aa_analysis.load_condition_outcomes` taint machinery — rejected or
-fully-tainted conditions contribute no value (registered "never quoted" rule).
+fully-tainted conditions contribute no value (the "never quoted" rule).
 
 **Pairing for (b).** Cache-off and cache-on **sessions** are paired
 **positionally by collection order** (timestamp, then run id) within each cache
@@ -59,14 +59,14 @@ from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
     load_condition_outcomes,
 )
 
-#: Registered H2 outcome: absolute during-churn UDP-conntrack drop.
+#: H2 outcome: absolute during-churn UDP-conntrack drop.
 OUTCOME = "udp_conntrack_drop_entries"
 
 #: The two placement extremes C3 visits (r=1): f=0 packed, f=1 spread.
 PACKED = "f-000"
 SPREAD = "f-100"
 
-#: Registered H2(b) bar — spread's cache-on UDP drop shrinks ≥ 50 % (D6).
+#: H2(b) bar — spread's cache-on UDP drop shrinks ≥ 50 % (D6).
 SHRINKAGE_BAR = 0.5
 
 
@@ -104,7 +104,7 @@ def _condition_udp_drop(results_dir: str, session: Any, condition: str) -> Optio
     """Session-condition median UDP drop for one placement, or None.
 
     Excludes the condition when it was not accepted (rejected placement) or has
-    no untainted iteration — the registered "never quoted" rule, via the shared
+    no untainted iteration — the "never quoted" rule, via the shared
     m2 taint machinery (``session.tainted`` / ``session.taints``).
     """
     obs = session.levels.get(condition)
@@ -226,7 +226,7 @@ def analyze(results_dir: str) -> Dict[str, Any]:
     )
     mech["shrinkageMedian"] = round(st.median(shrink), 4) if shrink else None
     # `barMet` is the DESCRIPTIVE point-estimate check (median shrinkage ≥ bar).
-    # The registered (b) "met" is the one-sided Wilcoxon against the bar, whose
+    # The (b) "met" is the one-sided Wilcoxon against the bar, whose
     # direction is mech["directionGreater"] (rank-based) — the conjunction gates
     # on THAT (see below), not on barMet alone, so the verdict can never
     # contradict p_b (the same reconciliation arm (a) uses for rescueMet).
@@ -247,7 +247,7 @@ def analyze(results_dir: str) -> Dict[str, Any]:
 
     p_a, p_b = place["p_one_sided"], mech["p_one_sided"]
     family_input = max(p_a, p_b) if (p_a is not None and p_b is not None) else None
-    # Registered direction+bar conjunction (p-values uncorrected, pending Holm).
+    # Direction+bar conjunction (p-values uncorrected, pending Holm).
     # Requires a defined directional p for BOTH co-primaries: a co-primary whose
     # paired differences are all zero (e.g. every shrinkage exactly at the bar)
     # yields no Wilcoxon signal (p=None), so the conjunction cannot be evaluated
@@ -260,7 +260,7 @@ def analyze(results_dir: str) -> Dict[str, Any]:
         )
     # Both co-primary gates follow the SAME signed-rank statistic as their p:
     # (a) rescueMet = place.directionGreater, (b) mech.directionGreater (the
-    # registered one-sided Wilcoxon against the 50% bar). Gating (b) on the
+    # one-sided Wilcoxon against the 50% bar). Gating (b) on the
     # median `barMet` alone would let the conjunction pass while p_b > 0.5 for a
     # non-monotone shrinkage pattern — the round-2 reconciliation, now propagated
     # to arm (b).
@@ -304,7 +304,7 @@ def _print(out: Dict[str, Any]) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="H2 (C3) confirmatory analysis.")
+    ap = argparse.ArgumentParser(description="H2 (C3) primary analysis.")
     ap.add_argument("--results-dir", required=True)
     ap.add_argument("--json", help="write the full result object to this path")
     args = ap.parse_args(argv)

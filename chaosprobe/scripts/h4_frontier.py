@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""H4 — the descriptive placement Pareto frontier (registered figure + protocol).
+"""H4 — the descriptive placement Pareto frontier (figure + protocol).
 
-H4 is **descriptive, not a confirmatory hypothesis** (``01-PREREGISTRATION.md``
-§H4; the headline objective of ``00-DESIGN.md`` §6). For each designed
+H4 is **descriptive, not a primary hypothesis** (§H4; the headline objective
+of ``00-DESIGN.md`` §6). For each designed
 placement ``(f, r, mode)`` it plots the **latency face** (pre-chaos east-west
 p95 tail — steady-state, placement-determined, hence comparable across
 campaigns/faults) against the **availability face** (during-chaos blast /
 recovery: trough depth in pods + user-route error rate), with cluster-bootstrap
 CIs, and reports the **non-dominated set under margins**.
 
-**Dominance is declared only with margins** (registered, frozen at M2): A
+**Dominance is declared only with margins** (margins set from the A/A
+calibration): A
 dominates B iff A is better than B by ≥ the band on the latency face **and** by
 ≥ the band on *both* availability DVs — the conservative all-DV reading. Bands
 (``M2-AA-REPORT.md``): δ_latency = **4.4 ms** (pre-chaos EW-p95 A/A p95 band),
@@ -69,7 +70,7 @@ class DV:
     face: str  # "latency" | "availability"
 
 
-#: The three registered DVs, all "lower is better". δ frozen at M2.
+#: The three DVs, all "lower is better". δ set from the A/A calibration.
 DVS: Tuple[DV, ...] = (
     DV("ew_p95_pre_ms", "EW p95 pre-chaos [ms]", 4.4, "latency"),
     DV("es_trough_depth_pods", "trough depth [pods]", 1.0, "availability"),
@@ -115,7 +116,7 @@ def dominates(a: Placement, b: Placement) -> bool:
 
     Requires A's point estimate to beat B's by at least the DV's δ band on the
     latency face AND on both availability DVs (the conservative all-DV reading
-    of the registered margin rule). Missing point estimates ⇒ no dominance.
+    of the margin rule). Missing point estimates ⇒ no dominance.
     """
     for dv in DVS:
         pa = a.stats.get(dv.key, {}).get("point")

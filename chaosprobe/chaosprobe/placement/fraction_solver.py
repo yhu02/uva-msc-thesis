@@ -1,8 +1,8 @@
 """Fraction-targeting placement solver (M1a — solver-feasibility spike).
 
 Implements the greedy edge-cut assignment sketched in ``design/00-DESIGN.md``
-§2.3 and the quantization-study enumerator required by ``design/02-WORKPLAN.md``
-M1a: given the service dependency graph (inter-service edges + call-volume
+§2.3 and the quantization-study enumerator (M1a):
+given the service dependency graph (inter-service edges + call-volume
 weights), choose a service→node assignment whose **cross-node call fraction**
 — the weight share of inter-service edges whose endpoints sit on different
 nodes — lands as close as possible to a target ``f``, and enumerate which
@@ -19,7 +19,7 @@ record no volume for east-west (latency-prober-only) routes, so those edges
 fall back to a uniform weight of 1.0 — making the weighted fraction coincide
 with the unweighted metric ``cross_node_fraction.py`` reports.
 
-Acceptance follows the pre-registered rejection rule (DESIGN §2.3): a solution
+Acceptance follows the rejection rule (DESIGN §2.3): a solution
 is **accepted** iff ``|achieved_f − target_f| ≤ 0.05``; misses are reported,
 never silently dropped.
 
@@ -50,7 +50,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Hashable, Iterable, List, Mapping, Sequence, Set, Tuple
 
-#: Pre-registered rejection rule (DESIGN §2.3): accept iff |achieved − target| ≤ 0.05.
+#: Rejection rule (DESIGN §2.3): accept iff |achieved − target| ≤ 0.05.
 TARGET_TOLERANCE = 0.05
 
 #: Canonical-assignment budget above which `enumerate_reachable` samples
@@ -276,7 +276,7 @@ def achieved_fraction(assignment: Mapping[str, Hashable], edges: Iterable[Edge])
 
 @dataclass
 class Solution:
-    """A solver result: the assignment plus the pre-registered acceptance verdict."""
+    """A solver result: the assignment plus the acceptance verdict."""
 
     assignment: Dict[str, int]
     achieved_f: float
@@ -479,7 +479,7 @@ def solve(
     instantiated as heaviest-incident-weight first plus seeded shuffled
     restarts (rather than a per-step argmin over all unplaced services — the
     restarts + local search close the same gap, and the acceptance verdict is
-    what is pre-registered, not the search path).  Deterministic for a given
+    what is accepted, not the search path).  Deterministic for a given
     seed.
 
     Args:
@@ -499,7 +499,7 @@ def solve(
         max_local_search_passes: Safety cap on local-search sweeps per restart.
 
     Returns:
-        A :class:`Solution`; ``accepted`` applies the pre-registered rule
+        A :class:`Solution`; ``accepted`` applies the rule
         ``|achieved_f − target_f| ≤ 0.05`` (:data:`TARGET_TOLERANCE`).
     """
     if n_nodes < 1:
@@ -695,7 +695,7 @@ def enumerate_reachable(
 ) -> List[float]:
     """Achievable cross-node fractions for this graph on ``n_nodes`` nodes.
 
-    Capacity-unaware (the analytical quantization study of WORKPLAN M1a).
+    Capacity-unaware (the analytical quantization study of M1a).
     Node identity never matters to the fraction, so only the *partition* of
     the edge-incident services is enumerated:
 
@@ -756,7 +756,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m chaosprobe.placement.fraction_solver",
         description=(
             "M1a fraction-targeting placement solver + reachable-set enumerator "
-            "(design/00-DESIGN.md §2.3, 02-WORKPLAN.md M1a). Derives the weighted "
+            "(design/00-DESIGN.md §2.3, M1a). Derives the weighted "
             "inter-service dependency graph from a run's summary.json, then either "
             "solves for a target cross-node fraction (--target) or enumerates the "
             "reachable fraction set for the given node count (--enumerate)."
@@ -851,7 +851,7 @@ def _print_solution(edges: List[Edge], services: List[str], args: argparse.Names
     gap = abs(solution.achieved_f - solution.target_f)
     print(f"\n  achieved f = {solution.achieved_f:.4f} (gap {gap:.4f})")
     verdict = "ACCEPTED" if solution.accepted else "REJECTED"
-    print(f"  {verdict} (pre-registered rule: |achieved - target| <= {TARGET_TOLERANCE})")
+    print(f"  {verdict} (rule: |achieved - target| <= {TARGET_TOLERANCE})")
     trace = solution.trace
     print(
         f"  trace: restarts={trace['restartsRun']} best={trace['bestRestart']} "

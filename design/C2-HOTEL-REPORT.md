@@ -2,13 +2,13 @@
 
 **Scope.** Exploratory **external-validity** replication of C2 / **H3**
 (replication rescue) on DeathStarBench **hotelReservation** (deep gRPC fan-out,
-per-service datastore pairs, Consul discovery). Reported **outside the frozen
-confirmatory Holm family**; it adjusts no confirmatory verdict and does not bear
+per-service datastore pairs, Consul discovery). Reported **outside the
+primary Holm family**; it adjusts no primary verdict and does not bear
 on H1 (C1-hotel) or the conntrack mechanism.
 
 **Provenance.** Data: 24 node-drain sessions (3 cells × 8), hotelReservation,
 collected 2026-06-21/22 on `main` commit `bdf1ccb` (all 24 sessions
-`runMetadata.git.dirty = false`). Frozen pre-analysis manifest of the raw
+`runMetadata.git.dirty = false`). Pre-analysis manifest of the raw
 `summary.json` + per-condition files. All 24
 sessions `doctor --strict` clean (0 errors), 0 tainted iterations (each session
 is 1 condition × 1 iteration).
@@ -24,8 +24,8 @@ placement is feasible at hotel's service count). Gate flags as in C1-hotel
 
 ## H3 — replication rescue under node-drain
 
-Registered test (`01-PREREGISTRATION.md` §H3): an **ART ANOVA** with factors
-`r ∈ {1, 3}` × `mode ∈ {packed, anti-affine}`; the registered effect is the
+Primary test: an **ART ANOVA** with factors
+`r ∈ {1, 3}` × `mode ∈ {packed, anti-affine}`; the effect of interest is the
 **interaction** — replication rescues availability only when replicas do not
 share the failure domain (r=3 anti-affine ≪ r=1; r=3 packed ≈ r=1). Two
 co-primary outcomes, **both must pass**. Depth margin for hotel = **0.0526**
@@ -40,22 +40,22 @@ online-boutique).
 
 Trough **duration** median (s): r1 = 45.0, r3-packed = 30.0, r3-anti = 15.0.
 
-**Outcome: the registered conjunction is NOT met (`CONJUNCTION = False`).** Both
+**Outcome: the conjunction is NOT met (`CONJUNCTION = False`).** Both
 co-primaries show a **significant r×mode interaction** and anti-affine r=3 is
 **directionally the best** arm on every measure (lowest trough depth, lowest user
 error, shortest trough — a 3× faster recovery than r1: 15 s vs 45 s), and both
 **packing controls pass** (r3-packed ≈ r1, within the equivalence band). But on
-**both** co-primaries the rescue magnitude falls **short of the registered
+**both** co-primaries the rescue magnitude falls **short of the
 margin** — depth rescue 0.044 < 0.053, error rescue 0.212 < 0.302 — so the
 both-must-pass conjunction fails.
 
 **Reading the verdict (external validity).** This **replicates the
 online-boutique C2 result almost exactly**: same `CONJUNCTION = False`, same
 shape — a real, significant interaction with anti-affine directionally rescuing
-availability, but not by the pre-registered margin, and the packing controls
+availability, but not by the set margin, and the packing controls
 holding. Across two structurally different workloads the *mechanism* is robust
 and visible (spreading replicas across failure domains demonstrably shrinks the
-node-drain blast radius and speeds recovery) while the *registered confirmatory
+node-drain blast radius and speeds recovery) while the *primary
 claim* — rescue clearing the pre-set margin — does not hold on either. The
 honest external-validity reading: **the directional replication-rescue effect
 generalizes; the strong margin-clearing claim does not.**
@@ -70,12 +70,12 @@ smaller error baseline.
 
 ## Limitations
 
-- **Exploratory, not confirmatory.** Outside the Holm family; no multiplicity
+- **Exploratory.** Outside the Holm family; no multiplicity
   correction, none owed.
 - **n = 8 per cell, single iteration per session, single cluster.** Adequate to
   reproduce the OB effect shape but not to tighten the margin question.
 - **Round-robin instrument** (D-2026-06-16-01) carried over from OB so the f=0.5
   r=3 placement is feasible at hotel's service count.
 - The verdict **mirrors** OB; it does not independently re-open the OB
-  pre-registration questions (the depth-margin construction limit is documented
+  margin-specification questions (the depth-margin construction limit is documented
   in C2-OB-REPORT.md and applies identically here).

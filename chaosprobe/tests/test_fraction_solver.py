@@ -63,7 +63,7 @@ def _random_graph(rng, n_services=None, allow_self_loops=True):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Property tests: solver vs independent implementation (pre-registered)
+# Property tests: solver vs independent implementation
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -164,7 +164,7 @@ def test_solve_trivial_two_services_extremes():
 def test_solve_single_node_only_reaches_zero():
     solution = fs.solve([("a", "b", 1.0)], ["a", "b"], 1, 1.0, seed=0)
     assert solution.achieved_f == 0.0
-    assert not solution.accepted  # gap 1.0 > 0.05 -> pre-registered rejection
+    assert not solution.accepted  # gap 1.0 > 0.05 -> rejection
 
 
 def test_solve_triangle_optimal_cuts():

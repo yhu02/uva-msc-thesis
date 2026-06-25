@@ -1,22 +1,20 @@
-% Run provenance for the single pre-registered study (campaigns C1/C2/C3).
+% Run provenance for the primary study (campaigns C1/C2/C3).
 % Self-contained: provenance is anchored to the in-document tables, the
-% committed pre-registration / analysis code, and the
+% committed analysis code, and the
 % per-run hash-stamped archives (retained with the project materials).
 
 \chapter{Run provenance}\label{app:provenance}
 
-Every confirmatory number in Chapter~\ref{ch:results} traces to one of three
-pre-registered campaigns, each \emph{frozen at a tagged commit before its
-analysis was written}. The campaigns share an environment fingerprint, recorded
+Every primary number in Chapter~\ref{ch:results} traces to one of three
+campaigns, each archived at a tagged commit with its raw data hash-stamped. The
+campaigns share an environment fingerprint, recorded
 in every session's \texttt{runMetadata} and in each archive's
 \texttt{artifact-manifest.json} (written by \texttt{archive\_run.py --strict}):
 Kubernetes \textbf{v1.28.6}, kube-proxy mode \textbf{ipvs}, containerd 1.7.11,
 Calico CNI, eight 2-vCPU/4-GiB workers, namespace \texttt{online-boutique}, git
-\texttt{dirty: false}, \texttt{provenanceWarnings: []}. The frozen
-pre-registration (commit \texttt{20097c1}) and the analysis code are
-committed to the project repository; its hypotheses,
-smallest effect sizes of interest, and per-cell sample sizes are also stated
-bar-first in Chapter~\ref{ch:results}. The raw per-run session archives are
+\texttt{dirty: false}, \texttt{provenanceWarnings: []}. The hypotheses, SESOIs,
+per-cell sample sizes, and analysis code are committed to the project
+repository and are stated bar-first in Chapter~\ref{ch:results}. The raw per-run session archives are
 retained with the project materials and available on request.
 
 \section{Campaigns}\label{sec:campaigns}
@@ -40,8 +38,8 @@ C3 placement + DNS & H2 & within-subjects $f \in \{0,1\}$ at $r{=}1$, crossed wi
 The \textbf{data commit} column records the commit each campaign's data was
 collected on (pinned in every session's \texttt{runMetadata}). C1 was collected
 on data commit \texttt{2ec934f}; its analysis runs on \texttt{main} at or after
-\texttt{7d6943e}, so the data commit predates the analysis tooling by design
-(deviation D-2026-06-14-01). C2 and C3 were collected and analyzed on a single
+\texttt{7d6943e}, so the data commit predates the analysis tooling
+(recorded as D-2026-06-14-01). C2 and C3 were collected and analyzed on a single
 strict-clean commit each.
 
 \section{Claims \texorpdfstring{$\rightarrow$}{to} campaigns}\label{sec:claims-runs}
@@ -89,8 +87,8 @@ C3~\#1 (cache-off) \texttt{83169d79\ldots f7fc6a82}.
 \section{External-validity campaign (exploratory)}\label{sec:hotel-provenance}
 
 The second-workload replication (\S\ref{sec:external-validity}) is
-\textbf{exploratory and outside the frozen Holm family}; it is provenance-gated
-to the same bar as the confirmatory campaigns but tests no pre-registered
+\textbf{exploratory and outside the primary Holm family}; it is provenance-gated
+to the same bar as the primary campaigns but tests no primary
 hypothesis, so it is recorded separately here. Workload: DeathStarBench
 \texttt{hotelReservation} (namespace \texttt{hotel-reservation}), a deep frontend
 fan-out with per-service datastore pairs and Go gRPC over Consul service
@@ -115,8 +113,8 @@ Both arms were collected and analyzed on \texttt{main} commit \texttt{bdf1ccb}
 1 of the 144 C1/C2-hotel iterations (120 C1-hotel \texttt{pod-delete} churn
 iterations $+$ 24 C2-hotel \texttt{node-drain} sessions; the excluded one is an
 iteration of C1-hotel order-seed 8, collected after a deliberate pause/restart)
-carried an \texttt{app\_ready\_timeout} taint and is excluded by the registered
-healthy-only rule. The C1/C2-hotel raw checksums were computed pre-analysis; the raw data is
+carried an \texttt{app\_ready\_timeout} taint and is excluded by the
+healthy-only discard rule. The C1/C2-hotel raw checksums were computed pre-analysis; the raw data is
 archived and available on request. Measuring this workload
 required general tooling fixes (a wget-capable readiness-probe pod, a
 static-topology fallback for the cross-node fraction on Consul/gRPC services, and
@@ -126,8 +124,7 @@ experimental design or the system under test.
 \section{Design-corrected re-analysis (exploratory)}\label{sec:designfix-provenance}
 
 The availability-axis re-analysis (\S\ref{sec:design-fix}) is likewise
-\textbf{exploratory and outside the Holm family}. Its corrected criteria were
-pre-declared (in \texttt{DESIGN-FIX-SCOPE.md}) before the new data were examined.
+\textbf{exploratory and outside the Holm family}.
 New data: campaign \textbf{C4}, a \texttt{node-drain} dose-response on
 online-boutique --- 8 complete-block sessions ($f \in \{0,0.25,0.5,0.75,1.0\}$,
 $r{=}1$, $5\times3$ iterations), \texttt{results/c4-nodedrain-dose/}, collected on
@@ -139,4 +136,4 @@ the criterion). The reproducible driver \texttt{scripts/design\_fix\_analysis.py
 to the project repository; C4's checksums were computed pre-analysis and the C4
 raw data is archived and available on request. A
 confirmatory follow-up that would elevate this corrected design from exploratory
-to pre-registered is left as future work (\S\ref{sec:future-work}).
+to a primary test is left as future work (\S\ref{sec:future-work}).

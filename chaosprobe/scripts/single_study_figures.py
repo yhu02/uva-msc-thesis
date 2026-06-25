@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Thesis figures for the single pre-registered study (campaigns C1/C2/C3).
+"""Thesis figures for the single study (campaigns C1/C2/C3).
 
-Each data figure reuses the campaign's confirmatory analysis driver, so every
+Each data figure reuses the campaign's primary analysis driver, so every
 number printed on a figure is the same number the results chapter reports — no
 re-derivation, no drift. Figures read **archived** session data only (no live
 cluster).
@@ -52,9 +52,9 @@ from thesis_figures import (  # noqa: E402  (reuse the shared house style + work
 # Okabe-Ito colorblind-safe accents used across the data figures.
 PACKED_C = "#D55E00"  # packed / co-located
 SPREAD_C = "#009E73"  # spread
-BAR_OK = "#009E73"  # clears a registered bar
+BAR_OK = "#009E73"  # clears a bar
 BAR_NO = "#999999"  # does not clear the bar
-MARGIN_C = "#CC79A7"  # registered margin / SESOI reference
+MARGIN_C = "#CC79A7"  # margin / SESOI reference
 
 DEFAULT_C1 = "results/c1-online-boutique"
 DEFAULT_C2 = "results/c2-roundrobin"
@@ -102,7 +102,7 @@ def fig_h1_dose(c1_dir: str, out_dir: str) -> str:
             fontsize=8,
             color=DARK,
         )
-    # Registered SESOI threshold: f=0 baseline + 15 %.
+    # SESOI threshold: f=0 baseline + 15 %.
     ax.axhline(
         sesoi_thresh,
         ls="--",
@@ -163,7 +163,7 @@ def fig_h2_conntrack(c3_dir: str, out_dir: str) -> str:
     _annotate(
         axa,
         f"packed $>$ spread in {place['n_pairs']}/{place['n_pairs']} pairs\n"
-        f"(direction reversed vs registered)",
+        f"(direction reversed vs hypothesis)",
     )
 
     # (b) DNS intervention removes the drop.

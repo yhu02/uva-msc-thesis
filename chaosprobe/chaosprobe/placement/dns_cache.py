@@ -17,7 +17,7 @@ that cache:
 
 It realizes "NodeLocal DNSCache on/off" via pod ``dnsConfig`` rather than the
 kubelet ``--cluster-dns`` default, chosen for **per-session reversibility** under
-the registered randomized-order paired C3 design (a logged deviation). Pods
+the randomized-order paired C3 design (a logged deviation). Pods
 still resolve through the same node-local cache; only the per-deployment
 resolver selection changes.
 """

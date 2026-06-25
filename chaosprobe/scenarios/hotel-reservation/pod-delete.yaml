@@ -1,6 +1,6 @@
 # Placement Experiment — Pod-delete on search (hotelReservation, C1 dose-response)
 # Second-workload EXTERNAL-VALIDITY replication of the H1 dose-response design
-# (online-boutique was the frozen confirmatory workload). The runner adds a
+# (online-boutique was the primary workload). The runner adds a
 # unique suffix to metadata.name automatically.
 #
 # Usage (automated):

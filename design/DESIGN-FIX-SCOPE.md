@@ -1,18 +1,18 @@
-# Design-corrected re-analysis — pre-declared scope (exploratory, outside the Holm family)
+# Design-corrected re-analysis — declared scope (exploratory, outside the Holm family)
 
-**Status: pre-declared BEFORE the corrected analyses are run / the new data are
-looked at** (the freeze-before-analysis discipline, applied to a design fix).
-This arm is **exploratory** — the confirmatory Holm family is frozen and closed;
+**Status: declared BEFORE the corrected analyses are run / the new data are
+looked at** (criteria fixed before analysis, applied to a design fix).
+This arm is **exploratory** — the primary Holm family is closed;
 nothing here re-opens or re-scores it. It is reported as a *design-corrected
-follow-up*: the original confirmatory tests for the availability axis were
+follow-up*: the original primary tests for the availability axis were
 construction-limited, and these corrected designs resolve that limit.
 
 ## The fault being corrected
 
-Three confirmatory tests touch an **availability axis that could not vary** in
+Three primary tests touch an **availability axis that could not vary** in
 the regime they were computed in:
 
-1. **H3 trough-depth co-primary** — the registered margin (1.0 pod = 0.0909
+1. **H3 trough-depth co-primary** — the margin (1.0 pod = 0.0909
    fraction) *equals the realized r=1 trough depth* (0.0909), so the depth rescue
    can never clear it regardless of data: the co-primary is un-passable by
    construction.
@@ -38,7 +38,7 @@ anti-affine trough depth is **≤ 50 % of the realized r=1 trough depth** (i.e. 
 ≥ 50 % relative reduction). The packing control (r3-packed ≈ r1) and the
 user-error co-primary (margin 0.302) are unchanged. Also report the
 **integrated-outage** metric (trough depth × duration) proposed in the thesis's
-own future-work. Pre-declared support: significant r×mode interaction AND the
+own future-work. Declared support: significant r×mode interaction AND the
 ≥ 50 % depth reduction AND the user-error rescue ≥ 0.302 AND both packing controls.
 
 ### FIX-H4 — placement frontier with a live availability face (new run)
@@ -49,7 +49,7 @@ iterations (the C1 design, fault swapped to node-drain). Two faces:
   ready endpoints lost), which now varies with placement (blast radius = services
   co-located with the drain target);
 - **latency** = pre-chaos east-west p95.
-Pre-declared question: is the availability axis **non-degenerate** (varies
+Declared question: is the availability axis **non-degenerate** (varies
 materially across placements), and does the frontier show a latency×availability
 **trade-off** or a **dominance** ordering? (Either is a real result; degeneracy
 is the failure mode being corrected.)
@@ -63,9 +63,9 @@ sub-scores reported alongside.
 ## Honesty / framing
 
 This does **not** erase the original limitation — it discloses it and resolves
-it. The thesis will report: the registered availability tests were
+it. The thesis will report: the original availability tests were
 construction-limited (un-passable margin / degenerate face / no-signal regime);
-a design-corrected, pre-declared follow-up under `node-drain` resolves each and
+a design-corrected, declared follow-up under `node-drain` resolves each and
 finds [result]. The corrected arm is exploratory (no Holm membership, no
 multiplicity owed), provenance-gated to the same bar as the
-confirmatory campaigns.
+primary campaigns.

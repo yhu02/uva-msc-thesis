@@ -44,7 +44,7 @@ dependency-aware`.
 ### Complete-block placement sessions
 
 Passing `--fraction-levels` switches the run from named strategies to the placement-session
-session driver (pre-registration §Session design / WORKPLAN C1–C3): every
+session driver (the C1–C3 campaigns): every
 target cross-node fraction becomes one *condition* — fraction-solver
 placement realized through the replica-level affinity engine, achieved
 placement verified from live pods — executed through the same iteration
@@ -52,7 +52,7 @@ pipeline (fault injection, all collectors including the conntrack prober,
 taint/doctor metadata) as a strategy. The session is a complete block: all
 levels are visited once, in a randomized order drawn from `--order-seed`.
 Between conditions the driver restores default scheduling and waits for
-namespace quiescence (the M1b barrier). Per the pre-registered rejection
+namespace quiescence (the M1b barrier). Per the rejection
 rule, a condition (or iteration) whose live fraction misses its target by
 more than 0.05 is **tainted, never dropped**; everything lands in
 `summary.json → session` (levels, applied order, both seeds, the

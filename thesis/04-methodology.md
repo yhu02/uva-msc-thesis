@@ -255,10 +255,10 @@ searched, and the nearest peer-reviewed computer-science precedent for
 affirmatively accepting practical equivalence is the region-of-practical-
 equivalence analysis of Benavoli et al.
 ([JMLR 18(77), 2017](https://jmlr.org/papers/v18/16-305.html)). TOST
-requires a pre-declared smallest effect size of interest: ours is
-|ρ| = 0.3 — the conventional small-correlation boundary — fixed in the
-committed analysis code (`tost_equivalence_correlation`, default
-`sesoi = 0.3`) before the campaign ran, not chosen after seeing the data.
+requires a smallest effect size of interest to bound the equivalence
+region: ours is |ρ| = 0.3 — the conventional small-correlation boundary —
+encoded in the committed analysis code (`tost_equivalence_correlation`,
+default `sesoi = 0.3`).
 Where factorial structure is examined (e.g. strategy × phase in the
 node-drain analyses), the aligned-rank-transform ANOVA provides a
 nonparametric interaction test. **Power analysis** closes the H1 argument:

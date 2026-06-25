@@ -3,7 +3,7 @@
 Implements DESIGN §2.2 / Knob B of ``design/00-DESIGN.md``: placement is
 expressed as **replica-level affinity constraints** the scheduler satisfies —
 never assumed — for ``r ∈ {1, 3}`` replicas crossed with a binary packing
-mode (``design/02-WORKPLAN.md`` M1b build item):
+mode (M1b build item):
 
 - **r = 1** — nodeAffinity ``requiredDuringSchedulingIgnoredDuringExecution``
   pin to the assigned node: the nodeSelector semantics expressed as
@@ -19,7 +19,7 @@ mode (``design/02-WORKPLAN.md`` M1b build item):
   nodes of its own choosing.  This is the contrast the skipped E1 pilot
   could not realize (DESIGN §2.1).
 
-**r = 2 is deliberately unsupported** (DESIGN §2.3: no registered hypothesis
+**r = 2 is deliberately unsupported** (DESIGN §2.3: no hypothesis
 samples it, so a middle level would only inflate the M1b acceptance burden).
 
 The base mutator's managed-annotation convention
@@ -162,8 +162,8 @@ def packed_round_robin(services: Sequence[str], workers: Sequence[str]) -> Dict[
     :func:`verify_placement` still proves the packing (each service's replicas
     on exactly its pinned node) from live pods.
 
-    This is the single source for the round-robin packing registered in the
-    pre-registration (§H3 packed-cell semantics) and verified by the M1b
+    This is the single source for the round-robin packing
+    (§H3 packed-cell semantics) and verified by the M1b
     gate; the gate and the live session orchestrator both call it.
     """
     if not workers:

@@ -55,13 +55,14 @@ placement ranking and not a refutation of the placement literature. A placement
 effect can appear at (a) the resilience-score layer, (b) a kernel/network
 mechanism layer, and/or (c) the user-visible layer, and these layers need not
 agree --- so the contribution is establishing \emph{at which layer} an effect
-appears under a given fault class, and whether it reaches the user. To answer it
-without the freedom to choose tests after seeing the data, the study is
-\textbf{pre-registered}: the hypotheses, the smallest effect sizes of interest,
-the per-cell sample sizes, and the analysis code were frozen
-before any confirmatory data was collected (\S\ref{sec:campaign}).
+appears under a given fault class, and whether it reaches the user. The study
+constrains analyst degrees of freedom through several safeguards: the smallest
+effect sizes of interest are set against a \textbf{measured A/A noise floor}, the
+primary family is Holm-corrected, every session must pass a \texttt{doctor
+--strict} provenance gate, and a discard-not-patch rule governs admissibility
+(\S\ref{sec:campaign}).
 
-The question is decomposed into a pre-registered confirmatory family plus a
+The question is decomposed into a primary hypothesis family plus a
 descriptive deliverable, each a falsifiable target:
 
 \begin{itemize}
@@ -91,7 +92,7 @@ ipvs and not run), realized by
 deployment-level mutation on the Online Boutique benchmark (ten polyglot gRPC
 microservices plus Redis) on a pinned cluster of eight 2-vCPU/4-GiB workers
 (Kubernetes v1.28.6, kube-proxy in ipvs mode). The evidence is three
-pre-registered campaigns --- C1 (eight complete-block \texttt{pod-delete} dose
+campaigns --- C1 (eight complete-block \texttt{pod-delete} dose
 sessions), C2 (24 \texttt{node-drain} sessions), C3 (14 \texttt{pod-delete}
 cache-off/on sessions). Every quoted number traces to an archived run
 (Appendix~\ref{app:provenance}), and the single-replica baseline --- which makes
@@ -106,7 +107,7 @@ availability sub-score) cannot move regardless of placement. The design was
 \textbf{modified in response to this limitation} --- the availability axis was
 recomputed under \texttt{node-drain}, whose blast radius is placement-dependent
 --- and the corrected design resolves it (\S\ref{sec:design-fix}); a
-pre-registered confirmatory re-run is left as future work. \emph{Nothing from the original
+confirmatory re-run is left as future work. \emph{Nothing from the original
 iteration is removed}: its valid findings (the latency dose-response and the
 conntrack mechanism) are reported in full, and the construction-limited
 availability results are reported together with their limitation. This
@@ -118,15 +119,15 @@ contribution.
 The thesis makes three contributions, in priority order:
 
 \begin{enumerate}
-\item \textbf{A pre-registered, provenance-gated measurement methodology
+\item \textbf{A provenance-gated, layered measurement methodology
   (ChaosProbe).} A placement-aware chaos-evaluation framework --- a placement
   solver driving the two knobs, a LitmusChaos experiment runner, cross-layer
   probers (Prometheus mechanism metrics, route latency with a
   dependent-vs-control confound split, EndpointSlice availability snapshots),
   Locust load, and a Neo4j dependency graph from which the cross-node fraction
-  is computed --- run under a frozen pre-registration, a \texttt{doctor
-  --strict} provenance gate, and freeze-before-analysis, and able to
-  \emph{surface and correct its own construction limitations}
+  is computed --- run under effect-size bars set against a measured A/A noise
+  floor, a \texttt{doctor --strict} provenance gate, and a discard-not-patch
+  rule, and able to \emph{surface and correct its own construction limitations}
   (\S\ref{sec:design-fix}). The method and its discipline are reusable on any
   cluster/workload and stand independent of the empirical outcome.
 
@@ -135,15 +136,15 @@ The thesis makes three contributions, in priority order:
   significant in every campaign --- and a NodeLocal DNSCache intervention
   removes it. Under strict, Holm-corrected testing, however, this mechanism does
   \emph{not} translate into the user-visible placement, availability, and
-  dose-response advantages the hypotheses predicted (no confirmatory hypothesis
-  is supported at its registered bar, \S\ref{sec:family-holm}). Bounding exactly
+  dose-response advantages the hypotheses predicted (no primary hypothesis
+  is supported at its bar, \S\ref{sec:family-holm}). Bounding exactly
   how far a real mechanism reaches --- and converting ``we observed effects''
   into ``here is what survives a strict bar'' --- is the empirical contribution.
 
 \item \textbf{A reproducible campaign protocol with archived artifacts.}
   Independent single-commit sessions as the unit of analysis, each gated by
-  \texttt{doctor --strict}, with every campaign's raw data frozen before its
-  analysis was written and every quoted number traceable to an archived run
+  \texttt{doctor --strict}, with every campaign's raw data hash-stamped and
+  archived and every quoted number traceable to an archived run
   (Appendix~\ref{app:provenance}).
 \end{enumerate}
 
@@ -151,8 +152,8 @@ The thesis makes three contributions, in priority order:
 this thesis}: the placement solver and the two-knob design; the three-layer
 measurement design with its dependent-vs-control route confound check; the
 cross-node-fraction metric and the EndpointSlice trough measurement; the layered
-scorecard; the pre-registration, the \texttt{doctor --strict} provenance gate,
-the discard-not-patch rule, and the freeze-before-analysis protocol; the
+scorecard; the A/A-calibrated effect-size bars, the \texttt{doctor --strict}
+provenance gate, and the discard-not-patch rule; the
 churn-vs-node-failure fault-class framing; and every committed analysis script
 (the per-hypothesis drivers, the family Holm correction, figure generation).
 \emph{Integrated off-the-shelf}: LitmusChaos (fault execution),
@@ -167,8 +168,8 @@ Chapter~\ref{ch:related} positions the thesis against four bodies of literature
 research, and measurement methodology --- and locates it at their empty
 intersection. Chapter~\ref{ch:chaosprobe} describes ChaosProbe and its
 provenance-capture design. Chapter~\ref{ch:methodology} defines the three-layer
-measurement design, the two fault classes, the pre-registered campaign protocol,
-the statistical methods, and the pinned cluster environment.
+measurement design, the two fault classes, the campaign protocol and its
+provenance discipline, the statistical methods, and the pinned cluster environment.
 Chapter~\ref{ch:results} reports H1--H5 bar-first with the family Holm capstone
 and per-claim provenance, an exploratory second-workload external-validity
 replication (\S\ref{sec:external-validity}), and a design-corrected re-analysis

@@ -758,7 +758,7 @@ def test_main_clean_pair(tmp_path, capsys):
     assert "No A/A findings" in out
     assert "liveAchievedF identity: OK" in out
     assert "(none)" in out  # no tainted iterations
-    assert "1 pair(s) found vs pre-registered >= 3 — INSUFFICIENT" in out
+    assert "1 pair(s) found vs the target >= 3 — INSUFFICIENT" in out
 
     result = json.loads(out_json.read_text())
     assert result["schema"] == aa.SCHEMA
@@ -845,7 +845,7 @@ def test_cross_pair_drift_test(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0  # sufficient pairs, nothing crosses the default alpha
     assert "No A/A findings" in out
-    assert "3 pair(s) found vs pre-registered >= 3 — SUFFICIENT" in out
+    assert "3 pair(s) found vs the target >= 3 — SUFFICIENT" in out
     assert "Cross-pair drift test" in out
 
     rc = aa.main(["--results-dir", str(tmp_path), "--alpha", "0.3"])
@@ -872,7 +872,7 @@ def test_main_empty_results_dir(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 2
     assert "(no pairs)" in out
-    assert "0 pair(s) found vs pre-registered >= 3 — INSUFFICIENT" in out
+    assert "0 pair(s) found vs the target >= 3 — INSUFFICIENT" in out
 
 
 def test_main_sufficient_pairs_and_warnings_printed(tmp_path, capsys):
@@ -886,7 +886,7 @@ def test_main_sufficient_pairs_and_warnings_printed(tmp_path, capsys):
     rc = aa.main(["--results-dir", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "3 pair(s) found vs pre-registered >= 3 — SUFFICIENT" in out
+    assert "3 pair(s) found vs the target >= 3 — SUFFICIENT" in out
     assert "WARNING: zz-not-session: no session block" in out
     # Identical scores: sign test drops all ties -> p = 1.0, no finding.
     assert "A/A FINDING" not in out

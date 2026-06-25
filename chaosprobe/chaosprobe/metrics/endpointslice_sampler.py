@@ -36,7 +36,7 @@ The result lands in ``summary.json`` as the additive top-level metrics key
 ``endpointSliceTimeSeries = {"samples": [...], "meta": {...}}`` (parallel to
 ``conntrackProtocolSamples`` / ``conntrackProtocolMeta``).  The existing
 pre/during/post snapshots under ``metrics.endpointSlices`` are left untouched
-— ``blast_radius.py`` and the frozen A/A data depend on them; the time series
+— ``blast_radius.py`` and the A/A data depend on them; the time series
 is purely additive.
 """
 

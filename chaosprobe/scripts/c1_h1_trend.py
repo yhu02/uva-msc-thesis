@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""H1 confirmatory analysis: dose-response of the east-west tail in f.
+"""H1 primary analysis: dose-response of the east-west tail in f.
 
-Runs the registered H1 primary test (`01-PREREGISTRATION.md` §H1): a
+Runs the H1 primary test (§H1): a
 **Page's L trend test** over the five ordered cross-node-fraction levels
 `f ∈ {0, 0.25, 0.5, 0.75, 1.0}`, predicting a monotone *increase* in median
 east-west p95 latency.  Each C1 session is a complete ordered block; the unit
@@ -11,8 +11,8 @@ route p95, loadgen→ excluded, pre-chaos window) over the session's untainted
 iterations.  Extraction reuses the canonical
 :func:`m2_aa_analysis.load_condition_outcomes`.
 
-**D3 UDP-slope taint is OFF by default here (deviation D-2026-06-14-02,
-DEVIATIONS.md).**  Diagnosis of C1 showed the frozen D3 band (D-2026-06-14-01,
+**D3 UDP-slope taint is OFF by default here (deviation
+D-2026-06-14-02).**  Diagnosis of C1 showed the D3 band (D-2026-06-14-01,
 derived from the low-churn A/A block) does not generalize to C1's per-level
 re-placement regime — it taints every f-025/f-050 iteration — while the
 east-west latency baseline at those levels is in fact the *cleanest* of all
@@ -20,12 +20,12 @@ levels.  The pre-window UDP/DNS conntrack pool is not a validity precondition
 for this TCP/gRPC latency outcome, so the slope-taint is removed from H1.
 ``--slope-band-taint`` re-enables it for the sensitivity report.
 
-Alongside the test it reports the registered **SESOI** effect size: the % change
+Alongside the test it reports the **SESOI** effect size: the % change
 in the per-level grand-median east-west p95 from f = 0 to f = 1 (the bar is a
 ≥15 % increase). A statistically significant Page's L with a < 15 % effect is
-reported as *below the SESOI*, not as support (prereg §H1).
+reported as *below the SESOI*, not as support (§H1).
 
-The Spearman-over-designed-levels sensitivity check is non-confirmatory and is
+The Spearman-over-designed-levels sensitivity check is secondary and is
 not computed here.
 
 Usage::
@@ -55,7 +55,7 @@ from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
     load_condition_outcomes,
 )
 
-#: The registered H1 design: the five f-levels in predicted-increasing order.
+#: The H1 design: the five f-levels in predicted-increasing order.
 LEVELS: Tuple[Tuple[str, float], ...] = (
     ("f-000", 0.0),
     ("f-025", 0.25),
@@ -64,7 +64,7 @@ LEVELS: Tuple[Tuple[str, float], ...] = (
     ("f-100", 1.0),
 )
 
-#: Registered H1 SESOI: ≥15 % increase in east-west p95 from f = 0 to f = 1.
+#: H1 SESOI: ≥15 % increase in east-west p95 from f = 0 to f = 1.
 SESOI_PCT = 15.0
 
 #: The D4-pinned H1 outcome (median east-west p95, pre-chaos).
@@ -86,7 +86,7 @@ def collect_blocks(
     the reported effect describe one cohort.
 
     ``slope_band_taint`` (default ``False`` — deviation D-2026-06-14-02) adds
-    the frozen D3 UDP-slope taint; left off for the primary H1 analysis.
+    the D3 UDP-slope taint; left off for the primary H1 analysis.
     """
     sessions, warnings = discover_sessions(results_dir)
     blocks: List[List[float]] = []
@@ -144,7 +144,7 @@ def analyze(results_dir: str, slope_band_taint: bool = False) -> Dict[str, objec
     """The full H1 dose-response analysis as one JSON-ready dict.
 
     ``slope_band_taint`` defaults OFF (deviation D-2026-06-14-02); set it for
-    the sensitivity run that re-applies the frozen D3 UDP-slope taint.
+    the sensitivity run that re-applies the D3 UDP-slope taint.
     """
     blocks, warnings = collect_blocks(results_dir, slope_band_taint=slope_band_taint)
     page = page_trend_test(blocks)
@@ -196,7 +196,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--slope-band-taint",
         dest="slope_band_taint",
         action="store_true",
-        help="re-apply the frozen D3 UDP-slope taint (off by default per "
+        help="re-apply the D3 UDP-slope taint (off by default per "
         "deviation D-2026-06-14-02; use for the sensitivity run)",
     )
     args = parser.parse_args(argv)

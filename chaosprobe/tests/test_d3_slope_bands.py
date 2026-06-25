@@ -133,7 +133,7 @@ def test_main_check_pass(tmp_path, capsys, monkeypatch):
 
 
 def test_main_check_mismatch_and_insufficient_branch(tmp_path, capsys):
-    # f-050 derives a band that won't match the real frozen f-050; f-075 has
+    # f-050 derives a band that won't match the real f-050; f-075 has
     # 1 sample -> the "insufficient samples" print branch; other levels empty.
     _write_session(tmp_path, "s1", {"f-050": [600.0], "f-075": [-7000.0]})
     _write_session(tmp_path, "s2", {"f-050": [700.0]})

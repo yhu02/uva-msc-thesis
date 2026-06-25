@@ -14,7 +14,7 @@
     "notes": [
       "frontend also initializes review/attractions gRPC clients at this commit, but those services are not part of the upstream kubernetes/ deployment and no load endpoint exercises them; they are omitted here, as upstream omits them.",
       "consul (registry) and jaeger (tracing) receive control-plane/observability traffic from every app service; those star edges are deliberately excluded from the request-path dependency graph, but both deployments are listed in services so the solver can place them.",
-      "Edges are directed [caller, callee]; with 16 uniform-weight edges the fraction quantum is 1/16 = 0.0625, so the pre-registered f targets {0, 0.25, 0.5, 0.75, 1} are exact multiples (4/16, 8/16, 12/16)."
+      "Edges are directed [caller, callee]; with 16 uniform-weight edges the fraction quantum is 1/16 = 0.0625, so the f targets {0, 0.25, 0.5, 0.75, 1} are exact multiples (4/16, 8/16, 12/16)."
     ]
   },
   "services": [

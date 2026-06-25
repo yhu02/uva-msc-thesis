@@ -7,17 +7,17 @@
 
 ## Verdict
 
-The project's pre-registered top risk — *can a solver hit the five
+The project's top risk — *can a solver hit the five
 cross-node-fraction targets on a real scheduler?* — is **retired**. The
 reachable-fraction set was enumerated **exhaustively** (not sampled) at all
 three candidate cluster sizes, every target is reachable within the
-pre-registered ±0.05, and the live solve→apply→schedule→verify loop at N=4
+±0.05 tolerance, and the live solve→apply→schedule→verify loop at N=4
 reproduced the analytical fractions **exactly** (deviation 0.0000 at every
 level — far inside the ±0.02 fidelity criterion).
 
 ## Exit criteria
 
-| M1a exit criterion (02-WORKPLAN) | Result |
+| M1a exit criterion | Result |
 |---|---|
 | Unit + property tests in CI, green before any live gate; achieved-fraction validated against an independent second implementation | ✅ exact agreement on all 70 cross-checks (40 random graphs + 30 direct); 100 % line+branch coverage on the new module; suite 2051 green |
 | Analytical enumerator matches live achieved-f at N=4 within ±0.02 | ✅ **exact** (Δ = 0.0000 at all five levels; see table) |
@@ -36,7 +36,7 @@ grid — comfortably inside the ±0.05 tolerance at every target.
 | 6 | exhaustive (≤6 blocks) | 601,492 | 0.80 s | full k/15 grid (16 values) | 0.033 (at f=0.50) |
 | 8 | exhaustive (≤8 blocks) | 677,359 | 0.66 s | full k/15 grid (16 values) | 0.033 (at f=0.50) |
 
-All five pre-registered targets {0, 0.25, 0.50, 0.75, 1.0} are within ±0.05
+All five targets {0, 0.25, 0.50, 0.75, 1.0} are within ±0.05
 at every candidate N. **The reachable set does not shrink between N=6 and
 N=8**, so the N=6-vs-8 choice is unconstrained by solver reachability.
 
@@ -70,7 +70,7 @@ Cluster restored afterwards (0 pinned deployments, 0 non-Running pods).
   allocatable.
 - **Reachability does not constrain N** (table above): 6 workers suffice;
   8×4 GiB fallback also reachable but would still require the M1b gate
-  re-run at N=8 per the workplan.
+  re-run at N=8.
 
 **Recommendation: GO — procure the pinned 6 × 8 GiB × ≥4 vCPU cluster as
 specified; no contingency triggered.**
@@ -82,7 +82,7 @@ specified; no contingency triggered.**
    its documented fallback. The *unweighted* and *weighted* fractions
    coincide under uniform weights; if M1b's prober adds real volumes, the
    quantization grid becomes non-uniform and the enumeration must be
-   re-run with weights before the M2 freeze (cheap: <1 s).
+   re-run with weights before the M2 analysis (cheap: <1 s).
 2. Live validation ran at **r=1 with per-service nodeSelector pinning**
    (the earlier mechanism). The replica-level affinity engine — and hence
    anti-affine r=3 scheduling — is M1b scope, on the pinned-N cluster.

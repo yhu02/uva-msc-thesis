@@ -1,20 +1,20 @@
 # ChaosProbe — H4 placement frontier (descriptive) + H6 (not attempted)
 
-Closes the two registered non-family deliverables, so **every registered
-hypothesis now has a stated outcome** (the workplan exit criterion). H4 is
-descriptive (a registered figure + reporting protocol, not a falsifiable
-hypothesis); H6 is an exploratory secondary that was not attempted. Neither
-is in the confirmatory Holm family (closed in `C3-OB-REPORT.md`).
+Closes the two non-family deliverables, so **every hypothesis now has a
+stated outcome**. H4 is descriptive (a figure + reporting protocol, not a
+falsifiable hypothesis); H6 is an exploratory secondary that was not
+attempted. Neither is in the primary Holm family (closed in
+`C3-OB-REPORT.md`).
 
 ## H4 — the placement Pareto frontier (descriptive)
 
-**Protocol (registered, binding — `01-PREREGISTRATION.md` §H4, `00-DESIGN.md`
-§6).** For each designed placement, plot the **latency face** (pre-chaos
+**Protocol (`00-DESIGN.md` §6).** For each designed placement, plot the
+**latency face** (pre-chaos
 east-west p95 tail — steady-state, placement-determined) against the
 **availability face** (during-chaos blast/recovery: trough depth in pods +
 user-route error rate), with cluster-bootstrap CIs, and report the
 **non-dominated set under margins**. Dominance is declared only with margins,
-frozen at M2 (`M2-AA-REPORT.md`): **δ_latency = 4.4 ms**, **δ_depth = 1.0 pod**,
+set from the A/A calibration (`M2-AA-REPORT.md`): **δ_latency = 4.4 ms**, **δ_depth = 1.0 pod**,
 **δ_error = 0.302**. A dominates B iff A beats B by ≥ the band on the latency
 face **and** on *both* availability DVs (the conservative all-DV reading). All
 three DVs are "lower is better". Analysis driver: `scripts/h4_frontier.py`;
@@ -58,14 +58,14 @@ neither availability DV separates placements by its δ band. The **latency face
 does vary** — packed (f = 0, 35.7 ms) is faster than the mid/spread placements
 (f = 0.5, 41.4 ms) by 5.7 ms > δ_latency, with non-overlapping CIs (this is the
 H1 dose-response signal). But a single-face advantage cannot establish
-**margin-dominance** under the registered all-DV rule, so the protocol correctly
+**margin-dominance** under the all-DV rule, so the protocol correctly
 crowns no winner and the entire set is non-dominated.
 
 The two-face latency-vs-availability trade-off the frontier was designed to
 reveal is therefore **not realizable from the collected data**: pod-delete (C1/C3)
 produces no availability-face variation to trade against latency, and the fault
 that *does* move the availability face — node-drain (C2) — has no latency face.
-This is consistent with the confirmatory family verdict: the placement/
+This is consistent with the primary hypothesis family verdict: the placement/
 availability conclusions the earlier study drew do not reproduce under the stricter design.
 Reported per protocol with the margins stated; no dominance is manufactured from
 the latency face alone.
@@ -79,19 +79,18 @@ the latency face alone.
 - **Single fault class** on the plotted cells (all pod-delete); the latency face
   is pre-chaos hence fault-independent, but the availability face is fault-conditioned.
 - Cluster-bootstrap CIs resample over sessions (n = 8 per C1 cell); descriptive,
-  not a significance test (none is registered for H4 — frontier cardinality is
-  near-self-confirming under noisy CIs, the registered rationale for the margin rule).
+  not a significance test (none is defined for H4 — frontier cardinality is
+  near-self-confirming under noisy CIs, the rationale for the margin rule).
 
 ## H6 — iptables-mode direction transfer (NOT ATTEMPTED)
 
 **Status: not attempted.** H6 (exploratory secondary, outside the
-confirmatory family) registered a sign test that the spread-vs-packed direction
+primary hypothesis family) defined a sign test that the spread-vs-packed direction
 of the UDP-drop contrast is preserved under kube-proxy **iptables** mode (vs the
-ipvs mode all campaigns used). It was the **second item in the pre-declared
-de-scope order** (`01-PREREGISTRATION.md` §H6, `02-WORKPLAN.md` de-scope
-order: second workload first, then H6). No iptables-mode campaign was run —
+ipvs mode all campaigns used). It was the **second item in the de-scope
+order** (second workload first, then H6). No iptables-mode campaign was run —
 the cluster ran kube-proxy **ipvs** throughout, and re-provisioning a parallel
-iptables cluster was outside the realized scope. Per the registered protocol an
-un-run exploratory arm is **reported as not-attempted**, which is recorded here
-and in `DEVIATIONS.md`. No data, no claim; the omission neither supports nor
-falsifies anything (H6 is exploratory and uncorrected by design).
+iptables cluster was outside the realized scope. An un-run exploratory arm is
+**reported as not-attempted**, which is recorded here. No data, no claim; the
+omission neither supports nor falsifies anything (H6 is exploratory and
+uncorrected by design).

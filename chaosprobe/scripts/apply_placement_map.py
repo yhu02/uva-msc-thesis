@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Apply an explicit service→node placement map (M1a live-validation helper).
 
-The M1a exit criterion (``design/02-WORKPLAN.md``) validates the analytical
+The M1a exit criterion validates the analytical
 reachable-fraction enumerator against live reality on the 4-worker cluster:
 solve → **apply** → schedule → verify.  This script is the *apply + verify*
 half of that loop:

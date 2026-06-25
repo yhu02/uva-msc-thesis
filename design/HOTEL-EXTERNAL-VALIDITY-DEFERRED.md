@@ -29,7 +29,7 @@ interaction with anti-affine directionally rescuing).
 hotelReservation is deployed and the full measurement pipeline was validated on
 it — the data ChaosProbe collects is clean once the app has recovered:
 
-- **East-west latency face** (the registered H1 primary outcome `ew_p95`):
+- **East-west latency face** (the H1 primary outcome `ew_p95`):
   11 inter-service routes measured with real p95 (e.g. `frontend->search` ~5 ms,
   `search->geo`, `*->mongodb/memcached`). hotelReservation uses Consul + gRPC and
   exposes no `*_SERVICE_ADDR` env vars, so the new **static-`topology.json`
@@ -85,5 +85,5 @@ pod-delete.yaml`, `node-drain.yaml`) and topology are in place. The only open
 item is the restart-vs-recovery decision above. Pick one (likely: skip the
 per-iteration restart for hotel, or a dependency-ordered restart so the frontend
 restarts last), validate a clean untainted smoke, then run C1 then C2 mirroring
-the frozen design — reported as **exploratory external validity, outside the
+the original design — reported as **exploratory external validity, outside the
 Holm family**.

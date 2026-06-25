@@ -20,11 +20,20 @@ kube-proxy mode, and a single-replica baseline bound the claims tightly, which i
 why \S\ref{sec:generalizes} separates what generalizes (the method, the
 mechanism's direction) from what does not (the absolute values, anything
 multi-replica). \textbf{Conclusion validity} asks whether the statistics support
-the inferences: the design is \emph{pre-registered} with SESOIs fixed against a
-measured A/A noise floor and the confirmatory family Holm-corrected, leaning on
-nonparametric tests, cluster-bootstrap intervals, and equivalence testing rather
-than significance hunting (\S\ref{sec:statistics}). The tables below give the
-threat-by-threat detail.
+the inferences. Several safeguards constrain them: (i) the SESOIs and dominance
+margins are set against a \emph{measured A/A noise floor}, so an effect inside
+instrument noise cannot clear a bar; (ii) the primary family is Holm-corrected
+for multiplicity; (iii) every session must pass a \texttt{doctor --strict}
+provenance gate (clean tree, scenario hashes, git-not-dirty); (iv) a
+discard-not-patch rule drops tainted sessions rather than repairing them; (v) the
+dependent-vs-control route split separates fault-specific effects from run-level
+drift; and (vi) a second workload (hotelReservation) corroborates the placement
+findings. The analysis leans on nonparametric tests, cluster-bootstrap
+intervals, and equivalence testing rather than significance hunting
+(\S\ref{sec:statistics}). This study carries no public analysis registration, so
+the credibility of the SESOIs rests on the measured A/A noise floor that sets
+them and on the Holm multiplicity correction rather than on any commitment made
+ahead of the data. The tables below give the threat-by-threat detail.
 
 \section{Threats and defences}\label{sec:threats-table}
 
@@ -42,7 +51,7 @@ threat-by-threat detail.
 \addlinespace
 \textbf{Placement mismatch} & The solver may not realize the intended cross-node fraction. & The M1b gate verified all five $f$-levels within $\pm 0.05$; \texttt{placementMatchRates} reported; mismatched iterations flagged or excluded. \\
 \addlinespace
-\textbf{Run-to-run drift} & Iteration and session noise can dominate. & The A/A calibration block quantified the noise floor \emph{before} freezing, and every SESOI/margin was fixed no smaller than that floor; independent single-commit sessions are the unit of analysis; runs are blocked/random effects; cluster-bootstrap CIs. \\
+\textbf{Run-to-run drift} & Iteration and session noise can dominate. & The A/A calibration block measured the noise floor, and every SESOI/margin was set no smaller than that floor; independent single-commit sessions are the unit of analysis; runs are blocked/random effects; cluster-bootstrap CIs. \\
 \addlinespace
 \textbf{Dirty provenance} & Untracked files / missing metadata undermine credibility. & Never quote results from runs failing \texttt{doctor --strict}; an early, weakly-provenanced pilot whose striking number did not survive strict re-runs is the institutionalized lesson behind the gate and the manifest dirty flag. \\
 \addlinespace
@@ -50,7 +59,7 @@ threat-by-threat detail.
 \addlinespace
 \textbf{Overclaiming causality} & Run-level slowness can confound correlations. & Dependent-vs-control routes + within-run correlation; TOST for equivalence claims; causal language reserved for the manipulated variable (placement) and the controlled DNS intervention. \\
 \addlinespace
-\textbf{Outcome-aware deviation} & One deviation (D-2026-06-14-02, withdrawing the registered D3 UDP-slope taint from the C1 H1/H5 latency analyses) was decided \emph{after} observing it made H1 unrunnable --- the study's only non-blind deviation. & Disclosed in the H1 result (\S\ref{sec:h1}); justified on protocol-independent grounds (the band gates DNS/UDP, a different protocol than the latency outcome, and discards the cleanest levels); the taint-on sensitivity run is available, and H5's verdict is shown robust to the choice while H1's dependence is stated explicitly. \\
+\textbf{Outcome-aware analysis choice} & One analysis choice (D-2026-06-14-02, withdrawing the D3 UDP-slope taint rule from the C1 H1/H5 latency analyses) was made \emph{after} observing it made H1 unrunnable --- the study's only outcome-aware choice. & Disclosed in the H1 result (\S\ref{sec:h1}); justified on protocol-independent grounds (the band gates DNS/UDP, a different protocol than the latency outcome, and discards the cleanest levels); the taint-on sensitivity run is available, and H5's verdict is shown robust to the choice while H1's dependence is stated explicitly. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -73,9 +82,9 @@ exists because the drift was measured, not despite it.
 \toprule
 \textbf{Aspect} & \textbf{Generalizes?} & \textbf{Why / caveat} \\
 \midrule
-The \emph{method} (placement-aware, cross-layer, pre-registered, provenance-gated chaos evaluation) & \textbf{Yes} & The framework and analysis discipline are reusable on any cluster/workload. \\
+The \emph{method} (placement-aware, cross-layer, provenance-gated chaos evaluation) & \textbf{Yes} & The framework and analysis discipline are reusable on any cluster/workload. \\
 \addlinespace
-The \emph{direction} of the placement effect on the conntrack drop (H2) & \textbf{Direction only} & Reproducible here (packed concentrates more per-node conntrack churn than spread under \texttt{pod-delete}, 7/7 pairs); absolute values are environment-specific, and the direction is the \emph{opposite} of the registered prediction. \\
+The \emph{direction} of the placement effect on the conntrack drop (H2) & \textbf{Direction only} & Reproducible here (packed concentrates more per-node conntrack churn than spread under \texttt{pod-delete}, 7/7 pairs); absolute values are environment-specific, and the direction is the \emph{opposite} of the prediction. \\
 \addlinespace
 The DNS-cache intervention (H2 arm b) removing the conntrack drop & \textbf{Direction only} & The NodeLocal DNSCache shrinks the drop under both placements here; the magnitude is environment-specific. \\
 \addlinespace
@@ -95,8 +104,8 @@ Anything about multi-replica / HA failover & \textbf{Partly (node-drain only)} &
 \end{center}
 
 The asymmetry of this table is deliberate. The portable row is the first: the
-measurement design, the pre-registered campaign protocol, and the analysis
-scripts transfer to any cluster and workload unchanged: a second-workload
+measurement design, the campaign protocol and its provenance discipline, and the
+analysis scripts transfer to any cluster and workload unchanged: a second-workload
 replication (\S\ref{sec:external-validity}) corroborates both placement studies,
 and a replication on different infrastructure is now the most valuable remaining
 follow-up (\S\ref{sec:future-work}). Everything below
@@ -110,8 +119,8 @@ instead of guessing.
 
 The study declines several stronger claims the data could be mistaken to
 support: no universal ``best'' placement; no claim that the placement or
-availability \emph{effects are disproven} (the confirmatory hypotheses are
-\emph{not supported at their registered bars} --- a bounded result, not a
+availability \emph{effects are disproven} (the primary hypotheses are
+\emph{not supported at their bars} --- a bounded result, not a
 refutation, and the mechanism they concern is real and significant); no proven
 causality for the conntrack mechanism (mechanistic consistency, not controlled
 causal proof); no generalization to Kubernetes clusters broadly; no claim that
@@ -121,9 +130,9 @@ archived rerun package).
 
 These exclusions are commitments, not disclaimers: each names a stronger claim
 the data could be misread to support and that we decline. In particular, ``no
-confirmatory hypothesis was supported'' is stated precisely --- two primaries
-(H1's trend, H3's interaction) are Holm-significant but fail their registered
+primary hypothesis was supported'' is stated precisely --- two primaries
+(H1's trend, H3's interaction) are Holm-significant but fail their
 effect-size bars, and the consistent positive thread is the mechanism, not the
 user-visible placement advantages the hypotheses predicted (\S\ref{sec:family-holm}).
-Where this document's prose and the registered scope could ever be read to
-disagree, the registered scope governs.
+Where this document's prose and the stated scope of claims could ever be read to
+disagree, the stated scope governs.

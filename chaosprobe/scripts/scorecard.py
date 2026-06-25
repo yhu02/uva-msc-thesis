@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """H5 layered scorecard — three sub-scores + the reliability evaluation.
 
-Implements the layered scorecard registered as DESIGN §5 / pre-registration
-§H5, with the aggregation formulas specified post-freeze (blind to all
-campaign data) in ``design/DEVIATIONS.md`` entry **D-2026-06-13-01**. The
-constituent signals and the evaluation rule are frozen at the M2 commit
-(tag ``prereg-freeze``); only the scalar aggregation is added here.
+Implements the layered scorecard (§H5), with the aggregation formulas
+specified after calibration (blind to all
+campaign data) in entry **D-2026-06-13-01**. The
+constituent signals and the evaluation rule are set from the M2 A/A
+calibration; only the scalar aggregation is added here.
 
 The scorecard replaces the aggregate ``score`` with **three per-layer
 sub-scores**, each a single scalar per session-condition, higher = better,
 range ``[0, 100]``:
 
-1. **availability** (required, confirmatory) — EndpointSlice trough
+1. **availability** (required, primary) — EndpointSlice trough
    depth/duration + user-route error rate during fault.
-2. **mechanism-reconvergence** (required, confirmatory) — protocol-labeled
+2. **mechanism-reconvergence** (required, primary) — protocol-labeled
    UDP-conntrack disturbance + reconvergence time.
 3. **user-tail** (exploratory) — dependent-route p95 vs control-route p95,
    the H3 confound-controlled contrast.
@@ -45,7 +45,7 @@ top-level ``anomalyLabels[*].parameters.duration_s`` (recorded
 ``TOTAL_CHAOS_DURATION``); falling back to the during-chaos sample span
 (EndpointSlice time series, then conntrack UDP series).
 
-Reliability evaluation (frozen §H5)
+Reliability evaluation (§H5)
 --------------------------------------
 Across a set of **campaign** sessions (NOT the A/A pairs): condition-level
 ICC for each sub-score AND for the aggregate ``score`` (ICC_old), using
@@ -61,7 +61,7 @@ H5's single Holm input is ``max(p_availability, p_mechanism)``. user-tail
 is computed and reported identically but flagged **exploratory** and excluded
 from the decision.
 
-Graceful degradation: on the frozen A/A block (no EndpointSlice time series ->
+Graceful degradation: on the A/A block (no EndpointSlice time series ->
 ``availability`` and ``mechanism`` sub-scores ``None``) the evaluation reports
 "not evaluable" rather than crashing.
 
@@ -112,12 +112,12 @@ from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
 SCHEMA = "chaosprobe/scorecard/v1"
 
 #: The three sub-score keys, in report order.  The first two are the
-#: **required** (confirmatory) sub-scores; the third is **exploratory**.
+#: **required** (primary) sub-scores; the third is **exploratory**.
 SUBSCORES = ("availability", "mechanism", "user_tail")
 REQUIRED_SUBSCORES = ("availability", "mechanism")
 EXPLORATORY_SUBSCORES = ("user_tail",)
 
-#: The frozen absolute reliability bar (pre-registration §H5).
+#: The absolute reliability bar (§H5).
 ABSOLUTE_ICC_BAR = 0.5
 
 #: Fewer than this many distinct session-conditions (the ICC "strategy"
@@ -442,11 +442,11 @@ def load_condition_subscores(
 
     Mirrors :func:`m2_aa_analysis.load_condition_outcomes`: loads the
     ``<condition>.json``, folds ``preChaosTaintReasons`` into ``tainted`` in
-    place, and emits a ``None`` row for every tainted iteration (the registered
+    place, and emits a ``None`` row for every tainted iteration (the
     "never quoted" exclusion).  ``None`` when the raw file is missing.
 
     When ``slope_band_taint`` is set (C1 analysis — see :func:`analyze`), an
-    iteration whose pre-window UDP slope leaves its f-level's frozen D3 band
+    iteration whose pre-window UDP slope leaves its f-level's D3 band
     (:func:`m2_aa_analysis.udp_preslope_out_of_band`) is tainted too, exactly as
     the canonical loader does; the A/A block that defined the bands is never
     gated by them.
@@ -500,7 +500,7 @@ def collect_conditions(
     Discovers ``<results-dir>/*/summary.json`` placement sessions (via
     :func:`m2_aa_analysis.parse_session`), reads each accepted condition's raw
     file, and returns ``(conditions, warnings, taints)``.  Rejected / not-
-    accepted conditions are skipped with a warning — registered-invalid data
+    accepted conditions are skipped with a warning — invalid data
     must not enter the reliability estimate.  ``taints`` is the flat list of
     excluded-iteration descriptions (engine-side + raw pre-chaos taints).
     """
@@ -550,7 +550,7 @@ def _clean_iterations(values: Sequence[Optional[float]]) -> List[float]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Condition-level ICC + the H5 evaluation (frozen §H5)
+# Condition-level ICC + the H5 evaluation (§H5)
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -582,7 +582,7 @@ def _diff_bootstrap_excludes_zero(
     Both ICCs are recomputed on the SAME resampled set of conditions/sessions
     each iteration, so the difference is paired (cancels the shared sampling
     noise).  Returns the point difference, the CI, whether the CI excludes 0,
-    and a two-sided bootstrap p-value for ``diff = 0`` (frozen §H5: the CI
+    and a two-sided bootstrap p-value for ``diff = 0`` (§H5: the CI
     on ICC_new − ICC_old must exclude zero).
     """
 
@@ -656,7 +656,7 @@ def evaluate_subscore(
     n_resamples: int,
     seed: Optional[int],
 ) -> Dict[str, Any]:
-    """The full per-sub-score evaluation row (frozen §H5 test rule).
+    """The full per-sub-score evaluation row (§H5 test rule).
 
     Pass requires BOTH: (1) the bootstrap CI on ``ICC_sub - ICC_old`` excludes
     0, AND (2) ``ICC_sub ≥ 0.5`` with its own CI excluding ICC_old.  The
@@ -670,7 +670,7 @@ def evaluate_subscore(
     n_conditions = icc_sub["n_strategies"]
     # A condition observed in <2 sessions has no test-retest replicate to
     # disagree, so it inflates ICC toward 1.0 (a degenerate, silently
-    # optimistic reliability). The frozen C1 design guarantees >=2 sessions
+    # optimistic reliability). The C1 design guarantees >=2 sessions
     # per condition; surfacing any thin-replication condition makes an
     # off-nominal inflation visible instead of silent.
     thin_replication = _thin_replication_conditions(sub_cells)
@@ -734,7 +734,7 @@ def _metric_cells(
 ) -> Dict[Tuple[str, str], List[float]]:
     """ICC cells for one sub-score: ``{(condition, session): [session-median]}``.
 
-    The registered unit is the **session-condition median over untainted
+    The unit is the **session-condition median over untainted
     iterations** (D-2026-06-13-01), so each cell is a single-element list — the
     "condition-level ICC" is then the test-retest reliability of that median
     (between-condition variance / total).  Cells whose median is unmeasurable
@@ -777,7 +777,7 @@ def analyze(
     """The full H5 scorecard reliability analysis as one JSON-ready dict.
 
     ``slope_band_taint`` defaults OFF (deviation D-2026-06-14-02): the C1
-    diagnosis showed the frozen D3 UDP-slope band (D-2026-06-14-01) does not
+    diagnosis showed the D3 UDP-slope band (D-2026-06-14-01) does not
     generalize from the A/A block to the C1 per-level re-placement regime — it
     taints every f-025/f-050 iteration — while the latency baseline at those
     levels is the cleanest, and the UDP/DNS conntrack pool is not a validity
@@ -810,7 +810,7 @@ def analyze(
     all_evaluable = all(row["evaluable"] for row in required_rows)
     if all_evaluable:
         conjunction_pass = all(bool(row["pass"]) for row in required_rows)
-        # Holm input = max(p_availability, p_mechanism) (frozen §H5).
+        # Holm input = max(p_availability, p_mechanism) (§H5).
         p_values = [row["pValue"] for row in required_rows if row["pValue"] is not None]
         holm_input = max(p_values) if len(p_values) == len(required_rows) else None
         verdict = "PASS" if conjunction_pass else "FAIL"
@@ -942,9 +942,9 @@ def build_parser() -> argparse.ArgumentParser:
             "H5 layered scorecard: computes the three per-iteration sub-scores "
             "(availability, mechanism-reconvergence, user-tail), aggregates each to "
             "the session-condition median over untainted iterations, and runs the "
-            "frozen H5 reliability evaluation (condition-level ICC per sub-score "
+            "H5 reliability evaluation (condition-level ICC per sub-score "
             "vs the aggregate; required conjunction; user-tail exploratory). "
-            "Aggregation formulas per DEVIATIONS.md D-2026-06-13-01."
+            "Aggregation formulas per D-2026-06-13-01."
         ),
     )
     parser.add_argument(
@@ -968,7 +968,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="slope_band_taint",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="apply the frozen D3 pre-window UDP-slope taint gate (default OFF per "
+        help="apply the D3 pre-window UDP-slope taint gate (default OFF per "
         "deviation D-2026-06-14-02; --slope-band-taint re-applies it for the sensitivity run)",
     )
     return parser

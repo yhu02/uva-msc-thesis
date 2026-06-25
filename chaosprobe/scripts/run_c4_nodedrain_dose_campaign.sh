@@ -6,8 +6,8 @@
 # across the cross-node fractions where pod-delete left it constant.
 # Same complete-block design as C1, fault swapped pod-delete -> node-drain:
 # f in {0,0.25,0.5,0.75,1.0}, r=1, 8 sessions (order-seeds 1-8, solver-seed 0),
-# 5 levels x 3 iterations. Exploratory, outside the frozen Holm family.
-# Criteria pre-declared in design/DESIGN-FIX-SCOPE.md.
+# 5 levels x 3 iterations. Exploratory, outside the Holm family.
+# Criteria declared in design/DESIGN-FIX-SCOPE.md.
 set -u
 
 export KUBECONFIG="$HOME/.kube/config-chaosprobe"

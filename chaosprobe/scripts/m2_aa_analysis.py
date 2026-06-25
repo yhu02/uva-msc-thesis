@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""M2 A/A calibration analysis (01-PREREGISTRATION.md §A/A calibration protocol).
+"""M2 A/A calibration analysis (§A/A calibration protocol).
 
 Implements the amended A/A protocol (PR #261): the A/A block is a
 **variance-component estimator plus a qualitative pipeline sanity check**,
 NOT a false-positive-rate gate — no numeric "FPR <= alpha" criterion is
-registered.  Any statistically significant A/A finding is reported as
+defined.  Any statistically significant A/A finding is reported as
 ``A/A FINDING — investigate`` (the amended rule: diagnose, fix the
 doctor gates / taint rules / instrumentation, rerun the block; the halt
-criterion lives in §Stopping rules 2).
+criterion lives in the design).
 
 This module is also the **shared per-iteration extraction library** for
 the supplementary A/A analysis: ``scripts/aa_block.py`` imports
@@ -30,11 +30,11 @@ What it does
    per-condition files (``<run>/<condition>.json``), reduced one file at a
    time to per-iteration scalars (the files are 20–100 MB).
 2. **Per-pair deltas + null tests.** Per pair, per accepted f-level, per
-   registered metric the A-vs-B delta is computed at the registered unit
+   metric the A-vs-B delta is computed at the analysis unit
    (the session-condition median over untainted iterations); per metric
    the level-paired samples go through Wilcoxon signed-rank (>= 5 paired
    levels) or the exact sign test (< 5).  Any p < alpha is an A/A
-   finding.  *Power note (registered 5-level grid):* the most extreme
+   finding.  *Power note (5-level grid):* the most extreme
    exact two-sided p on 5 paired levels is 0.0625 (> 0.05), so an
    exactly-significant per-pair result does not exist at the default
    alpha; a per-pair finding can still fire through the helper's
@@ -51,8 +51,8 @@ What it does
    deliberately NOT done: within a pair the level-deltas share that
    pair's realized between-session offset, so a pooled test over-fires
    exactly when between-session noise is ordinary (see
-   :func:`cross_pair_tests`).  At the registered minimum of 3 pairs the
-   cross-pair sign test bottoms out at p = 0.25 — the pre-registration
+   :func:`cross_pair_tests`).  At the minimum of 3 pairs the
+   cross-pair sign test bottoms out at p = 0.25 — the design
    itself concedes a handful of A/A pairs cannot certify any alpha; the
    detector gains power as pairs accumulate.
 4. **liveAchievedF identity check.** An identical solver seed must
@@ -75,14 +75,14 @@ What it does
    pairs) — the numbers the M2 power analysis and the SESOI
    finalization consume.
 
-Registered delta metrics (D4 consolidation)
--------------------------------------------
-The metric forms implement freeze decision **D4** of the M2 report
-(``design/M2-AA-REPORT.md`` §Freeze decisions, §Instrumentation gaps):
-one canonical A/A extraction whose forms match the registered tests —
+Delta metrics (D4 consolidation)
+--------------------------------
+The metric forms implement the D4 metric form of the M2 report
+(``design/M2-AA-REPORT.md`` §Decisions, §Instrumentation gaps):
+one canonical A/A extraction whose forms match the tests —
 the supplementary (median-over-routes, pre-chaos, taint-excluded)
-operationalization won D4, and H2 is registered on **absolute** UDP
-drops, not the pct ratio (the prereg disclaims ratio denominators: the
+operationalization won D4, and H2 is on **absolute** UDP
+drops, not the pct ratio (the design disclaims ratio denominators: the
 packed arm's near-zero pool makes them ill-defined).
 
 - ``ew_p95_pre_ms`` — the H1 east-west outcome (D4 winner): per
@@ -91,7 +91,7 @@ packed arm's near-zero pool makes them ill-defined).
   ``metrics.latency.phases``.  Routes containing ``loadgenerator->`` are
   excluded (DESIGN §4: the host-side load generator is excluded from
   edge accounting by construction).
-- ``udp_conntrack_drop_entries`` — H2's registered **absolute** UDP
+- ``udp_conntrack_drop_entries`` — H2's **absolute** UDP
   conntrack drop: per iteration, cluster UDP entries (per-node phase
   mean of ``metrics.conntrackProtocolSamples`` counts, summed over
   nodes) pre-chaos minus during-chaos.
@@ -106,11 +106,11 @@ packed arm's near-zero pool makes them ill-defined).
   fabricated 0.0 is not a valid resilience measurement).
 
 Every metric's session-condition value is the **median over untainted
-iterations** — the registered unit ("session medians as the unit").
+iterations** — the analysis unit ("session medians as the unit").
 Tainted iterations (``taintReasons`` recorded in ``summary.json``'s
 ``session.perLevel[].perIteration`` plus ``preChaosTaintReasons`` in
 the raw iteration records) are excluded from EVERY metric — the
-prereg's "no result is ever quoted from a tainted iteration" rule,
+"no result is ever quoted from a tainted iteration" rule,
 which the pre-D4 script applied to ``score`` only (M2-AA-REPORT.md
 §Verdict).  Excluded iterations keep a ``None`` row so per-iteration
 pairing alignment is preserved.
@@ -125,7 +125,7 @@ Usage
 
 Exit codes: 0 clean and sufficient; 1 when any A/A finding or
 liveAchievedF mismatch demands investigation; 2 when fewer than the
-pre-registered minimum pairs were found (and nothing demands
+minimum pairs were found (and nothing demands
 investigation yet).
 """
 
@@ -150,7 +150,7 @@ from chaosprobe.metrics.statistics import icc_bootstrap, sign_test, wilcoxon_sig
 #: every metric, ``ew_p95_pre_ms`` + ``udp_conntrack_drop_entries`` forms.
 SCHEMA = "chaosprobe/m2-aa-analysis/v2"
 
-#: Pre-registered minimum number of A/A session pairs (§A/A calibration).
+#: Minimum number of A/A session pairs (§A/A calibration).
 REGISTERED_MIN_PAIRS = 3
 
 #: Default threshold for the "any statistically significant A/A finding" rule.
@@ -160,18 +160,18 @@ DEFAULT_ALPHA = 0.05
 #: meaningless; the exact sign test is used instead.
 WILCOXON_MIN_LEVELS = 5
 
-#: Registered A/A delta metrics (liveAchievedF is the separate identity
+#: A/A delta metrics (liveAchievedF is the separate identity
 #: check).  Forms per D4 — see the module docstring.
 METRICS = ("ew_p95_pre_ms", "udp_conntrack_drop_entries", "conntrack_flush_pct", "score")
 
-#: Frozen D3 per-f-level pre-window UDP-slope taint bands (entries/min),
-#: derived from the 2026-06-12 M2 A/A block (deviation D-2026-06-14-01 in
-#: design/DEVIATIONS.md).  Each band is ``round(mean ± 3·SD)`` of the
+#: D3 per-f-level pre-window UDP-slope taint bands (entries/min),
+#: derived from the 2026-06-12 M2 A/A block (deviation D-2026-06-14-01).
+#: Each band is ``round(mean ± 3·SD)`` of the
 #: untainted per-iteration ``udp_preslope_epm`` at that f-level, pooled over
 #: the 6 A/A sessions, where SD is the population SD of the A/A reference
 #: iterations.  An iteration is tainted when its pre-window UDP-entry slope
-#: falls OUTSIDE its f-level's band — the registered D3 taint rule
-#: (§Session design).  ``scripts/d3_slope_bands.py`` recomputes these from
+#: falls OUTSIDE its f-level's band — the D3 taint rule
+#: (the session design).  ``scripts/d3_slope_bands.py`` recomputes these from
 #: ``results/aa/`` and a parity test asserts they still match.  Applied to
 #: C1 analysis ONLY (opt-in: ``load_condition_outcomes(..., slope_band_taint=
 #: True)``); never retro-applied to the A/A block it was derived from.
@@ -222,7 +222,7 @@ VARIANCE_METHOD = (
 class PairKey:
     """The identical-cell key two sessions must share to form an A/A pair.
 
-    Mirrors the pre-registration's cell definition ("same f, r, mode,
+    Mirrors the cell definition ("same f, r, mode,
     fault; nothing varied"): the fault is part of the key, so sessions of
     different fault experiments can never pair as A/A.  ``levels`` and
     ``workers`` are stored sorted — the applied order comes from the
@@ -261,7 +261,7 @@ class PairKey:
 class LevelObs:
     """One f-level of one session: identity fields + metric values.
 
-    ``values`` holds the registered unit — the session-condition median
+    ``values`` holds the analysis unit — the session-condition median
     over untainted iterations — per metric; ``iteration_values`` the
     per-iteration rows behind it (``None`` rows are taint-excluded
     iterations, kept so pairing alignment is preserved).
@@ -385,11 +385,11 @@ def udp_pre_slope(samples: List[Dict[str, Any]]) -> Optional[float]:
 def udp_preslope_out_of_band(slope: Optional[float], condition: str) -> bool:
     """True when ``slope`` (entries/min) is outside ``condition``'s D3 band.
 
-    The registered D3 pre-window UDP-slope validity check: an iteration whose
+    The D3 pre-window UDP-slope validity check: an iteration whose
     pre-chaos UDP-entry slope leaves its f-level's A/A-derived band
     (:data:`D3_UDP_SLOPE_BANDS_EPM`) is tainted.  Returns ``False`` when the
     slope is missing/NaN (no signal to gate on) or the condition has no
-    registered band (only the five C1 f-levels do), so unknown conditions and
+    band (only the five C1 f-levels do), so unknown conditions and
     slope-less iterations are never tainted on this rule's account.
     """
     band = D3_UDP_SLOPE_BANDS_EPM.get(condition)
@@ -541,7 +541,7 @@ def iteration_conntrack_flush_pct(metrics: Dict[str, Any]) -> Optional[float]:
 def extract_iteration(
     it: Dict[str, Any], app_services: Sequence[str]
 ) -> Dict[str, Optional[float]]:
-    """Reduce one raw iteration record to the registered scalar outcomes.
+    """Reduce one raw iteration record to the scalar outcomes.
 
     The single shared extraction (D4): the canonical metrics plus the
     supplementary variance outcomes ``scripts/aa_block.py`` reports.
@@ -558,7 +558,7 @@ def extract_iteration(
     depth, zeroed = es_trough(m.get("endpointSlices") or {}, app_services)
     # Real trough DURATION from the 15s EndpointSlice time series when the
     # sampler produced one (H3 instrument); None when the series is
-    # absent (e.g. frozen M2 A/A data), so the proxy below is used instead.
+    # absent (e.g. the M2 A/A data), so the proxy below is used instead.
     duration_real = es_trough_duration_real(m.get("endpointSliceTimeSeries") or {}, app_services)
     rec = ((m.get("recovery") or {}).get("summary")) or {}
     mean_rec = rec.get("meanRecovery_ms")
@@ -621,14 +621,14 @@ def load_condition_outcomes(
     missing (the caller decides how loudly to complain).  Iterations
     carrying ``preChaosTaintReasons`` are added to ``tainted`` /
     ``taints`` in place; every tainted iteration contributes a ``None``
-    row for every outcome — the registered "never quoted" exclusion,
+    row for every outcome — the "never quoted" exclusion,
     with index alignment preserved so paired tests drop the pair.
     Raw files are 20–100 MB: one is loaded at a time and freed before
     the next.
 
     When ``slope_band_taint`` is set (C1 analysis only — the M2 A/A block
     that defined the bands is never gated by them), an iteration whose
-    pre-window UDP slope leaves its f-level's frozen D3 band
+    pre-window UDP slope leaves its f-level's D3 band
     (:func:`udp_preslope_out_of_band`) is tainted in addition to the
     pipeline's recorded taints.
     """
@@ -741,7 +741,7 @@ def load_session_outcomes(session: Session, session_dir: str, warnings: List[str
 
     Per level: load ``<session_dir>/<condition>.json``, reduce it to
     taint-excluded per-iteration outcome rows (:func:`load_condition_outcomes`),
-    and set the registered-unit values — the median over untainted
+    and set the analysis-unit values — the median over untainted
     iterations per metric.  A missing raw file leaves the level's values
     ``None`` with a warning (never silently zeroed).
     """
@@ -837,7 +837,7 @@ def analyze_pair(
 
     Levels not shared by both sessions, or not accepted in either session
     (rejected / drifted / never-executed conditions), are excluded with a
-    warning — registered-invalid data must not enter the calibration.
+    warning — invalid data must not enter the calibration.
 
     Returns ``(record, findings, pipeline_bugs)``; each metric entry
     carries a ``meanDelta`` (the pair's mean level-delta) that feeds the
@@ -950,9 +950,9 @@ def cross_pair_tests(
     estimates), so pooled level-deltas are not independent and a pooled
     Wilcoxon over-fires precisely when between-session noise is ordinary.
     Collapsing to one summary per pair respects the pair-level
-    exchangeability; the cost is power — at the registered minimum of 3
+    exchangeability; the cost is power — at the minimum of 3
     pairs the exact sign test's smallest two-sided p is 0.25, consistent
-    with the pre-registration's concession that a handful of A/A pairs
+    with the concession that a handful of A/A pairs
     cannot certify any alpha.  The detector's power grows as pairs
     accumulate.
     """
@@ -1224,7 +1224,7 @@ def print_report(result: Dict[str, Any]) -> None:
     sufficiency = result["sufficiency"]
     verdict = "SUFFICIENT" if sufficiency["sufficient"] else "INSUFFICIENT"
     print(
-        f"\nA/A sufficiency: {sufficiency['pairsFound']} pair(s) found vs pre-registered "
+        f"\nA/A sufficiency: {sufficiency['pairsFound']} pair(s) found vs the target "
         f">= {sufficiency['registeredMinimum']} — {verdict}"
     )
 
@@ -1233,10 +1233,10 @@ def build_parser() -> argparse.ArgumentParser:
     """The CLI surface (also exercised by tests)."""
     parser = argparse.ArgumentParser(
         description=(
-            "M2 A/A calibration analysis (pre-registration §A/A, amended in #261; "
+            "M2 A/A calibration analysis (§A/A, amended in #261; "
             "metric forms per the D4 consolidation, design/M2-AA-REPORT.md): "
             "pairs identical-cell placement sessions, computes per-level per-metric deltas "
-            "at the registered unit (session-condition medians over untainted "
+            "at the analysis unit (session-condition medians over untainted "
             "iterations) with Wilcoxon/sign null tests (any p < alpha => 'A/A "
             "FINDING — investigate'), checks liveAchievedF exact identity within "
             "pairs, and emits the variance-component decomposition + noise band "

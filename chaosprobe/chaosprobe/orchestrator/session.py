@@ -1,17 +1,16 @@
 """Complete-block session driver (M2 plumbing for the C1–C3 campaigns).
 
-Implements the pre-registered session design of
-``design/01-PREREGISTRATION.md`` §Session design on top of the
+Implements the session design on top of the
 iteration pipeline: ``chaosprobe run --fraction-levels ...`` replaces the
 named-strategy axis with **solver-targeted cross-node-fraction conditions**.
 Every session is a complete block visiting all requested f-levels in a
-randomized order drawn from ``--order-seed`` (recorded, per the
-pre-registration — the named-strategy path fixed the order, making order effects constant but
+randomized order drawn from ``--order-seed`` (recorded — the named-strategy
+path fixed the order, making order effects constant but
 unmeasurable), with each level's placement computed by
 :mod:`chaosprobe.placement.fraction_solver` under ``--solver-seed`` and
 realized through the replica-level affinity engine
 (:mod:`chaosprobe.placement.affinity_engine`, r ∈ {1, 3} ×
-{packed, anti-affine} — the WORKPLAN C1/C2 cells).
+{packed, anti-affine} — the C1/C2 cells).
 
 Each condition rides the SAME per-strategy iteration pipeline as a named-strategy
 strategy (fault injection, every collector including the conntrack prober,
@@ -20,7 +19,7 @@ taint/doctor metadata): ``strategy_runner._apply_placement`` dispatches to
 carries a session, and ``strategy_runner._run_iterations`` calls
 :func:`annotate_iteration` after every iteration so the per-iteration live
 achieved fraction (recomputed from the recorded ``podPlacements``, never the
-solver's claim) lands in the session metadata and the pre-registered
+solver's claim) lands in the session metadata and the
 rejection rule (|live − target| > 0.05) taints — never silently drops —
 out-of-tolerance iterations.
 
@@ -50,7 +49,7 @@ from chaosprobe.orchestrator import quiescence
 from chaosprobe.placement import affinity_engine as engine
 from chaosprobe.placement import dns_cache as dns
 
-#: Pre-registered f-level acceptance tolerance (single source: the solver's).
+#: f-level acceptance tolerance (single source: the solver's).
 TOLERANCE = fs.TARGET_TOLERANCE
 
 #: Default per-apply rollout timeout (matches the M1b gate's default).
@@ -58,7 +57,7 @@ DEFAULT_ROLLOUT_TIMEOUT = 300.0
 
 #: Pinned-cell assignment strategies. The H1 dose-response sweep needs the
 #: fraction solver (it *is* the f knob); H3 uses the capacity-feasible
-#: round-robin packing registered in the pre-registration (§H3 packed-cell
+#: round-robin packing (§H3 packed-cell
 #: semantics) — f is irrelevant to the replication-rescue design.
 PACKED_ASSIGNMENT_SOLVER = "solver"
 PACKED_ASSIGNMENT_ROUND_ROBIN = "round-robin"
@@ -471,7 +470,7 @@ def apply_condition(session: Session, condition: Condition) -> Dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Per-iteration live fraction + taint (the pre-registered rejection rule)
+# Per-iteration live fraction + taint (the rejection rule)
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -522,7 +521,7 @@ def annotate_iteration(
 
     Taints when (a) the condition itself was rejected at apply time, or
     (b) a pinned iteration's live fraction is unverifiable or misses the
-    target by more than the pre-registered tolerance.
+    target by more than the tolerance.
 
     The target-drift check is skipped for the round-robin packed assignment
     (H3): that design does not target a cross-node fraction, so the live f
@@ -539,7 +538,7 @@ def annotate_iteration(
     node-drain session (its ``<condition>.json`` flattens metrics to the top
     level and leaves ``iterations`` empty), so a downstream analysis that reads
     ``perIteration[].taintReasons`` (``scripts/c2_h3_anova.py``) sees every
-    tainted iteration — honouring the registered "no result is ever quoted
+    tainted iteration — honouring the "no result is ever quoted
     from a tainted iteration" rule for both channels, not just the placement one.
     """
     record = session.per_level.get(condition_name_)

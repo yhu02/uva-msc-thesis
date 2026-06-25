@@ -6,9 +6,8 @@ realistic candidate at this cluster scale — a deliberately *different* topolog
 (deep frontend fan-out + per-service datastore pairs) and RPC stack (Go gRPC
 with **consul-based discovery**: inter-service calls go pod-to-pod via
 consul-resolved IPs, not ClusterIP Services) from Online Boutique. Capacity and
-the fraction-solver gate for this workload are **M2 exit criteria**
-([02-WORKPLAN.md](../../../design/02-WORKPLAN.md)); per the pre-declared
-de-scope order, if it fails either gate the second-workload claim is dropped
+the fraction-solver gate for this workload are **M2 exit criteria**;
+under the de-scope order, if it fails either gate the second-workload claim is dropped
 **first**, before the iptables arm.
 
 ## Provenance
@@ -90,7 +89,7 @@ upstream source at the pinned commit (file-level citations inside). Load it
 with `chaosprobe.placement.fraction_solver.load_static_topology(path)` — same
 `(edges, services)` shape as `load_dependency_graph`, so `solve` /
 `enumerate_reachable` consume it directly for the M2 solver gate. With 16
-uniform edges the fraction quantum is 1/16 = 0.0625; the pre-registered f
+uniform edges the fraction quantum is 1/16 = 0.0625; the f
 targets {0, .25, .5, .75, 1} are exact multiples. Consul/jaeger control-plane
 chatter is excluded from the graph by design (documented in the file); the
 measured route-view graph replaces this one once a hotel-reservation
@@ -110,6 +109,6 @@ part of this M2 prep deliverable. Until then, the deploy health check
 ## De-scope rule
 
 If the live M2 capacity check or solver gate fails for this workload, drop the
-second-workload claim per the pre-declared order (DESIGN §7: hotelReservation
+second-workload claim under the de-scope order (DESIGN §7: hotelReservation
 goes **first**, before the iptables arm) — do not shrink the app or relax the
 gate to force a fit.

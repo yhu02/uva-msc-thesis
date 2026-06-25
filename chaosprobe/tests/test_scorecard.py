@@ -3,7 +3,7 @@
 Covers the three sub-score formulas (availability, mechanism-reconvergence,
 user-tail) incl. the None / clamp / never-recovers / never-drops edge cases,
 the UDP conntrack reconvergence extractor, chaos_window_seconds sourcing, and
-the frozen H5 reliability evaluation on synthetic reliable-vs-noisy data
+the H5 reliability evaluation on synthetic reliable-vs-noisy data
 (pass vs fail; conjunction; user-tail exclusion; graceful "not evaluable").
 """
 
@@ -675,7 +675,7 @@ def test_evaluation_noisy_fails(tmp_path):
 
 
 def test_evaluation_not_evaluable_on_aa_block(tmp_path):
-    # Frozen-A/A-style data: no EndpointSlice time series, no conntrack -> the
+    # A/A-style data: no EndpointSlice time series, no conntrack -> the
     # required sub-scores are all None -> NOT_EVALUABLE, no crash.
     conditions = {}
     for cond in ("f-a", "f-b"):

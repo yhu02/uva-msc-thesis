@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # C2 / H3 replication-rescue — EXTERNAL VALIDITY replication on hotelReservation.
-# Mirrors the frozen online-boutique round-robin C2 design (run_c2_rr_campaign.sh):
+# Mirrors the online-boutique round-robin C2 design (run_c2_rr_campaign.sh):
 # 3 cells × 8 replicate sessions = 24 node-drain sessions. Each session: 1 condition
 # (f-050), 1 iteration, --packed-assignment round-robin (spreads r=3 across the 8
 # workers so the f=0.5 placement is feasible at hotel's service count).
-# Exploratory — reported OUTSIDE the frozen Holm family.
+# Exploratory — reported OUTSIDE the Holm family.
 #
 # Gate flags as in C1: wget-capable probe pod (#322) + sustained warm-up through the
 # readiness gate so hotel's Consul/gRPC stack passes the gate untainted.

@@ -1018,7 +1018,7 @@ def _resolve_placement_args(
     path, untouched).  The placement-session surface is mutually exclusive with
     ``-s/--strategies``, ``--seeds``, and ``--replicas`` — the session owns
     both the condition axis and the replica count — and a session runs
-    exactly one fault (the pre-registration's session = one fault, one
+    exactly one fault (the session = one fault, one
     block; the per-level records are keyed by condition, so a multi-fault
     matrix would silently overwrite the first fault's data).
     """
@@ -1063,7 +1063,7 @@ def _resolve_placement_args(
     if len(experiments) != 1:
         raise click.ClickException(
             f"--fraction-levels runs exactly one fault per session (one complete "
-            f"block per fault, per the pre-registered session design) but "
+            f"block per fault, per the session design) but "
             f"{len(experiments)} experiment files are selected — pass exactly "
             f"one -e/--experiment (the default selects "
             f"{len(experiments)})"

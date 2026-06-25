@@ -145,7 +145,7 @@ def _extract_http_routes(
     return Unknown), fall back to a single user-facing route ``GET /`` on
     *fallback_service* (the load-target frontend).  This route is measured by the
     in-cluster ``ContinuousLatencyProber`` — NOT a litmus probe — so it does not
-    reintroduce the Unknown-verdict problem, and it makes the registered
+    reintroduce the Unknown-verdict problem, and it makes the
     user-route ``user_err_during`` outcome available for H3 under node-drain.
     """
     from urllib.parse import urlparse
@@ -305,7 +305,7 @@ def _build_iteration_routes(
     # Env-var discovery is empty for workloads that find peers another way
     # (e.g. hotelReservation uses Consul, not *_SERVICE_ADDR env vars). Fall back
     # to the static topology.json adjacent to the scenario so the east-west
-    # latency face is still measured (the registered H1 outcome ew_p95).
+    # latency face is still measured (the H1 outcome ew_p95).
     if not dependency_routes:
         topology_path = _adjacent_topology_path(scenario)
         if topology_path:
@@ -1460,7 +1460,7 @@ def _run_iterations(
                 "podPlacements": {},
             }
         # placement sessions: record this iteration's live achieved fraction and
-        # apply the pre-registered rejection rule (|live − target| > 0.05
+        # apply the rejection rule (|live − target| > 0.05
         # taints, never drops) before the iteration enters aggregation.
         if ctx.session is not None:
             annotate_iteration(ctx.session, strategy_name, ir)

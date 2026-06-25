@@ -21,7 +21,7 @@
 #   3. confirm the spread cache-on UDP drop is materially (≥~50%) below cache-off.
 #   Only if the shrinkage is detectable is the full campaign worth its ~3 h/session.
 #
-# ⚠️ A dnsConfig-realization DEVIATION must be logged in design/DEVIATIONS.md
+# ⚠️ A dnsConfig-realization DEVIATION must be logged
 # before this campaign's results are quoted (NodeLocal DNSCache realized via pod
 # dnsConfig rather than the kubelet --cluster-dns default; see C3-OB-SCOPE.md).
 #

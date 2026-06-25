@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Design-corrected re-analysis of the availability-axis tests (H3/H4/H5).
 
-Exploratory, OUTSIDE the frozen Holm family. Criteria pre-declared in
+Exploratory, OUTSIDE the Holm family. Criteria declared in
 ``design/DESIGN-FIX-SCOPE.md`` before the new data were looked at. The three
-registered availability tests were construction-limited because ``pod-delete`` at
+availability tests were construction-limited because ``pod-delete`` at
 r=1 cannot move availability:
 
 * **H3** trough-depth co-primary — the absolute 1-pod margin equals the realized

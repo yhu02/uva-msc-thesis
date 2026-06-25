@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # C1 / H1 dose-response — EXTERNAL VALIDITY replication on hotelReservation.
-# Mirrors the frozen online-boutique C1 design (C1-OB-REPORT.md): complete-block,
+# Mirrors the online-boutique C1 design (C1-OB-REPORT.md): complete-block,
 # every session visits all five cross-node fractions f ∈ {0,0.25,0.5,0.75,1.0} in
 # randomized order (recorded seed), r=1, pod-delete churn + host-side Locust.
 # 8 sessions (order-seeds 1-8, solver-seed 0), 5 levels × 3 iterations.
-# Exploratory — reported OUTSIDE the frozen Holm family.
+# Exploratory — reported OUTSIDE the Holm family.
 #
 # Gate flags: hotelReservation needs a wget-capable probe pod (fixed in #322) and
 # sustained warm-up load through the readiness gate (#317/#318/#321) so the gate

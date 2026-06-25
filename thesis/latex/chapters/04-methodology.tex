@@ -2,15 +2,16 @@
 
 This chapter defines how the research question of \S\ref{sec:rq} is turned into
 measurements: the three-layer measurement design (\S\ref{sec:three-layer}), the
-two fault classes (\S\ref{sec:fault-classes}), the \emph{pre-registered}
+two fault classes (\S\ref{sec:fault-classes}), the
 campaign protocol that is itself a contribution (\S\ref{sec:campaign}), the
 statistical methods and multiplicity control (\S\ref{sec:statistics}), and the
 pinned cluster environment every claim is scoped to (\S\ref{sec:environment}).
-The defining methodological choice is that the confirmatory hypotheses, their
-smallest effect sizes of interest (SESOIs), the per-cell sample sizes, the
-outcome operationalizations, and the analysis code were all \emph{frozen before
-any confirmatory data was collected}; the design that follows is reported as
-registered, with every later deviation logged.
+The defining methodological choice is to constrain analyst degrees of freedom
+through explicit safeguards: the smallest effect sizes of interest (SESOIs) are
+set against a \emph{measured A/A noise floor}, the primary family is
+Holm-corrected, every session passes a \texttt{doctor --strict} provenance gate,
+and a discard-not-patch rule governs admissibility; every deviation from the
+stated protocol is logged.
 
 \section{Three-layer measurement design}\label{sec:three-layer}
 
@@ -71,7 +72,7 @@ Two fault classes are used, each matched to the layer it exercises:
   $\leftrightarrow$ availability frontier (\S\ref{sec:h4}).
 \end{itemize}
 
-\section{Pre-registered campaign design}\label{sec:campaign}
+\section{Campaign design}\label{sec:campaign}
 
 \textbf{Two knobs, not eight strategies.} The design replaces an ad-hoc set of
 named placement strategies with two orthogonal, continuously-varying knobs the
@@ -83,38 +84,39 @@ added whose predicted effects follow from the conntrack mechanism: a NodeLocal
 DNSCache toggle (H2's DNS arm) and the kube-proxy mode (H6, not attempted ---
 \S\ref{sec:h6}).
 
-\textbf{Pre-registration and provenance discipline.} The hypotheses, SESOIs,
-per-cell $n$, outcome operationalizations, and analysis code were frozen at a
-tagged commit \emph{before} any confirmatory data was collected; each campaign's
-raw data was likewise archived and hash-stamped \emph{before} its analysis was
-written. Every session records a provenance fingerprint and must pass a
-\texttt{doctor --strict} gate (clean working tree, complete metadata) to be
-admissible; the registered exclusion rule discards any rejected or fully-tainted
-session. This protocol --- pre-registration, freeze-before-analysis, and a strict
-provenance gate --- is one of the thesis's contributions, not just its hygiene.
+\textbf{Provenance and analysis discipline.} Each campaign's raw data is
+archived and hash-stamped. Every session records a provenance fingerprint and
+must pass a \texttt{doctor --strict} gate (clean working tree, scenario hashes,
+git-not-dirty, complete metadata) to be admissible; the discard-not-patch rule
+drops any rejected or fully-tainted session rather than repairing it. The SESOIs
+and dominance margins are set against the measured A/A noise floor
+(the M2 calibration gate below), and the primary family is Holm-corrected
+(\S\ref{sec:statistics}). This protocol --- A/A-calibrated effect-size bars, a
+strict provenance gate, and discard-not-patch --- is one of the thesis's
+contributions, not just its hygiene.
 
-\textbf{The confirmatory family and the descriptive deliverables.} Four
-hypotheses form the confirmatory family corrected together (\S\ref{sec:statistics}):
+\textbf{The primary family and the descriptive deliverables.} Four
+hypotheses form the primary family corrected together (\S\ref{sec:statistics}):
 H1 (dose-response of the east-west tail, complete-block design over the five
 $f$-levels), H2 (placement-dependence + the DNS intervention), H3 (replication
 rescue under node-drain), and H5 (layered-scorecard reliability). H4 is a
-\emph{descriptive} latency$\leftrightarrow$availability frontier (a registered
+\emph{descriptive} latency$\leftrightarrow$availability frontier (a defined
 figure and reporting protocol, no $p$-value), and H6 is an exploratory secondary
 that was not attempted. The campaigns map onto these: \textbf{C1} (8
 complete-block \texttt{pod-delete} sessions) supplies H1 and H5; \textbf{C2} (24
 \texttt{node-drain} sessions, three cells) supplies H3; \textbf{C3} (14
 \texttt{pod-delete} sessions, cache-off/on) supplies H2 and closes the family.
 
-\textbf{Feasibility and calibration gates.} Three pre-data gates de-risked the
+\textbf{Feasibility and calibration gates.} Three preparatory gates de-risked the
 design. \textbf{M1a} was a cheap solver-feasibility spike (could the engine hit
 the designed $f$-levels within $\pm 0.05$?) run on the existing small cluster.
 \textbf{M1b} re-verified the solver \emph{and} the capacity arithmetic on the
 actual run cluster; it passed (all five levels within $\pm 0.05$, 3/3
 consecutive attempts), so the designed-level dose design and Page's test stand
-rather than the pre-registered continuous-fraction fallback. \textbf{M2} was an
+rather than the continuous-fraction fallback. \textbf{M2} was an
 A/A calibration block (same-placement pairs, null data) that estimated the
 measurement noise floor; the SESOIs and dominance margins were then fixed at or
-above that floor under the registered ``no smaller than the A/A noise band''
+above that floor under the ``no smaller than the A/A noise band''
 rule --- the H1 SESOI exceeds it, while the H3 rescue/TOST and H4 dominance
 margins are set equal to the band. The H1 SESOI ($\geq 15\,\%$), for example, was set
 between the measured A/A noise band ($\approx 11.2\,\%$ of the pre-chaos level)
@@ -131,25 +133,25 @@ what Page's test assumes. H2 is a two-part both-must-pass conjunction of paired
 one-sided \textbf{Wilcoxon signed-rank} tests on the during-churn UDP-conntrack
 drop (placement-dependence and the $\geq 50\,\%$ DNS-cache shrinkage). H3 uses
 \textbf{ART ANOVA} (aligned-rank transform) for the $r \times \text{mode}$
-interaction, with the registered rescue margin and a packed$\approx r{=}1$
+interaction, with the rescue margin and a packed$\approx r{=}1$
 \textbf{TOST equivalence} control on each co-primary. H5 reports condition-level
 \textbf{intraclass correlations} (ICC, cluster-bootstrap CIs) for the scorecard
 sub-scores against the naive aggregate baseline, with an absolute reliability
 bar of $\text{ICC} \geq 0.5$.
 
 \textbf{Support requires significance \emph{and} effect size.} Every
-confirmatory verdict is gated on two things: Holm-corrected statistical
-significance, \emph{and} clearing the registered effect-size or reliability bar
+primary verdict is gated on two things: Holm-corrected statistical
+significance, \emph{and} clearing the effect-size or reliability bar
 (the SESOI). A statistically detectable effect below its SESOI is reported as
 below the bar, not as support --- the discipline that distinguishes a real but
 negligible trend (H1) from a meaningful one.
 
-\textbf{Multiplicity --- the family Holm correction.} The four confirmatory
-primaries are corrected together by the \textbf{Holm} step-down procedure at
+\textbf{Multiplicity --- the family Holm correction.} The four primary
+hypotheses are corrected together by the \textbf{Holm} step-down procedure at
 $\alpha = 0.05$, computed once all campaigns land (\S\ref{sec:family-holm}),
 each member's family-input $p$ read verbatim from its own analysis driver. H4's
 descriptive frontier and the exploratory secondaries are outside the family and
-carry no confirmatory weight. TOST equivalence testing
+carry no primary-family weight. TOST equivalence testing
 \citep{schuirmann1987equivalence,lakens2017equivalence} is used where a claim is
 that an effect is \emph{demonstrably small} rather than merely undetected; the
 distribution-first reporting (medians, tails, cluster-bootstrap intervals rather

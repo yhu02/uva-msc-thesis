@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the ChaosProbe thesis defense PowerPoint presentation.
 
-The deck tells the *current* pre-registered study (campaigns C1/C2/C3 plus the
+The deck tells the *current* study (campaigns C1/C2/C3 plus the
 exploratory hotelReservation external-validity arm and the design-corrected
 re-analysis). Every quoted number is taken verbatim from the thesis results
 chapter (chapters/05-results.tex) and the per-hypothesis analysis drivers, and
@@ -12,7 +12,7 @@ Slide structure (defense format, bar-first results):
   1. Title
   2. The operator's decision (motivation + gap)
   3. Research question, three layers, two knobs
-  4. Pre-registration & provenance discipline
+  4. Measurement & provenance discipline
   5. ChaosProbe architecture (authored vs off-the-shelf)
   6. Three-layer measurement design
   7. Campaigns C1/C2/C3 + fault classes + hypothesis map
@@ -20,7 +20,7 @@ Slide structure (defense format, bar-first results):
   9. H2  — placement-dependence and the DNS intervention
  10. H3  — replication rescue under node-drain
  11. H4 & H5 — degenerate frontier + scorecard reliability
- 12. Confirmatory family — the Holm capstone (central finding)
+ 12. Primary hypothesis family — the Holm capstone (central finding)
  13. Design-corrected re-analysis of the availability axis
  14. External validity — a second workload
  15. Threats to validity
@@ -341,7 +341,7 @@ add_text_box(
     2.7,
     11.7,
     0.5,
-    "A pre-registered, layered study in Kubernetes",
+    "A layered study in Kubernetes",
     font_size=18,
     color=LIGHT_GRAY,
     alignment=PP_ALIGN.CENTER,
@@ -613,13 +613,13 @@ add_text_box(
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SLIDE 4 — PRE-REGISTRATION & PROVENANCE DISCIPLINE
+# SLIDE 4 — MEASUREMENT & PROVENANCE DISCIPLINE
 # ══════════════════════════════════════════════════════════════════════
 slide = new_slide()
 slide_title(
     slide,
-    "Pre-Registration & Provenance",
-    "The methodological backbone — removing the freedom to choose tests after seeing the data",
+    "Measurement & Provenance",
+    "The methodological backbone — a fixed analysis plan and a strict provenance bar",
 )
 
 add_rounded_box(slide, 0.6, 1.7, 5.9, 4.6, VERY_DARK, border_color=ACCENT_BLUE)
@@ -630,22 +630,18 @@ add_bullet_frame(
     5.5,
     4.4,
     [
-        "• Hypotheses, smallest effect sizes of interest (SESOIs),",
-        "   per-cell sample sizes, and the analysis CODE were frozen",
-        "   BEFORE any confirmatory data was collected",
+        "• SESOIs set against a measured A/A noise floor;",
+        "   analysis CODE committed before each campaign's data",
         "",
-        "• Frozen pre-registration at its freeze commit",
-        "   (tag prereg-freeze, commit 20097c1)",
-        "",
-        "• Each member carries a registered effect-size / reliability",
+        "• Each member carries an effect-size / reliability",
         "   bar — Holm-significance is necessary, not sufficient",
         "",
-        "• The one non-blind deviation (D3) is logged in full in the",
-        "   deviations log — disclosed, not hidden",
+        "• The one outcome-aware analysis choice (D3) is",
+        "   disclosed in full — not hidden",
     ],
     font_size=13,
     color=LIGHT_GRAY,
-    title="Frozen before collection",
+    title="Safeguards",
     title_size=16,
     title_color=ACCENT_BLUE,
 )
@@ -664,8 +660,8 @@ add_bullet_frame(
         "• Every session gated by doctor --strict: clean tree,",
         "   scenario-hash present, runMetadata present, git.dirty=false",
         "",
-        "• Freeze-before-analysis: each campaign's raw data is",
-        "   frozen before its analysis is written",
+        "• Data-before-analysis: each campaign's raw data is",
+        "   committed before its analysis is written",
         "",
         "• Every quoted number traces to an archived, hash-stamped",
         "   run (artifact-manifest.json, SHA-256 per file)",
@@ -701,7 +697,7 @@ slide = new_slide()
 slide_title(
     slide,
     "ChaosProbe — The Framework",
-    "Contribution 1: a placement-aware, pre-registered, provenance-gated chaos-evaluation method",
+    "Contribution 1: a placement-aware, provenance-gated chaos-evaluation method",
 )
 
 authored = [
@@ -785,7 +781,7 @@ add_text_box(
     0.95,
     "Authored: the placement solver and two-knob design; the three-layer measurement design with its "
     "dependent-vs-control route confound check; the cross-node-fraction metric and EndpointSlice trough; the "
-    "layered scorecard; the pre-registration, doctor --strict gate, discard-not-patch rule, and "
+    "layered scorecard; the doctor --strict gate, discard-not-patch rule, and "
     "every analysis script.   Integrated off-the-shelf: LitmusChaos, Prometheus/Locust, "
     "Neo4j, and the Online Boutique application execute the science — they do not define it.",
     font_size=12.5,
@@ -904,7 +900,7 @@ slide = new_slide()
 slide_title(
     slide,
     "Campaigns & Hypotheses",
-    "Three pre-registered campaigns, each frozen before analysis",
+    "Three campaigns, each with raw data committed before analysis",
 )
 
 camp = [
@@ -946,7 +942,7 @@ add_table(
 
 # Hypothesis bar-first map.
 hyps = [
-    ["H", "Claim", "Registered bar"],
+    ["H", "Claim", "Stated bar"],
     [
         "H1",
         "Dose-response of the east-west tail",
@@ -965,7 +961,7 @@ hyps = [
     [
         "H4",
         "Placement frontier (descriptive)",
-        "non-dominated set under frozen margins",
+        "non-dominated set under stated margins",
     ],
     ["H5", "Layered scorecard reliability", "availability AND mechanism ICC ≥ 0.5"],
     [
@@ -1070,8 +1066,8 @@ add_text_box(
     5.55,
     5.6,
     1.4,
-    "The registered pre-window UDP-slope taint flags every iteration at f=0.25 and f=0.5 — zero complete "
-    "blocks, so Page's L is uncomputable and H1 is unrunnable as registered. The taint is withdrawn on "
+    "The pre-window UDP-slope taint flags every iteration at f=0.25 and f=0.5 — zero complete "
+    "blocks, so Page's L is uncomputable and H1 is unrunnable as planned. The taint is withdrawn on "
     "protocol-independent grounds (it gates DNS/UDP, a different protocol from the TCP/gRPC outcome). This is "
     "the study's one outcome-aware deviation — logged in full.",
     font_size=11,
@@ -1219,7 +1215,7 @@ add_text_box(
     "Anti-affine r=3 fully rescues the user-route error (0.632 → 0.0) — strong, significant directional "
     "support. The depth face cannot adjudicate: under round-robin spread, draining one node costs r=1 only "
     "≈1 pod, so the r=1 depth (0.091) EQUALS the one-pod margin it must beat. The metric's dynamic range "
-    "coincides with the bar — a measurement-design limit surfaced honestly, reported exactly as registered "
+    "coincides with the bar — a measurement-design limit surfaced honestly, reported exactly as planned "
     "(not retuned). The design-fix slide shows the rescue is real once this artifact is removed.",
     font_size=11,
     color=TRANS_WHITE,
@@ -1309,8 +1305,8 @@ add_text_box(
 slide = new_slide()
 slide_title(
     slide,
-    "The Confirmatory Family — Holm Capstone",
-    "The four confirmatory hypotheses corrected together at α = 0.05",
+    "The Primary Hypothesis Family — Holm Capstone",
+    "The four primary hypotheses corrected together at α = 0.05",
 )
 
 rows = [
@@ -1340,9 +1336,9 @@ add_text_box(
     1.9,
     3.5,
     2.4,
-    "Family verdict:\n\nNo confirmatory hypothesis is supported.\n\nTwo primaries (H1's trend, H3's "
+    "Family verdict:\n\nNo primary hypothesis is supported.\n\nTwo primaries (H1's trend, H3's "
     "interaction) survive Holm — but Holm-significance is necessary, not sufficient. Every member also "
-    "fails its registered effect-size / reliability bar.",
+    "fails its effect-size / reliability bar.",
     font_size=12.5,
     bold=True,
     color=WHITE,
@@ -1372,7 +1368,7 @@ add_text_box(
     "reconvergence signature is real and individually significant every time it is measured — placement-"
     "dependent under churn (H2), interacting with replication under node-drain (H3's error face), and the one "
     "scorecard layer with near-perfect test-retest reliability (H5, mechanism ICC 0.994). What does NOT hold, "
-    "at the pre-registered bar, is that this mechanism translates into the user-visible placement, "
+    "at the stated bar, is that this mechanism translates into the user-visible placement, "
     "availability, and dose-response advantages the hypotheses predicted. Once pod-delete at r=1 is understood "
     "as a churn fault, the bound is the expected shape: during the kill window the single replica is simply "
     "gone, and every dependent request fails identically whether services are packed or spread.",
@@ -1415,7 +1411,7 @@ add_bullet_frame(
     2.55,
     [
         "• C4: node-drain dose-response, 8 sessions,",
-        "   criteria pre-declared before data examined",
+        "   criteria declared before data examined",
         "• Availability trough now 1.00 (packed) → 0.36",
         "   (spread) — a LIVE axis, a real trade-off",
         "• H3: user error 0.63 → 0 + significant interaction",
@@ -1440,7 +1436,7 @@ add_text_box(
     6.18,
     12.0,
     0.75,
-    "Honest scope: this does NOT re-open the frozen confirmatory verdicts. It shows H3's not-supported and "
+    "Honest scope: this does NOT re-open the primary verdicts. It shows H3's not-supported and "
     "H4's degenerate results were partly construction artifacts whose underlying effects are real once "
     "availability can move — exploratory, outside the Holm family, held to the same bar.",
     font_size=12,
@@ -1462,7 +1458,7 @@ slide_title(
 add_fig(slide, 0.6, 1.75, 7.4, "fig-hotel-external-validity.png")
 
 rows = [
-    ["study", "registered bar", "hotel outcome"],
+    ["study", "stated bar", "hotel outcome"],
     ["H1 dose-response", "monotone, ≥15% SESOI", "Page's L p=0.99 — NO increase"],
     ["H3 repl. rescue", "interaction + margins", "CONJUNCTION = False"],
 ]
@@ -1566,15 +1562,14 @@ add_bullet_frame(
     5.4,
     5.05,
     [
-        "• Pre-registration fixes the SESOIs against a measured",
-        "   noise floor BEFORE collection — no test-after-seeing-data",
+        "• SESOIs set against a measured A/A noise floor",
+        "   (the basis for every effect-size bar)",
         "",
-        "• Holm correction across the confirmatory family",
+        "• Holm correction across the primary hypothesis family",
         "",
         "• doctor --strict gate on every session; discard-not-patch",
         "",
-        "• Pre-registration frozen before analysis; every number traces",
-        "   to a hash-stamped archived run",
+        "• Every number traces to a hash-stamped archived run",
         "",
         "• Dependent-vs-control route split controls the user layer",
         "   for run-level confounds",
@@ -1596,7 +1591,7 @@ slide = new_slide()
 slide_title(
     slide,
     "Conclusion & Future Work",
-    "Chaos evaluation of placement needs layered measurement, pre-registration, and provenance — not a single score",
+    "Chaos evaluation of placement needs layered measurement and provenance — not a single score",
 )
 
 add_rounded_box(slide, 0.6, 1.7, 6.0, 2.55, VERY_DARK, border_color=ACCENT_BLUE)
@@ -1607,14 +1602,14 @@ add_bullet_frame(
     5.6,
     2.4,
     [
-        "1. A pre-registered, provenance-gated measurement",
+        "1. A provenance-gated, layered measurement",
         "    methodology (ChaosProbe) — reusable, outcome-",
         "    independent",
         "2. A positively-established, precisely-bounded mechanism",
         "    — real conntrack signature, DNS cache removes it,",
-        "    does not reach the user at the registered bar",
+        "    does not reach the user at the stated bar",
         "3. A reproducible campaign protocol with",
-        "    hash-stamped, pre-registered artifacts",
+        "    hash-stamped artifacts",
     ],
     font_size=12.5,
     color=LIGHT_GRAY,
@@ -1715,7 +1710,7 @@ add_text_box(
 )
 
 stats = [
-    ("3", "pre-registered\ncampaigns", ACCENT_BLUE),
+    ("3", "campaigns", ACCENT_BLUE),
     ("46", "doctor-strict\nsessions", ACCENT_GREEN),
     ("0", "hypotheses supported\n(mechanism real)", ACCENT_ORANGE),
     ("0.994", "mechanism ICC\nvs 0.066 naive", ACCENT_PURPLE),
@@ -1754,7 +1749,7 @@ add_text_box(
     6.5,
     12.1,
     0.4,
-    "Raw data, pre-registration, and analysis code committed and hash-stamped · every number traces to an archived run",
+    "Raw data and analysis code committed and hash-stamped · every number traces to an archived run",
     font_size=12,
     color=MID_GRAY,
     alignment=PP_ALIGN.CENTER,

@@ -23,7 +23,7 @@
 
 % PDF document metadata.
 \hypersetup{
-  pdftitle={Measuring Placement-Sensitive Resilience under Chaos: A Pre-Registered, Layered Study in Kubernetes},
+  pdftitle={Measuring Placement-Sensitive Resilience under Chaos: A Layered, Provenance-Gated Study in Kubernetes},
   pdfauthor={Yvo Hu},
 }
 
@@ -32,7 +32,7 @@
 \graphicspath{{../figures/}}
 
 % ----- Author-owned placeholders (TODO: fill in before submission) -----
-\newcommand{\thesistitle}{Measuring Placement-Sensitive Resilience under Chaos: A Pre-Registered, Layered Study in Kubernetes}
+\newcommand{\thesistitle}{Measuring Placement-Sensitive Resilience under Chaos: A Layered, Provenance-Gated Study in Kubernetes}
 \newcommand{\thesisauthor}{Yvo Hu}
 \newcommand{\thesisdegree}{MSc Thesis, University of Amsterdam}
 \newcommand{\thesissupervisor}{TODO: supervisor name}
@@ -67,7 +67,7 @@
 Kubernetes offers rich placement controls and observability, yet it remains
 unclear when pod placement materially affects resilience under chaos, and when
 aggregate resilience scores obscure that effect. This thesis presents
-\textbf{ChaosProbe}, a pre-registered, provenance-gated chaos-evaluation
+\textbf{ChaosProbe}, a provenance-gated, layered chaos-evaluation
 framework. It manipulates placement through two orthogonal knobs --- the
 cross-node dependency-edge fraction $f$ (packing to spreading) and the
 replication degree $r$ (packed vs anti-affine) --- plus two interventional arms
@@ -79,25 +79,25 @@ Online Boutique benchmark (ten polyglot gRPC microservices plus Redis) on a
 pinned cluster of eight 2-vCPU/4-GiB workers (Kubernetes v1.28.6, kube-proxy
 ipvs).
 
-The evidence is three pre-registered campaigns under churn (\texttt{pod-delete})
+The evidence is three campaigns under churn (\texttt{pod-delete})
 and node failure (\texttt{node-drain}): C1 (eight complete-block dose-response
 sessions), C2 (24 node-drain replication-rescue sessions), and C3 (14
-placement-and-DNS sessions). The hypotheses, the smallest effect sizes of
-interest, the per-cell sample sizes, and the analysis code were frozen before
-any confirmatory data was collected, and the four confirmatory hypotheses are
-Holm-corrected as one family.
+placement-and-DNS sessions). The smallest effect sizes of interest were set
+against a measured A/A noise floor, the four primary hypotheses are
+Holm-corrected as one family, and every session passes a \texttt{doctor
+--strict} provenance gate.
 
 The central finding is a real mechanism whose reach is rigorously bounded.
 Placement reproducibly moves a UDP-conntrack reconvergence signature ---
 individually significant in every campaign, and the one scorecard layer with
 near-perfect test-retest reliability (mechanism ICC 0.994 versus a naive
 aggregate's 0.066) --- and a NodeLocal DNSCache intervention removes it under
-both placements. But no confirmatory hypothesis is supported at its registered
+both placements. But no primary hypothesis is supported at its
 bar: the east-west dose-response is statistically detectable yet only
 $+13.35\,\%$ across the full cross-node range, below the $15\,\%$ SESOI (H1);
 placement-dependence of the conntrack drop is significant but in the
 \emph{opposite} direction --- packing concentrates more per-node churn than
-spreading --- so the registered conjunction fails (H2); anti-affine replication
+spreading --- so the conjunction fails (H2); anti-affine replication
 fully rescues the user-route error rate under node failure
 ($0.632 \rightarrow 0.0$), but the co-primary trough-depth criterion could not
 adjudicate rescue on this placement (H3); and the scorecard's availability layer
@@ -118,17 +118,18 @@ trade-off the original frontier could not express reappears. The original
 iteration's valid findings (the latency dose-response and the conntrack
 mechanism) stand and are reported in full; the construction-limited availability
 results are reported \emph{with} their limitation, not removed; and a
-pre-registered confirmatory re-run of the corrected design is left as future work.
+confirmatory re-run of the corrected design is left as future work.
 
-Placement moves the kernel/network mechanism; at the pre-registered bar it does
+Placement moves the kernel/network mechanism; at the effect-size bar it does
 not move the user-visible placement, availability, and dose-response outcomes the
-hypotheses predicted. The thesis contributes a reproducible, pre-registered
+hypotheses predicted. The thesis contributes a reproducible, provenance-gated
 measurement methodology that surfaces and corrects its own construction
 limitations, a positively-established but precisely-bounded mechanism, and a
-freeze-before-analysis, provenance-gated campaign protocol in which every quoted
+discard-not-patch campaign protocol in which every quoted
 number traces to an archived, hash-stamped run. The methodological point is that
-chaos evaluation of placement needs layered measurement, pre-registration, and
-provenance-gated replication, not a single score: each fault class leaves its
+chaos evaluation of placement needs layered measurement, effect-size bars set
+against a measured noise floor, and provenance-gated replication, not a single
+score: each fault class leaves its
 placement signal in a specific layer, and a one-number instrument's availability
 component is unreliable or undefined exactly where it matters.
 \end{abstract}

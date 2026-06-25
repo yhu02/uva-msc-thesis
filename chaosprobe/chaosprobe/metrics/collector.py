@@ -195,7 +195,7 @@ class MetricsCollector:
             # Additive full time series ({ts, phase, services}), parallel to
             # conntrackProtocolSamples — distinct from the pre/during/post
             # ``endpointSlices`` snapshots, which are left untouched so
-            # blast_radius.py and the frozen A/A data keep their shape.
+            # blast_radius.py and the A/A data keep their shape.
             result["endpointSliceTimeSeries"] = {
                 "samples": endpoint_slice_timeseries_data.get("samples") or [],
                 "meta": endpoint_slice_timeseries_data.get("meta") or {},

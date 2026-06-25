@@ -8,10 +8,10 @@ signature, and that effect is individually significant every time it is
 measured --- it is placement-dependent under churn (H2), it interacts with
 replication under node-drain (H3), and its scorecard sub-score is the one
 layer with near-perfect test-retest reliability (H5, ICC 0.994). What does
-\emph{not} hold, under pre-registered and Holm-corrected testing, is that this
-mechanism translates into the user-visible placement, availability, and
-dose-response advantages the hypotheses predicted: no confirmatory hypothesis
-clears its registered bar (\S\ref{sec:family-holm}). The contribution is
+\emph{not} hold, under Holm-corrected testing against A/A-calibrated bars, is
+that this mechanism translates into the user-visible placement, availability, and
+dose-response advantages the hypotheses predicted: no primary hypothesis
+clears its bar (\S\ref{sec:family-holm}). The contribution is
 therefore a real mechanism whose reach is rigorously bounded, not a placement
 prescription.
 
@@ -46,15 +46,15 @@ scorecard's value (H5) is precisely that it separates the layer that
 
 Even H3's one clearly-directional result --- anti-affine replication fully
 rescuing the user-route error rate under node-drain ($0.632 \rightarrow 0.0$)
---- does not lift the hypothesis over its registered bar, because the
+--- does not lift the hypothesis over its bar, because the
 co-primary trough-depth criterion could not adjudicate rescue on this placement
 (the $r{=}1$ depth coincides with the one-pod margin by construction). That is a
 measurement-design limit surfaced honestly, not evidence against rescue; it is
-recorded as a lesson for a future pre-registration rather than retuned after the
+recorded as a lesson for a future design iteration rather than retuned after the
 fact. The consistent picture across H1--H5 is the same: where the mechanism is
 measured directly it is real and reproducible; where the hypotheses asked
 whether it reaches a user-visible, practically-significant outcome, the
-pre-registered answer is no.
+answer at the bar is no.
 
 \section{The conntrack mechanism: attribution with protocol scoping}\label{sec:h2-mechanism}
 
@@ -76,7 +76,7 @@ drives DNS re-resolution.
 The DNS intervention (H2 arm b) settles which component placement controls.
 Enabling the NodeLocal DNSCache shrinks the during-churn drop by a 78\,\% median
 under the spread placement and \emph{also} collapses it to $\approx 0$ under the
-packed placement. The registered secondary predicted that the packed arm, which
+packed placement. The secondary prediction held that the packed arm, which
 has no cross-node edges, would show no such cache effect if the drop were
 specifically cross-node DNS; that prediction fails (packed's effect is large),
 which pins the drop on the \emph{general} UDP/DNS pool rather than cross-node
@@ -84,7 +84,7 @@ resolution and removes the drop under \emph{both} placements. The drop is
 therefore dominated by the DNS/UDP pool, exactly the traffic class the documented
 UDP-only cleanup targets.
 This also explains the \emph{reversed} placement direction (H2 arm a): the
-registered prediction was that spreading dependencies across nodes would drive
+prediction was that spreading dependencies across nodes would drive
 more cross-node DNS churn and thus a larger drop, but the data shows the
 opposite --- packed exceeds spread in all 7 cache-off pairs. Co-locating a
 service's replicas on a single node \emph{concentrates} the per-node conntrack
@@ -126,11 +126,11 @@ across Kubernetes v1.31--v1.32 (\S\ref{sec:environment}).
 \end{itemize}
 
 Each implication inherits its result's scope (\S\ref{sec:generalizes}). The
-deepest one is methodological: the value of pre-registering the hypotheses,
-fixing the SESOIs against a measured noise floor, and Holm-correcting the family
-is that it converts ``we observed placement effects'' into the more useful and
-more honest ``here is exactly which effects survive a strict bar, and which do
-not.'' What is portable is the \emph{method}: manipulate placement, measure at
+deepest one is methodological: the value of
+fixing the SESOIs against a measured noise floor, Holm-correcting the family,
+and gating every number on provenance is that it converts ``we observed
+placement effects'' into the more useful and more honest ``here is exactly which
+effects survive a strict bar, and which do not.'' What is portable is the \emph{method}: manipulate placement, measure at
 the layer the fault class perturbs, control the user layer with
 dependent-vs-control routes, gate every number on provenance, and audit the
 resilience score's reliability before trusting it to rank anything.

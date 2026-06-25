@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Recompute the frozen D3 per-f-level pre-window UDP-slope taint bands.
+"""Recompute the D3 per-f-level pre-window UDP-slope taint bands.
 
-The D3 validity check (``01-PREREGISTRATION.md`` §Session design) taints a
+The D3 validity check (the session design) taints a
 C1 iteration whose pre-chaos UDP-entry slope leaves its f-level's band.  The
-bands are **frozen** in :data:`m2_aa_analysis.D3_UDP_SLOPE_BANDS_EPM` (deviation
-D-2026-06-14-01, ``design/DEVIATIONS.md``); this script is their audit trail
+bands are stored in :data:`m2_aa_analysis.D3_UDP_SLOPE_BANDS_EPM` (deviation
+D-2026-06-14-01); this script is their audit trail
 — it re-derives them from the 2026-06-12 M2 A/A block so anyone can verify the
 committed constants against the raw data.
 
 Per f-level the band is ``round(mean ± 3·SD)`` of the untainted per-iteration
 ``udp_preslope_epm`` pooled over the A/A sessions, SD being the population SD of
-that reference set (``round`` is Python's round-half-to-even; none of the frozen
+that reference set (``round`` is Python's round-half-to-even; none of the
 edges sit on a half-integer).  Extraction reuses the canonical
 :func:`m2_aa_analysis.load_condition_outcomes` and the same accept + per-
 iteration taint exclusions the M2 path applies, so the bands derive from the
@@ -42,7 +42,7 @@ from m2_aa_analysis import (  # noqa: E402  (sys.path bootstrap above)
     summary_tainted_iterations,
 )
 
-#: Derive bands only for the registered f-levels — keyed off the frozen dict
+#: Derive bands only for the f-levels — keyed off the dict
 #: so the level set can never drift from the constants this audits.
 LEVELS: Tuple[str, ...] = tuple(D3_UDP_SLOPE_BANDS_EPM)
 
@@ -101,7 +101,7 @@ def derive_bands(results_dir: str, exclude: Sequence[str] = ()) -> Dict[str, Tup
     """Re-derive the per-f-level bands from an A/A results directory.
 
     Levels with fewer than :data:`MIN_SAMPLES` untainted samples are omitted
-    (no band can be formed), so a mismatch against the frozen dict is visible.
+    (no band can be formed), so a mismatch against the dict is visible.
     """
     by_level = collect_slopes(results_dir, exclude)
     return {lv: band_from_slopes(xs) for lv, xs in by_level.items() if len(xs) >= MIN_SAMPLES}
@@ -116,12 +116,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--check",
         action="store_true",
-        help="exit non-zero unless the re-derived bands match the frozen constants",
+        help="exit non-zero unless the re-derived bands match the constants",
     )
     args = ap.parse_args(argv)
 
     by_level = collect_slopes(args.results_dir, args.exclude)
-    print(f"{'f-level':8} {'n':>3} {'mean':>10} {'pop-SD':>10} {'derived band':>22} {'frozen':>18}")
+    print(
+        f"{'f-level':8} {'n':>3} {'mean':>10} {'pop-SD':>10} "
+        f"{'derived band':>22} {'reference':>18}"
+    )
     derived: Dict[str, Tuple[int, int]] = {}
     for lv in LEVELS:
         xs = by_level[lv]
@@ -143,9 +146,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             if derived.get(lv) != D3_UDP_SLOPE_BANDS_EPM[lv]
         }
         if mismatch:
-            print(f"MISMATCH (derived != frozen): {mismatch}", file=sys.stderr)
+            print(f"MISMATCH (derived != reference): {mismatch}", file=sys.stderr)
             return 1
-        print("OK — re-derived bands match the frozen D3_UDP_SLOPE_BANDS_EPM")
+        print("OK — re-derived bands match D3_UDP_SLOPE_BANDS_EPM")
     return 0
 
 

@@ -1,17 +1,16 @@
 # C1 report — dose-response campaign, **online-boutique** (preliminary)
 
-Confirmatory results for the first C1 workload (online-boutique). **Preliminary**
-in one strict sense: the registered confirmatory family (H1, H2, H3,
+Results for the first C1 workload (online-boutique). **Preliminary**
+in one strict sense: the primary hypothesis family (H1, H2, H3,
 H5) is corrected together by **Holm across all campaigns**, and H2/H3
 are tested by C2/C3 — so the per-hypothesis p-values below are *uncorrected*
 and final significance waits on the full family. C1 tests **H1** and
 **H5**; H2/H3 do not apply to pod-delete dose-response.
 
 **Provenance.** Data: 8 complete-block sessions, online-boutique, collected at
-commit `2ec934f` (clean). Pre-registration frozen at tag
-`prereg-freeze`. Analysis at commit `9dbfdb3+`
-(`scripts/c1_h1_trend.py`, `scripts/scorecard.py`). Frozen **before** analysis
-per [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §Versioning.
+commit `2ec934f` (clean). Analysis at commit `9dbfdb3+`
+(`scripts/c1_h1_trend.py`, `scripts/scorecard.py`). Thresholds were fixed
+**before** analysis.
 
 ## Campaign as run
 
@@ -24,10 +23,10 @@ hit exactly.
 
 ## D3 taint disposition (deviation D-2026-06-14-02)
 
-The frozen D3 pre-window UDP-slope taint (D-2026-06-14-01) is **OFF** for the
+The D3 pre-window UDP-slope taint (D-2026-06-14-01) is **OFF** for the
 H1 / H5 analyses here. Applied to C1 it taints **24/24 iterations at both
 f-025 and f-050** (zero complete blocks → both tests unrunnable). Diagnosis
-([`DEVIATIONS.md`](DEVIATIONS.md) D-2026-06-14-02):
+(D-2026-06-14-02):
 
 - **Not an instrument artifact** — pre-chaos UDP sampling is identical between
   the A/A block and C1 (≈88–96 samples, ~60 s window, 8 nodes).
@@ -56,7 +55,7 @@ the post-(re)placement settle so the pre-window starts after the burst drains.
 
 ## H1 — dose-response of the east-west tail
 
-Registered primary test: **Page's L** trend test (tie-corrected) over the five
+Primary test: **Page's L** trend test (tie-corrected) over the five
 ordered f-levels, session-condition medians of `ew_p95_pre_ms` as the unit
 (median over inter-service routes, loadgen→ excluded, pre-chaos window — the D4
 operationalization), monotone-increase alternative.
@@ -71,20 +70,19 @@ operationalization), monotone-increase alternative.
 | 15 % SESOI | not met | — |
 
 **Outcome: a monotone increasing trend is detected (p = 0.0002), but the total
-effect (+13.35 %) is below the registered 15 % SESOI.** Per
-[`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §H1, a statistically
+effect (+13.35 %) is below the 15 % SESOI.** A statistically
 detectable but sub-SESOI trend is reported as **below the SESOI, not as
 support**. The medians rise then plateau/dip slightly at f-075 (39.55) — not the
 clean two-regime step that would trigger the distinct "threshold, not
-dose-response" registered outcome, but not a strict monotone climb either; Page's
+dose-response" outcome, but not a strict monotone climb either; Page's
 L (which rewards the overall ordering) is significant regardless. The
-Spearman-over-levels sensitivity check is non-confirmatory and not computed here.
+Spearman-over-levels sensitivity check is secondary and not computed here.
 
 ## H5 — layered scorecard reliability
 
-Registered evaluation: per-sub-score condition-level ICC vs the aggregate
+Evaluation: per-sub-score condition-level ICC vs the aggregate
 (`ICC_old`); required conjunction of **availability** ∧ **mechanism**; user-tail
-exploratory. Sub-score formulas per [`DEVIATIONS.md`](DEVIATIONS.md)
+exploratory. Sub-score formulas per deviation
 D-2026-06-13-01; absolute reliability bar ICC ≥ 0.5.
 
 Aggregate comparator: **ICC_old = 0.066** [0.027, 0.343].
@@ -96,7 +94,7 @@ Aggregate comparator: **ICC_old = 0.066** [0.027, 0.343].
 | user-tail | exploratory | 0.741 | [0.040, 0.886] | — | excluded |
 
 **Required conjunction: FAIL** (availability fails the bar). This is a
-**sensible registered falsification, not a method failure**: pod-delete churn
+**sensible falsification, not a method failure**: pod-delete churn
 produces no sustained endpoint outage, so the availability layer has little
 reproducible between-condition signal to estimate — that face is expected to
 bite under **node-drain (C2)**. The *mechanism* layer is the headline: ICC 0.994
@@ -114,10 +112,10 @@ strengthens the conclusion rather than resting it on the deviation.
 
 ## Limitations
 
-- **Preliminary pending Holm** across the confirmatory family (H1/H2/H3/H5);
+- **Preliminary pending Holm** across the primary hypothesis family (H1/H2/H3/H5);
   C1 supplies only H1 + H5, and the family is corrected once C2/C3 land.
-- **Single workload.** hotelReservation C1 is deferred (no pre-registered churn
-  fault yet); external validity across workloads is unestablished.
+- **Single workload.** hotelReservation C1 is deferred (no churn
+  fault defined yet); external validity across workloads is unestablished.
 - **Availability face untested by C1.** Its reliability/effect awaits node-drain
   (C2).
 - **D3 slope-taint withdrawal** is a non-blind deviation (decided after seeing it

@@ -1,6 +1,6 @@
 # Placement Experiment — node-drain on the node hosting search (hotelReservation)
 # Second-workload EXTERNAL-VALIDITY replication of the H3 replication-rescue
-# design (online-boutique was the frozen confirmatory workload).
+# design (online-boutique was the primary workload).
 #
 # WHY: node-drain is the node-level failure that topology-spread / anti-affinity
 # exists for. Draining a worker evicts every pod on it, so placement decides the

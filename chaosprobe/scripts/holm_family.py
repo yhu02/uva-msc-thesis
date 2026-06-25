@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Confirmatory-family capstone: Holm correction over H1/H2/H3/H5.
+"""Primary-hypothesis-family capstone: Holm correction over H1/H2/H3/H5.
 
-The pre-registration (``01-PREREGISTRATION.md`` §"Confirmatory family and
-multiplicity") fixes a **four-member** confirmatory family — the single primary
-test of each of H1, H2, H3, H5 — **Holm-corrected** across the
+The design fixes a **four-member** primary hypothesis family — the single
+primary test of each of H1, H2, H3, H5 — **Holm-corrected** across the
 family at α = 0.05. This script is the capstone: it reads each hypothesis's
-registered *family-input p-value* from that hypothesis's own analysis-driver
+*family-input p-value* from that hypothesis's own analysis-driver
 JSON (so nothing is transcribed by hand), applies Holm, and prints the family
 table.
 
-**Each family-input p comes from the registered primary test, verbatim:**
+**Each family-input p comes from the primary test, verbatim:**
 
 - **H1** (dose-response, Page's L): ``pageTrendTest.p_one_sided`` from
   ``c1_h1_trend.py``.
 - **H2** (placement + DNS conjunction): ``familyInputMaxP`` = max(p_a, p_b)
-  from ``c3_h2_dns.py`` (the registered conjunction input).
+  from ``c3_h2_dns.py`` (the conjunction input).
 - **H3** (replication rescue conjunction): max of the two co-primary ART
   interaction p-values (``troughDepthFraction.artInteraction.p`` and
   ``userErrorRate.artInteraction.p``) from ``c2_h3_anova.py`` — matching the
@@ -23,10 +22,10 @@ table.
   max(p_availability, p_mechanism) from ``scorecard.py``.
 
 **Holm significance is necessary but not sufficient for support.** Each
-hypothesis also carries a registered *bar* the Holm p cannot speak to — H1's
+hypothesis also carries a *bar* the Holm p cannot speak to — H1's
 SESOI (effect ≥ 15 %), H2/H5's both-must-pass conjunction, H3's anti-affine
 rescue margin. A hypothesis is **supported** only if its primary is
-Holm-significant **and** its registered bar is met; this script reports both so
+Holm-significant **and** its bar is met; this script reports both so
 the distinction is explicit (a statistically significant but sub-SESOI trend,
 or a significant interaction that misses the rescue margin, is *not* support).
 
@@ -37,7 +36,7 @@ import argparse
 import json
 from typing import Any, Dict, List, Tuple
 
-#: Registered family size and α (pre-registration §multiplicity).
+#: Family size and α (§multiplicity).
 ALPHA = 0.05
 
 
@@ -134,7 +133,7 @@ def h5_input(doc: Any) -> Tuple[float, bool, str]:
     return p, conj, note
 
 
-#: Family members in registered order, each with its driver-JSON extractor.
+#: Family members in order, each with its driver-JSON extractor.
 MEMBERS = [
     ("H1", "dose-response (Page's L)", h1_input),
     ("H2", "placement + DNS intervention", h2_input),
@@ -177,7 +176,7 @@ def _fmt_p(p: float) -> str:
 
 def render(result: Dict[str, Any]) -> str:
     lines = [
-        "Confirmatory family — Holm correction "
+        "Primary hypothesis family — Holm correction "
         f"(m={result['familySize']}, α={result['alpha']})",
         "",
         f"  {'hyp':6} {'p_input':>9} {'holm_adj':>9} {'sig?':>5} "
@@ -197,15 +196,15 @@ def render(result: Dict[str, Any]) -> str:
     verdict = (
         "at least one hypothesis is SUPPORTED"
         if result["anySupported"]
-        else "NO confirmatory hypothesis is supported "
-        "(each fails Holm significance and/or its registered bar)"
+        else "NO primary hypothesis is supported "
+        "(each fails Holm significance and/or its bar)"
     )
     lines.append(f"  Family verdict: {verdict}")
     return "\n".join(lines)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Holm correction over the confirmatory family")
+    ap = argparse.ArgumentParser(description="Holm correction over the primary hypothesis family")
     ap.add_argument("--h1", required=True, help="c1_h1_trend.py --json output")
     ap.add_argument("--h2", required=True, help="c3_h2_dns.py --json output")
     ap.add_argument("--h3", required=True, help="c2_h3_anova.py --json output")

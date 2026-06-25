@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""M1b live GO/NO-GO gate (pre-registered, decidable predicates).
+"""M1b live GO/NO-GO gate (decidable predicates).
 
-Runs the full M1b exit-criteria gate of ``design/02-WORKPLAN.md`` against
-a live cluster and emits the **committed verification artifact** the
-pre-registration's stopping rule 1 demands (per-phase, per-level,
+Runs the full M1b exit-criteria gate against
+a live cluster and emits the **committed verification artifact**
+(per-phase, per-level,
 per-attempt outcomes with timestamps and achieved values), plus a PASS/FAIL
 summary line per criterion.
 
@@ -86,10 +86,10 @@ from chaosprobe.placement import affinity_engine as engine
 #: snapshots, and the phase-B ``packedAssignmentMethod`` field.
 SCHEMA = "chaosprobe/m1b-gate-artifact/v2"
 
-#: WORKPLAN M1b capacity criterion: ≥30 % headroom at the heaviest cell.
+#: M1b capacity criterion: ≥30 % headroom at the heaviest cell.
 HEADROOM_FLOOR = 0.30
 
-#: Default pre-registered fraction level grid (DESIGN §2.3, Knob A).
+#: Default fraction level grid (DESIGN §2.3, Knob A).
 DEFAULT_LEVELS = (0.0, 0.25, 0.5, 0.75, 1.0)
 
 #: How phase B's packed assignment is built (recorded in the artifact).
@@ -104,7 +104,7 @@ _DIAGNOSTIC_EVENT_LIMIT = 10
 
 @dataclass
 class GateConfig:
-    """Knobs of the gate run (defaults are the pre-registered values)."""
+    """Knobs of the gate run (defaults are the standard values)."""
 
     levels: Tuple[float, ...] = DEFAULT_LEVELS
     tolerance: float = fs.TARGET_TOLERANCE
@@ -241,7 +241,7 @@ def solve_with_seed_sweep(
 ) -> Tuple[fs.Solution, List[int]]:
     """Solve at ``level``, sweeping up to ``sweep`` seeds from ``base_seed``.
 
-    Returns the first *accepted* solution (pre-registered ±0.05 rule), or —
+    Returns the first *accepted* solution (±0.05 rule), or —
     when every seed misses — the best-gap solution, plus the list of seeds
     actually tried.  Seeds step by :data:`SOLVER_SEED_SWEEP` so consecutive
     attempts never re-try each other's seeds.
@@ -273,7 +273,7 @@ def run_attempt(
     """One full solve→apply→schedule→verify cycle at one f-level.
 
     Starts from a restored (unpinned, single-replica) app state — the
-    pre-registration's "from a clean app deploy" — and judges the attempt
+    "from a clean app deploy" start — and judges the attempt
     on the fraction recomputed from live pods, never the solver's claim.
     """
     record: Dict[str, Any] = {"attempt": attempt_no, "target": level, "startedAt": _now()}
@@ -544,7 +544,7 @@ def run_phase_c(api: engine.K8sApi, namespace: str, workers: Sequence[str]) -> D
 
 
 def summary_lines(artifact: Dict[str, Any]) -> List[str]:
-    """One PASS/FAIL line per pre-registered criterion."""
+    """One PASS/FAIL line per criterion."""
     lines: List[str] = []
     phase_a = artifact.get("phaseA")
     if phase_a:
@@ -583,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
     """The gate's CLI surface (also exercised by tests)."""
     parser = argparse.ArgumentParser(
         description=(
-            "M1b live GO/NO-GO gate (design/02-WORKPLAN.md M1b exit criteria). "
+            "M1b live GO/NO-GO gate (M1b exit criteria). "
             "Phase A: solver fraction gate at r=1 (3 consecutive in-tolerance "
             "attempts per f-level, abort after 6). Phase B: r=3 anti-affine "
             "(3 distinct nodes per service) then r=3 packed (each service on 1 "
@@ -615,13 +615,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--levels",
         default=",".join(str(level) for level in DEFAULT_LEVELS),
-        help="comma-separated target fractions (default: the pre-registered grid)",
+        help="comma-separated target fractions (default: the standard grid)",
     )
     parser.add_argument(
         "--tolerance",
         type=float,
         default=fs.TARGET_TOLERANCE,
-        help="per-level acceptance tolerance (default: the pre-registered 0.05)",
+        help="per-level acceptance tolerance (default: 0.05)",
     )
     parser.add_argument(
         "--consecutive", type=int, default=3, help="required consecutive in-tolerance attempts"
@@ -707,8 +707,7 @@ def main(argv: List[str] | None = None) -> int:
             "settleTimeoutSeconds": cfg.settle_timeout,
             # An "attempt" starts from engine.restore() — default scheduling,
             # single replica — followed by the quiescence barrier; not a full
-            # app redeploy.  Recorded for the pre-registration's "from a
-            # clean app deploy" term.
+            # app redeploy.  Recorded for the "from a clean app deploy" term.
             "attemptProtocol": ("restore-to-default,quiesce,solve,apply(r=1),schedule,verify-live"),
         },
     }

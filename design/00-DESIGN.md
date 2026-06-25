@@ -1,10 +1,8 @@
 # ChaosProbe — Phase-0 design document
 
 > **Status: PROPOSAL — the build has not started.** Nothing in this document is
-> a finding. The pre-registration in
-> [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) freezes only at the M2
-> commit hash (see [`02-WORKPLAN.md`](02-WORKPLAN.md)); until that freeze,
-> every design choice here is open to revision. All earlier evidence cited below is
+> a finding; until the design is settled, every choice here is open to
+> revision. All earlier evidence cited below is
 > by hypothesis number (H1–H6) from
 > [`chaosprobe/docs/explanation/hypotheses.md`](../chaosprobe/docs/explanation/hypotheses.md)
 > and refers to archived, `doctor --strict`-clean runs only. **The earlier numeric
@@ -30,7 +28,7 @@ effect to a *single* placement property, and the dose between the two
 regimes H5 identifies was never sampled.
 
 **This study is a designed interventional experiment.** Instead of eight bundles, the design
-manipulates two pre-registered knobs — target cross-node fraction and
+manipulates two knobs — target cross-node fraction and
 replication degree — and adds explicit mechanism interventions (NodeLocal
 DNSCache, kube-proxy mode) whose predicted effects follow from the earlier measured
 mechanism. The earlier results are recast as the **motivating pilot**: they tell us
@@ -41,13 +39,12 @@ conntrack pool, per the 2026-06-10 protocol probe; §10). This study exists to c
 each of those observations into a tested causal or dose-response claim — or
 to falsify it.
 
-**Claim structure (binding across all three documents).** The confirmatory
-family is the single primary test of each of **H1, H2, H3, and
+**Claim structure.** The primary hypothesis family
+is the single primary test of each of **H1, H2, H3, and
 H5**, Holm-corrected across the family. **H4 is descriptive** (a
-registered figure and reporting protocol, not a falsifiable hypothesis), and
+figure and reporting protocol, not a falsifiable hypothesis), and
 **H6** (the kube-proxy iptables arm) is an **exploratory secondary**,
-labeled as such and outside the family. Details: pre-registration,
-§"Confirmatory family and multiplicity".
+labeled as such and outside the family.
 
 The earlier limitations chapter ([`thesis/07-threats.md`](../thesis/07-threats.md),
 [`thesis/08-conclusion.md`](../thesis/08-conclusion.md) §8.2) is treated here
@@ -117,7 +114,7 @@ structural behaviour deliberately, as a control) vs *anti-affine* (replicas
 on distinct nodes via `podAntiAffinity`/`topologySpreadConstraints`). This is
 exactly the contrast the skipped E1 pilot could not realize, now realizable
 by construction. r = 1 reproduces the earlier regime and anchors comparability.
-**r = 2 is deliberately omitted**: no registered hypothesis, campaign, or
+**r = 2 is deliberately omitted**: no hypothesis, campaign, or
 analysis samples it, so a middle level would inflate the cell count and the
 M1b acceptance burden for zero analytic payload.
 
@@ -138,8 +135,7 @@ showed the clearly placement-dependent conntrack component is **UDP (DNS)**:
 spread sustains several-fold more UDP entries than packed placements,
 matching kube-proxy's deliberately UDP-only cleanup. NodeLocal DNSCache
 moves pod DNS to a node-local cache, removing most cross-node UDP DNS flows
-from conntrack. **H2 is a two-part confirmatory conjunction** (see
-pre-registration): **(a)** the placement-dependence replication —
+from conntrack. **H2 is a two-part conjunction**: **(a)** the placement-dependence replication —
 between-placement, cache-off arms: spread's during-churn UDP drop exceeds
 packed's, a paired *directional* comparison of absolute drops, for which
 the packed arm IS the comparator (no ratio denominator is involved);
@@ -157,13 +153,13 @@ ran ipvs only and flagged mechanism behaviour as environment-contingent
 (threats table: "depends on CNI, kube-proxy mode, kernel/conntrack
 settings"). A reduced condition subset — **the f = 0 and f = 1 endpoints
 only**, riding on the C1/C3 endpoint cells — is repeated under iptables mode
-to test **mode-contingency**. This arm is registered as **H6, an
+to test **mode-contingency**. This arm is **H6, an
 exploratory secondary with a decidable direction-preservation criterion**
-(sign test across ≥5 sessions; see pre-registration): does the
+(sign test across ≥5 sessions): does the
 spread-vs-packed *direction* of the UDP-drop contrast survive a proxy-mode
-change? No prediction is registered on magnitude, because the earlier evidence is
-mode-specific by construction. H6 sits **outside the confirmatory
-family** and is **second in the pre-declared de-scope order** (after the
+change? No prediction is made on magnitude, because the earlier evidence is
+mode-specific by construction. H6 sits **outside the primary hypothesis
+family** and is **second to be de-scoped under overrun** (after the
 second workload) if M1 overruns.
 
 ## 4. Instrumentation
@@ -176,18 +172,17 @@ second workload) if M1 overruns.
   defects: *i* = 1 (no replication) and window contamination (the Locust ramp
   inside the pre-window), which left the earlier flush medians (§10)
   unapportioned between kernel TCP teardown and UDP/DNS cleanup.
-- **Load generator placement and windows, pre-registered.** Locust runs
+- **Load generator placement and windows.** Locust runs
   **host-side** (outside the cluster, as before). By construction it is
   therefore **excluded from the cross-node-fraction edge accounting and from
   the per-node conntrack aggregation** — it occupies no cluster node the
   solver controls and contributes no in-cluster pod. The window protocol is
   fixed: the pre-chaos baseline window **starts only after the load ramp
-  completes plus a 60 s settle**. A pre-registered validity check —
+  completes plus a 60 s settle**. A validity check —
   **per-f-level pre-window UDP-slope bands** derived from the M2 A/A block
-  (redefined at the M2 freeze from the original "slope ≈ 0" absolute
+  (redefined from the original "slope ≈ 0" absolute
   threshold, which the A/A block showed is unworkable: the pre-window pool
-  carries placement-coupled transients — pre-registration §M2 freeze
-  amendments, D3) — taints any iteration whose pre-window slope falls
+  carries placement-coupled transients — decision D3) — taints any iteration whose pre-window slope falls
   outside its level's band. This closes the exact contamination path the
   earlier probe documented.
 - **EndpointSlice trough sampler retained** (15 s cadence) — the H6
@@ -213,9 +208,9 @@ a CI and never summed into one number:
 
 **Evaluation is falsifiable and guarded against circularity.** Because the
 three sub-scores were chosen *because* the earlier study showed signal in those layers,
-evaluating them on the earlier data would be circular — that circularity is a named,
-registered threat (pre-registration, H5). The mitigations: (1) sub-score
-definitions are **frozen at the M2 commit**, before any reliability data
+evaluating them on the earlier data would be circular — that circularity is a named
+threat (H5). The mitigations: (1) sub-score
+definitions are **fixed at the M2 commit**, before any reliability data
 exists; (2) test-retest reliability is evaluated **exclusively on fresh
 campaign sessions, never on the earlier sessions** that informed the design;
 (3) the bar is double — each retained sub-score must both beat the
@@ -236,16 +231,15 @@ the non-dominated set. The substantive question replication degree adds:
 at low f recover the availability that f = 0/r = 1 sacrifices, yielding
 frontier points the earlier design could not produce?
 
-**H4 is registered as descriptive, not confirmatory.** Under noisy,
+**H4 is descriptive, not a primary hypothesis.** Under noisy,
 overlapping bootstrap-CI regions, "the frontier contains ≥2 non-dominated
 placements" is nearly self-confirming — the noisier the data, the more
-non-dominated points appear. The frontier is therefore a **registered figure
+non-dominated points appear. The frontier is therefore a **figure
 with a reporting protocol**: dominance is declared only with margins
-δ_latency / δ_blast tied to the A/A noise band (finalized at the M2 freeze:
+δ_latency / δ_blast tied to the A/A noise band (finalized from the M2 A/A block:
 δ_latency = 4.4 ms, δ_blast = 1.0 pod trough depth + 0.302 user-route error
-rate, floored at the A/A 95 % noise band — pre-registration §M2 freeze
-amendments, H4), and the
-non-dominated set is reported under those margins (pre-registration, H4).
+rate, floored at the A/A 95 % noise band), and the
+non-dominated set is reported under those margins.
 A single placement dominating all others by ≥ δ on both faces would be
 reported prominently as the headline result, not suppressed.
 
@@ -259,14 +253,14 @@ reported prominently as the headline result, not suppressed.
   solver's reachable-fraction set is a function of N, so adopting the
   fallback **requires the M1b solver gate to re-run at N = 8** before
   anything downstream proceeds. Hardware existence/procurement is the
-  user-owned M0 gate ([`02-WORKPLAN.md`](02-WORKPLAN.md)).
+  user-owned M0 gate.
 - **Replication arm:** a **second, deliberately different environment** —
   different CNI and/or a managed Kubernetes service — running a reduced
   condition subset, to test whether the dose-response *direction* (not
   magnitudes) transfers. The earlier study explicitly identified an independent-
   infrastructure replication as "the most valuable follow-up this study
-  could receive" (§7.2). This arm is **pre-declared droppable** (condition
-  and reporting in the pre-registration's stopping rules): the H4 and
+  could receive" (§7.2). This arm is **droppable under overrun** (condition
+  and reporting): the H4 and
   H5 analyses depend only on primary-environment data and complete
   regardless.
 - **Workloads:** Online Boutique (11 services; continuity with the earlier study — all earlier
@@ -278,7 +272,7 @@ reported prominently as the headline result, not suppressed.
   hotelReservation's exact service/edge counts are measured at deploy (M2
   prep window) and feed its fraction quantum and capacity check, which are
   M2 exit criteria; if it does not fit the capacity budget below, the
-  second-workload claim is dropped per the pre-declared de-scope order —
+  second-workload claim is dropped under the de-scope order —
   first to go, before the iptables arm.
 
 ### 7.1 Capacity budget (pinned N = 6 × 8 GiB)
@@ -319,9 +313,8 @@ artifacts.
   replicas need **3 schedulable, distinct nodes**; N = 6 satisfies this with
   slack. "r = 3 anti-affine schedulable at the pinned N" is an **explicit
   M1b exit criterion** (it can only be evaluated on the pinned-N cluster,
-  not in the M1a spike), and the capacity-null stopping rule covers
-  anti-affine scheduling failure, not only the f = 0/f = 1 extremes
-  (pre-registration, stopping rules).
+  not in the M1a spike), and the capacity-null abandon condition covers
+  anti-affine scheduling failure, not only the f = 0/f = 1 extremes.
 - hotelReservation's analogous budget (≈ 15 × r app pods plus its
   datastores) is computed the same way at deploy and gated at M2. Its
   r = 3 anti-affine distinct-node requirement is the same 3-of-6-nodes
@@ -350,15 +343,15 @@ artifacts.
 > and is the single point of failure: with ~11 services, integer node
 > assignments, and capacity constraints, achievable cut fractions may be
 > quantized far from the targets. Therefore the solver is built and
-> validated **first**, in two stages ([`02-WORKPLAN.md`](02-WORKPLAN.md)):
+> validated **first**, in two stages:
 > **M1a**, a cheap solver-feasibility spike (algorithm + quantization study,
 > runnable on the existing 4-worker cluster, no new hardware) whose
 > output informs the M0 hardware decision; then **M1b**, the full go/no-go
 > gate **at the pinned N = 6**. The gate MUST run at the pinned N because
 > the reachable-fraction set is N-dependent, and it re-runs if the
 > 8 × 4 GiB fallback cluster is adopted. Gate terms ("attempt",
-> "consecutive", the recorded artifact) are defined decidably in the
-> pre-registration's stopping rules. Both the solver and the engine carry
+> "consecutive", the recorded artifact) are defined decidably for the
+> gate. Both the solver and the engine carry
 > CI-gated unit/property tests — including validation of the
 > achieved-fraction computation against an independent second
 > implementation — **before** any live smoke gate (workplan M1a/M1b exit
@@ -368,30 +361,28 @@ artifacts.
 > this study switches to a **nearest-achievable-fraction design** — the solver emits
 > its closest achievable placements, the *achieved* fraction (measured
 > post-schedule from `podPlacements`) becomes the regressor, and H1's
-> analysis switches to the **pre-registered fallback tests** (linear
+> analysis switches to the **fallback tests** (linear
 > mixed-effects model on achieved-f as the primary, Jonckheere–Terpstra as
 > the nonparametric secondary — see H1). This weakens the design from
 > designed-dose to observed-dose but preserves falsifiability; the switch,
-> if taken, is recorded in the pre-registration before freezing.
+> if taken, is recorded before analysis begins.
 
 ## 10. Relation of the earlier evidence to this study's hypotheses
 
 **This table is the single canonical home of the earlier numeric literals in this
-plan.** §1–§6 above, the pre-registration's per-hypothesis pilot cites, and
-the workplan reference rows here (or `hypotheses.md` directly) instead of
+plan.** §1–§6 above and the per-hypothesis pilot cites reference the rows
+here (or `hypotheses.md` directly) instead of
 restating numbers.
 
 | Earlier result (archived) | Earlier literals (canonical) | This study's successor | What changes |
 |---|---|---|---|
-| H5 two-regime separator (2 batches) | ~1.25× ≈ 25 % east-west tail separation, f ≈ 0 vs ≈ 0.70–0.82; lone interior point 0.13 vanished in batch 2; ρ 0.79 → 0.25 | H1 dose-response (**confirmatory**) | Interior of the dose sampled by design |
-| H2 flush (7/7 sessions, sign test p = 0.0156) + protocol probe (UDP placement-dependence) | flush medians 38.5 % vs 2.7 %; UDP entries spread 910 vs colocate 224 (~4×); packed/colocate UDP pool ~72–224 entries across the probe window | H2 placement-dependence + DNS-cache intervention (**confirmatory**, two-part conjunction) | Consistency → replication (between-placement, directional) plus controlled intervention (within-spread ratio, whose denominator is spread's own drop — avoiding the near-zero packed pool for the ratio while keeping packed as the part-(a) comparator) |
-| H6 blast = predicted; E1 deliberately skipped (structurally null) | ρ = 1.0, n = 6; colocate 11/11 services down vs spread 2/11 | H3 replication rescue (**confirmatory**) | Anti-affinity becomes expressible; E1 finally runnable |
+| H5 two-regime separator (2 batches) | ~1.25× ≈ 25 % east-west tail separation, f ≈ 0 vs ≈ 0.70–0.82; lone interior point 0.13 vanished in batch 2; ρ 0.79 → 0.25 | H1 dose-response (**primary**) | Interior of the dose sampled by design |
+| H2 flush (7/7 sessions, sign test p = 0.0156) + protocol probe (UDP placement-dependence) | flush medians 38.5 % vs 2.7 %; UDP entries spread 910 vs colocate 224 (~4×); packed/colocate UDP pool ~72–224 entries across the probe window | H2 placement-dependence + DNS-cache intervention (**primary**, two-part conjunction) | Consistency → replication (between-placement, directional) plus controlled intervention (within-spread ratio, whose denominator is spread's own drop — avoiding the near-zero packed pool for the ratio while keeping packed as the part-(a) comparator) |
+| H6 blast = predicted; E1 deliberately skipped (structurally null) | ρ = 1.0, n = 6; colocate 11/11 services down vs spread 2/11 | H3 replication rescue (**primary**) | Anti-affinity becomes expressible; E1 finally runnable |
 | H5 × H6 trade-off (two-point) | (see rows above) | H4 Pareto frontier (**descriptive**) | Two points → frontier with CIs and δ dominance margins |
-| H1 score reliability | ICC = 0.033, CI [0.014, 0.178], 7 sessions / 147 iterations; MDE ≈ 51 points at n = 3; between-session variance 37.6 % of score variance | H5 scorecard reliability (**confirmatory**) | Critique → constructive replacement; absolute bar + fresh-data evaluation |
+| H1 score reliability | ICC = 0.033, CI [0.014, 0.178], 7 sessions / 147 iterations; MDE ≈ 51 points at n = 3; between-session variance 37.6 % of score variance | H5 scorecard reliability (**primary**) | Critique → constructive replacement; absolute bar + fresh-data evaluation |
 | Mode-contingency caveat (ipvs-only; threats table) | — (no numeric claim) | H6 iptables direction transfer (**exploratory secondary**) | Untested caveat → decidable direction-preservation check |
 
-The falsifiable statements, SESOIs, tests, multiplicity policy, and stopping
-rules for H1–H6 live in [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md);
-the schedule and gates in [`02-WORKPLAN.md`](02-WORKPLAN.md). Family
-membership — **H1/H2/H3/H5 confirmatory (Holm-corrected), H4
-descriptive, H6 exploratory** — is identical in all three documents.
+Family
+membership is **H1/H2/H3/H5 primary (Holm-corrected), H4
+descriptive, H6 exploratory**.

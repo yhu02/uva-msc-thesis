@@ -1,15 +1,15 @@
 # Design-corrected re-analysis of the availability axis (H3/H4/H5) — report
 
-**Scope.** Exploratory, **outside the frozen Holm family**. Three confirmatory
+**Scope.** Exploratory, **outside the Holm family**. Three primary
 availability tests were construction-limited because `pod-delete` at r=1 cannot
-move availability. Criteria were **pre-declared** in `DESIGN-FIX-SCOPE.md` before
+move availability. Criteria were **declared** in `DESIGN-FIX-SCOPE.md` before
 the corrected analyses were run. Driver: `chaosprobe/scripts/design_fix_analysis.py`.
 
 **Provenance.** New data: C4 node-drain dose-response, **8 complete-block sessions**
 (`results/c4-nodedrain-dose/`), collected 2026-06-22/23 on `main` (`git.dirty=false`;
 sessions 1–2 commit `445c5bc`, 3–8 commit `71c545d` — identical run-path code, the
 intervening merge was thesis-docs only). All 8 sessions `doctor --strict` clean
-(0 errors). H3 re-uses the existing, frozen C2 node-drain data
+(0 errors). H3 re-uses the existing C2 node-drain data
 (`results/c2-roundrobin/`).
 
 ## The fault (recap)
@@ -63,13 +63,13 @@ Re-analysing the existing C2 node-drain data:
 - **Trough depth:** r1 = 0.0909 (1/11), r3-packed = 0.0909, r3-anti = 0.0455
   (0.5/11); anti-affine **halves the trough depth**, with a significant r×mode
   interaction (p = 0.0065). On the unrounded medians the reduction is **exactly
-  50 %**, so it *meets* the pre-declared range-relative bar — but knife-edge: at
+  50 %**, so it *meets* the declared range-relative bar — but knife-edge: at
   n=8 the anti-affine session depths are bimodal, so the median landing on the
   half-pod is a coincidence and the bar is not robustly cleared.
 - **User-route error:** r1 = 0.632, r3-anti = **0.0**; anti-affine **eliminates**
   the user-visible error (rescue 0.632, interaction p ≈ 0).
 
-The original `CONJUNCTION = False` was an artifact of the registered 1-pod depth
+The original `CONJUNCTION = False` was an artifact of the 1-pod depth
 margin, which equalled the r=1 range and so demanded a >100 % depth reduction —
 impossible. With the artifact removed, the **rescue effect is real and significant
 on both faces** (depth halved, user-error eliminated). The depth *bar* is met only
@@ -78,12 +78,12 @@ is the significant interaction plus the user-error co-primary, not the threshold
 
 ## Honest framing for the thesis
 
-The registered availability tests were construction-limited — un-passable margin
+The original availability tests were construction-limited — un-passable margin
 (H3), degenerate face (H4), no-signal regime (H5) — all rooted in pod-delete@r=1
-being unable to move availability. A pre-declared, design-corrected follow-up
+being unable to move availability. A declared, design-corrected follow-up
 under node-drain resolves each: **anti-affine replication halves the blast radius
 and eliminates user-error; spreading trades a small latency cost for a large
 availability gain; and the availability layer is reliable once a fault produces
 signal.** This is reported as exploratory (outside the Holm family); it does not
-re-open the frozen confirmatory verdicts but shows that two of their "failures"
+re-open the primary verdicts but shows that two of their "failures"
 (H3, H4) were partly construction artifacts whose underlying effects are real.

@@ -129,7 +129,7 @@ def test_load_session_values_taints_and_missing_raw(tmp_path, capsys):
 def test_load_session_reads_legacy_v2session_key(tmp_path):
     """Back-compat: datasets deposited under the published DOI use the old
     top-level ``v2Session`` summary key; the loader must still parse them via the
-    ``or summary.get("v2Session")`` fallback (DEVIATIONS D-2026-06-25-01)."""
+    ``or summary.get("v2Session")`` fallback (deviation D-2026-06-25-01)."""
     summary = _aa_summary(_TWO_LEVELS)
     # Re-key the placement block under the legacy name; drop the new key entirely.
     summary["v2Session"] = summary.pop("session")
@@ -341,7 +341,7 @@ def test_main_pending_extra_anomalies_and_excludes(tmp_path, capsys):
     assert "[skip] skipme: excluded on the command line" in out
     assert "complete (extra sessions ignored: ['s3'])" in out
     assert "pair-seed1: PENDING — 1/2 sessions banked (s4)" in out
-    assert "Tainted iterations (registered: never quoted in results):" in out
+    assert "Tainted iterations (never quoted in results):" in out
     assert "s2: f-000 it1: app_ready_timeout" in out
     assert "!! pair-seed0: orderSeeds identical (11)" in out
     assert "solver assignments differ" in out

@@ -2,9 +2,9 @@
 """M2 A/A calibration block — supplementary variance outcomes + noise bands.
 
 Companion to the canonical A/A analysis (``scripts/m2_aa_analysis.py``,
-which owns the registered delta metrics, the pairing, the registered-unit
+which owns the delta metrics, the pairing, the per-unit
 null tests and the liveAchievedF identity check).  Per the D4
-consolidation (``design/M2-AA-REPORT.md`` §Freeze decisions,
+consolidation (``design/M2-AA-REPORT.md`` §Decisions,
 §Instrumentation gaps) there is ONE per-iteration extraction — this
 script imports it from the canonical module
 (:func:`m2_aa_analysis.extract_iteration` /
@@ -17,17 +17,17 @@ broader scope the M2 report's variance table is sourced from:
    f-condition and pooled, plus the 95 % A/A noise band: the distribution of
    paired |A - B| differences between identical sessions (per condition,
    pooled across complete pairs). These bands feed the M2 power analysis and
-   the TBD-at-freeze numbers: the H1 >=15 % SESOI must exceed the band,
+   the TBD-at-calibration numbers: the H1 >=15 % SESOI must exceed the band,
    the H3 margin/TOST equivalence band, H4's delta dominance margins,
    and the pre-window UDP-slope taint threshold.
 
 2. **A/A-as-A/B null tests** — within each complete pair, each outcome is
-   pushed through the paired comparison the registered A/B analyses use
+   pushed through the paired comparison the A/B analyses use
    (Wilcoxon signed-rank, conditions as the pairing unit with session
-   medians as values, exactly the unit the registered tests pair on; an
+   medians as values, exactly the unit the tests pair on; an
    iteration-level pairing is reported alongside as a higher-resolution
    sensitivity check). Any statistically significant A/A finding is flagged
-   loudly: per the registered rule it triggers investigate -> fix -> rerun.
+   loudly: per the rule it triggers investigate -> fix -> rerun.
 
 Outcomes (extracted per iteration from the raw ``f-XXX.json`` files by the
 shared canonical extraction; tainted iterations — ``taintReasons`` +
@@ -39,7 +39,7 @@ rows preserving pairing alignment):
   route p95 (``loadgenerator->`` routes excluded per DESIGN §4).
 - during-churn UDP conntrack-entry drop (H2): cluster UDP entries
   (per-node phase mean, summed over nodes) pre-chaos minus during-chaos —
-  the registered **absolute** drop (no ratio denominator); the percentage
+  the **absolute** drop (no ratio denominator); the percentage
   drop is reported as context only.
 - all-protocol conntrack flush % (mechanism context).
 - EndpointSlice trough depth (H3) + services driven to zero (blast
@@ -50,7 +50,7 @@ rows preserving pairing alignment):
   Locust ``errorRate`` is reported alongside.
 - pre-chaos-window UDP-entry slope (taint-threshold feed), entries/min.
 - per-iteration resilience score (H5). Layered sub-scores are NOT yet
-  implemented in the chaosprobe package (their definitions freeze at the
+  implemented in the chaosprobe package (their definitions are set at the
   M2 commit), so only the aggregate is analyzed; the script notes this.
 
 Pairs are derived from ``summary.json -> session.solverSeed`` plus the
@@ -95,7 +95,7 @@ ALPHA = 0.05
 
 # Supplementary outcomes: key -> (label, unit).  Keys are the shared
 # canonical extraction's (m2_aa_analysis.ITERATION_OUTCOMES) — the
-# canonical registered metrics plus the broader variance outcomes.
+# canonical metrics plus the broader variance outcomes.
 OUTCOMES: List[Tuple[str, str, str]] = [
     ("ew_p95_pre_ms", "east-west p95 latency, pre-chaos (H1)", "ms"),
     ("ew_p95_during_ms", "east-west p95 latency, during-chaos (H1 alt window)", "ms"),
@@ -247,7 +247,7 @@ def _clean(vals: Sequence[Optional[float]]) -> List[float]:
 
 def cond_value(session: dict, cond: str, outcome: str) -> Optional[float]:
     """The session x condition unit value: median across iterations (the
-    registered analyses use session medians as units)."""
+    analyses use session medians as units)."""
     vals = _clean((session["values"].get(cond) or {}).get(outcome) or [])
     return st.median(vals) if vals else None
 
@@ -351,7 +351,7 @@ def null_tests(pairs: Dict[str, List[dict]], outcome: str) -> dict:
             continue
         a, b = members[:2]
         conds = sorted(set(a["conditions"]) & set(b["conditions"]))
-        # Condition-level: the registered pairing unit (session medians per level).
+        # Condition-level: the pairing unit (session medians per level).
         ca, cb = [], []
         for cond in conds:
             va, vb = cond_value(a, cond, outcome), cond_value(b, cond, outcome)
@@ -382,7 +382,7 @@ def null_tests(pairs: Dict[str, List[dict]], outcome: str) -> dict:
 
 
 def significant_findings(tests_by_outcome: Dict[str, dict], alpha: float) -> List[str]:
-    """Every A/A test with p < alpha, named — the registered halt trigger."""
+    """Every A/A test with p < alpha, named — the halt trigger."""
     hits = []
     for outcome, t in tests_by_outcome.items():
         for pair, entry in t["perPair"].items():
@@ -483,7 +483,7 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
 
     taints = [f"{s['name']}: {t}" for s in sessions for t in s["taints"]]
     if taints:
-        print("\nTainted iterations (registered: never quoted in results):")
+        print("\nTainted iterations (never quoted in results):")
         for t in taints:
             print(f"  {t}")
     else:
@@ -501,7 +501,7 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
         "\nNOTE  layered sub-scores (availability / mechanism-reconvergence /"
         "\n      user-tail, H5) are not implemented in the chaosprobe package"
         "\n      yet; only the aggregate per-iteration resilience score is"
-        "\n      analyzed here. Their definitions freeze at the M2 commit."
+        "\n      analyzed here. Their definitions are set from the M2 A/A calibration."
         "\nNOTE  EndpointSlice data has pre/during/post snapshots only (no 15 s"
         "\n      trough series); trough *duration* is proxied by mean pod"
         "\n      recovery time. Flag for the M2 instrumentation review."
@@ -574,7 +574,7 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
     if hits:
         print(
             f"  *** {len(hits)} STATISTICALLY SIGNIFICANT A/A FINDING(S) at alpha={alpha} ***\n"
-            "  Registered rule: investigate -> fix the doctor gates / taint rules /\n"
+            "  Rule: investigate -> fix the doctor gates / taint rules /\n"
             "  instrumentation -> RERUN the A/A block before any comparison runs.\n"
             "  (A second significant finding after a fix HALTS the campaign.)"
         )
@@ -585,7 +585,7 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
                 "  Note: all hits are iteration-level (sensitivity pairing). Within a\n"
                 "  pair, iteration-level pairs share the session, so this pairing is\n"
                 "  sensitive to a constant session-level offset — i.e. it detects\n"
-                "  between-session variance. The registered analyses pair at the\n"
+                "  between-session variance. The analyses pair at the\n"
                 "  session-median unit (the condition-level tests above)."
             )
     else:
@@ -601,7 +601,7 @@ def report(sessions: List[dict], pairs: Dict[str, List[dict]], alpha: float) -> 
         verdict = "EXCEEDS" if h1["p95_pct_of_level"] < 15.0 else "DOES NOT EXCEED"
         print(
             f"\n  H1 SESOI check: 15% of the mean east-west p95 level vs the A/A\n"
-            f"  p95 band of {h1['p95_pct_of_level']:.1f}% -> the registered 15% SESOI "
+            f"  p95 band of {h1['p95_pct_of_level']:.1f}% -> the 15% SESOI "
             f"{verdict} the A/A noise band."
         )
     return out
