@@ -1,23 +1,31 @@
-# ChaosProbe — Availability-Axis confirmatory study — pre-registration (**DRAFT — calibration complete, freeze pending**)
+# ChaosProbe — Availability-Axis confirmatory study — pre-registration (**FROZEN 2026-06-25 — tag `ax-prereg-freeze`**)
 
-> **Status: DRAFT — TBDs filled, not yet frozen.** This document specifies a
-> *new, separate* confirmatory study whose purpose is to make the
+> **Status: FROZEN (2026-06-25), tag `ax-prereg-freeze`.** This document specifies
+> a *new, separate* confirmatory study whose purpose is to make the
 > availability-axis findings — established only *exploratorily* in the thesis
-> design-corrected re-analysis — **confirmatory**. It becomes binding only after
-> (1) the open TBDs are filled from a dedicated node-drain A/A calibration block,
-> (2) a freeze commit + git tag, and (3) a DOI deposit of the frozen state,
-> exactly as the original pre-registration was frozen
+> design-corrected re-analysis — **confirmatory**. Its content is now **locked**:
+> every change after this freeze commit is logged in [`DEVIATIONS.md`](DEVIATIONS.md)
+> with date, reason, and whether it was decided blind to outcome data (§9). The
+> three binding prerequisites: (1) the §6 TBDs were filled from a dedicated
+> node-drain A/A calibration block — **done**; (2) this freeze commit + git tag —
+> **done**; (3) a DOI deposit of the frozen state + raw A/A data — **the one
+> remaining step before confirmatory data collection**, anchoring this tag
+> externally exactly as the original pre-registration was frozen
 > ([`01-PREREGISTRATION.md`](01-PREREGISTRATION.md), DOI
 > [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)).
+> *(The filename retains the `-DRAFT` suffix only to preserve the cross-references
+> that already point at it — thesis chapters, `AX-AA-REPORT.md`; this banner is
+> authoritative on the frozen status.)*
 >
-> **Step (1) is COMPLETE (2026-06-25).** The node-drain A/A calibration block ran
+> **Calibration outcome, frozen here.** The node-drain A/A calibration block ran
 > (6 fixed-placement sessions, `results/ax-aa-nodedrain/`); every §6 TBD is filled
 > and the environment (§6.7) is chosen — see [`AX-AA-REPORT.md`](AX-AA-REPORT.md).
 > **The calibration retired AX-H3** (the availability outcomes are deterministic at
 > fixed placement, so its test-retest ICC is not a valid estimand — the §3
-> not-runnable hatch fired); the confirmatory family is now **two members (AX-H1,
-> AX-H2)**, availability reported descriptively via AX-H1 + AX-H4. Steps (2) freeze
-> commit + tag and (3) DOI deposit remain.
+> not-runnable hatch fired); the confirmatory family is **two members (AX-H1,
+> AX-H2)**, availability reported descriptively via AX-H1 + AX-H4. **No data testing
+> the (surviving) hypotheses has been collected** — that begins only after the DOI
+> deposit.
 >
 > **This document does NOT change anything in the thesis.** The frozen
 > confirmatory family (H1–H5) and its Holm verdict stand untouched; the
@@ -367,11 +375,11 @@ Unchanged in discipline from [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md)
 1. ✅ **DONE (2026-06-25).** Ran the §5 node-drain A/A block; filled every §6 TBD
    from it + the power analysis ([`AX-AA-REPORT.md`](AX-AA-REPORT.md)).
 2. ✅ **DONE (2026-06-25).** Resolved the §6.7 environment choice (pinned cluster).
-3. **Freeze (user-owned, next):** commit + annotated git tag (e.g.
-   `ax-prereg-freeze`); flip this document's status banner to FROZEN with the date
-   and tag.
-4. Deposit the frozen state + raw A/A data + gate artifacts under a DOI
-   (`isSupplementTo` 10.5281/zenodo.20690836), as `FREEZE-DEPOSIT.md` did.
+3. ✅ **DONE (2026-06-25).** Freeze: this commit + annotated git tag
+   `ax-prereg-freeze`; status banner flipped to FROZEN with the date and tag.
+4. **DOI deposit (next, user-owned — token-gated):** deposit the frozen state + raw
+   A/A data + gate artifacts under a DOI (`isSupplementTo` 10.5281/zenodo.20690836),
+   as `FREEZE-DEPOSIT.md` did.
 5. Only then collect AX confirmatory data.
 
 ## 9. Deviations policy
