@@ -1,0 +1,129 @@
+\chapter{Threats to validity \& scope}\label{ch:threats}
+
+This chapter states the boundary of every claim, in the standard vocabulary.
+\textbf{Construct validity} asks whether the measured quantities mean what the
+claims need: whether a single resilience score measures ``resilience'' at all is
+itself under test (H5 quantifies the layered scorecard's reliability against a
+naive single-aggregate baseline rather than assuming it), the UDP-conntrack drop
+is a \emph{proxy} for reconvergence whose causal decomposition is explicitly
+pending (\S\ref{sec:h2-mechanism}), and the \texttt{metricAvailability}
+bookkeeping exists because a missing metric silently read as zero would corrupt
+the construct it stands for. \textbf{Internal validity} asks whether observed
+differences are attributable to the manipulated variable: the threats are
+run-level drift, placement mismatch, and dirty provenance, and the defenses ---
+the dependent-vs-control route split, within-run correlation,
+\texttt{placementMatchRates}, and the \texttt{doctor --strict} gate --- are built
+into the design (\S\ref{sec:three-layer}, \S\ref{sec:campaign}) rather than
+applied post hoc. \textbf{External validity} asks how far the results carry: a
+single small virtualized cluster, one workload, one Kubernetes version and
+kube-proxy mode, and a single-replica baseline bound the claims tightly, which is
+why \S\ref{sec:generalizes} separates what generalizes (the method, the
+mechanism's direction) from what does not (the absolute values, anything
+multi-replica). \textbf{Conclusion validity} asks whether the statistics support
+the inferences: the design is \emph{pre-registered} with SESOIs fixed against a
+measured A/A noise floor and the confirmatory family Holm-corrected, leaning on
+nonparametric tests, cluster-bootstrap intervals, and equivalence testing rather
+than significance hunting (\S\ref{sec:statistics}). The tables below give the
+threat-by-threat detail.
+
+\section{Threats and defences}\label{sec:threats-table}
+
+\begin{center}
+\footnotesize
+\begin{tabular}{p{0.2\textwidth}p{0.32\textwidth}p{0.38\textwidth}}
+\toprule
+\textbf{Threat} & \textbf{Why it matters} & \textbf{Defence} \\
+\midrule
+\textbf{Single-replica baseline} & At $r{=}1$, \texttt{pod-delete} removes the only instance, which can swamp topology effects on the availability layer. & Scope the churn claims to single-replica and layered measurement; the replication degree is itself a knob (H3 sweeps $r{=}3$ packed/anti-affine under node-drain). \\
+\addlinespace
+\textbf{Small virtualized cluster} & Eight 2-vCPU/4-GiB KVM/libvirt workers may not generalize. & Claim bounded external validity; report \emph{direction} and \emph{mechanism}, not absolute latency values. \\
+\addlinespace
+\textbf{Version sensitivity} & kube-proxy / conntrack behaviour evolves across releases (materially in v1.31--v1.32). & Archive exact Kubernetes (v1.28.6), runtime, kube-proxy mode/conntrack settings, and the analysis commit (\texttt{runMetadata} / manifests); present as a measurement study of a specific environment. \\
+\addlinespace
+\textbf{Placement mismatch} & The solver may not realize the intended cross-node fraction. & The M1b gate verified all five $f$-levels within $\pm 0.05$; \texttt{placementMatchRates} reported; mismatched iterations flagged or excluded. \\
+\addlinespace
+\textbf{Run-to-run drift} & Iteration and session noise can dominate. & The A/A calibration block quantified the noise floor \emph{before} freezing, and every SESOI/margin was fixed no smaller than that floor; independent single-commit sessions are the unit of analysis; runs are blocked/random effects; cluster-bootstrap CIs. \\
+\addlinespace
+\textbf{Dirty provenance} & Untracked files / missing metadata undermine credibility. & Never quote results from runs failing \texttt{doctor --strict}; an early, weakly-provenanced pilot whose striking number did not survive strict re-runs is the institutionalized lesson behind the gate and the manifest dirty flag. \\
+\addlinespace
+\textbf{Metric-availability gaps} & Missing PromQL queries can manufacture fake zeros. & \texttt{metricAvailability} distinguishes ``not collected'' from ``collected zero'' (e.g.\ kube-proxy programming latency is recorded as \emph{uncollected} here, anchoring the mechanism only conceptually). \\
+\addlinespace
+\textbf{Overclaiming causality} & Run-level slowness can confound correlations. & Dependent-vs-control routes + within-run correlation; TOST for equivalence claims; causal language reserved for the manipulated variable (placement) and the controlled DNS intervention. \\
+\addlinespace
+\textbf{Outcome-aware deviation} & One deviation (D-2026-06-14-02, withdrawing the registered D3 UDP-slope taint from the C1 H1/H5 latency analyses) was decided \emph{after} observing it made H1 unrunnable --- the study's only non-blind deviation. & Disclosed in the H1 result (\S\ref{sec:h1}); justified on protocol-independent grounds (the band gates DNS/UDP, a different protocol than the latency outcome, and discards the cleanest levels); the taint-on sensitivity run is available, and H5's verdict is shown robust to the choice while H1's dependence is stated explicitly. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two threats deserve a sentence beyond the table. The single-replica baseline is
+not only a threat but a \emph{scoping instrument}: it is what makes
+\texttt{pod-delete} a pure churn fault (at $r{=}1$ the outage is total by
+construction, so any churn signal must appear at a non-availability layer),
+which is precisely why the availability face is degenerate under that fault
+(\S\ref{sec:h4}, \S\ref{sec:h5}). And the run-to-run drift row is not an
+admission that the environment was too noisy: quantifying that noise and setting
+the SESOIs above it is the point of the A/A calibration block, so the design
+exists because the drift was measured, not despite it.
+
+\section{What generalizes vs.\ what does not}\label{sec:generalizes}
+
+\begin{center}
+\footnotesize
+\begin{tabular}{p{0.32\textwidth}p{0.18\textwidth}p{0.4\textwidth}}
+\toprule
+\textbf{Aspect} & \textbf{Generalizes?} & \textbf{Why / caveat} \\
+\midrule
+The \emph{method} (placement-aware, cross-layer, pre-registered, provenance-gated chaos evaluation) & \textbf{Yes} & The framework and analysis discipline are reusable on any cluster/workload. \\
+\addlinespace
+The \emph{direction} of the placement effect on the conntrack drop (H2) & \textbf{Direction only} & Reproducible here (packed concentrates more per-node conntrack churn than spread under \texttt{pod-delete}, 7/7 pairs); absolute values are environment-specific, and the direction is the \emph{opposite} of the registered prediction. \\
+\addlinespace
+The DNS-cache intervention (H2 arm b) removing the conntrack drop & \textbf{Direction only} & The NodeLocal DNSCache shrinks the drop under both placements here; the magnitude is environment-specific. \\
+\addlinespace
+Absolute metric values (latency, recovery s, conntrack entries) & \textbf{No} & Tied to a small virtualized 8-worker cluster. \\
+\addlinespace
+Mechanism behaviour (conntrack, kube-proxy sync) & \textbf{Environment-contingent} & Depends on CNI, kube-proxy mode (ipvs here), kernel/conntrack settings --- archived per run so the scope is explicit. \\
+\addlinespace
+The layered-scorecard reliability finding (H5) & \textbf{This regime} & The mechanism sub-score is highly test-retest reliable (ICC 0.994) and the availability sub-score is not (0.180) under single-replica \texttt{pod-delete}; not asserted for node-drain-dominated or multi-replica regimes. \\
+\addlinespace
+The dose-response of the east-west tail (H1) & \textbf{This regime, sub-SESOI} & Detected and Holm-significant but below the 15\,\% SESOI on this cluster; a detectable-but-negligible trend, not a transferable magnitude. \\
+\addlinespace
+The placement findings across \emph{workloads} (H1, H3) & \textbf{Corroborated on a 2nd workload} & Both replicated on DeathStarBench hotelReservation (a deep Consul/gRPC fan-out): same below-SESOI dose-response verdict (sub-SESOI on online-boutique, null on hotel) and the same \texttt{CONJUNCTION = False} with a significant-but-margin-short rescue (\S\ref{sec:external-validity}). The mechanism-without-margin pattern is not an artifact of one topology; second \emph{cluster}/infrastructure still untested. \\
+\addlinespace
+Anything about multi-replica / HA failover & \textbf{Partly (node-drain only)} & H3 reaches $r{=}3$ under node-drain; broader HA-failover behaviour is out of scope (\S\ref{sec:future-work}). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The asymmetry of this table is deliberate. The portable row is the first: the
+measurement design, the pre-registered campaign protocol, and the analysis
+scripts transfer to any cluster and workload unchanged: a second-workload
+replication (\S\ref{sec:external-validity}) corroborates both placement studies,
+and a replication on different infrastructure is now the most valuable remaining
+follow-up (\S\ref{sec:future-work}). Everything below
+degrades gracefully from ``direction only'' to ``not in scope,'' and where a row
+says environment-contingent, the archived manifests make the contingency
+checkable rather than vague: a reader can compare their kube-proxy mode,
+conntrack settings, and Kubernetes version against the archived fingerprint
+instead of guessing.
+
+\section{Explicitly not claimed}\label{sec:not-claimed}
+
+The study declines several stronger claims the data could be mistaken to
+support: no universal ``best'' placement; no claim that the placement or
+availability \emph{effects are disproven} (the confirmatory hypotheses are
+\emph{not supported at their registered bars} --- a bounded result, not a
+refutation, and the mechanism they concern is real and significant); no proven
+causality for the conntrack mechanism (mechanistic consistency, not controlled
+causal proof); no generalization to Kubernetes clusters broadly; no claim that
+any single score ``identifies the best strategy''; and no unqualified
+``reproducible'' (only the mechanism metrics reproduce, and only with the
+archived rerun package).
+
+These exclusions are commitments, not disclaimers: each names a stronger claim
+the data could be misread to support and that we decline. In particular, ``no
+confirmatory hypothesis was supported'' is stated precisely --- two primaries
+(H1's trend, H3's interaction) are Holm-significant but fail their registered
+effect-size bars, and the consistent positive thread is the mechanism, not the
+user-visible placement advantages the hypotheses predicted (\S\ref{sec:family-holm}).
+Where this document's prose and the registered scope could ever be read to
+disagree, the registered scope governs.

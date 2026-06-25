@@ -1,0 +1,53 @@
+# Placement Experiment — node-drain on the node hosting productcatalogservice
+#
+# WHY this exists (roadmap P1/P3): this is the *node-level failure* fault that
+# topology-spread / anti-affinity actually exists for. Draining a worker evicts
+# every pod on it, so placement decides the blast radius — and it is most telling
+# with MULTI-REPLICA services (run with `--replicas 3`):
+#   - colocate  → all replicas of a service share the drained node → full
+#                 per-service outage (the failure-domain risk).
+#   - spread    → at most one replica per service is on the drained node → the
+#                 service stays up on the others (the isolation P3 predicts).
+# At single replica both lose the only pod, so the user-visible difference appears
+# only once services are replicated — which is the boundary P1 measures.
+#
+# Target follows the placement strategy: TARGET_NODE is left "auto" and the runner
+# resolves it (singular env — node-drain reads TARGET_NODE, not TARGET_NODES) to
+# whichever node the active strategy placed productcatalogservice on.
+#
+# NO litmus probes (deliberately). During a node drain the litmus probe-evaluation
+# machinery runs on the very node being drained, so EVERY probe resolves to
+# `Unknown` — a structural artifact, not a resilience signal. Those all-Unknown
+# verdicts (a) make the resilience score meaningless for node-drain and (b) trip
+# the runner's ">50% Unknown → retry" path, which re-runs and (when interrupted)
+# leaves the node cordoned. The blast-radius result is measured from EndpointSlice
+# deltas (the duringChaos trough) + the recovery watcher + the continuous latency
+# prober — none of which are litmus probes — so dropping the probes loses no
+# signal we use. See scripts/blast_radius.py.
+#
+# Usage:
+#   chaosprobe run -n online-boutique -s spread,colocate \
+#     -e scenarios/online-boutique/node-drain.yaml --replicas 3 -i 4
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-node-drain
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=productcatalogservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: node-drain
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            # "auto" → resolved by the runner to the node hosting applabel above
+            # (per-strategy). node-drain reads the SINGULAR TARGET_NODE. Replace
+            # with a node name to pin it manually.
+            - name: TARGET_NODE
+              value: "auto"

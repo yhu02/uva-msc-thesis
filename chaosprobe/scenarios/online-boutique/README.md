@@ -1,0 +1,352 @@
+# Online Boutique Chaos Experiments
+
+Chaos experiments for [Google's Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) (microservices-demo), a 12-service e-commerce application. The contention/saturation experiments are organized by the distributed systems performance bottleneck taxonomy; `pod-delete` sits outside it as a separate **churn / availability** fault:
+
+```
+Performance bottleneck taxonomy (contention / saturation faults)
+├── Execution
+│   └── Saturation (Stack Height / QoS)    → CPU hog, Memory hog
+└── I/O
+    ├── Contention (Critical Sections)     → Redis latency (in-cluster storage)
+    └── Saturation (Bandwidth)             → Network loss, Disk I/O stress
+
+Churn / availability (a distinct fault class — not contention)
+└── pod-delete → forced pod kill; the thesis placement study uses
+                 pod-delete.yaml on productcatalogservice (single replica)
+```
+
+## Architecture
+
+```
+                        ┌─────────────┐
+                   ─────│  frontend    │─────
+                  │     │  (Go:8080)   │     │
+                  │     └──────────────┘     │
+                  │            │             │
+         ┌────────┴──┐  ┌─────┴──────┐  ┌───┴──────────┐
+         │ adservice  │  │ checkout   │  │ recommendation│
+         │(Java:9555) │  │(Go:5050)   │  │ (Python:8080) │
+         └────────────┘  └─────┬──────┘  └───┬───────────┘
+                               │             │
+              ┌────────┬───────┼──────┬──────┘
+              │        │       │      │
+         ┌────┴───┐┌───┴──┐┌──┴──┐┌──┴────────┐
+         │currency││cart  ││ship ││productcat  │
+         │(Node:  ││(C#:  ││(Go: ││(Go:3550)   │
+         │ 7000)  ││7070) ││50051│└────────────┘
+         └────────┘└──┬───┘└─────┘
+                      │
+                 ┌────┴────┐        ┌──────────┐  ┌─────────┐
+                 │redis-cart│        │ payment  │  │ email   │
+                 │(:6379)   │        │(Node:    │  │(Py:8080)│
+                 └──────────┘        │ 50051)   │  └─────────┘
+                                     └──────────┘
+```
+
+## Scenarios
+
+### 1. Deploy (Health Check)
+
+**Directory:** `deploy/`
+
+Deploys all 11 microservices (including load generator) + Redis, then runs a simple pod-delete on the frontend as a deployment health check.
+
+```bash
+chaosprobe provision scenarios/online-boutique/deploy/
+```
+
+### 2. CPU Contention — Execution Saturation
+
+**Directory:** `contention-cpu/`
+**Target:** currencyservice (highest QPS, Node.js single-threaded)
+**Experiment:** `pod-cpu-hog` — 100% CPU load for 60s
+
+Tests cascading latency when the hottest service's CPU is saturated. Currency conversion is called by checkout, frontend, and every price display.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-cpu/experiment.yaml
+```
+
+### 3. Memory Contention — Execution Saturation
+
+**Directory:** `contention-memory/`
+**Target:** recommendationservice (Python, loads catalog into memory)
+**Experiment:** `pod-memory-hog` — 300MB consumption for 60s
+
+Tests OOMKill behavior and graceful degradation when a Python service exceeds memory limits.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-memory/experiment.yaml
+```
+
+### 4. Pod Churn — Forced Pod Delete (Reconvergence)
+
+**Directory:** `contention-scheduling/` (historical name; `pod-delete` is a churn fault, not a contention one)
+**Target:** checkoutservice (orchestrator calling 5+ services)
+**Experiment:** `pod-delete` — force-kill 100% of pods every 15s for 60s
+
+`pod-delete` is a **churn / availability** fault: it forces the target pod to disappear and measures how quickly the service reconverges — endpoint reprogramming, rescheduling, recovery time — rather than steady-state resource pressure. With 1 replica and force-delete, the entire checkout flow is unavailable until rescheduling completes.
+
+> **Thesis placement study.** The placement experiments below do **not** use this demo file. They share [`pod-delete.yaml`](pod-delete.yaml) — `pod-delete` churn on **productcatalogservice** (a central dependency for the homepage and product pages), the churn fault class analysed in the thesis. See [`docs/explanation/hypotheses.md`](../../docs/explanation/hypotheses.md).
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-scheduling/experiment.yaml
+```
+
+### 5. Redis Latency — I/O Contention (In-cluster Storage)
+
+**Directory:** `contention-redis-latency/`
+**Target:** cartservice (C#, depends on redis-cart for session state)
+**Experiment:** `pod-network-latency` — 300ms latency to Redis for 60s
+
+Tests in-cluster storage contention by injecting latency between the cart service and its Redis dependency. Measures whether slow storage cascades to checkout and frontend.
+
+**Probes:**
+- `frontend-availability` (httpProbe, Continuous) — monitors frontend HTTP 200 throughout chaos
+- `check-redis` (cmdProbe, Edge) — custom Rust probe that TCP-connects to Redis and sends a `PING` command, verifying `+PONG` response before and after chaos injection
+
+The `check-redis` probe is in `probes/check-redis/` and is automatically built and injected when running the experiment. Set `PROBE_REDIS_ADDR` to override the default Redis address (`redis-cart.online-boutique.svc.cluster.local:6379`).
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-redis-latency/experiment.yaml
+```
+
+### 6. Network Loss — I/O Saturation (Bandwidth)
+
+**Directory:** `contention-network-loss/`
+**Target:** checkoutservice (orchestrator on critical path)
+**Experiment:** `pod-network-loss` — 60% packet loss for 60s
+
+Tests bandwidth saturation and network congestion on the checkout service. With 60% packet loss, downstream calls to payment, shipping, email, cart, and currency fail intermittently.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-network-loss/experiment.yaml
+```
+
+### 7. Disk I/O Stress — I/O Saturation
+
+**Directory:** `contention-io-stress/`
+**Target:** productcatalogservice (Go, reads product data from embedded JSON)
+**Experiment:** `pod-io-stress` — 80% filesystem utilization for 60s
+
+Tests disk I/O pressure on the product catalog. Measures whether the service degrades gracefully or becomes unresponsive, affecting frontend product listing and recommendations.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-io-stress/experiment.yaml
+```
+
+### 8. Inter-Service Latency — Checkout Fanout
+
+**Directory:** `contention-checkout-latency/`
+**Target:** checkoutservice (Go, orchestrator calling 5+ services)
+**Experiment:** `pod-network-latency` — 200ms latency injection for 60s
+
+Injects network latency on the checkout fanout point to measure cascading latency across downstream dependencies (payment, shipping, email, cart, currency, product catalog).
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-checkout-latency/experiment.yaml --measure-latency
+```
+
+### 9. Inter-Service Latency — Product Catalog
+
+**Directory:** `contention-interservice-latency/`
+**Target:** productcatalogservice (Go, central dependency)
+**Experiment:** `pod-network-latency` — network latency injection
+
+Tests whether co-location mitigates or amplifies network latency effects. Under colocate, services communicate locally; under spread, cross-node traffic amplifies injected latency.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-interservice-latency/experiment.yaml --measure-latency
+```
+
+### 10. Inter-Service Latency — Frontend Edge
+
+**Directory:** `contention-frontend-latency/`
+**Target:** frontend (Go, user-facing edge service)
+**Experiment:** `pod-network-latency` — network latency on ingress
+
+Simulates network congestion at the ingress layer. Frontend calls all backend services, so placement determines how many calls traverse the physical network.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-frontend-latency/experiment.yaml --measure-latency
+```
+
+### 11. Database Throughput — Redis Contention
+
+**Directory:** `contention-db-throughput/`
+**Target:** redis-cart (Redis, in-memory cart session store)
+**Experiment:** `pod-cpu-hog` + `pod-memory-hog` — resource stress on Redis
+
+Tests how placement affects Redis SET/GET throughput under resource contention. Under colocate, Redis shares node resources with high-traffic services.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-db-throughput/experiment.yaml
+```
+
+### 12. Disk Throughput — I/O Saturation
+
+**Directory:** `contention-disk-throughput/`
+**Target:** productcatalogservice (Go, reads product catalog JSON)
+**Experiment:** `pod-io-stress` — aggressive disk I/O stress
+
+Saturates disk bandwidth to test whether co-located services suffer from shared I/O. Under colocate, all services share a single node's disk; under spread, I/O stress is isolated.
+
+```bash
+chaosprobe run -n online-boutique -e scenarios/online-boutique/contention-disk-throughput/experiment.yaml
+```
+
+## Custom Rust Probes
+
+The `probes/` directory contains custom Rust cmdProbes that test service health beyond what HTTP probes can measure. These are compiled to static Linux binaries and packaged into minimal container images automatically.
+
+| Probe | Type | Target | Output |
+|---|---|---|---|
+| `check-redis` | Cargo project | `redis-cart:6379` (TCP `PING`) | `REDIS_OK` or `REDIS_FAIL: <reason>` |
+| `check-http-latency` | Single-file `.rs` | `frontend/` (HTTP GET, latency budget) | `LATENCY_OK <ms>` or `LATENCY_FAIL: <reason>` |
+| `check-dns-latency` | Single-file `.rs` | `frontend` (DNS resolve time) | `DNS_OK <ms>` or `DNS_FAIL: <reason>` |
+| `check-tcp-connect` | Single-file `.rs` | `frontend:80` (TCP handshake time) | `TCP_OK <ms>` or `TCP_FAIL: <reason>` |
+| `check-cart-flow` | Single-file `.rs` | `frontend` (multi-route user journey) | `FLOW_OK` or `FLOW_FAIL: <reason>` |
+
+**Build probes manually:**
+
+```bash
+# Build locally
+chaosprobe probe build scenarios/online-boutique
+
+# Build and push to the in-cluster registry (chaosprobe run does this
+# automatically; the address is what `chaosprobe init` prints, e.g. 192.168.56.11:30500)
+chaosprobe probe build scenarios/online-boutique -r 192.168.56.11:30500 --push
+
+# List discovered probes
+chaosprobe probe list scenarios/online-boutique
+```
+
+**Add a new probe:**
+
+```bash
+chaosprobe probe init check-grpc -s scenarios/online-boutique
+# Edit probes/check-grpc/src/main.rs
+# Add cmdProbe entry to experiment YAML with source.image: auto
+```
+
+When using `chaosprobe run`, probes are built and injected automatically — no manual build step needed.
+
+## Workflow
+
+### Step 1: Deploy the application
+
+```bash
+chaosprobe provision scenarios/online-boutique/deploy/
+```
+
+This deploys all services to the `online-boutique` namespace.
+
+### Step 2: Run experiments
+
+Run the full placement experiment matrix automatically:
+
+```bash
+chaosprobe run -n online-boutique
+```
+
+Or run specific strategies:
+
+```bash
+chaosprobe run -n online-boutique -s colocate,spread
+```
+
+### Step 3: AI fix-and-verify loop (exploratory tooling — not a thesis finding)
+
+> This optional loop is exploratory scaffolding, not part of the thesis's evaluated
+> contribution. The thesis results do not depend on it; it is a convenience for
+> iterating on a deployment, not a validated anomaly-classification/remediation system.
+
+Feed the experiment data to an AI agent. The data stored in Neo4j includes:
+- Full YAML content of all manifests and experiments
+- LitmusChaos experiment verdicts (Pass/Fail)
+- Probe results (frontend HTTP availability during chaos)
+
+The AI reads the output, diagnoses the root cause, modifies the deployment manifests or experiment parameters, and re-runs to verify the fix.
+
+### Step 4: Cleanup
+
+```bash
+chaosprobe cleanup online-boutique --all
+```
+
+## Placement Scenarios
+
+Placement experiments control pod scheduling to study how co-location affects multiple resilience dimensions under chaos: pod recovery time, inter-service latency, Redis/disk I/O throughput, node resource utilisation, and fault cascade propagation. All strategies use a single shared experiment file (`pod-delete.yaml` — pod-delete on productcatalogservice with 7 frontend HTTP probes across 4 sensitivity tiers) while continuous probers collect multi-signal telemetry throughout each run.
+
+The thesis study uses two fault classes, run separately:
+
+- **Churn / availability** — [`pod-delete.yaml`](pod-delete.yaml) (above).
+- **Contention** — [`load-contention.yaml`](load-contention.yaml), run with `--load-profile spike`. A sustained 200-user Locust spike (targeting `frontend`) is the stressor; the chaos fault is a near-no-op `pod-cpu-hog` that only opens the during-chaos window. The metric is during-load route tail latency (p95) via `scripts/contention_routes.py`, not the resilience score. Synthetic *hog* faults are **not** used for contention: `cpu-hog.yaml`/`pod-cpu-hog` is CFS-capped, and [`node-memory-hog.yaml`](node-memory-hog.yaml) is retained but **demoted** — it cannot induce node pressure on this cluster (the stress helper self-evicts; see its header).
+
+**Strategies:**
+
+| Strategy | Description |
+|---|---|
+| **baseline** | No-fault control — no chaos injected (establishes performance baseline) |
+| **default** | Default Kubernetes scheduling with full chaos injection |
+| **colocate** | All pods on a single node (max contention) |
+| **spread** | Pods distributed evenly across nodes (min contention) |
+| **adversarial** | Resource-heavy pods co-located (worst-case contention, worst-fit) |
+| **random** | Random node per deployment (chaotic, `--seed` for reproducibility) |
+| **best-fit** | Bin-packing: pack deployments into fewest nodes (Borg-style scoring) |
+| **dependency-aware** | Co-locate communicating services via service-graph BFS partitioning |
+
+### Automated (recommended)
+
+```bash
+# Run all strategies (baseline, default, colocate, spread, adversarial, random, best-fit, dependency-aware)
+chaosprobe run -n online-boutique
+
+# Run specific strategies only
+chaosprobe run -n online-boutique -s colocate,spread
+
+# Custom output directory
+chaosprobe run -n online-boutique -o results/my-run
+
+# Custom experiment file
+chaosprobe run -n online-boutique -e path/to/experiment.yaml
+```
+
+This iterates through each strategy — clearing placement, applying the strategy, waiting for workloads to settle, running the chaos experiment, and collecting results. All data is stored in Neo4j.
+
+### Manual workflow
+
+```bash
+# 1. Apply a placement strategy
+chaosprobe placement apply colocate -n online-boutique
+
+# 2. Run a single strategy with a custom experiment file
+chaosprobe run -n online-boutique -s baseline -e scenarios/online-boutique/pod-delete.yaml
+
+# 3. Clear placement and try another strategy
+chaosprobe placement clear -n online-boutique
+```
+
+## Cluster Requirements
+
+- 2+ worker nodes with at least 2GB RAM each
+- LitmusChaos operator (litmus-core chart)
+- containerd runtime (kubespray default)
+- Available LitmusChaos experiments: pod-delete, pod-cpu-hog, pod-memory-hog, pod-network-latency, pod-network-loss, pod-io-stress
+
+## Tuning Parameters
+
+**Load patterns** — Modify `loadgenerator.yaml`:
+- `USERS=10` (default balanced load)
+- `USERS=50` (high load)
+- `USERS=100` (burst/stress)
+
+**Replicas** — Increase replicas on target services to test scheduling under contention:
+- `replicas: 1` (default, worst case)
+- `replicas: 3` (tests pod distribution and PDB effectiveness)
+
+**Chaos intensity** — Adjust experiment parameters:
+- `CPU_LOAD`, `MEMORY_CONSUMPTION` — severity of resource pressure
+- `NETWORK_LATENCY`, `NETWORK_PACKET_LOSS_PERCENTAGE` — I/O degradation level
+- `PODS_AFFECTED_PERC` — fraction of pods hit simultaneously
+- `TOTAL_CHAOS_DURATION` — how long the disruption lasts

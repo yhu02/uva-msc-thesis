@@ -1,0 +1,159 @@
+% =========================================================================
+% main.tex — Overleaf-ready LaTeX port of the UvA MSc thesis manuscript.
+%
+% Compiles cleanly with tectonic/XeLaTeX (PDF committed as
+% Yvo-Hu-MSc-thesis.pdf). Originally hand-converted from the canonical Markdown
+% manuscript; see thesis/latex/README.md for import instructions.
+%
+% Wording is governed by chaosprobe/docs/explanation/scope-of-claims.md.
+% =========================================================================
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}     % \text{} in math mode (e.g. r×\text{mode}, \delta_{\text{latency}})
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\bibliographystyle{plainnat}
+
+% PDF document metadata.
+\hypersetup{
+  pdftitle={Measuring Placement-Sensitive Resilience under Chaos: A Pre-Registered, Layered Study in Kubernetes},
+  pdfauthor={Yvo Hu},
+}
+
+% Figures live in thesis/figures/ (one level above this directory);
+% the Overleaf project must contain both thesis/latex/ and thesis/figures/.
+\graphicspath{{../figures/}}
+
+% ----- Author-owned placeholders (TODO: fill in before submission) -----
+\newcommand{\thesistitle}{Measuring Placement-Sensitive Resilience under Chaos: A Pre-Registered, Layered Study in Kubernetes}
+\newcommand{\thesisauthor}{Yvo Hu}
+\newcommand{\thesisdegree}{MSc Thesis, University of Amsterdam}
+\newcommand{\thesissupervisor}{TODO: supervisor name}
+\newcommand{\thesisexaminer}{TODO: second reader / examiner}
+\newcommand{\thesisdate}{TODO: defense date}
+\newcommand{\thesisprogramme}{TODO: programme name (e.g.\ Master Software Engineering)}
+
+\begin{document}
+
+% ----------------------------- Title page -------------------------------
+\begin{titlepage}
+  \centering
+  {\scshape\large University of Amsterdam\par}
+  {\large \thesisprogramme\par}
+  \vspace{3cm}
+  {\huge\bfseries \thesistitle\par}
+  \vspace{1.5cm}
+  {\Large \thesisauthor\par}
+  \vspace{0.5cm}
+  {\large \thesisdegree\par}
+  \vfill
+  \begin{tabular}{ll}
+    Supervisor: & \thesissupervisor \\
+    Examiner:   & \thesisexaminer   \\
+  \end{tabular}
+  \vspace{1cm}
+  {\par\large \thesisdate\par}
+\end{titlepage}
+
+% ------------------------------ Abstract --------------------------------
+\begin{abstract}
+Kubernetes offers rich placement controls and observability, yet it remains
+unclear when pod placement materially affects resilience under chaos, and when
+aggregate resilience scores obscure that effect. This thesis presents
+\textbf{ChaosProbe}, a pre-registered, provenance-gated chaos-evaluation
+framework. It manipulates placement through two orthogonal knobs --- the
+cross-node dependency-edge fraction $f$ (packing to spreading) and the
+replication degree $r$ (packed vs anti-affine) --- plus two interventional arms
+(a NodeLocal DNSCache toggle, executed, and the kube-proxy mode, de-scoped to
+ipvs and not run), and reads every outcome
+simultaneously at three layers: the aggregate resilience score, the
+kernel/network mechanism, and the user-visible route. The study runs on the
+Online Boutique benchmark (ten polyglot gRPC microservices plus Redis) on a
+pinned cluster of eight 2-vCPU/4-GiB workers (Kubernetes v1.28.6, kube-proxy
+ipvs).
+
+The evidence is three pre-registered campaigns under churn (\texttt{pod-delete})
+and node failure (\texttt{node-drain}): C1 (eight complete-block dose-response
+sessions), C2 (24 node-drain replication-rescue sessions), and C3 (14
+placement-and-DNS sessions). The hypotheses, the smallest effect sizes of
+interest, the per-cell sample sizes, and the analysis code were frozen before
+any confirmatory data was collected, and the four confirmatory hypotheses are
+Holm-corrected as one family.
+
+The central finding is a real mechanism whose reach is rigorously bounded.
+Placement reproducibly moves a UDP-conntrack reconvergence signature ---
+individually significant in every campaign, and the one scorecard layer with
+near-perfect test-retest reliability (mechanism ICC 0.994 versus a naive
+aggregate's 0.066) --- and a NodeLocal DNSCache intervention removes it under
+both placements. But no confirmatory hypothesis is supported at its registered
+bar: the east-west dose-response is statistically detectable yet only
+$+13.35\,\%$ across the full cross-node range, below the $15\,\%$ SESOI (H1);
+placement-dependence of the conntrack drop is significant but in the
+\emph{opposite} direction --- packing concentrates more per-node churn than
+spreading --- so the registered conjunction fails (H2); anti-affine replication
+fully rescues the user-route error rate under node failure
+($0.632 \rightarrow 0.0$), but the co-primary trough-depth criterion could not
+adjudicate rescue on this placement (H3); and the scorecard's availability layer
+is unreliable under churn (ICC $0.180 < 0.5$) (H5). The
+latency$\leftrightarrow$availability frontier the design sought is correspondingly
+not realizable from these data, because \texttt{pod-delete} varies the latency
+face but not the availability face (H4).
+
+This last result exposed a \textbf{construction limitation in the design itself}:
+at a single replica, \texttt{pod-delete} cannot move availability. Reported as an
+\emph{in-development, iterative design study}, the design was therefore
+\textbf{modified} --- the availability tests were recomputed under
+\texttt{node-drain}, whose blast radius is placement-dependent --- and the
+corrected design resolves the limitation exploratorily: placement governs the
+blast radius strongly and monotonically (all app endpoints lost under packing,
+roughly a third under spreading), and the latency$\leftrightarrow$availability
+trade-off the original frontier could not express reappears. The original
+iteration's valid findings (the latency dose-response and the conntrack
+mechanism) stand and are reported in full; the construction-limited availability
+results are reported \emph{with} their limitation, not removed; and a
+pre-registered confirmatory re-run of the corrected design is left as future work.
+
+Placement moves the kernel/network mechanism; at the pre-registered bar it does
+not move the user-visible placement, availability, and dose-response outcomes the
+hypotheses predicted. The thesis contributes a reproducible, pre-registered
+measurement methodology that surfaces and corrects its own construction
+limitations, a positively-established but precisely-bounded mechanism, and a
+freeze-before-analysis, provenance-gated campaign protocol in which every quoted
+number traces to an archived, hash-stamped run. The methodological point is that
+chaos evaluation of placement needs layered measurement, pre-registration, and
+provenance-gated replication, not a single score: each fault class leaves its
+placement signal in a specific layer, and a one-number instrument's availability
+component is unreliable or undefined exactly where it matters.
+\end{abstract}
+
+\tableofcontents
+\listoffigures
+
+% ------------------------------ Chapters --------------------------------
+\input{chapters/01-introduction}
+\input{chapters/02-related-work}
+\input{chapters/03-chaosprobe}
+\input{chapters/04-methodology}
+\input{chapters/05-results}
+\input{chapters/06-discussion}
+\input{chapters/07-threats}
+\input{chapters/08-conclusion}
+
+% ------------------------------ Appendix --------------------------------
+\appendix
+\input{appendix/a-provenance}
+
+% ---------------------------- Bibliography ------------------------------
+% \nocite{*} prints the full bibliography from references.bib so entries
+% referenced only by inline \href identifiers still appear.
+\nocite{*}
+\bibliography{references}
+
+\end{document}

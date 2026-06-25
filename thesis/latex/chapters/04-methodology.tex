@@ -1,0 +1,188 @@
+\chapter{Methodology}\label{ch:methodology}
+
+This chapter defines how the research question of \S\ref{sec:rq} is turned into
+measurements: the three-layer measurement design (\S\ref{sec:three-layer}), the
+two fault classes (\S\ref{sec:fault-classes}), the \emph{pre-registered}
+campaign protocol that is itself a contribution (\S\ref{sec:campaign}), the
+statistical methods and multiplicity control (\S\ref{sec:statistics}), and the
+pinned cluster environment every claim is scoped to (\S\ref{sec:environment}).
+The defining methodological choice is that the confirmatory hypotheses, their
+smallest effect sizes of interest (SESOIs), the per-cell sample sizes, the
+outcome operationalizations, and the analysis code were all \emph{frozen before
+any confirmatory data was collected}; the design that follows is reported as
+registered, with every later deviation logged.
+
+\section{Three-layer measurement design}\label{sec:three-layer}
+
+Each experiment is measured at three layers that need not agree --- the unit of
+explanation is \emph{which layer moves}:
+
+\begin{enumerate}
+\item \textbf{Layered scorecard} --- a resilience scorecard split into
+  sub-scores (availability, mechanism-reconvergence, user-tail), replacing the
+  single industry-style aggregate number whose reliability H5 audits against a
+  naive single-aggregate baseline.
+\item \textbf{Mechanism metrics} --- kernel/network signals: per-node conntrack
+  entries (the UDP-conntrack reconvergence signature that recurs throughout the
+  results), CoreDNS tail latency, TCP retransmits, and east-west inter-service
+  route tails.
+\item \textbf{User-visible routes} --- per-route tail latency and error rate,
+  with a built-in \textbf{dependent-vs-control confound check}: \emph{dependent}
+  routes traverse the chaos target, \emph{control} routes do not, so a genuine
+  fault-specific effect must show on dependent routes \emph{beyond} the control
+  route's run-level drift.
+\end{enumerate}
+
+The confound-controlled user layer is the difference between ``correlates with
+the run'' and ``caused by the fault path.'' On a small virtualized cluster
+entire runs are slower or faster than each other for reasons unrelated to the
+fault (host load, cache state, background reconciliation), so any two metrics
+measured in the same slow run will correlate. The control routes break this
+degeneracy: riding the same run but not traversing the killed service, they
+carry the run-level drift and nothing else, so a genuine mechanism$\rightarrow$user
+propagation must show an association on the dependent routes both significant
+and in clear excess of the control routes'. A within-run rank correlation
+(computed inside each run, where run-level drift is constant by construction)
+confirms the read. Each layer is read by a different instrument that fails
+independently: the scorecard from LitmusChaos probe verdicts, the mechanism
+layer from PromQL samples of kernel/infrastructure metrics, and the user layer
+from a \textbf{host-side} route prober's active HTTP measurements under Locust
+traffic --- host-side by construction so the prober occupies no cluster node the
+placement solver controls and contributes no in-cluster pod to the per-node
+conntrack aggregation.
+
+\section{Fault classes}\label{sec:fault-classes}
+
+Two fault classes are used, each matched to the layer it exercises:
+
+\begin{itemize}
+\item \textbf{Churn (\texttt{pod-delete}).} Repeated deletion of a target
+  service's pod drives the kernel/network reconvergence the mechanism layer
+  measures. By construction it removes a single pod at a time, so it produces a
+  strong, reproducible conntrack signature but \emph{no sustained endpoint
+  outage} --- which is why the availability face is degenerate under this fault
+  (\S\ref{sec:h4}) and the availability scorecard layer has little reproducible
+  signal to estimate under it (\S\ref{sec:h5}). Used by H1, H2, H4, H5.
+\item \textbf{Node failure (\texttt{node-drain}).} Draining a worker node
+  removes whole pods' worth of endpoints at once, producing the sustained
+  availability trough the replication-rescue hypothesis (H3) needs. It is run
+  with host-side load on the user route; it carries no pre-chaos east-west
+  latency face, which is why its cells cannot be placed on the latency
+  $\leftrightarrow$ availability frontier (\S\ref{sec:h4}).
+\end{itemize}
+
+\section{Pre-registered campaign design}\label{sec:campaign}
+
+\textbf{Two knobs, not eight strategies.} The design replaces an ad-hoc set of
+named placement strategies with two orthogonal, continuously-varying knobs the
+placement engine targets directly: the \textbf{cross-node fraction} $f$ (the
+fraction of inter-service dependency edges that cross a node boundary, swept
+over $\{0, 0.25, 0.5, 0.75, 1.0\}$) and the \textbf{replication degree} $r \in
+\{1, 3\}$ with packed vs anti-affine modes. Two \textbf{interventional arms} are
+added whose predicted effects follow from the conntrack mechanism: a NodeLocal
+DNSCache toggle (H2's DNS arm) and the kube-proxy mode (H6, not attempted ---
+\S\ref{sec:h6}).
+
+\textbf{Pre-registration and provenance discipline.} The hypotheses, SESOIs,
+per-cell $n$, outcome operationalizations, and analysis code were frozen at a
+tagged commit \emph{before} any confirmatory data was collected; each campaign's
+raw data was likewise archived and hash-stamped \emph{before} its analysis was
+written. Every session records a provenance fingerprint and must pass a
+\texttt{doctor --strict} gate (clean working tree, complete metadata) to be
+admissible; the registered exclusion rule discards any rejected or fully-tainted
+session. This protocol --- pre-registration, freeze-before-analysis, and a strict
+provenance gate --- is one of the thesis's contributions, not just its hygiene.
+
+\textbf{The confirmatory family and the descriptive deliverables.} Four
+hypotheses form the confirmatory family corrected together (\S\ref{sec:statistics}):
+H1 (dose-response of the east-west tail, complete-block design over the five
+$f$-levels), H2 (placement-dependence + the DNS intervention), H3 (replication
+rescue under node-drain), and H5 (layered-scorecard reliability). H4 is a
+\emph{descriptive} latency$\leftrightarrow$availability frontier (a registered
+figure and reporting protocol, no $p$-value), and H6 is an exploratory secondary
+that was not attempted. The campaigns map onto these: \textbf{C1} (8
+complete-block \texttt{pod-delete} sessions) supplies H1 and H5; \textbf{C2} (24
+\texttt{node-drain} sessions, three cells) supplies H3; \textbf{C3} (14
+\texttt{pod-delete} sessions, cache-off/on) supplies H2 and closes the family.
+
+\textbf{Feasibility and calibration gates.} Three pre-data gates de-risked the
+design. \textbf{M1a} was a cheap solver-feasibility spike (could the engine hit
+the designed $f$-levels within $\pm 0.05$?) run on the existing small cluster.
+\textbf{M1b} re-verified the solver \emph{and} the capacity arithmetic on the
+actual run cluster; it passed (all five levels within $\pm 0.05$, 3/3
+consecutive attempts), so the designed-level dose design and Page's test stand
+rather than the pre-registered continuous-fraction fallback. \textbf{M2} was an
+A/A calibration block (same-placement pairs, null data) that estimated the
+measurement noise floor; the SESOIs and dominance margins were then fixed at or
+above that floor under the registered ``no smaller than the A/A noise band''
+rule --- the H1 SESOI exceeds it, while the H3 rescue/TOST and H4 dominance
+margins are set equal to the band. The H1 SESOI ($\geq 15\,\%$), for example, was set
+between the measured A/A noise band ($\approx 11.2\,\%$ of the pre-chaos level)
+and the larger separation seen in an earlier internal pilot, so that an effect
+at the pilot magnitude would clear it with margin while anything inside
+instrument noise could not.
+
+\section{Statistics}\label{sec:statistics}
+
+\textbf{Per-hypothesis primary tests.} H1 uses \textbf{Page's $L$} trend test
+(tie-corrected) over the ordered $f$-levels, with session-condition medians as
+the unit --- the design is replicated complete ordered blocks, which is exactly
+what Page's test assumes. H2 is a two-part both-must-pass conjunction of paired
+one-sided \textbf{Wilcoxon signed-rank} tests on the during-churn UDP-conntrack
+drop (placement-dependence and the $\geq 50\,\%$ DNS-cache shrinkage). H3 uses
+\textbf{ART ANOVA} (aligned-rank transform) for the $r \times \text{mode}$
+interaction, with the registered rescue margin and a packed$\approx r{=}1$
+\textbf{TOST equivalence} control on each co-primary. H5 reports condition-level
+\textbf{intraclass correlations} (ICC, cluster-bootstrap CIs) for the scorecard
+sub-scores against the naive aggregate baseline, with an absolute reliability
+bar of $\text{ICC} \geq 0.5$.
+
+\textbf{Support requires significance \emph{and} effect size.} Every
+confirmatory verdict is gated on two things: Holm-corrected statistical
+significance, \emph{and} clearing the registered effect-size or reliability bar
+(the SESOI). A statistically detectable effect below its SESOI is reported as
+below the bar, not as support --- the discipline that distinguishes a real but
+negligible trend (H1) from a meaningful one.
+
+\textbf{Multiplicity --- the family Holm correction.} The four confirmatory
+primaries are corrected together by the \textbf{Holm} step-down procedure at
+$\alpha = 0.05$, computed once all campaigns land (\S\ref{sec:family-holm}),
+each member's family-input $p$ read verbatim from its own analysis driver. H4's
+descriptive frontier and the exploratory secondaries are outside the family and
+carry no confirmatory weight. TOST equivalence testing
+\citep{schuirmann1987equivalence,lakens2017equivalence} is used where a claim is
+that an effect is \emph{demonstrably small} rather than merely undetected; the
+distribution-first reporting (medians, tails, cluster-bootstrap intervals rather
+than bare means) follows the systems-measurement guidance of Hoefler \& Belli
+(SC 2015), and the quantify-then-prescribe argument shape follows Maricq et
+al.\ (OSDI 2018).
+
+\section{Cluster environment}\label{sec:environment}
+
+% Values from the archived run manifests (runMetadata) — the citable
+% fingerprint. Versions are pinned: the conntrack mechanism is version-sensitive.
+
+\begin{itemize}
+\item \textbf{Cluster}: kubeadm cluster of 1 control plane + \textbf{8 worker
+  nodes (2 vCPU / 4 GiB each)} on Vagrant-managed KVM/libvirt VMs on a single
+  host --- the capacity-feasible cluster on which the M1b solver-and-capacity
+  gate was re-verified before collection.
+\item \textbf{Kubernetes v1.28.6} (pinned --- kube-proxy/conntrack behaviour
+  changed materially in v1.31--v1.32, see \S\ref{sec:h2-mechanism}), containerd
+  1.7.11, Ubuntu 22.04 LTS nodes.
+\item \textbf{kube-proxy mode: \texttt{ipvs}}, conntrack settings archived per
+  run --- the reason H6 (an iptables-mode comparison) was de-scoped.
+\item \textbf{Workload}: Online Boutique (Google Cloud microservices-demo), 10
+  polyglot gRPC microservices + Redis, single replica per service in the baseline
+  regime, host-side Locust load generator.
+\end{itemize}
+
+All VMs run on a single physical host under KVM/libvirt, making host-level
+interference a shared, time-varying influence on every measurement. This is
+treated as a property of the environment \emph{absorbed by design} --- the
+session-level blocking of the campaign protocol (\S\ref{sec:campaign}) and the
+dependent-vs-control route split (\S\ref{sec:three-layer}) are precisely the
+controls for it. The environment values are stamped into every archived run's
+manifest so each mechanism-level claim carries its exact scope
+(\S\ref{sec:provenance}); what does and does not port out of this pinned
+environment is stated in \S\ref{sec:generalizes}.

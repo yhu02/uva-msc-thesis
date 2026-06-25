@@ -1,0 +1,227 @@
+[project]
+name = "chaosprobe"
+version = "0.1.0"
+description = "A CLI tool for running LitmusChaos experiments on Kubernetes with AI-consumable output"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Yvo Hu", email = "yvo.hu@student.uva.nl"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "kubernetes>=28.0.0",
+    "click>=8.0.0",
+    "pyyaml>=6.0",
+    "locust>=2.20.0",
+    "matplotlib>=3.7.0",
+    "neo4j>=5.0.0",
+    "pyarrow>=12.0.0",
+    "python-dotenv>=1.0.0",
+    "python-pptx>=0.6.21",
+]
+
+[project.scripts]
+chaosprobe = "chaosprobe.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yhu02/uva-msc-thesis"
+Repository = "https://github.com/yhu02/uva-msc-thesis"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=26.3.1",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["chaosprobe"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+# `results/` holds runtime experiment outputs and ad-hoc re-aggregation
+# scripts dropped into per-run directories; they are not part of the
+# package source and must not be subjected to formatting.
+extend-exclude = "/(results)/"
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["results"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# HTML-template-heavy file: long lines are inside f-string HTML templates
+# where breaking them either pollutes the rendered output or fights black.
+"chaosprobe/output/visualize.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+# Scoped gate: type-check the defender's analysis-CLI surface, the
+# part that's been growing the most over the last 70+ PRs.  Cluster /
+# run / visualize use untyped kubernetes / matplotlib APIs and need
+# stub work before they can be added.  Run via `uv run mypy --strict-equality`
+# against the files in this list (kept in sync with chaosprobe analysis CLI).
+files = [
+    "chaosprobe/commands/diff_cmd.py",
+    "chaosprobe/commands/doctor_cmd.py",
+    "chaosprobe/commands/export_cmd.py",
+    "chaosprobe/commands/inspect_cmd.py",
+    "chaosprobe/commands/power_cmd.py",
+    "chaosprobe/commands/recommend_cmd.py",
+    "chaosprobe/commands/report_cmd.py",
+    "chaosprobe/commands/stats_cmd.py",
+    "chaosprobe/commands/summarize_cmd.py",
+    # CLI command modules for cluster / placement / probe management.
+    # Raw kubernetes calls are handled by the ignore_missing_imports override.
+    "chaosprobe/commands/cleanup_cmd.py",
+    "chaosprobe/commands/cluster_cmd.py",
+    "chaosprobe/commands/compare_cmd.py",
+    "chaosprobe/commands/dashboard_cmd.py",
+    "chaosprobe/commands/delete_cmd.py",
+    "chaosprobe/commands/graph_cmd.py",
+    "chaosprobe/commands/init_cmd.py",
+    "chaosprobe/commands/placement_cmd.py",
+    "chaosprobe/commands/probe_cmd.py",
+    "chaosprobe/commands/provision_cmd.py",
+    "chaosprobe/commands/status_cmd.py",
+    # output/ — the schema-writing half of the analysis contract.  The
+    # matplotlib / pyarrow imports are handled by the ignore_missing_imports
+    # override below; ml_export's lazy neo4j import resolves through the
+    # storage/ layer without pulling its (still-ungated) errors into scope.
+    "chaosprobe/output/__init__.py",
+    "chaosprobe/output/charts.py",
+    "chaosprobe/output/comparison.py",
+    "chaosprobe/output/generator.py",
+    "chaosprobe/output/ml_export.py",
+    "chaosprobe/output/visualize.py",
+    # graph/ — pure-Python Neo4j-read helpers consumed by stats /
+    # report / blast-radius commands.  Driver imports are isolated to
+    # the storage/ layer, so this directory itself doesn't pull in
+    # neo4j or pyarrow.
+    "chaosprobe/graph/__init__.py",
+    "chaosprobe/graph/analysis.py",
+    # metrics/ — all modules pass cleanly under the kubernetes / matplotlib
+    # ignore_missing_imports override below.
+    "chaosprobe/metrics/__init__.py",
+    "chaosprobe/metrics/anomaly_labels.py",
+    "chaosprobe/metrics/base.py",
+    "chaosprobe/metrics/cascade.py",
+    "chaosprobe/metrics/collector.py",
+    "chaosprobe/metrics/endpointslices.py",
+    "chaosprobe/metrics/latency.py",
+    "chaosprobe/metrics/prometheus.py",
+    "chaosprobe/metrics/recovery.py",
+    "chaosprobe/metrics/remediation.py",
+    "chaosprobe/metrics/reproducibility.py",
+    "chaosprobe/metrics/resources.py",
+    "chaosprobe/metrics/statistics.py",
+    "chaosprobe/metrics/throughput.py",
+    "chaosprobe/metrics/timeseries.py",
+    "chaosprobe/metrics/utilization.py",
+    # orchestrator/ — fully gated; kubernetes deps are handled by the
+    # override.  Driver / Optional-config boundaries in the cluster-run
+    # path are narrowed with asserts (that path is integration-scope, not
+    # unit tested per CONTRIBUTING).
+    "chaosprobe/orchestrator/__init__.py",
+    "chaosprobe/orchestrator/diagnostics.py",
+    "chaosprobe/orchestrator/portforward.py",
+    "chaosprobe/orchestrator/preflight.py",
+    "chaosprobe/orchestrator/probers.py",
+    "chaosprobe/orchestrator/readiness.py",
+    "chaosprobe/orchestrator/recovery.py",
+    "chaosprobe/orchestrator/run_phases.py",
+    "chaosprobe/orchestrator/strategy_runner.py",
+    "chaosprobe/orchestrator/timeout.py",
+    # loadgen/ — Locust runner + headless wrapper.
+    "chaosprobe/loadgen/__init__.py",
+    "chaosprobe/loadgen/runner.py",
+    # probes/ — Rust cmdProbe scaffolding + builder.
+    "chaosprobe/probes/__init__.py",
+    "chaosprobe/probes/builder.py",
+    "chaosprobe/probes/templates.py",
+    # provisioner/ — kubernetes manifest application (raw k8s API).
+    "chaosprobe/provisioner/__init__.py",
+    "chaosprobe/provisioner/kubernetes.py",
+    "chaosprobe/provisioner/_setup_base.py",
+    "chaosprobe/provisioner/chaoscenter.py",
+    "chaosprobe/provisioner/chaoscenter_api.py",
+    "chaosprobe/provisioner/components.py",
+    "chaosprobe/provisioner/setup.py",
+    "chaosprobe/provisioner/vagrant.py",
+    # storage/ — the neo4j graph store.  The reader / writer mixins
+    # declare the shared ``_driver`` attribute (an opaque neo4j Driver)
+    # supplied by the concrete Neo4jStore, so they type-check standalone.
+    "chaosprobe/storage/__init__.py",
+    "chaosprobe/storage/neo4j_reader.py",
+    "chaosprobe/storage/neo4j_store.py",
+    "chaosprobe/storage/neo4j_writer.py",
+    # placement/ — pod-placement strategy helpers (pure Python).
+    "chaosprobe/placement/__init__.py",
+    "chaosprobe/placement/affinity_engine.py",
+    "chaosprobe/placement/dns_cache.py",
+    "chaosprobe/placement/fraction_solver.py",
+    "chaosprobe/placement/mutator.py",
+    "chaosprobe/placement/strategy.py",
+    # Package-level + small leaf utilities — no remaining errors.
+    "chaosprobe/__init__.py",
+    "chaosprobe/cli.py",
+    "chaosprobe/k8s.py",
+    "chaosprobe/commands/__init__.py",
+    "chaosprobe/commands/run_cmd.py",
+    "chaosprobe/commands/shared.py",
+    "chaosprobe/commands/visualize_cmd.py",
+    "chaosprobe/chaos/__init__.py",
+    "chaosprobe/chaos/manifest.py",
+    "chaosprobe/chaos/runner.py",
+    "chaosprobe/collector/__init__.py",
+    "chaosprobe/collector/result_collector.py",
+    "chaosprobe/config/__init__.py",
+    "chaosprobe/config/loader.py",
+    "chaosprobe/config/topology.py",
+    "chaosprobe/config/validator.py",
+]
+
+# Third-party packages that ship without py.typed markers.  We treat
+# them as opaque rather than letting mypy gate on every call site —
+# adding stubs upstream is out of scope and per-file ignores would
+# scatter the same workaround across dozens of files.
+[[tool.mypy.overrides]]
+module = [
+    "kubernetes",
+    "kubernetes.*",
+    "matplotlib",
+    "matplotlib.*",
+    "pyarrow",
+    "pyarrow.*",
+    "yaml",
+]
+ignore_missing_imports = true
+
+# neo4j ships its own modules without a py.typed marker, so mypy would
+# otherwise try to type-check the untyped driver source itself.
+# ``follow_imports = "skip"`` skips re-analysing that source when our
+# code imports from it.
+[[tool.mypy.overrides]]
+module = ["neo4j", "neo4j.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

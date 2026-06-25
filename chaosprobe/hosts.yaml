@@ -1,0 +1,21 @@
+hosts:
+  - name: master1
+    ip: 192.168.88.199
+    ansible_user: ubuntu
+    roles: [control_plane]
+  - name: worker1
+    ip: 192.168.88.198
+    ansible_user: ubuntu
+    roles: [worker]
+  - name: worker2
+    ip: 192.168.88.197
+    ansible_user: ubuntu
+    roles: [worker]
+  - name: worker3
+    ip: 192.168.88.196
+    ansible_user: ubuntu
+    roles: [worker]
+  - name: worker4
+    ip: 192.168.88.195
+    ansible_user: ubuntu
+    roles: [worker]

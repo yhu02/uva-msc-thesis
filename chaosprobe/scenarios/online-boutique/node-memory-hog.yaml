@@ -1,0 +1,252 @@
+# Placement Experiment — node-memory-hog (DEMOTED: does not bite on this cluster)
+#
+# STATUS: kept for the record, but this fault does NOT produce placement-sensitive
+# contention here — it is superseded by load-contention.yaml. The original idea was
+# that node memory exhaustion would evict app pods (colocate → mass eviction; spread
+# → isolated), testing contention at the node-pressure / eviction layer.
+#
+# WHAT WE FOUND (verified against the litmus-go source + an empirical 100% probe):
+#   - MEMORY_CONSUMPTION_PERCENTAGE is a % of node *capacity*, clamped to 100% of
+#     allocatable (NOT of free memory, as an earlier version of this comment said).
+#   - On an already-utilized node the stress-ng helper is the single pod most over
+#     its memory *request*, so the kubelet/kernel evicts/OOM-kills the HELPER first
+#     and relieves the pressure before any app pod is touched — the fault
+#     self-relieves rather than reaching the node-NotReady state it needs.
+#   - Empirically, at 75% AND 100% the target worker stayed ~75% memory with ZERO
+#     MemoryPressure / OOM / app-pod eviction (the helper just ran to Completed).
+#   - Root cause per litmus-go calculateMemoryConsumption: the percentage is
+#     of node CAPACITY, clamped to allocatable, with no free-memory accounting.
+#     No percentage or MEBIBYTES value reliably fixes this on these 4 GiB nodes.
+#
+# CONCLUSION: synthetic hogs are absorbed by cgroup requests/limits; genuine
+# placement-sensitive contention needs real LOAD. See load-contention.yaml (a
+# sustained Locust spike as the stressor) — the contention fault the thesis uses.
+#
+# TARGET_NODES is "auto" → resolved by the runner to the node the active strategy
+# placed productcatalogservice on (appinfo.applabel below).
+#
+# Usage (retained only to reproduce the negative result):
+#   chaosprobe run -n online-boutique -e scenarios/online-boutique/node-memory-hog.yaml -i 3
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-node-memhog
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=productcatalogservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: node-memory-hog
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            # % of node *capacity* clamped to allocatable (see header). On an
+            # already-utilized node this never crosses the eviction threshold —
+            # the stress helper self-evicts first. Left at 75 for the record; no
+            # value makes this fault bite on these nodes (verified by a 100% probe).
+            - name: MEMORY_CONSUMPTION_PERCENTAGE
+              value: "75"
+            - name: NUMBER_OF_WORKERS
+              value: "1"
+            # "auto" → resolved by the runner to the node hosting applabel above
+            # (per-strategy). Replace with a node name to pin it manually.
+            - name: TARGET_NODES
+              value: "auto"
+        probe:
+          # ── Tier 1: Strict probes (3s timeout, 1 retry ≈ 6s) ──────
+          - name: frontend-product-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          - name: frontend-homepage-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          # ── Tier 2: Moderate-tight (3s timeout, 4 retries ≈ 15s) ─
+          - name: frontend-homepage-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          - name: frontend-product-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          # ── Tier 3: Moderate-loose (5s timeout, 4 retries ≈ 20s) ─
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          - name: frontend-homepage-loose
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          # ── Tier 4: Control probe ──────────────────────────────────
+          - name: frontend-healthz
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/_healthz
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 4s
+              retry: 3
+
+          # ── Rust cmdProbes ──────────────────────────────────────────
+          - name: check-redis
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-redis
+              comparator:
+                type: string
+                criteria: contains
+                value: "REDIS_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 0
+
+          - name: check-http-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-http-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "LATENCY_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 8s
+              interval: 12s
+              retry: 6
+
+          - name: check-dns-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-dns-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "DNS_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 2
+
+          - name: check-tcp-connect
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-tcp-connect
+              comparator:
+                type: string
+                criteria: contains
+                value: "TCP_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 0
+
+          - name: check-cart-flow
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-cart-flow
+              comparator:
+                type: string
+                criteria: contains
+                value: "FLOW_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 1

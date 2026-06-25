@@ -1,0 +1,909 @@
+"""Tests for the Prometheus metrics collection module."""
+
+import json
+import math
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from chaosprobe.metrics.prometheus import (
+    DEFAULT_QUERIES,
+    ContinuousPrometheusProber,
+    _check_prometheus_url,
+    _find_free_port,
+    _find_prometheus_service,
+    _query_prometheus,
+    discover_prometheus_urls,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_prom_response(results):
+    """Build a Prometheus instant query JSON response."""
+    return json.dumps(
+        {
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": results,
+            },
+        }
+    ).encode()
+
+
+def _make_prober(**kwargs):
+    """Create a ContinuousPrometheusProber without calling __init__ side-effects."""
+    prober = ContinuousPrometheusProber.__new__(ContinuousPrometheusProber)
+    prober._lock = threading.Lock()
+    prober._stop_event = threading.Event()
+    prober._thread = None
+    prober._time_series = []
+    prober._start_time = time.time()
+    prober._chaos_start_time = None
+    prober._chaos_end_time = None
+    prober._expected_chaos_duration = None
+    prober._post_chaos_buffer = 15.0
+    prober._probe_errors = 0
+    prober._consecutive_failures = 0
+    prober._thread_name = "prometheus-prober"
+    prober.namespace = kwargs.get("namespace", "online-boutique")
+    prober.interval = kwargs.get("interval", 10.0)
+    prober._prometheus_urls = kwargs.get("urls", ["http://prometheus:9090"])
+    prober._available = kwargs.get("available", True)
+    prober._port_forward_procs = []
+    prober._queries = kwargs.get("queries", {"test_metric": 'up{namespace="online-boutique"}'})
+    return prober
+
+
+# ---------------------------------------------------------------------------
+# _query_prometheus
+# ---------------------------------------------------------------------------
+
+
+class TestQueryPrometheus:
+    def test_parses_vector_result(self, tmp_path):
+        """Valid Prometheus response is parsed into label/value dicts."""
+        handler_body = _make_prom_response(
+            [
+                {"metric": {"pod": "frontend-abc", "__name__": "up"}, "value": [1711700000, "1.5"]},
+                {"metric": {"pod": "cart-def"}, "value": [1711700000, "0.3"]},
+            ]
+        )
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(handler_body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.handle_request, daemon=True)
+        t.start()
+
+        result = _query_prometheus(f"http://127.0.0.1:{port}", "up")
+        t.join(timeout=5)
+        server.server_close()
+
+        assert result is not None
+        assert len(result) == 2
+        assert result[0]["metric"] == {"pod": "frontend-abc", "__name__": "up"}
+        assert result[0]["value"] == [1711700000, "1.5"]
+        assert result[1]["metric"] == {"pod": "cart-def"}
+        assert result[1]["value"] == [1711700000, "0.3"]
+
+    def test_returns_none_on_connection_error(self):
+        result = _query_prometheus("http://127.0.0.1:1", "up", timeout=0.5)
+        assert result is None
+
+    def test_returns_none_on_error_status(self, tmp_path):
+        body = json.dumps({"status": "error", "error": "bad query"}).encode()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.handle_request, daemon=True)
+        t.start()
+
+        result = _query_prometheus(f"http://127.0.0.1:{port}", "up")
+        t.join(timeout=5)
+        server.server_close()
+
+        assert result is None
+
+    def test_skips_unparseable_values(self, tmp_path):
+        body = _make_prom_response(
+            [
+                {"metric": {"pod": "a"}, "value": [1711700000, "NaN"]},
+                {"metric": {"pod": "b"}, "value": [1711700000, "42"]},
+            ]
+        )
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.handle_request, daemon=True)
+        t.start()
+
+        result = _query_prometheus(f"http://127.0.0.1:{port}", "up")
+        t.join(timeout=5)
+        server.server_close()
+
+        # NaN is a valid float, so both should parse
+        assert result is not None
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# discover_prometheus_urls / _find_prometheus_service
+# ---------------------------------------------------------------------------
+
+
+class TestFindPrometheusService:
+    # `ensure_k8s_config` is imported at module load by
+    # chaosprobe.metrics.prometheus and re-binds `config` from
+    # chaosprobe.k8s.  Patching kubernetes.config doesn't reach that
+    # binding, so on CI (no kubeconfig) the real load_kube_config raises
+    # and the bare except swallows it -> []. Patch the import site
+    # directly instead.
+    @patch("chaosprobe.metrics.prometheus.ensure_k8s_config")
+    @patch("kubernetes.client")
+    def test_returns_empty_when_no_services(self, mock_client, _mock_ensure):
+        mock_core = MagicMock()
+        mock_client.CoreV1Api.return_value = mock_core
+        mock_core.list_namespaced_service.return_value = MagicMock(items=[])
+
+        result = _find_prometheus_service()
+        assert result == []
+
+    @patch("chaosprobe.metrics.prometheus.ensure_k8s_config")
+    @patch("kubernetes.client")
+    def test_finds_single_prometheus_service(self, mock_client, _mock_ensure):
+        svc = MagicMock()
+        svc.metadata.name = "prometheus-server"
+        port = MagicMock()
+        port.port = 9090
+        svc.spec.ports = [port]
+
+        mock_core = MagicMock()
+        mock_client.CoreV1Api.return_value = mock_core
+        mock_core.list_namespaced_service.side_effect = [
+            MagicMock(items=[svc]),
+        ]
+
+        result = _find_prometheus_service()
+        assert result == [("prometheus-server", "prometheus", 9090)]
+
+    @patch("chaosprobe.metrics.prometheus.ensure_k8s_config")
+    @patch("kubernetes.client")
+    def test_finds_prometheus_service_in_namespace(self, mock_client, _mock_ensure):
+        svc = MagicMock()
+        svc.metadata.name = "prometheus-server"
+        p1 = MagicMock()
+        p1.port = 9090
+        svc.spec.ports = [p1]
+
+        mock_core = MagicMock()
+        mock_client.CoreV1Api.return_value = mock_core
+        mock_core.list_namespaced_service.side_effect = [
+            MagicMock(items=[svc]),
+        ]
+
+        result = _find_prometheus_service()
+        assert len(result) == 1
+        assert ("prometheus-server", "prometheus", 9090) in result
+
+
+class TestDiscoverPrometheusUrls:
+    @patch("chaosprobe.metrics.prometheus._find_prometheus_service", return_value=[])
+    def test_returns_empty_when_no_services(self, _mock):
+        result = discover_prometheus_urls()
+        assert result == []
+
+    @patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True)
+    @patch(
+        "chaosprobe.metrics.prometheus._find_prometheus_service",
+        return_value=[
+            ("prometheus-server", "prometheus", 9090),
+        ],
+    )
+    def test_returns_all_reachable_urls(self, _mock_find, _mock_check):
+        result = discover_prometheus_urls()
+        assert len(result) == 1
+        assert "http://prometheus-server.prometheus:9090" in result
+
+    @patch("chaosprobe.metrics.prometheus._check_prometheus_url", side_effect=[False])
+    @patch(
+        "chaosprobe.metrics.prometheus._find_prometheus_service",
+        return_value=[
+            ("prometheus-server", "prometheus", 9090),
+        ],
+    )
+    def test_filters_unreachable(self, _mock_find, _mock_check):
+        result = discover_prometheus_urls()
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# ContinuousPrometheusProber — result() and phase splitting
+# ---------------------------------------------------------------------------
+
+
+class TestPrometheusProberResult:
+    def test_result_when_no_data(self):
+        prober = _make_prober(available=False)
+        prober._time_series = []
+
+        result = prober.result()
+        assert result["available"] is False
+        assert "reason" in result
+
+    def test_result_with_data(self):
+        prober = _make_prober()
+        prober._time_series = [
+            {
+                "timestamp": "2026-03-29T12:00:00+00:00",
+                "elapsed_s": 0.0,
+                "phase": "pre-chaos",
+                "metrics": {
+                    "test_metric": [{"metric": {"pod": "a"}, "value": [1711700000, "1.0"]}],
+                },
+            },
+            {
+                "timestamp": "2026-03-29T12:00:10+00:00",
+                "elapsed_s": 10.0,
+                "phase": "during-chaos",
+                "metrics": {
+                    "test_metric": [{"metric": {"pod": "a"}, "value": [1711700010, "5.0"]}],
+                },
+            },
+        ]
+
+        result = prober.result()
+        assert result["available"] is True
+        assert result["serverUrls"] == ["http://prometheus:9090"]
+        assert "timeSeries" in result
+        assert "phases" in result
+        assert "queries" in result
+        assert "probeErrors" not in result
+
+    def test_aggregate_phases_ignores_nan_and_inf(self):
+        # Prometheus returns NaN / +Inf for no-data (e.g. histogram_quantile
+        # over an empty window). These must not crash statistics.stdev
+        # ("'float' object has no attribute 'numerator'") nor poison the stats —
+        # they should be skipped, with the metric computed from finite values.
+        prober = _make_prober()
+        series = [
+            {"phase": "during-chaos", "metrics": {"p99": [{"value": [1, "2.0"]}]}},
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "p99": [
+                        {"value": [2, "NaN"]},  # skipped (non-finite)
+                        {"value": [3, "not-a-number"]},  # skipped (unparseable)
+                        {"value": [3, "4.0"]},
+                    ]
+                },
+            },
+            {"phase": "during-chaos", "metrics": {"p99": [{"value": [4, "+Inf"]}]}},
+        ]
+
+        agg = prober._aggregate_phases(series)
+
+        # sample sums: [2.0, 4.0 (NaN + bad skipped), 0.0 (Inf skipped)]
+        p99 = agg["during-chaos"]["metrics"]["p99"]
+        assert p99["mean"] == pytest.approx(2.0)
+        assert p99["max"] == pytest.approx(4.0)
+        assert math.isfinite(p99["stdev"])  # computed without crashing
+
+    def test_result_includes_probe_errors(self):
+        prober = _make_prober()
+        prober._probe_errors = 2
+        prober._time_series = [
+            {
+                "timestamp": "2026-03-29T12:00:00+00:00",
+                "elapsed_s": 0.0,
+                "phase": "pre-chaos",
+                "metrics": {"test_metric": [{"metric": {}, "value": [1711700000, "1.0"]}]},
+            },
+        ]
+
+        result = prober.result()
+        assert result["probeErrors"] == 2
+
+    def test_result_includes_metric_availability_map(self):
+        """`metricAvailability` flags every configured query as available
+        when at least one sample carried non-empty data for it."""
+        prober = _make_prober(
+            queries={
+                "always_present": "up",
+                "never_present": "noop",
+                "intermittent": "blip",
+            }
+        )
+        prober._time_series = [
+            {
+                "phase": "pre-chaos",
+                "metrics": {
+                    "always_present": [{"metric": {}, "value": [1, "1.0"]}],
+                    # `never_present` and `intermittent` missing here
+                },
+            },
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "always_present": [{"metric": {}, "value": [2, "2.0"]}],
+                    "intermittent": [{"metric": {}, "value": [2, "3.0"]}],
+                },
+            },
+        ]
+
+        result = prober.result()
+        availability = result["metricAvailability"]
+
+        assert availability["always_present"] is True
+        assert availability["intermittent"] is True
+        assert availability["never_present"] is False
+
+    def test_metric_availability_treats_empty_list_as_unavailable(self):
+        """An entry that carries the key but with an empty list still counts
+        as unavailable — empty results mean the query returned nothing."""
+        prober = _make_prober(queries={"only_metric": "up"})
+        prober._time_series = [
+            {"phase": "pre-chaos", "metrics": {"only_metric": []}},
+            {"phase": "during-chaos", "metrics": {"only_metric": []}},
+        ]
+
+        result = prober.result()
+        assert result["metricAvailability"]["only_metric"] is False
+
+
+class TestPrometheusProberPhaseSplitting:
+    def test_phase_aggregation(self):
+        prober = _make_prober()
+
+        series = [
+            {
+                "phase": "pre-chaos",
+                "metrics": {
+                    "error_rate": [
+                        {"metric": {"svc": "frontend"}, "value": [1711700000, "0.01"]},
+                        {"metric": {"svc": "cart"}, "value": [1711700000, "0.02"]},
+                    ],
+                },
+            },
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "error_rate": [
+                        {"metric": {"svc": "frontend"}, "value": [1711700010, "0.40"]},
+                        {"metric": {"svc": "cart"}, "value": [1711700010, "0.10"]},
+                    ],
+                },
+            },
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "error_rate": [
+                        {"metric": {"svc": "frontend"}, "value": [1711700020, "0.60"]},
+                        {"metric": {"svc": "cart"}, "value": [1711700020, "0.20"]},
+                    ],
+                },
+            },
+            {
+                "phase": "post-chaos",
+                "metrics": {
+                    "error_rate": [
+                        {"metric": {"svc": "frontend"}, "value": [1711700030, "0.02"]},
+                    ],
+                },
+            },
+        ]
+
+        phases = prober._aggregate_phases(series)
+
+        assert phases["pre-chaos"]["sampleCount"] == 1
+        assert phases["during-chaos"]["sampleCount"] == 2
+        assert phases["post-chaos"]["sampleCount"] == 1
+
+        # During-chaos: sample sums are 0.50 and 0.80, mean = 0.65, max = 0.80
+        during = phases["during-chaos"]["metrics"]["error_rate"]
+        assert during["mean"] == pytest.approx(0.65, abs=0.001)
+        assert during["max"] == pytest.approx(0.80, abs=0.001)
+        assert during["min"] == pytest.approx(0.50, abs=0.001)
+
+    def test_empty_phases(self):
+        prober = _make_prober()
+        phases = prober._aggregate_phases([])
+
+        assert phases["pre-chaos"]["sampleCount"] == 0
+        assert phases["during-chaos"]["sampleCount"] == 0
+        assert phases["post-chaos"]["sampleCount"] == 0
+
+    def test_no_metrics_in_entry(self):
+        prober = _make_prober()
+        series = [{"phase": "during-chaos"}]
+        phases = prober._aggregate_phases(series)
+        assert phases["during-chaos"]["sampleCount"] == 1
+        assert phases["during-chaos"]["metrics"] == {}
+
+    def test_metric_missing_from_some_samples(self):
+        """When an optional metric (e.g. `kubelet_pleg_relist_duration_p99`
+        on a cluster without kubelet metrics exposed) is absent from some
+        samples, the aggregator must still produce a phase summary for the
+        other metrics without raising."""
+        prober = _make_prober()
+        series = [
+            {
+                "phase": "during-chaos",
+                "metrics": {
+                    "cpu_throttling": [
+                        {"metric": {"pod": "p1", "container": "app"}, "value": [1, "0.5"]},
+                    ],
+                    "kubelet_pleg_relist_duration_p99": [
+                        {"metric": {}, "value": [1, "0.01"]},
+                    ],
+                },
+            },
+            {
+                # PLEG metric absent (kubelet doesn't expose it / scrape failed)
+                "phase": "during-chaos",
+                "metrics": {
+                    "cpu_throttling": [
+                        {"metric": {"pod": "p1", "container": "app"}, "value": [2, "0.6"]},
+                    ],
+                },
+            },
+        ]
+
+        phases = prober._aggregate_phases(series)
+        agg = phases["during-chaos"]["metrics"]
+
+        # cpu_throttling present in both samples → aggregated across both
+        assert agg["cpu_throttling"]["mean"] == pytest.approx(0.55, abs=0.001)
+        # pleg present in only one → the aggregator treats the missing
+        # sample as 0.0, so mean = (0.01 + 0.0) / 2 = 0.005.  The key
+        # invariant here is that the aggregator does NOT raise on partial
+        # coverage; the exact zero-fill semantics are a separate concern.
+        assert "kubelet_pleg_relist_duration_p99" in agg
+        assert agg["kubelet_pleg_relist_duration_p99"]["mean"] == pytest.approx(0.005, abs=0.0001)
+        # Both samples counted (no exception raised on the empty one)
+        assert phases["during-chaos"]["sampleCount"] == 2
+
+
+class TestPrometheusProberPhaseTransitions:
+    def test_current_phase_transitions(self):
+        prober = _make_prober()
+        now = time.time()
+
+        assert prober._current_phase(now) == "pre-chaos"
+
+        prober._chaos_start_time = now - 10
+        assert prober._current_phase(now) == "during-chaos"
+
+        prober._chaos_end_time = now - 5
+        assert prober._current_phase(now) == "post-chaos"
+
+
+class TestPrometheusProberLifecycle:
+    def test_start_disables_when_no_prometheus(self):
+        prober = _make_prober(urls=[])
+        prober._prometheus_urls = []
+
+        with (
+            patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]),
+            patch("chaosprobe.metrics.prometheus._find_prometheus_service", return_value=[]),
+        ):
+            prober.start()
+
+        assert prober._available is False
+
+    def test_start_disables_when_unreachable(self):
+        prober = _make_prober(urls=["http://127.0.0.1:1"])
+
+        with patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=False):
+            prober.start()
+
+        assert prober._available is False
+
+    def test_start_uses_port_forward_fallback(self):
+        prober = _make_prober(urls=[])
+        prober._prometheus_urls = []
+
+        with (
+            patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]),
+            patch(
+                "chaosprobe.metrics.prometheus._find_prometheus_service",
+                return_value=[("prometheus-server", "prometheus", 80)],
+            ),
+            patch.object(
+                prober, "_start_port_forward", return_value="http://localhost:19090"
+            ) as mock_pf,
+            patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True),
+        ):
+            prober.start()
+
+        mock_pf.assert_called_once_with("prometheus-server", "prometheus", 80)
+        assert prober._prometheus_urls == ["http://localhost:19090"]
+        assert prober._available is True
+
+    def test_start_with_multiple_port_forwards(self):
+        prober = _make_prober(urls=[])
+        prober._prometheus_urls = []
+
+        with (
+            patch("chaosprobe.metrics.prometheus.discover_prometheus_urls", return_value=[]),
+            patch(
+                "chaosprobe.metrics.prometheus._find_prometheus_service",
+                return_value=[
+                    ("prometheus-server", "prometheus", 80),
+                ],
+            ),
+            patch.object(
+                prober, "_start_port_forward", return_value="http://localhost:19090"
+            ) as mock_pf,
+            patch("chaosprobe.metrics.prometheus._check_prometheus_url", return_value=True),
+        ):
+            prober.start()
+
+        assert mock_pf.call_count == 1
+        assert len(prober._prometheus_urls) == 1
+        assert prober._available is True
+
+    def test_stop_cleans_up_port_forwards(self):
+        prober = _make_prober()
+        mock_proc1 = MagicMock()
+        mock_proc2 = MagicMock()
+        prober._port_forward_procs = [mock_proc1, mock_proc2]
+
+        prober.stop()
+
+        mock_proc1.terminate.assert_called_once()
+        mock_proc2.terminate.assert_called_once()
+        assert prober._port_forward_procs == []
+
+
+# ---------------------------------------------------------------------------
+# DEFAULT_QUERIES
+# ---------------------------------------------------------------------------
+
+
+# Namespace-scoped queries embed `{namespace}` and the LitmusChaos pod
+# exclusion filter; cluster-wide queries do neither (kube-proxy, CoreDNS,
+# conntrack, kubelet, etc. are per-node or per-cluster signals).  The
+# split lets the templating + filter tests check the right invariants
+# per class without listing every key inline.
+NAMESPACE_SCOPED_QUERIES = {
+    "pod_ready_count",
+    "cpu_usage",
+    "cpu_throttling",
+    "memory_usage",
+    "network_receive_bytes",
+    "cpu_pressure_some",
+    "memory_pressure_some",
+    "io_pressure_some",
+    "tcp_sockets_per_pod",
+    "network_transmit_bytes",
+    "network_packets",
+    "container_oom_events_per_pod",
+}
+CLUSTER_WIDE_QUERIES = {
+    "kubeproxy_network_programming_p99",
+    "kubeproxy_sync_proxy_rules_p99",
+    "coredns_request_duration_p99",
+    "coredns_request_count_per_sec",
+    "conntrack_entries_per_node",
+    "tcp_retransmit_rate_per_node",
+    "endpointslice_changes_per_sec",
+    "kubelet_pleg_relist_duration_p99",
+    "kube_proxy_rules_synced_per_sec",
+    "scheduler_attempt_p99",
+    "scheduler_pending_pods",
+    "apiserver_request_p99",
+    "apiserver_inflight",
+    "etcd_wal_fsync_p99",
+    "etcd_backend_commit_p99",
+    "felix_active_local_endpoints",
+    "felix_int_dataplane_apply_p99",
+    "felix_iptables_save_p99",
+    "tcp_aborts_per_node",
+    "tcp_syn_retrans_per_node",
+    "coredns_cache_hit_rate_per_sec",
+    "coredns_cache_miss_rate_per_sec",
+    "etcd_compaction_duration_p99",
+    "node_cpu_pressure_some_per_node",
+    "node_memory_pressure_some_per_node",
+    "node_io_pressure_some_per_node",
+    "kubelet_pod_start_p99",
+    "kubelet_runtime_ops_p99",
+}
+
+
+class TestDefaultQueries:
+    def test_namespace_templating_for_scoped_queries(self):
+        """Namespace-scoped templates expand `{namespace}` correctly."""
+        for label in NAMESPACE_SCOPED_QUERIES:
+            template = DEFAULT_QUERIES[label]
+            formatted = template.format(namespace="test-ns")
+            assert "test-ns" in formatted, f"{label} did not substitute namespace"
+            assert "{namespace}" not in formatted, f"{label} left unsubstituted placeholder"
+
+    def test_cluster_wide_queries_have_no_namespace_placeholder(self):
+        """Cluster-wide templates intentionally omit `{namespace}` so they
+        format without raising ``KeyError`` in `_build_queries`.
+
+        The post-format string may legitimately differ from the template
+        when PromQL label selectors are escaped with double-braces
+        (e.g. ``{{verb!="WATCH"}}`` → ``{verb!="WATCH"}``).  What we
+        actually care about is that ``.format(namespace=…)`` (a) does
+        not raise, and (b) does not substitute the namespace anywhere
+        the template did not ask for it — i.e. the namespace string
+        never appears in the output."""
+        for label in CLUSTER_WIDE_QUERIES:
+            template = DEFAULT_QUERIES[label]
+            assert "{namespace}" not in template, f"{label} unexpectedly references {{namespace}}"
+            formatted = template.format(namespace="test-ns")
+            assert "test-ns" not in formatted, f"{label} accidentally substitutes namespace"
+
+    def test_all_queries_present(self):
+        expected = NAMESPACE_SCOPED_QUERIES | CLUSTER_WIDE_QUERIES
+        assert set(DEFAULT_QUERIES.keys()) == expected
+
+    def test_litmus_pod_filter_in_namespace_scoped_queries(self):
+        """Namespace-scoped queries exclude LitmusChaos experiment pods."""
+        for label in NAMESPACE_SCOPED_QUERIES:
+            template = DEFAULT_QUERIES[label]
+            formatted = template.format(namespace="test-ns")
+            assert (
+                'pod!~"' in formatted
+            ), f"Query {label!r} is missing the LitmusChaos pod exclusion filter"
+
+    def test_cluster_wide_queries_have_no_litmus_filter(self):
+        """Cluster-wide queries operate on node / cluster metrics with no
+        pod dimension, so the LitmusChaos pod filter does not apply."""
+        for label in CLUSTER_WIDE_QUERIES:
+            template = DEFAULT_QUERIES[label]
+            assert 'pod!~"' not in template, f"{label} has an unexpected pod filter"
+
+    def test_cpu_throttling_aggregates_by_pod_and_container(self):
+        """The cpu_throttling query preserves the container label so the raw
+        timeSeries can be sliced per-container; the phase summary still
+        collapses (sum-of-sums = sum)."""
+        tpl = DEFAULT_QUERIES["cpu_throttling"]
+        assert "by (pod, container)" in tpl
+        assert tpl.count("by (pod)") == 0
+
+    def test_new_extended_churn_queries_present(self):
+        """Extended churn-mechanism queries are part of the default set."""
+        assert "endpointslice_changes_per_sec" in DEFAULT_QUERIES
+        assert "kubelet_pleg_relist_duration_p99" in DEFAULT_QUERIES
+        assert "kube_proxy_rules_synced_per_sec" in DEFAULT_QUERIES
+
+    def test_extended_churn_queries_are_histograms_or_rates(self):
+        """Spec invariant: each new query is either a histogram_quantile or
+        a rate-based counter, never a bare gauge — otherwise the value over
+        the chaos window is meaningless."""
+        for label in (
+            "endpointslice_changes_per_sec",
+            "kubelet_pleg_relist_duration_p99",
+            "kube_proxy_rules_synced_per_sec",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert (
+                "rate(" in tpl or "histogram_quantile" in tpl
+            ), f"{label} must use rate() or histogram_quantile()"
+
+    def test_control_plane_queries_present(self):
+        """Scheduler + apiserver + etcd control-plane queries are part of
+        the default set so contention-vs-churn analysis can distinguish
+        control-plane latency from kernel/networking latency."""
+        for label in (
+            "scheduler_attempt_p99",
+            "scheduler_pending_pods",
+            "apiserver_request_p99",
+            "apiserver_inflight",
+            "etcd_wal_fsync_p99",
+            "etcd_backend_commit_p99",
+        ):
+            assert label in DEFAULT_QUERIES, f"{label} missing from DEFAULT_QUERIES"
+
+    def test_control_plane_latency_queries_use_histogram_quantile(self):
+        """The four latency-shaped control-plane queries are p99
+        histogram_quantile aggregations.  The two depth/gauge-shaped
+        ones (`scheduler_pending_pods`, `apiserver_inflight`) are
+        intentional bare gauges — they measure queue depth at scrape
+        time, where rate() would be meaningless.  This test pins the
+        latency-vs-depth split so a future edit can't accidentally
+        downgrade a p99 to a gauge."""
+        for label in (
+            "scheduler_attempt_p99",
+            "apiserver_request_p99",
+            "etcd_wal_fsync_p99",
+            "etcd_backend_commit_p99",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert (
+                "histogram_quantile" in tpl
+            ), f"{label} must use histogram_quantile (latency metric)"
+        for label in ("scheduler_pending_pods", "apiserver_inflight"):
+            tpl = DEFAULT_QUERIES[label]
+            assert (
+                "histogram_quantile" not in tpl and "rate(" not in tpl
+            ), f"{label} is a depth gauge; must not wrap in rate() or histogram_quantile"
+
+    def test_apiserver_request_query_excludes_watch_verb(self):
+        """WATCH requests are long-lived (open the entire experiment),
+        so their latency distribution is dominated by the watch lifetime
+        and not the per-call work.  Excluding WATCH keeps the metric
+        meaningful for the H7/H8 attribution claim."""
+        tpl = DEFAULT_QUERIES["apiserver_request_p99"]
+        # `{{verb!="WATCH"}}` escapes to `{verb!="WATCH"}` after .format()
+        assert '{{verb!="WATCH"}}' in tpl or '{verb!="WATCH"}' in tpl
+
+    def test_control_plane_queries_format_to_valid_promql(self):
+        """The apiserver query uses double-braces to escape PromQL's own
+        label selectors so .format(namespace=...) is still a no-op.  This
+        test verifies the formatted output is intended PromQL, not the
+        template-with-double-braces literal."""
+        for label in (
+            "scheduler_attempt_p99",
+            "scheduler_pending_pods",
+            "apiserver_request_p99",
+            "apiserver_inflight",
+            "etcd_wal_fsync_p99",
+            "etcd_backend_commit_p99",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            formatted = tpl.format(namespace="test-ns")
+            assert "{{" not in formatted, f"{label} has unescaped double-braces"
+            assert "}}" not in formatted, f"{label} has unescaped double-braces"
+
+    def test_psi_queries_present(self):
+        """PSI (Pressure Stall Information) queries are part of the default
+        set so H7's contention refutation has a cleaner signal than
+        cpu_throttling alone."""
+        for label in ("cpu_pressure_some", "memory_pressure_some", "io_pressure_some"):
+            assert label in DEFAULT_QUERIES, f"{label} missing from DEFAULT_QUERIES"
+
+    def test_psi_queries_aggregate_by_pod_and_container(self):
+        """PSI is a per-cgroup signal; aggregating `by (pod, container)`
+        preserves the dimension needed to distinguish app-container from
+        sidecar stalls."""
+        for label in ("cpu_pressure_some", "memory_pressure_some", "io_pressure_some"):
+            tpl = DEFAULT_QUERIES[label]
+            assert "by (pod, container)" in tpl, f"{label} should be aggregated per container"
+
+    def test_per_pod_network_queries_present(self):
+        """Per-pod network queries move the conntrack-mechanism story from
+        per-node to per-pod attribution."""
+        for label in ("tcp_sockets_per_pod", "network_transmit_bytes", "network_packets"):
+            assert label in DEFAULT_QUERIES, f"{label} missing from DEFAULT_QUERIES"
+
+    def test_contention_rate_queries_use_rate_not_gauge(self):
+        """PSI counters and the byte-rate queries must use `rate(...)` over
+        the counter — otherwise the value over the chaos window is just
+        the latest counter sample, which is meaningless."""
+        for label in (
+            "cpu_pressure_some",
+            "memory_pressure_some",
+            "io_pressure_some",
+            "network_transmit_bytes",
+            "network_packets",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert "rate(" in tpl, f"{label} must use rate()"
+
+    def test_tcp_sockets_is_a_gauge(self):
+        """`container_network_tcp_usage_total` is exposed as a gauge of
+        currently-open sockets — wrapping it in rate() would be wrong.
+        Pin the gauge shape so a future edit can't silently change it."""
+        tpl = DEFAULT_QUERIES["tcp_sockets_per_pod"]
+        assert "rate(" not in tpl
+        assert "histogram_quantile" not in tpl
+
+    def test_node_level_psi_queries_present(self):
+        """Node-level PSI complements container-level PSI: it surfaces
+        cases where one pod's contention pushes the whole node into stall
+        even when the *neighbour's* per-container PSI looks fine."""
+        for label in (
+            "node_cpu_pressure_some_per_node",
+            "node_memory_pressure_some_per_node",
+            "node_io_pressure_some_per_node",
+        ):
+            assert label in DEFAULT_QUERIES, f"{label} missing"
+
+    def test_node_level_psi_uses_rate_per_instance(self):
+        """Node-level PSI counters must use `rate(...)` and `by (instance)`
+        — same shape invariant as the kernel TCP-drop counters."""
+        for label in (
+            "node_cpu_pressure_some_per_node",
+            "node_memory_pressure_some_per_node",
+            "node_io_pressure_some_per_node",
+        ):
+            tpl = DEFAULT_QUERIES[label]
+            assert "rate(" in tpl, f"{label} must use rate()"
+            assert "by (instance)" in tpl, f"{label} must aggregate by (instance)"
+
+    def test_container_oom_events_is_namespace_scoped_rate_per_pod(self):
+        """`container_oom_events_total` time-series locates an OOM event in
+        a phase — the snapshot-only count from `_collect_pod_status` can't.
+        It must be namespace-scoped (exclude Litmus pods), use rate(), and
+        aggregate by (pod)."""
+        tpl = DEFAULT_QUERIES["container_oom_events_per_pod"]
+        assert "{namespace}" in tpl
+        assert 'pod!~"' in tpl
+        assert "rate(" in tpl
+        assert "by (pod)" in tpl
+
+    def test_kubelet_pod_start_p99_is_histogram_quantile(self):
+        """`kubelet_pod_start_p99` further decomposes scheduledToReady_ms
+        into the kubelet+CRI start phase.  Must be p99 histogram."""
+        tpl = DEFAULT_QUERIES["kubelet_pod_start_p99"]
+        assert "histogram_quantile(0.99" in tpl
+        assert "kubelet_pod_start_duration_seconds_bucket" in tpl
+
+    def test_kubelet_runtime_ops_p99_keeps_operation_type_dimension(self):
+        """Different runtime operations (pull/create/start) have very
+        different latency distributions; collapsing them would hide the
+        bottleneck.  Pin the `operation_type` dimension."""
+        tpl = DEFAULT_QUERIES["kubelet_runtime_ops_p99"]
+        assert "histogram_quantile(0.99" in tpl
+        assert "operation_type" in tpl
+
+
+# ---------------------------------------------------------------------------
+# _find_free_port / _check_prometheus_url
+# ---------------------------------------------------------------------------
+
+
+class TestFindFreePort:
+    def test_returns_valid_tcp_port(self):
+        port = _find_free_port()
+        assert isinstance(port, int)
+        assert 0 < port < 65536
+
+
+class TestCheckPrometheusUrl:
+    def test_true_on_http_200(self):
+        cm = MagicMock()
+        cm.__enter__.return_value.status = 200
+        with patch("urllib.request.urlopen", return_value=cm):
+            assert _check_prometheus_url("http://prometheus:9090") is True
+
+    def test_false_on_non_200(self):
+        cm = MagicMock()
+        cm.__enter__.return_value.status = 503
+        with patch("urllib.request.urlopen", return_value=cm):
+            assert _check_prometheus_url("http://prometheus:9090") is False
+
+    def test_false_on_connection_error(self):
+        with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+            assert _check_prometheus_url("http://prometheus:9090") is False

@@ -1,0 +1,175 @@
+# DeathStarBench hotelReservation — reservation (gRPC, port 8087) + memcached-reserve + mongodb-reservation
+# Source: https://github.com/delimitrou/DeathStarBench/tree/6ecb09706140f8730b5385c08f1386c654c3c526/hotelReservation/kubernetes/reserve
+# Upstream commit: 6ecb0970 (2024-06-27, latest commit touching hotelReservation).
+# Adaptations vs upstream: `io.kompose.service` labels -> `app:` (ChaosProbe prober
+# convention); images pinned by tag; explicit resources.requests; tcpSocket readiness
+# probes added; kompose/istio annotations dropped; mongodb hostPath PV/PVC replaced by
+# emptyDir (chaos runs need no persistence; each service re-seeds its database on boot).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reservation
+  labels:
+    app: reservation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reservation
+  template:
+    metadata:
+      labels:
+        app: reservation
+    spec:
+      containers:
+        - name: hotel-reserv-reservation
+          image: deathstarbench/hotel-reservation:0.3.5
+          command: ["/go/bin/reservation"]
+          ports:
+            - containerPort: 8087
+          readinessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            tcpSocket:
+              port: 8087
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reservation
+  labels:
+    app: reservation
+spec:
+  type: ClusterIP
+  selector:
+    app: reservation
+  ports:
+    - name: grpc
+      port: 8087
+      targetPort: 8087
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memcached-reserve
+  labels:
+    app: memcached-reserve
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memcached-reserve
+  template:
+    metadata:
+      labels:
+        app: memcached-reserve
+    spec:
+      containers:
+        - name: hotel-reserv-reservation-mmc
+          # Upstream env kept for parity; library/memcached ignores MEMCACHED_* vars
+          # (it runs with its defaults: 64 MB cache, 4 threads).
+          image: memcached:1.6.42-alpine
+          env:
+            - name: MEMCACHED_CACHE_SIZE
+              value: "128"
+            - name: MEMCACHED_THREADS
+              value: "2"
+          ports:
+            - containerPort: 11211
+          readinessProbe:
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            tcpSocket:
+              port: 11211
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memcached-reserve
+  labels:
+    app: memcached-reserve
+spec:
+  type: ClusterIP
+  selector:
+    app: memcached-reserve
+  ports:
+    - name: memcached
+      port: 11211
+      targetPort: 11211
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb-reservation
+  labels:
+    app: mongodb-reservation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-reservation
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mongodb-reservation
+    spec:
+      hostname: reservation-db
+      containers:
+        - name: hotel-reserv-reservation-mongo
+          image: mongo:4.4.6
+          ports:
+            - containerPort: 27017
+          readinessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            tcpSocket:
+              port: 27017
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - mountPath: /data/db
+              name: data
+      volumes:
+        - name: data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-reservation
+  labels:
+    app: mongodb-reservation
+spec:
+  type: ClusterIP
+  selector:
+    app: mongodb-reservation
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017

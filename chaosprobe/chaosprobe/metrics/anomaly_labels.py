@@ -1,0 +1,231 @@
+"""Anomaly label generation for ML training.
+
+Produces structured ``anomalyLabels`` from chaos experiment metadata,
+providing ground-truth labels that pair fault injection events with
+timestamps, targets, affected services, and severity levels.
+
+These labels enable supervised learning for anomaly classification:
+each label says "anomaly type X happened at time T affecting service S."
+"""
+
+from typing import Any, Dict, List, Optional, Tuple
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    """Best-effort int coercion for chaos-experiment env values.
+
+    Chaos env values arrive as strings from the experiment manifest and may be
+    empty, blank, float-like (``"1.5"``), or templated.  ``int("")`` /
+    ``int("1.5")`` raise ``ValueError``; since these labels are built
+    unconditionally during output generation, an unparseable value must fall
+    back to ``default`` rather than abort the whole iteration (which the broad
+    iteration-level handler would then mislabel as a spurious ERROR).
+    """
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+# Mapping of LitmusChaos experiment names to anomaly categories
+EXPERIMENT_TO_ANOMALY = {
+    "pod-delete": {"category": "availability", "resource": "pod", "severity": "critical"},
+    "pod-cpu-hog": {"category": "saturation", "resource": "cpu", "severity": "high"},
+    "pod-memory-hog": {"category": "saturation", "resource": "memory", "severity": "high"},
+    "pod-network-loss": {"category": "network", "resource": "bandwidth", "severity": "high"},
+    "pod-network-latency": {"category": "network", "resource": "latency", "severity": "medium"},
+    "pod-network-corruption": {
+        "category": "network",
+        "resource": "integrity",
+        "severity": "medium",
+    },
+    "pod-network-duplication": {"category": "network", "resource": "bandwidth", "severity": "low"},
+    "pod-io-stress": {"category": "saturation", "resource": "disk", "severity": "medium"},
+    "disk-fill": {"category": "saturation", "resource": "disk", "severity": "high"},
+    "node-cpu-hog": {"category": "saturation", "resource": "cpu", "severity": "critical"},
+    "node-memory-hog": {"category": "saturation", "resource": "memory", "severity": "critical"},
+    "node-drain": {"category": "availability", "resource": "node", "severity": "critical"},
+    "kubelet-service-kill": {
+        "category": "availability",
+        "resource": "kubelet",
+        "severity": "critical",
+    },
+}
+
+
+def _get_affected_services(
+    target_service: str,
+    routes: Optional[List[Tuple[str, str, str, str, str]]] = None,
+) -> List[str]:
+    """Find upstream services that depend on *target_service*.
+
+    Parameters
+    ----------
+    target_service
+        The service being targeted by chaos.
+    routes
+        Service dependency graph as ``(src, tgt, host, proto, desc)`` tuples,
+        discovered via ``config.topology``.  Returns an empty list when no
+        routes are provided.
+    """
+    if not routes:
+        return []
+    affected = set()
+    for src, tgt, _host, _proto, _desc in routes:
+        if tgt == target_service and src != target_service:
+            affected.add(src)
+    return sorted(affected)
+
+
+def generate_anomaly_labels(
+    scenario: Dict[str, Any],
+    metrics: Optional[Dict[str, Any]] = None,
+    experiment_start: Optional[str] = None,
+    experiment_end: Optional[str] = None,
+    placement: Optional[Dict[str, Any]] = None,
+    service_routes: Optional[List[Tuple[str, str, str, str, str]]] = None,
+) -> List[Dict[str, Any]]:
+    """Generate structured anomaly labels for an experiment run.
+
+    Parameters
+    ----------
+    scenario:
+        Loaded scenario dict (from ``load_scenario``).
+    metrics:
+        Collected metrics dict (from ``MetricsCollector.collect``).
+    experiment_start:
+        ISO-8601 timestamp of chaos start. Falls back to
+        ``metrics.timeWindow.start`` if not given.
+    experiment_end:
+        ISO-8601 timestamp of chaos end. Falls back to
+        ``metrics.timeWindow.end`` if not given.
+    placement:
+        Placement dict with ``strategy`` and ``assignments``.
+    service_routes:
+        Service dependency graph as ``(src, tgt, host, proto, desc)`` tuples,
+        discovered via ``config.topology``.  When *None*, affected services
+        are reported as an empty list.
+
+    Returns
+    -------
+    List of anomaly label dicts, one per experiment in the scenario.
+    """
+    labels: List[Dict[str, Any]] = []
+
+    # Derive time window from metrics if not provided explicitly
+    if metrics:
+        tw = metrics.get("timeWindow", {})
+        if experiment_start is None:
+            experiment_start = tw.get("start")
+        if experiment_end is None:
+            experiment_end = tw.get("end")
+
+    for exp in scenario.get("experiments", []):
+        spec = exp.get("spec", {}).get("spec", {}) or exp.get("spec", {})
+        appinfo = spec.get("appinfo", {})
+        target_label = appinfo.get("applabel", "")
+        target_service = target_label.split("=", 1)[1] if "=" in target_label else target_label
+        target_ns = appinfo.get("appns", scenario.get("namespace", "default"))
+
+        for chaos_exp in spec.get("experiments", []):
+            exp_name = chaos_exp.get("name", "unknown")
+            env_vars = {}
+            for env in chaos_exp.get("spec", {}).get("components", {}).get("env", []):
+                env_vars[env.get("name", "")] = env.get("value", "")
+
+            # Look up anomaly metadata
+            anomaly_meta = EXPERIMENT_TO_ANOMALY.get(
+                exp_name,
+                {
+                    "category": "unknown",
+                    "resource": "unknown",
+                    "severity": "medium",
+                },
+            )
+
+            # Determine target node from placement assignments
+            target_node = None
+            if placement:
+                assignments = placement.get("assignments", {})
+                target_node = assignments.get(target_service)
+
+            affected = _get_affected_services(target_service, service_routes)
+
+            label: Dict[str, Any] = {
+                "faultType": exp_name,
+                "category": anomaly_meta["category"],
+                "resource": anomaly_meta["resource"],
+                "severity": anomaly_meta["severity"],
+                "targetService": target_service,
+                "targetNamespace": target_ns,
+                "targetNode": target_node,
+                "affectedServices": affected,
+                "startTime": experiment_start,
+                "endTime": experiment_end,
+                "parameters": {
+                    "duration_s": _as_int(env_vars.get("TOTAL_CHAOS_DURATION", "0")),
+                    "interval_s": _as_int(env_vars.get("CHAOS_INTERVAL", "0")),
+                    "podsAffectedPercent": _as_int(env_vars.get("PODS_AFFECTED_PERC", "0")),
+                },
+            }
+
+            # Add fault-specific parameters
+            if exp_name == "pod-cpu-hog":
+                label["parameters"]["cpuCores"] = _as_int(env_vars.get("CPU_CORES", "0"))
+                label["parameters"]["cpuLoad"] = _as_int(env_vars.get("CPU_LOAD", "0"))
+            elif exp_name == "pod-memory-hog":
+                label["parameters"]["memoryConsumption_mb"] = _as_int(
+                    env_vars.get("MEMORY_CONSUMPTION", "0")
+                )
+            elif exp_name == "pod-network-loss":
+                label["parameters"]["packetLossPercent"] = _as_int(
+                    env_vars.get("NETWORK_PACKET_LOSS_PERCENTAGE", "0")
+                )
+            elif exp_name == "pod-network-latency":
+                label["parameters"]["networkLatency_ms"] = _as_int(
+                    env_vars.get("NETWORK_LATENCY", "0")
+                )
+            elif exp_name == "pod-io-stress":
+                label["parameters"]["ioWorkers"] = _as_int(env_vars.get("NUMBER_OF_WORKERS", "0"))
+
+            labels.append(label)
+
+    # Enrich with observed micro-anomalies from recovery cycles
+    if metrics:
+        recovery = metrics.get("recovery", {})
+        cycles = recovery.get("recoveryEvents", [])
+        if cycles:
+            for label in labels:
+                observed = _build_observed_windows(cycles)
+                label["observedWindows"] = observed
+                label["observedCycleCount"] = len(cycles)
+                completed = sum(1 for c in cycles if c.get("totalRecovery_ms") is not None)
+                label["observedCompletedCycles"] = completed
+                label["observedIncompleteCycles"] = len(cycles) - completed
+
+    return labels
+
+
+def _build_observed_windows(
+    cycles: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build micro-anomaly windows from recovery cycle data.
+
+    Each deletion-to-ready cycle is a discrete fault event with
+    precise timestamps from the Kubernetes watch API.
+    """
+    windows: List[Dict[str, Any]] = []
+    for idx, cycle in enumerate(cycles):
+        deletion = cycle.get("deletionTime")
+        ready = cycle.get("readyTime")
+        if not deletion:
+            continue
+        window: Dict[str, Any] = {
+            "cycleIndex": idx,
+            "deletionTime": deletion,
+            "readyTime": ready,
+            "totalRecovery_ms": cycle.get("totalRecovery_ms"),
+            "recovered": ready is not None,
+        }
+        windows.append(window)
+    return windows

@@ -1,0 +1,71 @@
+# DeathStarBench hotelReservation — consul (service registry; every app service
+# registers itself here and resolves srv-* peers through it, so inter-service gRPC
+# goes pod-to-pod via consul-resolved IPs, not via the ClusterIP Services).
+# Source: https://github.com/delimitrou/DeathStarBench/tree/6ecb09706140f8730b5385c08f1386c654c3c526/hotelReservation/kubernetes/consul
+# Upstream commit: 6ecb0970 (2024-06-27, latest commit touching hotelReservation).
+# Adaptations vs upstream: `io.kompose.service` labels -> `app:` (ChaosProbe prober
+# convention); image pinned (upstream uses hashicorp/consul:latest — 1.18.2 is the
+# release current at the pinned commit date); explicit resources.requests; tcpSocket
+# readiness probe added; kompose/istio annotations dropped.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consul
+  labels:
+    app: consul
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consul
+  template:
+    metadata:
+      labels:
+        app: consul
+    spec:
+      containers:
+        - name: consul
+          image: hashicorp/consul:1.18.2
+          ports:
+            - containerPort: 8300
+            - containerPort: 8400
+            - containerPort: 8500
+            - containerPort: 53
+              protocol: UDP
+          readinessProbe:
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            tcpSocket:
+              port: 8500
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consul
+  labels:
+    app: consul
+spec:
+  type: ClusterIP
+  selector:
+    app: consul
+  ports:
+    - name: server
+      port: 8300
+      targetPort: 8300
+    - name: rpc
+      port: 8400
+      targetPort: 8400
+    - name: http
+      port: 8500
+      targetPort: 8500
+    - name: dns-udp
+      port: 53
+      targetPort: 53
+      protocol: UDP

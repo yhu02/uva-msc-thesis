@@ -1,0 +1,723 @@
+"""Prometheus metrics collector for chaos experiments.
+
+Queries an existing Prometheus instance in the cluster during chaos
+experiments and collects application-level and infrastructure metrics
+that complement ChaosProbe's active probing data.
+"""
+
+import json
+import logging
+import math
+import socket
+import statistics
+import subprocess
+import time
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlencode
+
+from chaosprobe.k8s import ensure_k8s_config
+from chaosprobe.metrics.base import ContinuousProberBase
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Default PromQL queries for common Kubernetes metrics
+# ---------------------------------------------------------------------------
+
+# LitmusChaos experiment pods (runners and helpers like pod-delete-*)
+# execute in the target namespace.  Exclude them so only real workload
+# data is collected.  The filter below is inlined into every query.
+#   pod!~".*-runner$|.*chaos.*|.*litmus.*"
+
+DEFAULT_QUERIES: Dict[str, str] = {
+    # ── Application-side metrics (per pod) ─────────────────────────────
+    "pod_ready_count": (
+        'sum(kube_pod_status_ready{{namespace="{namespace}",condition="true",'
+        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}})'
+    ),
+    "cpu_usage": (
+        'sum(rate(container_cpu_usage_seconds_total{{namespace="{namespace}",'
+        'container!="",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
+    ),
+    "cpu_throttling": (
+        # `by (pod, container)` preserves the container dimension so the raw
+        # timeSeries entries can be sliced per app-container vs sidecar.  The
+        # phase summary still sums across the container dimension and matches
+        # the previous `by (pod)` output exactly (sum-of-sums = sum).
+        'sum(rate(container_cpu_cfs_throttled_seconds_total{{namespace="{namespace}",'
+        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod, container)'
+    ),
+    "memory_usage": (
+        'sum(container_memory_working_set_bytes{{namespace="{namespace}",'
+        'container!="",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}) by (pod)'
+    ),
+    "network_receive_bytes": (
+        'sum(rate(container_network_receive_bytes_total{{namespace="{namespace}",'
+        'pod!~".*-runner$|.*chaos.*|.*litmus.*"}}[5m])) by (pod)'
+    ),
+    # ── PSI (Pressure Stall Information) — cgroup-v2 only ──────────────
+    # PSI measures *how much real time the workload spent stalled* waiting
+    # for a resource, independent of whether a cgroup limit is set.  This
+    # is a cleaner contention signal than `cpu_throttling` (which only
+    # fires when the cgroup CFS quota is hit) — PSI fires under any kind
+    # of contention pressure.  Used together with cpu_throttling to test
+    # H7 ("CPU throttling runs counter to the contention model under churn"):
+    # if both PSI and throttling agree under pod-delete, the contention story
+    # does not transfer to this churn fault — a bounded, mechanism-layer
+    # observation, not a universal refutation.
+    #
+    # `some` variant counts time when at least one task in the cgroup is
+    # waiting; `full` (not collected here) counts time when *every* task
+    # is waiting — too restrictive for our per-pod analysis.
+    #
+    # Requires cgroup-v2 + a node-exporter / cAdvisor build that exposes
+    # `container_pressure_*_waiting_seconds_total`.  Missing on cgroup-v1
+    # hosts; existing graceful-missing-metric path covers it.
+    "cpu_pressure_some": (
+        "sum(rate(container_pressure_cpu_waiting_seconds_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod, container)"
+    ),
+    "memory_pressure_some": (
+        "sum(rate(container_pressure_memory_waiting_seconds_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod, container)"
+    ),
+    "io_pressure_some": (
+        "sum(rate(container_pressure_io_waiting_seconds_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod, container)"
+    ),
+    # ── Per-pod network — moves the conntrack-mechanism story from
+    # per-node to per-pod attribution.  The existing
+    # `conntrack_entries_per_node` and `tcp_retransmit_rate_per_node`
+    # tell us *how much* churn each node sees; these tell us *which
+    # pods* are creating it.
+    "tcp_sockets_per_pod": (
+        "sum(container_network_tcp_usage_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}})'
+        " by (pod)"
+    ),
+    "network_transmit_bytes": (
+        "sum(rate(container_network_transmit_bytes_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod)"
+    ),
+    "network_packets": (
+        "sum(rate(container_network_receive_packets_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[5m])) by (pod)"
+    ),
+    # ── Churn-mechanism metrics (cluster-wide) ─────────────────────────
+    # These directly measure the reconvergence behaviour the thesis
+    # identifies as the dominant resilience-degrading mechanism under
+    # pod-delete: kube-proxy load-balancer programming latency, CoreDNS
+    # DNS-resolution latency, conntrack table size, and TCP retransmits.
+    #
+    # The `{namespace}` placeholder is unused in these queries but is
+    # left out of the strings so `_build_queries` can `.format()` the
+    # rest without raising on missing substitutions.
+    #
+    # References:
+    #   - K8s SIG-Scalability "Network Programming Latency SLO":
+    #     github.com/kubernetes/community/blob/master/sig-scalability/
+    #     slos/network_latency.md
+    #   - kubernetes/kubernetes#82378 (SLO investigation)
+    #   - kubernetes/kubernetes#100698 (conntrack not cleared on endpoint
+    #     change) — direct primary source for the conntrack-churn mechanism
+    "kubeproxy_network_programming_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubeproxy_network_programming_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "kubeproxy_sync_proxy_rules_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubeproxy_sync_proxy_rules_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "coredns_request_duration_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "coredns_dns_request_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "coredns_request_count_per_sec": ("sum(rate(coredns_dns_requests_total[1m]))"),
+    "conntrack_entries_per_node": ("sum(node_nf_conntrack_entries) by (instance)"),
+    "tcp_retransmit_rate_per_node": ("sum(rate(node_netstat_Tcp_RetransSegs[1m])) by (instance)"),
+    # ── Extended churn-mechanism metrics ───────────────────────────────
+    # These augment the kube-proxy / conntrack / CoreDNS signals above:
+    #   * EndpointSlice churn — how many endpoint updates kube-proxy is
+    #     receiving (the layer above iptables / IPVS programming).  Issue
+    #     kubernetes/kubernetes#133474 documents that high EndpointSlice
+    #     churn drives reprogramming work even when iptables itself is fast.
+    #   * kubelet PLEG (Pod Lifecycle Event Generator) relist latency — a
+    #     spike here means the kubelet itself is struggling to track pod
+    #     state changes under churn, which is independent from kube-proxy
+    #     work and reveals load on the node agent.
+    #   * kube-proxy sync rate — how often the iptables/IPVS ruleset is
+    #     resynced during chaos.  Pairs with `kubeproxy_sync_proxy_rules_p99`
+    #     (already collected) to give both count and latency of syncs.
+    #
+    # All three are cluster-wide aggregations; the `{namespace}` placeholder
+    # is intentionally omitted so `_build_queries` `.format()` is a no-op.
+    "endpointslice_changes_per_sec": (
+        "sum(rate(kubeproxy_sync_proxy_rules_endpoint_changes_total[1m]))"
+    ),
+    "kubelet_pleg_relist_duration_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubelet_pleg_relist_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "kube_proxy_rules_synced_per_sec": (
+        "sum(rate(kubeproxy_sync_proxy_rules_duration_seconds_count[1m]))"
+    ),
+    # ── Control-plane metrics ──────────────────────────────────────────
+    # These distinguish *control-plane* churn (scheduler queue depth,
+    # apiserver latency, etcd write latency) from kernel/networking
+    # churn (the kube-proxy / conntrack / CoreDNS bundle above).  Under
+    # pod-delete at CHAOS_INTERVAL=15s the API write rate is steady;
+    # if the apiserver or etcd starts dragging, the resulting recovery
+    # latency comes from a *different* mechanism than the thesis's
+    # kube-proxy reconvergence claim.  Collecting these makes the
+    # attribution defensible.
+    #
+    # All cluster-wide; `{namespace}` placeholder is intentionally
+    # omitted so `_build_queries` `.format()` is a no-op.
+    "scheduler_attempt_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "scheduler_scheduling_attempt_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "scheduler_pending_pods": ("sum(scheduler_pending_pods)"),
+    "apiserver_request_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        'apiserver_request_duration_seconds_bucket{{verb!="WATCH"}}[5m])) by (le))'
+    ),
+    "apiserver_inflight": ("sum(apiserver_current_inflight_requests)"),
+    "etcd_wal_fsync_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "etcd_disk_wal_fsync_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "etcd_backend_commit_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "etcd_disk_backend_commit_duration_seconds_bucket[5m])) by (le))"
+    ),
+    # ── Calico / Felix CNI metrics ─────────────────────────────────────
+    # Proxmox-deployed clusters run Calico per `chaosprobe/proxmox-setup.md`.
+    # Felix's dataplane-apply time is the Calico equivalent of the kube-proxy
+    # network-programming SLO.  Missing on Cilium / Flannel / kindnet clusters;
+    # graceful-missing-metric path in the aggregator covers it.
+    "felix_active_local_endpoints": ("sum(felix_active_local_endpoints) by (instance)"),
+    "felix_int_dataplane_apply_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "felix_int_dataplane_apply_time_seconds_bucket[5m])) by (le))"
+    ),
+    "felix_iptables_save_p99": (
+        "histogram_quantile(0.99, sum(rate(felix_iptables_save_seconds_bucket[5m])) by (le))"
+    ),
+    # ── Kernel TCP-drop counters ───────────────────────────────────────
+    # Direct signatures of in-flight TCP connections killed by kernel under
+    # churn.  Pairs with `tcp_retransmit_rate_per_node` for a complete picture.
+    "tcp_aborts_per_node": ("sum(rate(node_netstat_TcpExtTCPAbortOnTimeout[1m])) by (instance)"),
+    "tcp_syn_retrans_per_node": ("sum(rate(node_netstat_TcpExtTCPSynRetrans[1m])) by (instance)"),
+    # ── CoreDNS cache + etcd compaction ────────────────────────────────
+    # Cache hit/miss split distinguishes pod-IP-churn-driven cache misses
+    # from query load.  etcd compaction lets us distinguish a slow etcd
+    # under chaos load from one routinely compacting.
+    "coredns_cache_hit_rate_per_sec": ("sum(rate(coredns_cache_hits_total[1m]))"),
+    "coredns_cache_miss_rate_per_sec": ("sum(rate(coredns_cache_misses_total[1m]))"),
+    "etcd_compaction_duration_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "etcd_debugging_mvcc_db_compaction_total_duration_seconds_bucket[5m])) by (le))"
+    ),
+    # ── Node-level PSI (cgroup-v2 only) ────────────────────────────────
+    # Container-level PSI tells us a pod stalled; node-level PSI tells us
+    # the *whole node* stalled.  Under a colocate adversarial placement,
+    # one pod's contention can push every neighbour into stall — the
+    # per-pod PSI of an unrelated pod looks "fine" while the node is on
+    # fire.  Pairs with the per-container `cpu_pressure_some` /
+    # `memory_pressure_some` / `io_pressure_some` for both viewpoints.
+    "node_cpu_pressure_some_per_node": (
+        "sum(rate(node_pressure_cpu_waiting_seconds_total[5m])) by (instance)"
+    ),
+    "node_memory_pressure_some_per_node": (
+        "sum(rate(node_pressure_memory_waiting_seconds_total[5m])) by (instance)"
+    ),
+    "node_io_pressure_some_per_node": (
+        "sum(rate(node_pressure_io_waiting_seconds_total[5m])) by (instance)"
+    ),
+    # ── OOM events (time-series, not snapshot) ─────────────────────────
+    # _collect_pod_status captures the pod's *current* OOM count — which
+    # is stale by the time the chaos window ended.  cAdvisor exposes
+    # OOMKills as a time-series so the event can be located in a phase.
+    "container_oom_events_per_pod": (
+        "sum(rate(container_oom_events_total"
+        '{{namespace="{namespace}",pod!~".*-runner$|.*chaos.*|.*litmus.*"}}'
+        "[1m])) by (pod)"
+    ),
+    # ── Kubelet pod-start + runtime operation latency ──────────────────
+    # Decomposes the scheduledToReady_ms phase further:
+    #   * `kubelet_pod_start_duration_seconds_bucket` covers from
+    #     PodSandboxReady → pod-running — i.e. how long the kubelet+CRI
+    #     took to bring the container up after the scheduler decided.
+    #   * `kubelet_runtime_operations_duration_seconds_bucket` covers
+    #     individual containerd ops (image pull, container create,
+    #     container start).  A spike here under churn says the runtime
+    #     itself is the bottleneck, not the kube-proxy reconvergence.
+    "kubelet_pod_start_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubelet_pod_start_duration_seconds_bucket[5m])) by (le))"
+    ),
+    "kubelet_runtime_ops_p99": (
+        "histogram_quantile(0.99, sum(rate("
+        "kubelet_runtime_operations_duration_seconds_bucket[5m])) by (le, operation_type))"
+    ),
+}
+
+# Common service names / namespaces where Prometheus is typically deployed.
+# Names must match exactly (not substring) to avoid false positives like
+# prometheus-node-exporter or prometheus-pushgateway.
+_PROMETHEUS_SERVICE_NAMES = ("prometheus-server",)
+_PROMETHEUS_NAMESPACES = ("prometheus",)
+_PROMETHEUS_PORT = 9090
+
+
+def _query_prometheus(
+    base_url: str,
+    query: str,
+    timeout: float = 10.0,
+) -> Optional[List[Dict[str, Any]]]:
+    """Execute an instant PromQL query and return the raw result vector.
+
+    Returns the ``data.result`` list from the Prometheus API response
+    in its original format, or *None* on error.  Each element looks like::
+
+        {"metric": {"__name__": "up", "pod": "frontend"}, "value": [1711700000, "1.5"]}
+    """
+    params = urlencode({"query": query})
+    url = f"{base_url}/api/v1/query?{params}"
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read())
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        logger.debug("Prometheus query failed (%s): %s", url, exc)
+        return None
+
+    if body.get("status") != "success":
+        logger.debug("Prometheus returned non-success: %s", body.get("error"))
+        return None
+
+    # body is decoded JSON (Any); coerce the result vector at this boundary
+    result: List[Dict[str, Any]] = body.get("data", {}).get("result", [])
+    return result
+
+
+def _find_prometheus_service() -> List[Tuple[str, str, int]]:
+    """Find all Prometheus services in the cluster via the K8s API.
+
+    Returns a list of ``(service_name, namespace, port)`` tuples.
+    """
+    try:
+        from kubernetes import client
+
+        ensure_k8s_config()
+
+        core = client.CoreV1Api()
+    except Exception:
+        return []
+
+    found: List[Tuple[str, str, int]] = []
+    for ns in _PROMETHEUS_NAMESPACES:
+        try:
+            services = core.list_namespaced_service(ns)
+        except Exception:
+            continue
+        for svc in services.items:
+            name = svc.metadata.name
+            if name in _PROMETHEUS_SERVICE_NAMES:
+                port = _PROMETHEUS_PORT
+                for p in svc.spec.ports or []:
+                    if p.port in (9090, 80, 443):
+                        port = p.port
+                        break
+                found.append((name, ns, port))
+    return found
+
+
+def _find_free_port() -> int:
+    """Return an available local TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        port: int = s.getsockname()[1]
+        return port
+
+
+def _check_prometheus_url(url: str, timeout: float = 5.0) -> bool:
+    """Return True if *url* responds to a Prometheus API health check."""
+    try:
+        req = urllib.request.Request(
+            f"{url}/api/v1/status/config",
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return bool(resp.status == 200)
+    except Exception:
+        return False
+
+
+def discover_prometheus_urls(namespace: str = "prometheus") -> List[str]:
+    """Try to find all reachable Prometheus URLs.
+
+    1. Locate Prometheus services via the K8s API.
+    2. Try a direct in-cluster URL for each (works inside the cluster).
+    3. Return only those that respond to a health check.  The caller can
+       set up port-forwards for unreachable services separately.
+    """
+    services = _find_prometheus_service()
+    if not services:
+        return []
+
+    reachable: List[str] = []
+    for name, ns, port in services:
+        url = f"http://{name}.{ns}:{port}"
+        if _check_prometheus_url(url):
+            reachable.append(url)
+    return reachable
+
+
+# ---------------------------------------------------------------------------
+# Continuous Prometheus prober
+# ---------------------------------------------------------------------------
+
+
+class ContinuousPrometheusProber(ContinuousProberBase):
+    """Queries one or more Prometheus instances at intervals during a chaos
+    experiment.
+
+    Behaves identically to ContinuousResourceProber: start/stop lifecycle,
+    phase tracking, and structured result output with per-phase aggregation.
+
+    If no Prometheus URLs are given, the prober attempts auto-discovery.
+    If Prometheus is unreachable the prober disables itself gracefully.
+
+    Multiple Prometheus instances are supported — each query is sent to
+    every reachable server and results are merged (deduplicated by label
+    set).
+
+    Usage::
+
+        prober = ContinuousPrometheusProber(
+            namespace="online-boutique",
+            prometheus_urls=["http://prometheus-server.monitoring:9090"],
+        )
+        prober.start()
+        prober.mark_chaos_start()
+        # ... chaos ...
+        prober.mark_chaos_end()
+        prober.stop()
+        data = prober.result()
+    """
+
+    def __init__(
+        self,
+        namespace: str,
+        prometheus_url: Optional[str] = None,
+        prometheus_urls: Optional[List[str]] = None,
+        interval: float = 10.0,
+        queries: Optional[Dict[str, str]] = None,
+    ):
+        super().__init__(namespace, interval, name="prometheus-prober")
+        self._consecutive_failures: int = 0
+        # Accept both singular and plural for convenience
+        if prometheus_urls:
+            self._prometheus_urls: List[str] = list(prometheus_urls)
+        elif prometheus_url:
+            self._prometheus_urls = [prometheus_url]
+        else:
+            self._prometheus_urls = []
+        self._available: bool = True
+        self._port_forward_procs: List[subprocess.Popen] = []
+        # Resolve query templates with the target namespace
+        raw = queries if queries is not None else dict(DEFAULT_QUERIES)
+        self._queries: Dict[str, str] = {
+            label: tpl.format(namespace=namespace) for label, tpl in raw.items()
+        }
+
+    # -- lifecycle ----------------------------------------------------------
+
+    def start(self) -> None:
+        """Start Prometheus probing.  Auto-discovers if no URLs given."""
+        if not self._prometheus_urls:
+            # Try direct in-cluster URLs first
+            self._prometheus_urls = discover_prometheus_urls(self.namespace)
+            if self._prometheus_urls:
+                logger.info(
+                    "Auto-discovered %d Prometheus instance(s): %s",
+                    len(self._prometheus_urls),
+                    ", ".join(self._prometheus_urls),
+                )
+            else:
+                # Direct URLs not reachable — try port-forwarding each service
+                services = _find_prometheus_service()
+                if services:
+                    for svc_name, ns, port in services:
+                        url = self._start_port_forward(svc_name, ns, port)
+                        if url:
+                            self._prometheus_urls.append(url)
+                if self._prometheus_urls:
+                    logger.info(
+                        "Prometheus reachable via port-forward: %s",
+                        ", ".join(self._prometheus_urls),
+                    )
+                else:
+                    logger.warning("No Prometheus instance found — prometheus probing disabled")
+                    self._available = False
+                    return
+
+        # Connectivity check — keep only reachable URLs
+        reachable = [u for u in self._prometheus_urls if _check_prometheus_url(u)]
+        if not reachable:
+            logger.warning(
+                "Prometheus at %s is unreachable — probing disabled",
+                ", ".join(self._prometheus_urls),
+            )
+            self._available = False
+            return
+        self._prometheus_urls = reachable
+
+        super().start()
+
+    def stop(self) -> None:
+        """Stop probing and clean up any port-forward processes."""
+        super().stop()
+        self._cleanup_port_forwards()
+
+    # -- probe loop ---------------------------------------------------------
+
+    def _probe_loop(self) -> None:
+        while not self._stop_event.is_set():
+            if not self._available:
+                break
+
+            try:
+                now = time.time()
+                phase = self._current_phase(now)
+                entry = self._make_entry(now, phase)
+
+                metrics: Dict[str, Any] = {}
+                for label, query in self._queries.items():
+                    merged: List[Dict[str, Any]] = []
+                    seen_keys: set = set()
+                    for url in self._prometheus_urls:
+                        result = _query_prometheus(url, query)
+                        if result is not None:
+                            for item in result:
+                                # Deduplicate by (sorted metric label pairs)
+                                key = tuple(sorted(item.get("metric", {}).items()))
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    merged.append(item)
+                    if merged:
+                        metrics[label] = merged
+
+                if not metrics:
+                    # All queries failed — Prometheus may be down
+                    with self._lock:
+                        self._probe_errors += 1
+                        self._consecutive_failures += 1
+                        consecutive = self._consecutive_failures
+                    if consecutive >= 3:
+                        logger.warning(
+                            "Prometheus unreachable after %d consecutive attempts — stopping",
+                            consecutive,
+                        )
+                        self._available = False
+                        break
+                else:
+                    self._consecutive_failures = 0
+                    entry["metrics"] = metrics
+                    with self._lock:
+                        self._time_series.append(entry)
+
+            except Exception as exc:
+                logger.warning("Prometheus probe failed: %s", exc)
+                with self._lock:
+                    self._probe_errors += 1
+
+            self._stop_event.wait(timeout=self.interval)
+
+    # -- result -------------------------------------------------------------
+
+    def result(self) -> Dict[str, Any]:
+        """Return structured Prometheus metrics data."""
+        with self._lock:
+            series = list(self._time_series)
+            errors = self._probe_errors
+
+        if not series:
+            return {
+                "available": False,
+                "reason": ("prometheus not found" if not self._available else "no data collected"),
+            }
+
+        phases = self._aggregate_phases(series)
+
+        # Distinguish "metric returned 0" from "metric was never available".
+        # Without this map, a cgroup-v1 cluster (no PSI), a non-Calico CNI
+        # (no Felix), or an etcd-version mismatch silently produces zeroed
+        # phase aggregates that are indistinguishable from "signal was flat
+        # under chaos." Required to defend portability claims in the thesis.
+        availability: Dict[str, bool] = {
+            label: any(entry.get("metrics", {}).get(label) for entry in series)
+            for label in self._queries.keys()
+        }
+
+        data: Dict[str, Any] = {
+            "available": True,
+            "serverUrls": list(self._prometheus_urls),
+            "queries": dict(self._queries),
+            "metricAvailability": availability,
+            "timeSeries": series,
+            "phases": phases,
+            "config": {
+                "interval_s": self.interval,
+                "namespace": self.namespace,
+            },
+        }
+        if errors > 0:
+            data["probeErrors"] = errors
+        return data
+
+    # -- phase aggregation --------------------------------------------------
+
+    def _aggregate_phases(
+        self,
+        series: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Aggregate metrics per phase (pre/during/post-chaos)."""
+        buckets: Dict[str, List[Dict[str, Any]]] = {
+            "pre-chaos": [],
+            "during-chaos": [],
+            "post-chaos": [],
+        }
+        for entry in series:
+            buckets.setdefault(entry.get("phase", "pre-chaos"), []).append(entry)
+
+        result: Dict[str, Any] = {}
+        for phase_name, entries in buckets.items():
+            if not entries:
+                result[phase_name] = {"sampleCount": 0}
+                continue
+
+            phase_summary: Dict[str, Any] = {"sampleCount": len(entries)}
+
+            # Collect all metric labels seen in this phase
+            metric_labels: set = set()
+            for e in entries:
+                metric_labels.update(e.get("metrics", {}).keys())
+
+            agg: Dict[str, Any] = {}
+            for label in sorted(metric_labels):
+                # Gather scalar values per label across all samples.
+                # Each sample may have multiple series (e.g. per-pod).
+                # We aggregate the *sum* of all series per sample.
+                sample_sums: List[float] = []
+                for e in entries:
+                    metric_items = e.get("metrics", {}).get(label, [])
+                    total = 0.0
+                    for item in metric_items:
+                        raw = item.get("value", [None, None])
+                        try:
+                            value = float(raw[1])
+                        except (TypeError, IndexError, ValueError):
+                            continue
+                        # Prometheus returns NaN / +Inf / -Inf for no-data
+                        # (e.g. histogram_quantile over an empty window). Letting
+                        # them into the sums makes statistics.stdev raise
+                        # "'float' object has no attribute 'numerator'", which
+                        # fails the *entire* Prometheus collection — so skip them.
+                        if math.isfinite(value):
+                            total += value
+                    sample_sums.append(total)
+
+                if sample_sums:
+                    agg[label] = {
+                        "mean": round(statistics.mean(sample_sums), 6),
+                        "max": round(max(sample_sums), 6),
+                        "min": round(min(sample_sums), 6),
+                    }
+                    if len(sample_sums) >= 2:
+                        agg[label]["stdev"] = round(
+                            statistics.stdev(sample_sums),
+                            6,
+                        )
+
+            phase_summary["metrics"] = agg
+            result[phase_name] = phase_summary
+
+        return result
+
+    # -- helpers ------------------------------------------------------------
+
+    def _start_port_forward(
+        self,
+        svc_name: str,
+        namespace: str,
+        remote_port: int,
+    ) -> Optional[str]:
+        """Start ``kubectl port-forward`` and return a localhost URL.
+
+        Returns *None* if the tunnel cannot be established within a few
+        seconds.
+        """
+        local_port = _find_free_port()
+        try:
+            proc = subprocess.Popen(
+                [
+                    "kubectl",
+                    "port-forward",
+                    f"svc/{svc_name}",
+                    f"{local_port}:{remote_port}",
+                    "-n",
+                    namespace,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            logger.warning("kubectl not found — cannot port-forward to Prometheus")
+            return None
+
+        # Wait for the tunnel to become usable
+        url = f"http://localhost:{local_port}"
+        for _ in range(10):
+            time.sleep(1)
+            if proc.poll() is not None:
+                # Process exited prematurely
+                logger.warning("kubectl port-forward exited unexpectedly")
+                return None
+            if _check_prometheus_url(url, timeout=2):
+                self._port_forward_procs.append(proc)
+                return url
+
+        # Timeout — clean up
+        logger.warning("Port-forward to Prometheus did not become ready")
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            logger.debug("failed to terminate Prometheus port-forward after timeout", exc_info=True)
+        return None
+
+    def _cleanup_port_forwards(self) -> None:
+        """Terminate all port-forward subprocesses."""
+        for proc in self._port_forward_procs:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    logger.debug("port-forward did not exit after kill", exc_info=True)
+            except Exception:
+                logger.debug("failed to terminate port-forward process", exc_info=True)
+        self._port_forward_procs.clear()

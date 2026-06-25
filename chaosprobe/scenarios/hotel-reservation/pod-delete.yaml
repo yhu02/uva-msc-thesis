@@ -1,0 +1,159 @@
+# Placement Experiment — Pod-delete on search (hotelReservation, C1 dose-response)
+# Second-workload EXTERNAL-VALIDITY replication of the V2-H1 dose-response design
+# (online-boutique was the frozen confirmatory workload). The runner adds a
+# unique suffix to metadata.name automatically.
+#
+# Usage (automated):
+#   chaosprobe run -n hotel-reservation -e scenarios/hotel-reservation/pod-delete.yaml
+#
+# Target: search — on the critical /hotels path (frontend->search->{geo,rate});
+# the analog to online-boutique's productcatalogservice (a heavily-depended-on
+# backend with its own downstreams). Killing it degrades the /hotels route and,
+# under co-location, neighbours via node-level contention.
+#
+# Outcome note: V2-H1's registered primary outcome is the east-west p95
+# (ew_p95_pre_ms), measured by the in-cluster prober over the service-dependency
+# graph. hotelReservation discovers peers via Consul (no *_SERVICE_ADDR env
+# vars), so east-west routes come from the static topology.json adjacent to this
+# scenario (PlacementMutator.get_topology_dependency_routes). The httpProbes
+# below feed the north-south user-route availability (user_err) + resilience
+# score; cmdProbes are omitted (the online-boutique set is redis/cart-specific
+# and the v2 outcomes do not depend on them).
+#
+# Probe tiers mirror the online-boutique design (4 sensitivity tiers) over
+# hotelReservation's four verified-200 routes:
+#   /hotels         frontend->search->{geo,rate}  (search path — strict)
+#   /recommendations frontend->recommendation->mongodb (collateral)
+#   /user           frontend->user->mongodb           (collateral)
+#   /               static home page                  (control — no backend)
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-pod-delete
+spec:
+  engineState: active
+  appinfo:
+    appns: hotel-reservation
+    applabel: app=search
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: CHAOS_INTERVAL
+              value: "15"
+            - name: FORCE
+              value: "true"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+        probe:
+          # ── Tier 1: Strict (3s timeout, 1 retry ≈ 6s) — expected to fail
+          # under search pod-delete; confirm chaos has impact. ──────────
+          - name: frontend-hotels-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: "http://frontend.hotel-reservation.svc.cluster.local/hotels?inDate=2015-04-09&outDate=2015-04-10&lat=37.7749&lon=-122.4194"
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          - name: frontend-recommendations-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: "http://frontend.hotel-reservation.svc.cluster.local/recommendations?require=dis&lat=37.7749&lon=-122.4194"
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          # ── Tier 2: Moderate-tight (3s timeout, 4 retries ≈ 15s) —
+          # pass only when recovery is fast (<5s). ─────────────────────
+          - name: frontend-hotels-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: "http://frontend.hotel-reservation.svc.cluster.local/hotels?inDate=2015-04-10&outDate=2015-04-11&lat=37.7799&lon=-122.4147"
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          - name: frontend-user-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: "http://frontend.hotel-reservation.svc.cluster.local/user?username=Cornell_0&password=0000000000"
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          # ── Tier 3: Moderate-loose (5s timeout, 4 retries ≈ 25s) —
+          # pass when recovery is moderate. ───────────────────────────
+          - name: frontend-recommendations-loose
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: "http://frontend.hotel-reservation.svc.cluster.local/recommendations?require=rate&lat=37.7749&lon=-122.4194"
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          - name: frontend-user-loose
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: "http://frontend.hotel-reservation.svc.cluster.local/user?username=Cornell_1&password=1111111111"
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          # ── Tier 4: Control — the static home page is served by the
+          # frontend without any backend call; failure indicates severe
+          # node-level resource pressure, not search degradation. ──────
+          - name: frontend-home-control
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: "http://frontend.hotel-reservation.svc.cluster.local/"
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 4s
+              retry: 3

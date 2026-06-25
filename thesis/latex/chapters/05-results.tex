@@ -1,0 +1,528 @@
+\chapter{Results}\label{ch:results}
+
+This chapter reports the pre-registered confirmatory study. The four
+confirmatory hypotheses (H1, H2, H3, H5) are corrected together by Holm across
+the campaigns; H4 is a descriptive frontier (not a falsifiable member); H6 was
+not attempted (\S\ref{sec:h6}). Each section states its \emph{registered bar
+first}, then the outcome against that bar --- a hypothesis counts as supported
+only if it is both Holm-significant \emph{and} clears its registered
+effect-size / reliability bar. The confirmatory family is corrected and
+adjudicated together in \S\ref{sec:family-holm}.
+
+% Figures are generated from the archived C1/C2/C3 sessions by the committed
+% chaosprobe/scripts/single_study_figures.py (every on-figure number is computed
+% from the source data by the same driver the tables below report).
+
+\section{H1 --- Dose-response of the east-west tail}\label{sec:h1}
+
+\textbf{Registered bar.} H1 predicts that median east-west (inter-service) p95
+latency increases \emph{monotonically} in the achieved cross-node fraction $f$
+across the designed levels $\{0, 0.25, 0.5, 0.75, 1.0\}$. Primary test: Page's
+$L$ trend test (tie-corrected), session-condition medians of the pre-chaos
+east-west p95 as the unit. The smallest effect size of interest (SESOI),
+frozen pre-registration, is a \textbf{$\geq 15\,\%$ increase} from $f=0$ to
+$f=1$; a statistically detectable but sub-SESOI trend is reported as below the
+bar, not as support.
+
+\textbf{Campaign.} Eight complete-block sessions (online-boutique, $r=1$,
+\texttt{pod-delete} churn), each visiting all five $f$-levels in randomized
+order; $5\times 3 = 15$ iterations per session, all \texttt{doctor --strict}
+clean, all $f$-targets hit exactly.
+
+\textbf{Result --- trend detected, but below the SESOI.}
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Page's $L$ & $L = 410$, $z = 3.54$ \\
+$p$ (one-sided, uncorrected) & $0.0002$ \\
+per-level median p95 (ms) & 35.74 / 38.60 / 41.40 / 39.55 / 40.51 \\
+$f{=}0 \rightarrow f{=}1$ effect & \textbf{$+13.35\,\%$} \\
+$15\,\%$ SESOI & \textbf{not met} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A monotone-increasing trend is detected ($p = 0.0002$; Holm-adjusted in
+\S\ref{sec:family-holm}), but the total effect ($+13.35\,\%$) sits below the
+registered $15\,\%$ SESOI. The medians rise then plateau/dip slightly at
+$f{=}0.75$ (39.55\,ms) --- neither a strict monotone climb nor the clean
+two-regime step that would have triggered the distinct registered
+``threshold, not dose-response'' outcome. \textbf{H1 is therefore not supported:}
+the dose-response is real and statistically significant but practically
+negligible at the registered bar (Figure~\ref{fig:h1}).
+
+\textbf{A disclosed deviation governs this analysis.} H1 (and H5,
+\S\ref{sec:h5}) is computed with the registered D3 pre-window UDP-slope taint
+\emph{withdrawn} from the C1 latency analyses --- the study's only
+\emph{outcome-aware} (non-blind) deviation, logged as D-2026-06-14-02 and decided
+after observing that the registered taint, applied to C1, flags \emph{every}
+iteration at $f{=}0.25$ and $f{=}0.5$: zero complete blocks, so under the gate
+exactly as registered Page's $L$ is uncomputable and \textbf{H1 is unrunnable}.
+The withdrawal rests on protocol-independent grounds: the slope band was
+calibrated on a low-churn affinity-only block and gates the DNS/UDP conntrack
+pool --- a \emph{different} protocol from the TCP/gRPC east-west latency outcome,
+for which the tainted levels are in fact the \emph{cleanest} baselines --- and it
+reproduces exactly the placement-coupled pre-window transient the M2 preparation
+had pre-flagged. The result is reported taint-off; the registered taint-on run is
+available as a sensitivity check but, for H1, yields \emph{no} result rather than
+a different one. This asymmetry matters: H5's FAIL verdict is robust to the
+choice (it fails either way, \S\ref{sec:h5}), whereas H1 has a verdict only with
+the taint off. Being non-blind, this is the one deviation a reader may weigh
+differently; it is recorded in full in the deviations log.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.78\textwidth]{fig-h1-dose-response.png}
+  \caption{\textbf{H1 --- dose-response of the east-west tail} (C1, $r{=}1$,
+    \texttt{pod-delete}). Per-level grand-median east-west p95 rises then
+    plateaus/dips at $f{=}0.75$; the $f{=}0\rightarrow1$ change is $+13.35\,\%$,
+    below the registered $15\,\%$ SESOI (dashed), so H1 is not supported despite
+    a Holm-significant Page's $L$ trend.}
+  \label{fig:h1}
+\end{figure}
+
+\section{H2 --- Placement-dependence and the DNS intervention}\label{sec:h2}
+
+\textbf{Registered bar.} H2 is a two-part, both-must-pass conjunction over the
+during-churn UDP-conntrack drop (\texttt{udp\_conntrack\_drop\_entries}):
+\textbf{(a) placement-dependence} --- spread ($f{=}1$) shows a \emph{larger}
+drop than packed ($f{=}0$), paired; and \textbf{(b) DNS mechanism} --- enabling
+the NodeLocal DNSCache shrinks the spread placement's drop by $\geq 50\,\%$.
+Both arms must pass for H2 to hold.
+
+\textbf{Campaign.} Fourteen sessions (7 cache-off, 7 cache-on), $r=1$, placements
+$f{=}0$ (packed) / $f{=}1$ (spread), \texttt{pod-delete} churn; all 14 accepted,
+untainted, strict-clean.
+
+\textbf{Result --- the DNS arm passes; the placement arm reverses.}
+
+\begin{center}
+\begin{tabular}{p{0.30\textwidth}p{0.34\textwidth}r}
+\toprule
+arm & result & one-sided $p$ \\
+\midrule
+(a) placement-dependence (cache-off) & \textbf{packed $>$ spread in 7/7 pairs} (packed median 11153.4, spread 8929.1) --- direction \textbf{reversed} & 0.98875 \\
+(b) DNS mechanism (within-spread) & \textbf{78.0\,\% median} shrinkage (all 7 pairs 61--85\,\%) --- \textbf{passes} & 0.01125 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Conjunction = False; H2 is not supported.} Arm (b) is strongly
+confirmed --- the DNS-cache intervention removes the conntrack drop. Arm (a)
+fails on \emph{direction}, and the reversal is robust and monotone: packed
+exceeds spread in every one of the 7 cache-off pairs (two-sided Wilcoxon at the
+$n=7$ floor, $p = 0.0225$). Co-locating a service's replicas on one node
+\emph{concentrates} the per-node conntrack churn when \texttt{pod-delete} hits
+that node, producing a \emph{larger} during-churn UDP drop than spread
+placement, which distributes the same replicas across nodes. Placement
+\emph{does} matter for the conntrack drop --- significantly, but in the opposite
+direction to the registered prediction. A registered secondary prediction is
+\emph{not} borne out, and in failing it sharpens the mechanism: the secondary
+held that the packed ($f{=}0$) arm, which has no cross-node dependency edges,
+would show only a near-floor cache effect \emph{if} the drop were specifically
+cross-node DNS. Instead the packed cache-off drop is large (median 11153.4) and
+\emph{also} collapses to $\approx 0$ with the cache on (median $-105.2$;
+$p = 0.01125$). The intervention thus removes the drop under \emph{both}
+placements (Figure~\ref{fig:h2}), so the floodable pool is the \emph{general}
+per-node DNS/UDP conntrack churn rather than specifically cross-node DNS
+resolution --- consistent with the reversed arm-(a) direction.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-h2-conntrack-dns.png}
+  \caption{\textbf{H2 --- conntrack placement-dependence and the DNS
+    intervention} (C3). (a) The cache-off during-churn UDP-conntrack drop is
+    \emph{larger} under packing than spreading --- reversed against the
+    registered prediction, packed $>$ spread in all 7 pairs. (b) Enabling the
+    NodeLocal DNSCache collapses the packed drop to $\approx 0$ and shrinks the
+    spread drop by a $78\,\%$ median, removing it under both placements: arm (b)
+    passes, but the reversed direction (a) fails the conjunction.}
+  \label{fig:h2}
+\end{figure}
+
+\section{H3 --- Replication rescue under node-drain}\label{sec:h3}
+
+\textbf{Registered bar.} H3 predicts an \emph{interaction}: replication
+($r{=}3$) rescues availability under node-drain only when replicas do not share
+the failure domain (anti-affine $r{=}3 \ll r{=}1$; packed $r{=}3 \approx r{=}1$).
+Two co-primary outcomes --- trough depth and user-route error rate --- combined
+both-must-pass; each requires (i) a significant ART-ANOVA $r\times\text{mode}$
+interaction, (ii) the anti-affine rescue margin met, and (iii) the
+packed$\approx r{=}1$ equivalence (TOST) control.
+
+\textbf{Campaign.} 24 node-drain sessions ($3$ cells $\times 8$): r1-packed,
+r3-packed, r3-anti-affine, on the capacity-feasible round-robin packed
+instrument; all 24 accepted and untainted.
+
+\textbf{Result --- the error face rescues; the depth face cannot adjudicate.}
+
+\begin{center}
+\begin{tabular}{p{0.20\textwidth}rrrp{0.26\textwidth}}
+\toprule
+co-primary & r1 & r3-pk & r3-anti & verdict vs bar \\
+\midrule
+trough depth (frac) & 0.0909 & 0.0909 & 0.0455 & interaction sig ($p{=}0.0065$); rescue $0.0455 < 0.0909$ margin $\rightarrow$ \textbf{not met} \\
+user-route error & 0.6316 & 0.6316 & 0.0000 & interaction $p \approx 0$; rescue $0.6316 \geq 0.302$ $\rightarrow$ \textbf{met}; TOST within band \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Conjunction = False; H3 is not supported} --- but the single failing
+criterion is one the depth co-primary \emph{could not adjudicate by
+construction}. Both packing controls pass (packed $r{=}3 \approx r{=}1$ exactly
+on both faces), so the instrument behaves as designed. On the
+\textbf{user-route error face}, anti-affine $r{=}3$ fully rescues the error rate
+($0.632 \rightarrow 0.0$; interaction $p \approx 0$; rescue $\gg$ the 0.302
+margin) --- strong, significant directional support. On the \textbf{trough-depth
+face}, the interaction is significant ($p = 0.0065$) but the anti-affine rescue
+(0.0455) falls below the 0.0909 margin; under round-robin spread, draining one
+node costs $r{=}1$ only $\approx 1$ pod, so the $r{=}1$ depth (0.0909) equals the
+registered one-pod margin --- the metric's dynamic range coincides with the bar
+it must beat, leaving no room for a rescue to register. The depth co-primary is
+reported exactly as registered (not retuned); the substantive result is the
+error face, where replication rescues user-visible availability when replicas
+are spread (Figure~\ref{fig:h3}). A design-corrected re-analysis
+(\S\ref{sec:design-fix}) shows the rescue effect is real once this construction
+artifact is removed: anti-affine halves the trough depth and eliminates the
+user-route error.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-h3-replication-rescue.png}
+  \caption{\textbf{H3 --- replication rescue under node-drain} (C2), across the
+    three cells. (a) Trough depth: the anti-affine rescue (0.0455) falls below
+    the registered one-pod margin (0.0909, dashed), which the $r{=}1$ and
+    $r{=}3$-packed cells sit on by construction --- the depth face cannot
+    adjudicate. (b) User-route error: anti-affine $r{=}3$ fully rescues
+    ($0.632\rightarrow0$), clearing the 0.302 margin. The conjunction fails only
+    on the depth co-primary it could not test.}
+  \label{fig:h3}
+\end{figure}
+
+\section{H4 --- The placement frontier (descriptive)}\label{sec:h4}
+
+\textbf{Protocol (registered, descriptive --- no $p$-value).} For each designed
+placement, the \emph{latency face} (pre-chaos east-west p95 tail) is plotted
+against the \emph{availability face} (during-chaos trough depth in pods +
+user-route error rate), and the non-dominated set is reported under frozen
+margins ($\delta_{\text{latency}} = 4.4$\,ms, $\delta_{\text{depth}} = 1.0$
+pod, $\delta_{\text{error}} = 0.302$; dominance requires beating on the latency
+face \emph{and} both availability DVs).
+
+\begin{center}
+\begin{tabular}{lrrrc}
+\toprule
+placement (r=1, pod-delete) & EW p95 [ms] & depth [pods] & user err & non-dom.? \\
+\midrule
+$f{=}0$ (packed) & 35.74 & 1.0 & 0.04 & yes \\
+$f{=}0.25$ & 38.60 & 1.0 & 0.04 & yes \\
+$f{=}0.5$ & 41.40 & 1.0 & 0.04 & yes \\
+$f{=}0.75$ & 39.55 & 1.0 & 0.04 & yes \\
+$f{=}1$ (spread) & 40.51 & 1.0 & 0.01 & yes \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Non-dominated set: all 5/5 placements.} The frontier is degenerate on
+the availability face: \texttt{pod-delete} removes a single pod by
+construction, so trough depth is $\approx 1$ pod for every placement and the
+error rate is uniformly low --- neither availability DV separates placements by
+its margin. The latency face \emph{does} vary (packed 35.7\,ms vs mid 41.4\,ms,
+$> \delta_{\text{latency}}$, non-overlapping CIs --- the H1 signal), but a
+single-face advantage cannot establish margin-dominance under the all-DV rule,
+so the protocol correctly crowns no winner. The two-face
+latency$\leftrightarrow$availability trade-off the frontier was designed to
+reveal is \textbf{not realizable from the collected data}: the fault that varies
+the availability face (node-drain) has no latency face, and the fault with a
+latency face (pod-delete) produces no availability-face variation
+(Figure~\ref{fig:h4}). A design-corrected follow-up (\S\ref{sec:design-fix})
+re-draws this frontier under a node-drain dose-response, where the availability
+face \emph{does} vary ($1.0 \rightarrow 0.36$ across placements) and a real
+trade-off appears.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.72\textwidth]{fig-h4-frontier.png}
+  \caption{\textbf{H4 --- descriptive placement frontier} (C1,
+    \texttt{pod-delete}). All five placements are non-dominated (red rings): the
+    latency face varies (east-west p95 $35.7$--$41.4$\,ms) but the availability
+    face is degenerate --- trough depth is $\approx1$ pod and the error rate
+    uniformly low --- so no placement dominates on all faces.}
+  \label{fig:h4}
+\end{figure}
+
+\section{H5 --- Layered scorecard reliability}\label{sec:h5}
+
+\textbf{Registered bar.} H5 evaluates a layered resilience scorecard against a
+\textbf{naive single-aggregate baseline} via condition-level test-retest
+reliability (ICC), requiring a conjunction of the \textbf{availability} and
+\textbf{mechanism} sub-scores each clearing an absolute bar of $\text{ICC}\geq
+0.5$.
+
+\textbf{Result --- mechanism reliable, availability not.}
+
+\begin{center}
+\begin{tabular}{lrlc}
+\toprule
+sub-score & ICC & 95\,\% CI & $\geq 0.5$? \\
+\midrule
+availability (required) & \textbf{0.180} & [0.042, 0.468] & \textbf{no} \\
+mechanism (required) & \textbf{0.994} & [0.635, 0.999] & yes \\
+naive aggregate baseline & 0.066 & [0.027, 0.343] & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The scorecard's third layer, the user-tail sub-score (ICC 0.741,
+Figure~\ref{fig:h5}), is reported for completeness but is not part of the
+registered required conjunction, which is over the availability and mechanism
+sub-scores only.
+
+\textbf{Required conjunction: FAIL; H5 is not supported.} This is a sensible
+registered falsification, not a method failure: \texttt{pod-delete} churn
+produces no sustained endpoint outage, so the availability layer has little
+reproducible between-condition signal to estimate (that face is fault-matched
+to node-drain --- and indeed, recomputed under node-drain the availability layer
+carries large, well-defined signal, though its ICC is $1.0$ \emph{by
+construction}, \S\ref{sec:design-fix}). The mechanism layer is the headline reliability result --- ICC
+0.994 versus the naive aggregate's 0.066: the layered scorecard's
+conntrack-reconvergence sub-score is far more test-retest reliable than a single
+aggregate score. The verdict is robust to the analysis's taint-handling choice
+(the conjunction fails either way). A single-campaign 0.994 with a wide-ish
+lower CI bound is strong but is re-evaluated across environments before being
+over-read (Figure~\ref{fig:h5}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.82\textwidth]{fig-h5-scorecard-icc.png}
+  \caption{\textbf{H5 --- layered-scorecard test-retest reliability} (C1). The
+    mechanism sub-score (ICC 0.994) clears the registered $\text{ICC}\geq0.5$ bar
+    (dashed); the required availability sub-score does not (0.180), so H5 is not
+    supported. Both far exceed the naive single-aggregate baseline (0.066). Bars
+    show 95\,\% bootstrap CIs.}
+  \label{fig:h5}
+\end{figure}
+
+\section{Confirmatory family --- Holm capstone}\label{sec:family-holm}
+
+The four confirmatory hypotheses are corrected together by Holm at
+$\alpha = 0.05$, each member's family-input $p$ read verbatim from its own
+analysis driver.
+
+\begin{center}
+\begin{tabular}{llrrc}
+\toprule
+hyp & primary test & input $p$ & Holm-adj $p$ & supported? \\
+\midrule
+H1 & dose-response (Page's $L$) & 0.0002 & \textbf{0.0008} & no (effect $<$ SESOI) \\
+H2 & placement + DNS & 0.98875 & 0.98875 & no (placement reversed) \\
+H3 & replication rescue & 0.0065 & \textbf{0.0195} & no (rescue margin unmet) \\
+H5 & layered scorecard ICC & 0.2501 & 0.5002 & no (availability ICC $<0.5$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Family verdict: no confirmatory hypothesis is supported.} Two primaries
+(H1's trend, H3's interaction) survive Holm as statistically significant, but
+Holm-significance is necessary, not sufficient: each member also carries a
+registered effect-size / reliability bar the $p$-value cannot speak to, and
+every member fails its bar or its significance. The consistent, positive thread
+across all three campaigns is the \emph{mechanism}: the UDP-conntrack
+reconvergence signature is real, individually significant in every campaign
+(H2's placement effect, H3's interaction, H5's mechanism ICC 0.994), and
+movable by placement and by the DNS intervention. What does \emph{not} hold, at
+the pre-registered bar, is that this mechanism translates into the
+user-visible placement, availability, and dose-response advantages the
+hypotheses predicted. The discussion (\S\ref{sec:decoupling}) develops this as
+the study's central finding: a real mechanism, rigorously bounded in reach.
+
+\section{External validity --- a second workload}\label{sec:external-validity}
+
+\textbf{Motivation.} The single largest threat to these results
+(\S\ref{sec:generalizes}) is that they come from one workload. As an exploratory
+check --- \emph{outside} the frozen confirmatory family, so no multiplicity
+correction is owed --- the two placement-bearing studies (H1 dose-response and
+H3 replication rescue) were replicated on a second, deliberately different
+application: DeathStarBench hotelReservation, a deep frontend fan-out with
+per-service datastore pairs and Go gRPC over Consul service discovery, against
+online-boutique's flatter topology and ClusterIP routing.
+
+\textbf{Campaign.} The protocols were identical: 8 H1 complete-block sessions
+(\texttt{pod-delete} on the search path, $r{=}1$, five $f$-levels $\times$ 3
+iterations) and 24 H3 sessions (\texttt{node-drain}; cells r1-packed,
+r3-packed, r3-anti-affine $\times$ 8). All 32 sessions were
+\texttt{doctor --strict} clean with pristine provenance; 1 of 144 iterations was
+excluded on an \texttt{app\_ready\_timeout} taint.\footnote{Measuring
+hotelReservation required general ChaosProbe fixes, not changes to the
+experimental design or the system under test: a wget-capable readiness-probe
+pod, a static-topology fallback for the cross-node fraction on Consul/gRPC
+services that expose no service-address environment dependencies, and sustained
+warm-up load through the readiness gate. A prior scoping attempt mis-attributed
+the resulting gate timeouts to the workload's gRPC keepalive recovery; the cause
+was these tooling gaps, and once closed the campaign ran clean.}
+
+\textbf{Result --- both arms corroborate online-boutique.}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+study & registered bar & hotelReservation outcome \\
+\midrule
+H1 dose-response & monotone east-west p95 increase, $\geq 15\,\%$ SESOI &
+  Page's $L$ $p = 0.99$ --- \textbf{no increase} \\
+H3 replication rescue & $r{\times}$mode interaction + rescue $\geq$ margins &
+  \texttt{CONJUNCTION = False} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-hotel-external-validity.png}
+  \caption{\textbf{External validity on hotelReservation} (exploratory, outside
+    the Holm family). \textbf{(a)} H1 dose-response: east-west p95 latency shows
+    no monotone increase in the cross-node fraction $f$ (Page's $L$ $p = 0.99$),
+    a tight $\sim$5--9\,ms band trending mildly downward --- not supported.
+    \textbf{(b)} H3 replication rescue: anti-affine $r{=}3$ drives the
+    during-chaos user-route error to zero (from $r{=}1$'s $0.21$) with a
+    significant $r{\times}$mode interaction, but the rescue stays below the
+    registered $0.302$ margin --- not met. Both arms corroborate online-boutique.}
+  \label{fig:hotel}
+\end{figure}
+
+H1 on hotelReservation shows \emph{no} dose-response of the east-west tail
+(Figure~\ref{fig:hotel}a): the registered one-sided trend test is non-significant
+($p = 0.99$) and the per-level medians ($9.34 / 6.44 / 6.32 / 7.10 / 5.40$\,ms)
+sit in a tight band with, if
+anything, a mild \emph{decrease}. This is the same negative reading as
+online-boutique's sub-SESOI H1 (\S\ref{sec:h1}), slightly strengthened --- no
+increase at all on the deeper topology. H3 reaches online-boutique's top-line
+verdict (\texttt{CONJUNCTION = False}; Figure~\ref{fig:hotel}b) by the same route
+--- a \emph{significant}
+$r{\times}$mode interaction on both co-primaries ($p \approx 0$) with anti-affine
+$r{=}3$ the directionally best arm on every measure (trough recovery $15$\,s
+versus $r{=}1$'s $45$\,s, during-chaos user-error $0.0$ versus $0.21$) and the
+packing controls holding --- though the conjunction fails more broadly here:
+where online-boutique cleared the user-error margin and failed only on trough
+depth (\S\ref{sec:h3}), hotelReservation clears \emph{neither} margin (depth
+$0.044 < 0.0526$, error $0.212 < 0.302$).
+
+\textbf{Reading.} The cross-workload picture mirrors the within-workload one
+(\S\ref{sec:family-holm}): the \emph{mechanism} --- spreading replicas across
+failure domains shrinks the node-drain blast radius and speeds recovery --- is
+robust and visible on both applications, while the \emph{strong placement and
+margin-clearing claims} hold on neither. That a second, structurally different
+workload reproduces both the below-SESOI dose-response and the
+significant-but-margin-short rescue is the strongest available evidence that the
+study's central finding --- a real mechanism, rigorously bounded in reach --- is
+not an artifact of one application's topology. This arm is exploratory and its
+verdicts are not folded into the Holm family; its full numbers, per-session
+provenance, and frozen integrity manifest are recorded in the committed C1/C2
+hotelReservation campaign reports, with the raw dataset archived and available on
+request.
+
+\section{Design-corrected re-analysis of the availability axis}\label{sec:design-fix}
+
+\textbf{Motivation.} Three of the availability-side tests are
+\emph{construction-limited} in the confirmatory regime, all for one reason:
+\texttt{pod-delete} at $r{=}1$ removes a service's only replica, so the
+availability trough is $\approx 1$ pod for \emph{every} placement and the
+availability axis cannot move. This makes H3's trough-depth co-primary
+un-passable (its 1-pod margin equals the realized $r{=}1$ depth, \S\ref{sec:h3}),
+H4's availability face degenerate (constant, \S\ref{sec:h4}), and H5's
+availability-sub-score ICC a measurement of noise (\S\ref{sec:h5}). As an
+exploratory, pre-declared follow-up --- \emph{outside} the frozen Holm family ---
+the three are recomputed under \texttt{node-drain}, whose blast radius is the set
+of services co-located with the drained node and therefore varies with placement.
+Criteria were fixed before the new data were examined (a design-corrected
+analogue of the freeze-before-analysis rule). The new campaign is C4: a
+node-drain dose-response, 8 complete-block sessions ($f \in \{0,0.25,0.5,0.75,
+1.0\}$, $r{=}1$), all \texttt{doctor --strict} clean.
+
+\textbf{The availability axis is now live (corrects H4).} The node-drain trough
+depth varies strongly and monotonically with placement, and a genuine
+latency$\times$availability trade-off appears:
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+$f$ (packing $\rightarrow$ spreading) & avail.\ trough (median) & east-west p95 (ms) \\
+\midrule
+$f{=}0$ (packed) & \textbf{1.00} (all endpoints lost) & 35.5 \\
+$f{=}0.25$ & 0.82 & 36.3 \\
+$f{=}0.50$ & 0.64 & 51.3 \\
+$f{=}0.75$ & 0.64 & 36.2 \\
+$f{=}1$ (spread) & \textbf{0.36} & 41.0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The availability face spans $1.0 \rightarrow 0.36$ (against the degenerate
+$\approx 1$-pod-everywhere of \texttt{pod-delete}): spreading buys a large
+availability gain at a small ($\sim$35$\rightarrow$41\,ms, sub-SESOI) latency
+cost. The latency face rises mildly and monotonically except at $f{=}0.5$, whose
+$51.3$\,ms median is a noise-dominated outlier (two of eight sessions at
+$\sim$78\,ms); read with that caveat the curve is monotone. The corrected
+frontier is non-degenerate and spreading is the availability-optimal region (at a
+small latency cost --- so not Pareto-dominant, but a real trade-off) --- replacing
+H4's degenerate ``all five non-dominated'' (Figure~\ref{fig:design-fix}).
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=\textwidth]{fig-design-fix-availability.png}
+  \caption{\textbf{Design-corrected re-analysis --- the availability axis made
+    live} (C4, \texttt{node-drain}, exploratory). \textbf{(a)} The availability
+    trough now varies monotonically with placement, $1.0$ (packed) $\rightarrow$
+    $0.36$ (spread), against the $\approx$1-pod-everywhere degeneracy of
+    \texttt{pod-delete} that made H4's availability face flat and H5's
+    availability ICC a measurement of noise. \textbf{(b)} The corrected two-face
+    frontier: spreading lowers the blast radius at a small east-west latency cost
+    --- a real trade-off ($f{=}0.5$ is a noise-dominated latency outlier). The
+    arm is exploratory and outside the Holm family.}
+  \label{fig:design-fix}
+\end{figure}
+
+\textbf{The availability layer carries reliable signal (corrects H5).} Computed
+on the node-drain sessions, the availability sub-score's test-retest
+$\text{ICC} = 1.0$ versus $0.180$ under \texttt{pod-delete} --- the $0.180$ was
+\emph{absent signal}, not an unreliable scorecard. The $1.0$ is, however,
+$1.0$ \emph{by construction}: the fraction-solver placement is deterministic, so
+every session's blast radius is identical (between-session variance is
+identically zero) and the ICC carries no test-retest information. The honest
+claim is therefore the weaker one --- under a fault that produces an outage the
+availability layer has large, well-defined signal --- not a noise-limited
+reliability estimate.
+
+\textbf{The replication-rescue effect is real (corrects H3's artifact).}
+Re-analysing the C2 node-drain data, anti-affine $r{=}3$ \emph{halves} the trough
+depth ($0.091 \rightarrow 0.046$; $r{\times}$mode interaction $p{=}0.0065$) and
+drives the user-route error to \emph{zero} ($0.63 \rightarrow 0.0$; $p \approx
+0$). H3's registered \texttt{CONJUNCTION = False} was an artifact of the 1-pod
+margin (which demanded a $>100\,\%$ depth reduction); with it removed, the rescue
+is real and significant on both faces. On the unrounded medians the depth
+reduction is \emph{exactly} $50\,\%$ ($r{=}1$ loses one pod, anti-affine half a
+pod-equivalent), so it meets the pre-declared range-relative bar --- but
+knife-edge: at $n{=}8$ the anti-affine session depths are bimodal, so the median
+landing on the half-pod is a coincidence and the bar is not robustly cleared. The
+substantive, robust evidence is therefore the significant interaction and the
+user-error elimination, not the threshold itself.
+
+\textbf{Reading.} This does not re-open the frozen confirmatory verdicts; it shows
+that H3's \emph{not-supported} and H4's \emph{degenerate} results were partly
+\emph{construction artifacts} whose underlying effects are real once availability
+can move, and that H5's reliability gap was a fault-regime mismatch. The corrected
+arm is exploratory; its numbers, the reproducible driver
+(\texttt{scripts/design\_fix\_analysis.py}), and the frozen pre-analysis manifest
+(\texttt{c4-nodedrain-manifest.sha256}) are in the committed design-fix report,
+with the C4 raw data archived and available on request. A pre-registered
+confirmatory re-run that would elevate this corrected design from exploratory to
+confirmatory is left as future work (\S\ref{sec:future-work}).
+
+\section{H6 --- direction transfer (not attempted)}\label{sec:h6}
+
+H6 (an exploratory, non-family secondary on iptables-mode direction transfer)
+was \textbf{not attempted}: the cluster ran the IPVS proxier rather than the
+iptables mode the hypothesis presumes, so the comparison was de-scoped before
+collection (recorded in the deviations log). It supports no claim and is
+reported here only for completeness of the registered set.

@@ -1,0 +1,48 @@
+# I/O → Saturation → Bandwidth (Disk)
+# Target: productcatalogservice (Go, reads product data from embedded JSON)
+# Goal: Stress disk I/O on the product catalog to simulate storage bandwidth
+#        saturation. This tests whether the service degrades gracefully under
+#        I/O pressure or becomes unresponsive, affecting frontend product
+#        listing and recommendation service.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: contention-io-stress-productcatalog
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=productcatalogservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-io-stress
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: FILESYSTEM_UTILIZATION_PERCENTAGE
+              value: "80"
+            - name: NUMBER_OF_WORKERS
+              value: "2"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3

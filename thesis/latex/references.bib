@@ -1,0 +1,523 @@
+% references.bib — derived from references.md (the annotated bibliography
+% source of truth). Author lists use the initials given there; entries whose
+% authors references.md does not name carry a `key` field so natbib can
+% render a label (they are referenced in the text by identifier links).
+% Web resources (@misc) carry an access date of 2026-06-11.
+
+% ----------------------------------------------------------------------
+% 1. Pod placement / scheduler lineage
+% ----------------------------------------------------------------------
+
+@inproceedings{verma2015borg,
+  author    = {Verma, A. and Pedrosa, L. and Korupolu, M. and Oppenheimer, D. and Tune, E. and Wilkes, J.},
+  title     = {Large-scale cluster management at {Google} with {Borg}},
+  booktitle = {Proceedings of the Tenth European Conference on Computer Systems (EuroSys 2015)},
+  year      = {2015},
+  address   = {Bordeaux, France},
+  doi       = {10.1145/2741948.2741964},
+  url       = {https://dl.acm.org/doi/10.1145/2741948.2741964},
+}
+
+@inproceedings{garefalakis2018medea,
+  author    = {Garefalakis, P. and Karanasos, K. and Pietzuch, P. and Suresh, A. and Rao, S.},
+  title     = {Medea: Scheduling of Long Running Applications in Shared Production Clusters},
+  booktitle = {Proceedings of the Thirteenth European Conference on Computer Systems (EuroSys 2018)},
+  year      = {2018},
+  doi       = {10.1145/3190508.3190549},
+  url       = {https://dl.acm.org/doi/abs/10.1145/3190508.3190549},
+}
+
+@inproceedings{ousterhout2013sparrow,
+  author    = {Ousterhout, K. and Wendell, P. and Zaharia, M. and Stoica, I.},
+  title     = {Sparrow: Distributed, Low Latency Scheduling},
+  booktitle = {Proceedings of the 24th ACM Symposium on Operating Systems Principles (SOSP 2013)},
+  year      = {2013},
+  doi       = {10.1145/2517349.2522716},
+  url       = {https://dl.acm.org/doi/10.1145/2517349.2522716},
+}
+
+@inproceedings{mars2011bubbleup,
+  author    = {Mars, J. and Tang, L. and Hundt, R. and Skadron, K. and Soffa, M. L.},
+  title     = {Bubble-Up: Increasing Utilization in Modern Warehouse Scale Computers via Sensible Co-locations},
+  booktitle = {Proceedings of the 44th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO 2011)},
+  year      = {2011},
+  pages     = {248--259},
+  url       = {https://www.cs.virginia.edu/~skadron/Papers/mars_micro2011.pdf},
+}
+
+@inproceedings{delimitrou2014quasar,
+  author    = {Delimitrou, C. and Kozyrakis, C.},
+  title     = {Quasar: Resource-Efficient and {QoS}-Aware Cluster Management},
+  booktitle = {Proceedings of the 19th International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS 2014)},
+  year      = {2014},
+  address   = {Salt Lake City, UT},
+  url       = {https://www.csl.cornell.edu/~delimitrou/papers/2014.asplos.quasar.pdf},
+}
+
+@inproceedings{gan2019deathstarbench,
+  author    = {Gan, Y. and others},
+  title     = {An Open-Source Benchmark Suite for Microservices and Their Hardware-Software Implications for Cloud and Edge Systems},
+  booktitle = {Proceedings of the 24th International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS 2019)},
+  year      = {2019},
+  doi       = {10.1145/3297858.3304013},
+  url       = {https://dl.acm.org/doi/10.1145/3297858.3304013},
+}
+
+@article{burns2016borg,
+  author    = {Burns, B. and Grant, B. and Oppenheimer, D. and Brewer, E. and Wilkes, J.},
+  title     = {Borg, {Omega}, and {Kubernetes}},
+  journal   = {ACM Queue},
+  volume    = {14},
+  year      = {2016},
+  month     = may,
+  note      = {Also: Communications of the ACM 59(5), May 2016},
+  doi       = {10.1145/2890784},
+  url       = {https://dl.acm.org/doi/10.1145/2890784},
+}
+
+@inproceedings{cortez2017resource,
+  author    = {Cortez, E. and Bonde, A. and Muzio, A. and Russinovich, M. and Fontoura, M. and Bianchini, R.},
+  title     = {Resource Central: Understanding and Predicting Workloads for Improved Resource Management in Large Cloud Platforms},
+  booktitle = {Proceedings of the 26th ACM Symposium on Operating Systems Principles (SOSP 2017)},
+  year      = {2017},
+  doi       = {10.1145/3132747.3132772},
+  url       = {https://dl.acm.org/doi/10.1145/3132747.3132772},
+}
+
+@article{karypis1998metis,
+  author    = {Karypis, G. and Kumar, V.},
+  title     = {A Fast and High Quality Multilevel Scheme for Partitioning Irregular Graphs},
+  journal   = {SIAM Journal on Scientific Computing},
+  volume    = {20},
+  number    = {1},
+  pages     = {359--392},
+  year      = {1998},
+  note      = {Also: Multilevel k-way Partitioning Scheme for Irregular Graphs, Journal of Parallel and Distributed Computing, 48, 1998, pp.\ 96--129},
+  url       = {https://www.cs.utexas.edu/~pingali/CS395T/2009fa/papers/metis.pdf},
+}
+
+@inproceedings{zhang2021sinan,
+  author    = {Zhang, Y. and Hua, W. and Zhou, Z. and Suh, G. E. and Delimitrou, C.},
+  title     = {Sinan: {ML}-Based and {QoS}-Aware Resource Management for Cloud Microservices},
+  booktitle = {Proceedings of the 26th International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS 2021)},
+  year      = {2021},
+  doi       = {10.1145/3445814.3446693},
+  url       = {https://dl.acm.org/doi/10.1145/3445814.3446693},
+}
+
+% ----------------------------------------------------------------------
+% 2. Chaos engineering
+% ----------------------------------------------------------------------
+
+@article{basiri2016chaos,
+  author    = {Basiri, A. and Behnam, N. and de Rooij, R. and Hochstein, L. and Kosewski, L. and Reynolds, J. and Rosenthal, C.},
+  title     = {Chaos Engineering},
+  journal   = {IEEE Software},
+  volume    = {33},
+  number    = {3},
+  pages     = {35--41},
+  year      = {2016},
+  doi       = {10.1109/MS.2016.60},
+  url       = {https://dl.acm.org/doi/abs/10.1109/MS.2016.60},
+}
+
+@misc{netflix2011simian,
+  author       = {{Netflix Technology Blog}},
+  title        = {The {Netflix} Simian Army},
+  year         = {2011},
+  howpublished = {Netflix Technology Blog; open-sourced as Netflix/SimianArmy (later Netflix/chaosmonkey)},
+  url          = {https://netflixtechblog.com/the-netflix-simian-army-16e57fbab116},
+  note         = {Accessed 2026-06-11},
+}
+
+@inproceedings{yang2024microres,
+  author    = {Yang, T. and Lee, C. and Shen, J. and Su, Y. and Feng, C. and Yang, Y. and Lyu, M. R.},
+  title     = {{MicroRes}: Versatile Resilience Profiling in Microservices via Degradation Dissemination Indexing},
+  booktitle = {Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis (ISSTA 2024)},
+  year      = {2024},
+  address   = {Vienna, Austria},
+  doi       = {10.1145/3650212.3652131},
+  url       = {https://arxiv.org/abs/2212.12850},
+}
+
+@inproceedings{kikuta2025chaoseater,
+  author    = {Kikuta, D. and Ikeuchi, H. and Tajiri, K.},
+  title     = {{ChaosEater}: {LLM}-Powered Fully Automated Chaos Engineering},
+  booktitle = {Proceedings of the 40th IEEE/ACM International Conference on Automated Software Engineering (ASE 2025), NIER track},
+  year      = {2025},
+  pages     = {3861--3865},
+  doi       = {10.1109/ASE63991.2025.00331},
+  url       = {https://arxiv.org/abs/2511.07865},
+}
+
+% ----------------------------------------------------------------------
+% 3. Tail latency
+% ----------------------------------------------------------------------
+
+@article{dean2013tail,
+  author    = {Dean, J. and Barroso, L. A.},
+  title     = {The Tail at Scale},
+  journal   = {Communications of the ACM},
+  volume    = {56},
+  number    = {2},
+  pages     = {74--80},
+  year      = {2013},
+  month     = feb,
+  doi       = {10.1145/2408776.2408794},
+  url       = {https://dl.acm.org/doi/10.1145/2408776.2408794},
+}
+
+% ----------------------------------------------------------------------
+% 4. The churn-vs-contention mechanism (Kubernetes primary sources)
+% ----------------------------------------------------------------------
+
+@misc{k8scommunity-netslo,
+  author       = {{Kubernetes Community}},
+  title        = {Network Programming Latency {SLO}},
+  howpublished = {sig-scalability, kubernetes/community repository},
+  url          = {https://github.com/kubernetes/community/blob/master/sig-scalability/slos/network_latency.md},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-82378,
+  author       = {{Kubernetes Community}},
+  title        = {Investigate issues with {Network Programming Latency SLO} (kubernetes/kubernetes issue \#82378)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/82378},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-100698,
+  author       = {{Kubernetes Community}},
+  title        = {conntrack entries not cleared when switching service endpoints (kubernetes/kubernetes issue \#100698)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/100698},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-93143,
+  author       = {{Kubernetes Community}},
+  title        = {conntrack entries not cleared when pod moves (kubernetes/kubernetes issue \#93143)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/93143},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-104098,
+  author       = {{Kubernetes Community}},
+  title        = {{Kubernetes} doesn't clear conntrack entry for {TCP} (kubernetes/kubernetes issue \#104098)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/104098},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-113203,
+  author       = {{Kubernetes Community}},
+  title        = {Connections stuck in conntrack when {externalTrafficPolicy} is ``local'' (kubernetes/kubernetes issue \#113203)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/113203},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-48370,
+  author       = {{Kubernetes Community}},
+  title        = {Flush stale {UDP} conntrack entries when endpoints change (kubernetes/kubernetes issue \#48370)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/48370},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-108523,
+  author       = {{Kubernetes Community}},
+  title        = {conntrack entries removed on service/endpoint deletion are {UDP} \& {SCTP} (kubernetes/kubernetes issue \#108523)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/108523},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-126130,
+  author       = {{Kubernetes Community}},
+  title        = {conntrack reconciler; ``{UDP} is the only protocol that requires this'' (kubernetes/kubernetes issue \#126130)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/126130},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-129982,
+  author       = {{Kubernetes Community}},
+  title        = {v1.32 netlink-reconciler regression: any {UDP}-port change triggered a full cleanup pass (kubernetes/kubernetes issue \#129982, since fixed)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/129982},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-125467,
+  author       = {{Kubernetes Community}},
+  title        = {kube-proxy exec-based conntrack cleaner logs (kubernetes/kubernetes issue \#125467)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/125467},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-conntrack-cleanup-source,
+  author       = {{Kubernetes Community}},
+  title        = {kube-proxy netlink conntrack reconciler ({pkg/proxy/conntrack/cleanup.go})},
+  howpublished = {Source file, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/blob/master/pkg/proxy/conntrack/cleanup.go},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{kernel-nfconntrack-sysctl,
+  author       = {{The Linux kernel development community}},
+  title        = {Netfilter conntrack sysctl reference},
+  howpublished = {kernel.org documentation},
+  url          = {https://docs.kernel.org/networking/nf_conntrack-sysctl.html},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-56903,
+  author       = {{Kubernetes Community}},
+  title        = {{DNS} intermittent delays of 5s (kubernetes/kubernetes issue \#56903)},
+  year         = {2017},
+  howpublished = {GitHub issue, kubernetes/kubernetes, 2017--2019},
+  url          = {https://github.com/kubernetes/kubernetes/issues/56903},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{xing-connection-timeouts,
+  author       = {{XING Engineering}},
+  title        = {A reason for unexplained connection timeouts on {Kubernetes}/{Docker}},
+  howpublished = {XING engineering blog},
+  url          = {https://tech.xing.com/a-reason-for-unexplained-connection-timeouts-on-kubernetes-docker-abd041cf7e02},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{pumputis-racy-conntrack,
+  author       = {Pumputis, M.},
+  title        = {Racy conntrack and {DNS} lookup timeouts},
+  howpublished = {Weaveworks blog (site defunct --- use an archive.org link)},
+  note         = {Accessed via archive.org, 2026-06-11},
+}
+
+@misc{k8s-issue-133474,
+  author       = {{Kubernetes Community}},
+  title        = {Frequent churn between {EndpointSlice} objects (kubernetes/kubernetes issue \#133474)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/133474},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{versockas-controller-latency,
+  author       = {Versockas, P.},
+  title        = {A Technique To Monitor {Kubernetes} Controller Latency},
+  howpublished = {Practitioner blog, povilasv.me},
+  url          = {https://povilasv.me/a-technique-to-monitor-kubernetes-controller-latency/},
+  note         = {Accessed 2026-06-11},
+}
+
+% ----------------------------------------------------------------------
+% 5. Closest related work
+% ----------------------------------------------------------------------
+
+@misc{liu2025resilience,
+  author       = {Liu and others},
+  title        = {Resilience Evaluation of {Kubernetes} in Cloud-Edge Environments via Failure Injection},
+  year         = {2025},
+  howpublished = {arXiv:2507.16109},
+  url          = {https://arxiv.org/abs/2507.16109},
+  note         = {Accessed 2026-06-11},
+}
+
+@inproceedings{barletta2024mutiny,
+  author    = {Barletta, M. and Cinque, M. and Di Martino, C. and Kalbarczyk, Z. T. and Iyer, R. K.},
+  title     = {Mutiny! {How} does {Kubernetes} fail, and what can we do about it?},
+  booktitle = {54th IEEE/IFIP International Conference on Dependable Systems and Networks (DSN 2024)},
+  year      = {2024},
+  url       = {https://arxiv.org/abs/2404.11169},
+}
+
+@misc{yang2024networkaware,
+  author       = {Yang and others},
+  title        = {Network-Aware Reliability Modeling and Optimization for Microservice Placement},
+  year         = {2024},
+  howpublished = {arXiv:2405.18001},
+  url          = {https://arxiv.org/abs/2405.18001},
+  note         = {Accessed 2026-06-11},
+}
+
+@article{awad2025chaosslr,
+  author    = {Awad and others},
+  title     = {Chaos experiments in microservice architectures: A systematic literature review},
+  journal   = {Journal of Systems and Software},
+  year      = {2025},
+  url       = {https://www.sciencedirect.com/science/article/abs/pii/S092054892500145X},
+}
+
+@misc{resilient2025microservices,
+  key          = {Resilient Microservices SLR},
+  title        = {Resilient Microservices: A Systematic Review of Recovery Patterns, Strategies, and Evaluation Frameworks},
+  year         = {2025},
+  howpublished = {arXiv:2512.16959},
+  url          = {https://arxiv.org/abs/2512.16959},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{hagedoorn2026topology,
+  author       = {Hagedoorn and others},
+  title        = {An Empirical Study on How Architectural Topology Affects Microservice Performance and Energy Usage},
+  year         = {2026},
+  howpublished = {arXiv:2604.00080},
+  url          = {https://arxiv.org/abs/2604.00080},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{priority2025packing,
+  key          = {Priority Matters},
+  title        = {Priority Matters: Optimising {Kubernetes} Clusters Usage with Constraint-Based Pod Packing},
+  year         = {2025},
+  howpublished = {arXiv:2511.08373},
+  url          = {https://arxiv.org/abs/2511.08373},
+  note         = {Accessed 2026-06-11},
+}
+
+@inproceedings{wojciechowski2021netmarks,
+  author    = {Wojciechowski, K. and others},
+  title     = {{NetMARKS}: Network Metrics-{AwaRe} {Kubernetes} Scheduler Powered by Service Mesh},
+  booktitle = {IEEE INFOCOM 2021 --- IEEE Conference on Computer Communications},
+  year      = {2021},
+  doi       = {10.1109/INFOCOM42981.2021.9488670},
+  url       = {https://ieeexplore.ieee.org/document/9488670/},
+}
+
+@misc{trade2024scheduling,
+  key          = {TraDE},
+  title        = {{TraDE}: Network and Traffic-aware Adaptive Scheduling for Microservices Under Dynamics},
+  year         = {2024},
+  howpublished = {arXiv:2411.05323},
+  url          = {https://arxiv.org/abs/2411.05323},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{cast2026resilience,
+  key          = {Cast},
+  title        = {Cast: Automated resilience testing via online traffic record-and-replay with fault injection},
+  year         = {2026},
+  howpublished = {ICSE 2026 SEIP track; arXiv:2602.00972},
+  url          = {https://arxiv.org/html/2602.00972v1},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{csur2024multivocal,
+  key          = {Chaos Engineering MLR},
+  title        = {Chaos Engineering: A Multi-Vocal Literature Review},
+  year         = {2024},
+  howpublished = {arXiv:2412.01416; ACM Computing Surveys, DOI 10.1145/3777375},
+  url          = {https://arxiv.org/abs/2412.01416},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{aws-cellbased,
+  author       = {{Amazon Web Services}},
+  title        = {Reducing the Scope of Impact with Cell-Based Architecture},
+  howpublished = {AWS Well-Architected whitepaper},
+  url          = {https://docs.aws.amazon.com/wellarchitected/latest/reducing-scope-of-impact-with-cell-based-architecture/reducing-scope-of-impact-with-cell-based-architecture.html},
+  note         = {Accessed 2026-06-11},
+}
+
+% ----------------------------------------------------------------------
+% 6. Methodology precedents
+% ----------------------------------------------------------------------
+
+@inproceedings{maricq2018taming,
+  author    = {Maricq, A. and Duplyakin, D. and Jimenez, I. and Maltzahn, C. and Stutsman, R. and Ricci, R.},
+  title     = {Taming Performance Variability},
+  booktitle = {13th USENIX Symposium on Operating Systems Design and Implementation (OSDI 2018)},
+  year      = {2018},
+  pages     = {409--425},
+  url       = {https://www.usenix.org/conference/osdi18/presentation/maricq},
+}
+
+@inproceedings{mytkowicz2009producing,
+  author    = {Mytkowicz, T. and Diwan, A. and Hauswirth, M. and Sweeney, P. F.},
+  title     = {Producing Wrong Data Without Doing Anything Obviously Wrong!},
+  booktitle = {Proceedings of the 14th International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS 2009)},
+  year      = {2009},
+  url       = {https://www.semanticscholar.org/paper/3886c40229b3de318de668e0c0f4202079eb6f55},
+}
+
+@inproceedings{hoefler2015scientific,
+  author    = {Hoefler, T. and Belli, R.},
+  title     = {Scientific Benchmarking of Parallel Computing Systems},
+  booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC 2015)},
+  year      = {2015},
+  doi       = {10.1145/2807591.2807644},
+  url       = {https://dl.acm.org/doi/10.1145/2807591.2807644},
+}
+
+@article{schuirmann1987equivalence,
+  author    = {Schuirmann, D. J.},
+  title     = {A comparison of the two one-sided tests procedure and the power approach for assessing the equivalence of average bioavailability},
+  journal   = {Journal of Pharmacokinetics and Biopharmaceutics},
+  volume    = {15},
+  year      = {1987},
+  doi       = {10.1007/BF01068419},
+  url       = {https://doi.org/10.1007/BF01068419},
+}
+
+@article{lakens2017equivalence,
+  author    = {Lakens, D.},
+  title     = {Equivalence Tests: A Practical Primer for t Tests, Correlations, and Meta-Analyses},
+  journal   = {Social Psychological and Personality Science},
+  volume    = {8},
+  number    = {4},
+  year      = {2017},
+  url       = {https://journals.sagepub.com/doi/10.1177/1948550617697177},
+}
+
+@article{lakens2018equivalence,
+  author    = {Lakens, D. and Scheel, A. M. and Isager, P. M.},
+  title     = {Equivalence Testing for Psychological Research},
+  journal   = {Advances in Methods and Practices in Psychological Science},
+  volume    = {1},
+  number    = {2},
+  year      = {2018},
+  url       = {https://journals.sagepub.com/doi/10.1177/2515245918770963},
+}
+
+@article{benavoli2017time,
+  author    = {Benavoli, A. and Corani, G. and Dem{\v s}ar, J. and Zaffalon, M.},
+  title     = {Time for a Change: a Tutorial for Comparing Multiple Classifiers Through {Bayesian} Analysis},
+  journal   = {Journal of Machine Learning Research},
+  volume    = {18},
+  number    = {77},
+  year      = {2017},
+  url       = {https://jmlr.org/papers/v18/16-305.html},
+}
+
+@misc{kep895,
+  author       = {{Kubernetes SIG Scheduling}},
+  title        = {{KEP-895}: Pod Topology Spread},
+  howpublished = {Kubernetes Enhancement Proposal 895, sig-scheduling},
+  url          = {https://github.com/kubernetes/enhancements/tree/master/keps/sig-scheduling/895-pod-topology-spread},
+  note         = {Accessed 2026-06-11},
+}
+
+% ----------------------------------------------------------------------
+% 7. Application benchmark & tooling
+% ----------------------------------------------------------------------
+
+@misc{onlineboutique,
+  author       = {{Google Cloud Platform}},
+  title        = {microservices-demo: Sample cloud-first application with 10 microservices showcasing {Kubernetes}, {Istio}, and {gRPC}},
+  howpublished = {GitHub repository},
+  url          = {https://github.com/GoogleCloudPlatform/microservices-demo},
+  note         = {Accessed 2026-06-11},
+}
+
+@misc{litmusgo-nodememoryhog,
+  author       = {{LitmusChaos contributors}},
+  title        = {litmus-go: node-memory-hog chaos library ({calculateMemoryConsumption})},
+  howpublished = {Source file, litmuschaos/litmus-go},
+  url          = {https://github.com/litmuschaos/litmus-go/blob/master/chaoslib/litmus/node-memory-hog/lib/node-memory-hog.go},
+  note         = {Accessed 2026-06-11},
+}

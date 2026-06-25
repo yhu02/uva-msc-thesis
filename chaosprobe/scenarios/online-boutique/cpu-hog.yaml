@@ -1,0 +1,245 @@
+# Placement Experiment — pod-cpu-hog on frontend
+#
+# Companion to pod-delete.yaml (pod-delete on productcatalogservice).
+# Together the two files form the multi-fault matrix that tests the central
+# thesis claim from the critical review: pod-delete is a CHURN-based fault and
+# the literature's spread-is-best intuition fails under it.  pod-cpu-hog is a
+# CONTENTION-based fault.
+#
+# Target: frontend, the single entry point every probe measures (all seven
+# httpProbes plus the cart-flow cmdProbe go through it).  CPU-starving the
+# backend (productcatalogservice) left the frontend-measured SLOs untouched, so
+# contention there registered as no impact at all.  Targeting frontend directly
+# maximises the measurable contention effect — the goal here is the most drastic
+# fault impact, not a single-variable A/B, so the two faults intentionally
+# differ in both target and fault class.
+#
+# Usage (automated multi-fault matrix):
+#   chaosprobe run -n online-boutique \
+#     -e scenarios/online-boutique/pod-delete.yaml \
+#     -e scenarios/online-boutique/cpu-hog.yaml \
+#     -i 5
+#
+# Probe set is identical to pod-delete.yaml so that
+# resilience scores are directly comparable across the two fault classes.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-pod-cpuhog
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=frontend
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-cpu-hog
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: CPU_CORES
+              value: "1"
+            - name: CPU_LOAD
+              value: "100"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+            - name: CONTAINER_RUNTIME
+              value: containerd
+            - name: SOCKET_PATH
+              value: /run/containerd/containerd.sock
+        probe:
+          # ── Tier 1: Strict probes (3s timeout, 1 retry ≈ 6s) ──────
+          - name: frontend-product-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          - name: frontend-homepage-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          # ── Tier 2: Moderate-tight (3s timeout, 4 retries ≈ 15s) ─
+          - name: frontend-homepage-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          - name: frontend-product-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          # ── Tier 3: Moderate-loose (5s timeout, 4 retries ≈ 20s) ─
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          - name: frontend-homepage-loose
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          # ── Tier 4: Control probe ──────────────────────────────────
+          - name: frontend-healthz
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/_healthz
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 4s
+              retry: 3
+
+          # ── Rust cmdProbes ──────────────────────────────────────────
+          - name: check-redis
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-redis
+              comparator:
+                type: string
+                criteria: contains
+                value: "REDIS_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 0
+
+          - name: check-http-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-http-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "LATENCY_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 8s
+              interval: 12s
+              retry: 6
+
+          - name: check-dns-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-dns-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "DNS_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 2
+
+          - name: check-tcp-connect
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-tcp-connect
+              comparator:
+                type: string
+                criteria: contains
+                value: "TCP_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 0
+
+          - name: check-cart-flow
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-cart-flow
+              comparator:
+                type: string
+                criteria: contains
+                value: "FLOW_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 1

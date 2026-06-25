@@ -1,0 +1,168 @@
+# This experiment demonstrates ALL four resilience probe types supported
+# by LitmusChaos: httpProbe, cmdProbe, k8sProbe, and promProbe.
+#
+# Probe modes used:
+#   - Continuous: runs throughout chaos injection
+#   - Edge: runs at start and end of chaos
+#   - EOT: runs at end of test only
+#   - OnChaos: runs only during active chaos injection
+#
+# See: https://docs.litmuschaos.io/docs/concepts/probes
+
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: nginx-all-probes
+spec:
+  engineState: active
+  appinfo:
+    appns: default
+    applabel: app=nginx
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: CHAOS_INTERVAL
+              value: "10"
+            - name: FORCE
+              value: "true"
+            - name: PODS_AFFECTED_PERC
+              value: "50"
+        probe:
+          # ── httpProbe (GET) ─────────────────────────────────
+          # Checks that the nginx service returns HTTP 200
+          # continuously during chaos.
+          - name: nginx-http-get
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://nginx-service.default.svc.cluster.local:80
+              insecureSkipVerify: false
+              responseTimeout: 3000   # milliseconds
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 2s
+              retry: 3
+              probePollingInterval: 2s
+
+          # ── httpProbe (POST) ────────────────────────────────
+          # Sends a POST request with a body and checks the response.
+          - name: nginx-http-post
+            type: httpProbe
+            mode: Edge
+            httpProbe/inputs:
+              url: http://nginx-service.default.svc.cluster.local:80
+              insecureSkipVerify: false
+              method:
+                post:
+                  contentType: application/json
+                  body: '{"test": true}'
+                  criteria: "!="
+                  responseCode: "500"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 2
+
+          # ── cmdProbe (inline) ───────────────────────────────
+          # Runs a shell command inside the chaos runner to verify
+          # that the nginx pods are running.
+          - name: check-nginx-pods
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: kubectl get pods -l app=nginx -n default --no-headers | grep -c Running
+              comparator:
+                type: int
+                criteria: ">="
+                value: "1"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 2
+
+          # ── cmdProbe (source pod) ───────────────────────────
+          # Runs a command from a custom source image instead of
+          # inline in the chaos runner.
+          - name: check-dns-resolution
+            type: cmdProbe
+            mode: OnChaos
+            cmdProbe/inputs:
+              command: nslookup nginx-service.default.svc.cluster.local
+              comparator:
+                type: string
+                criteria: contains
+                value: "Address"
+              source:
+                image: busybox:1.36
+                hostNetwork: false
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3
+              probePollingInterval: 3s
+
+          # ── k8sProbe (present) ──────────────────────────────
+          # Verifies that the nginx Deployment resource exists
+          # and is present in the cluster.
+          - name: check-deployment-exists
+            type: k8sProbe
+            mode: EOT
+            k8sProbe/inputs:
+              group: apps
+              version: v1
+              resource: deployments
+              namespace: default
+              labelSelector: app=nginx
+              operation: present
+            runProperties:
+              probeTimeout: 5s
+              interval: 5s
+              retry: 1
+
+          # ── k8sProbe (absent) ───────────────────────────────
+          # Verifies that no failed pods exist in the namespace
+          # after chaos ends.
+          - name: check-no-failed-pods
+            type: k8sProbe
+            mode: EOT
+            k8sProbe/inputs:
+              group: ""
+              version: v1
+              resource: pods
+              namespace: default
+              fieldSelector: status.phase=Failed
+              labelSelector: app=nginx
+              operation: absent
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 2
+
+          # ── promProbe ───────────────────────────────────────
+          # Queries Prometheus to check that the nginx pod
+          # restart rate stays below a threshold during chaos.
+          - name: check-pod-restart-rate
+            type: promProbe
+            mode: Continuous
+            promProbe/inputs:
+              endpoint: http://prometheus.monitoring.svc.cluster.local:9090
+              query: sum(rate(kube_pod_container_status_restarts_total{namespace="default",pod=~"nginx.*"}[1m]))
+              comparator:
+                type: float
+                criteria: "<="
+                value: "0.5"
+            runProperties:
+              probeTimeout: 5s
+              interval: 10s
+              retry: 2
+              probePollingInterval: 5s

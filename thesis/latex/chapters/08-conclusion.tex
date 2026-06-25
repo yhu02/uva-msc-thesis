@@ -1,0 +1,119 @@
+\chapter{Conclusion \& future work}\label{ch:conclusion}
+
+\section{Conclusion}\label{sec:conclusion}
+
+This thesis asked: \textbf{under which chaos fault classes does pod placement
+measurably affect mechanism-level behaviour and user-visible outcomes in a
+Kubernetes microservice application, and when do aggregate resilience scores
+obscure those effects?} Answered through a pre-registered, Holm-corrected
+confirmatory family, the result is a real mechanism whose reach is rigorously
+bounded.
+
+The positive thread is the \emph{mechanism}. Placement reproducibly moves a
+UDP-conntrack reconvergence signature, and that effect is significant in every
+campaign: it is placement-dependent under churn (H2), it interacts with
+replication under node-drain (H3's error face, where anti-affine replication
+fully rescues the user-route error rate), and it is the one scorecard layer with
+near-perfect test-retest reliability (H5, mechanism ICC 0.994 vs a naive
+aggregate's 0.066). A NodeLocal DNSCache intervention removes the conntrack drop
+under both placements --- the one actionable lever the study confirmed.
+
+The bound is what pre-registration makes precise. No confirmatory hypothesis
+clears its registered bar (\S\ref{sec:family-holm}): the dose-response is
+detectable but below the 15\,\% SESOI (H1); placement-dependence replicates with
+the \emph{opposite} sign, packing concentrating more per-node conntrack churn
+than spreading, so the conjunction fails (H2); replication's rescue is clear on
+the error face but the trough-depth co-primary could not adjudicate it on this
+placement (H3); and the scorecard's availability layer is unreliable under churn
+(H5). The latency$\leftrightarrow$availability frontier is likewise
+degenerate on the availability face under pod-delete (H4) --- both reflecting
+that pod-delete produces no sustained availability outage to discriminate on. Placement moves the
+mechanism; at the pre-registered bar, it does not move the user-visible
+placement, availability, and dose-response outcomes the hypotheses predicted.
+
+The three contributions of \S\ref{sec:contributions} carry this answer within the
+boundary of Chapter~\ref{ch:threats}. The empirical finding --- a real,
+DNS-mediated, placement-dependent conntrack mechanism whose user-visible reach is
+bounded --- is a statement about a single-replica baseline on one small
+virtualized v1.28.6/ipvs cluster (\S\ref{sec:generalizes}), never ``spread is
+worse'' or a best strategy. ChaosProbe and the freeze-before-analysis campaign
+protocol are the portable parts: any cluster and workload can rerun this design,
+and every number traces to an archived, hash-stamped run
+(Appendix~\ref{app:provenance}).
+
+Reported as an in-development, iterative design study, this thesis also
+demonstrates the method correcting itself: a first design iteration's
+single-replica \texttt{pod-delete} could not move the availability axis, the
+limitation was diagnosed and the design modified to \texttt{node-drain}
+(\S\ref{sec:design-fix}), and the corrected design --- exploratory here, with a
+pre-registered confirmatory re-run left as future work --- recovers the
+latency$\leftrightarrow$availability trade-off the original could not express.
+Nothing from the first iteration is discarded; surfacing the construction limit
+and correcting it under the same pre-registered, provenance-gated discipline is
+the part of the methodology a thesis is meant to show.
+
+The methodological point is the one we would have the field retain. Chaos
+evaluation of placement needs \textbf{layered measurement, pre-registration, and
+provenance-gated replication, not a single score}: each fault class left
+its placement signal in a specific layer, a one-number instrument's availability
+component was unreliable or undefined exactly where it mattered, and freezing the
+hypotheses and effect-size bars before collection is what turned ``we observed
+placement effects'' into the more honest ``here is exactly which effects survive
+a strict bar, and which do not.''
+
+\section{Future work}\label{sec:future-work}
+
+\subsection*{Beyond the second workload}
+
+The single largest threat (\S\ref{sec:generalizes}) --- that all confirmatory
+results come from one workload --- has been \emph{partly addressed}: the two
+placement-bearing studies were replicated on DeathStarBench hotelReservation, a
+deep Consul/gRPC fan-out, and both arms corroborate online-boutique
+(\S\ref{sec:external-validity}) --- a null dose-response and a
+significant-but-margin-short replication rescue --- the strongest available
+evidence that the central finding is not an artifact of one topology. That
+replication is exploratory (a second workload, not a second cluster), so the
+highest-value next steps now lie elsewhere: replicating the family on
+\emph{different infrastructure} (a managed cluster, a different kube-proxy mode,
+non-virtualized nodes), extending to \emph{more} workloads and faults to map how
+far the mechanism-without-margin pattern holds, and the margin-construction fixes
+below that would let the depth and dose-response faces be tested on their merits.
+
+\subsection*{Decomposing and extending the mechanism}
+
+\begin{itemize}
+\item \textbf{Conntrack-drop apportionment.} The drop has both a kernel TCP
+  teardown component and the placement-dependent UDP/DNS pool the cache removes
+  (\S\ref{sec:h2-mechanism}); a steady-state, multi-iteration protocol-composition
+  probe would apportion the two, converting the study's most reproducible signal
+  from mechanism-consistent to causally decomposed.
+\item \textbf{A rescue-margin the depth face can express.} H3's trough-depth
+  co-primary could not adjudicate rescue because the registered absolute one-pod
+  margin coincided with the $r{=}1$ dynamic range on this placement; a margin
+  defined relative to the realized $r{=}1$ depth (or an integrated outage =
+  depth\,$\times$\,duration metric) would let a future pre-registration test the
+  depth face on its merits.
+\item \textbf{Denser dose levels and other faults.} Finer cross-node-fraction
+  steps around the detected (sub-SESOI) trend, and a fault that varies the
+  availability face while retaining a latency face, would let the frontier (H4)
+  realize the trade-off it is degenerate on here.
+\end{itemize}
+
+\subsection*{Environment and scope}
+
+Larger and bare-metal clusters, other CNIs and kube-proxy modes (iptables,
+nftables --- the de-scoped direction-transfer comparison), multi-replica
+workloads beyond the node-drain regime H3 reaches, production traffic, and
+integrating the cross-node fraction into a scheduler as a scoring plugin. The
+common thread is the method: each of these runs on the same layered,
+pre-registered, provenance-gated protocol this thesis contributes, and each
+would sharpen --- not merely extend --- the boundary of where placement matters.
+
+These external-validity steps cohere into a single \emph{generalization
+extension}: a pre-registered second-environment direction-transfer arm (which
+subsumes the de-scoped iptables/nftables comparison), a fresh confirmatory
+second-workload arm, and the conntrack-composition probe above. It bears stating
+plainly that such an extension would \emph{discharge} the standing threats by
+widening the tested set, not eliminate them --- even fully run, the study stays
+bounded by the environments and workloads it covers. Closing scope threats is a
+matter of disclosure and bounded extension, not a limitation-free end state.

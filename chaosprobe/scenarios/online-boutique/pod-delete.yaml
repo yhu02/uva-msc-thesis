@@ -1,0 +1,356 @@
+# Placement Experiment — Pod-delete on productcatalogservice
+# Used by all placement strategies (baseline, default, colocate, spread, adversarial, random, best-fit, dependency-aware).
+# The runner adds a unique suffix to metadata.name automatically.
+#
+# Usage (automated):
+#   chaosprobe run -n online-boutique
+#
+# Usage (manual):
+#   chaosprobe placement apply colocate -n online-boutique
+#   chaosprobe run scenarios/online-boutique/pod-delete.yaml -o colocate.json
+#   chaosprobe placement clear -n online-boutique
+#
+# Hypothesis: Microservice resilience under chaos varies with pod placement
+# strategy due to differences in resource contention on co-located nodes.
+# Measured via: pod recovery time, inter-service latency, Redis/disk I/O
+# throughput, node resource utilisation, and cascade propagation depth.
+#
+# Target: productcatalogservice — a central dependency for homepage, product
+# pages, recommendations, and search. Killing it causes visible degradation
+# across multiple frontend routes.
+#
+# Probes test collateral damage via frontend routes that depend on
+# productcatalogservice. Under colocate, pod-delete churn creates node-level
+# resource contention that degrades co-located services and slows recovery.
+#
+# Probe design rationale (7 probes for granular resilience scoring):
+#
+#   Continuous probes run every few seconds throughout chaos. A SINGLE failed
+#   check (after retries) marks the entire probe as "Failed". This makes the
+#   probe mode and retry/timeout settings critical for differentiation.
+#
+#   We use 4 sensitivity tiers so that different recovery speeds produce
+#   different scores:
+#
+#   Tier 1 — Strict (2 probes): 3s timeout, 1 retry ≈ 6s window.
+#     Expected to fail under pod-delete; confirm chaos has impact.
+#
+#   Tier 2 — Moderate-tight (2 probes): 3s timeout, 4 retries ≈ 15s window.
+#     Pass only when recovery is fast (<5s). Window of 15s spans ≥1
+#     chaos cycle (15s each), reliably catching a recovery window.
+#     Interval 5s gives 24 checks over 120s — sufficient sensitivity.
+#
+#   Tier 3 — Moderate-loose (2 probes): 5s timeout, 4 retries ≈ 25s window.
+#     Pass when recovery is moderate. Window spans ~1.7 chaos cycles;
+#     only fails if degradation persists across multiple kill cycles.
+#
+#   Tier 4 — Control (1 probe): healthz endpoint, 5s timeout, 3 retries.
+#     Detects node-level contention that affects even local endpoints.
+#
+#   With 7 HTTP probes + 5 Rust cmdProbes (12 total), resilience scores
+#   step in ~8% increments (100/12 ≈ 8.3%) for finer differentiation.
+#
+#   The Rust cmdProbes (check-redis, check-http-latency, check-dns-latency,
+#   check-tcp-connect, check-cart-flow) capture orthogonal signals that
+#   the httpProbes miss: Redis collateral damage, post-chaos HTTP latency
+#   thresholds, CoreDNS resolve time, TCP connect time, and a
+#   multi-route user journey. check-http-latency uses Edge mode
+#   (pre/post only) because Continuous mode with retry:0 inevitably
+#   fails during active pod-delete chaos, providing zero differentiation.
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: placement-pod-delete
+spec:
+  engineState: active
+  appinfo:
+    appns: online-boutique
+    applabel: app=productcatalogservice
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "120"
+            - name: CHAOS_INTERVAL
+              value: "15"
+            - name: FORCE
+              value: "true"
+            - name: PODS_AFFECTED_PERC
+              value: "100"
+        probe:
+          # ── Tier 1: Strict probes (3s timeout, 1 retry ≈ 6s) ──────
+          # Expected to fail under 100% pod-delete. Confirm chaos impact.
+
+          # Probe 1: Product page (strict) — directly depends on productcatalog.
+          - name: frontend-product-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          # Probe 2: Homepage (strict) — depends on productcatalog + recommendation + ad.
+          - name: frontend-homepage-strict
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 2s
+              retry: 1
+
+          # ── Tier 2: Moderate-tight probes (3s timeout, 4 retries ≈ 15s) ─
+          # Pass only when recovery is fast (<5s). This tier differentiates
+          # fast-recovering strategies (spread, dependency-aware) from slow ones.
+
+          # Probe 3: Homepage (moderate-tight)
+          # retry:4 gives a 15s evaluation window (3s × 5 attempts).
+          # With CHAOS_INTERVAL=15s and avg recovery ~5s, each 15s cycle
+          # has ~10s of uptime. A 15s window spans 1 full cycle, reliably
+          # catching a recovery window and eliminating timing races.
+          # Previous retry:3/interval:3s (40 checks, 12s window) produced
+          # cascade-dependent bimodality when recovery was slow.
+          - name: frontend-homepage-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          # Probe 4: Product page (moderate-tight) — same tier, different route.
+          # Same retry:4/interval:5s as homepage-moderate (see above).
+          - name: frontend-product-moderate
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/product/OLJCESPC7Z
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 4
+
+          # ── Tier 3: Moderate-loose probes (5s timeout, 3 retries ≈ 20s) ─
+          # Pass when recovery is moderate. Catches strategies with slow
+          # recovery (>5s) that might still pass tier 2.
+
+          # Probe 5: Cart page (moderate-loose) — hits cartservice + redis,
+          # NOT productcatalog. Fails under colocate/adversarial where
+          # node-level resource contention degrades unrelated routes.
+          - name: frontend-cart
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/cart
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          # Probe 6: Homepage (moderate-loose) — generous tolerance catches
+          # only the slowest recovery strategies.
+          - name: frontend-homepage-loose
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 6s
+              retry: 4
+
+          # ── Tier 4: Control probe ──────────────────────────────────
+          # The /_healthz endpoint is served locally by the frontend and
+          # does NOT call any backend service. Failure indicates severe
+          # node-level resource pressure (CPU/memory contention).
+
+          # Probe 7: Healthcheck (control) — pure infrastructure health.
+          - name: frontend-healthz
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.online-boutique.svc.cluster.local/_healthz
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 5s
+              interval: 4s
+              retry: 3
+
+          # ── Rust cmdProbe: Redis collateral-damage check ───────────
+          # Verifies Redis remains reachable during productcatalog chaos.
+          # Under colocate/adversarial, node-level contention from pod
+          # churn can degrade co-located services like redis-cart.
+          - name: check-redis
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-redis
+              comparator:
+                type: string
+                criteria: contains
+                value: "REDIS_OK"
+              source:
+                image: auto  # patched by ChaosProbe build
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            # The binary always exits 0 with a parseable comparator line
+            # (REDIS_OK / REDIS_FAIL) and is bounded to ~PROBE_TIMEOUT_MS
+            # (default 2s).  retry=0 keeps each tick bounded to probeTimeout
+            # so the post-chaos cmdProbe cancel cascade in litmus-go
+            # pkg/probe/probe.go cannot fire.
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 0
+
+          # ── Rust cmdProbe: HTTP latency (Continuous) ──────────────
+          # Threshold-aware GET on the frontend homepage. Fails when the
+          # response body returns OK status but the wall-clock latency
+          # exceeds PROBE_LATENCY_MS_MAX. Captures the latency-preservation
+          # component of resilience directly, rather than inferring it
+          # from probe verdicts.
+          #
+          # Mode rationale (Continuous with high retry budget):
+          # Edge mode was tried previously to avoid the all-fail outcome
+          # of Continuous + retry:0 (a single spike during 120s of chaos
+          # killed the probe).  But Edge collapses to one pre / one post
+          # sample per iteration, giving n=3 measurements per strategy —
+          # statistically underpowered (cannot detect a 2x latency change
+          # at p<0.05).
+          #
+          # The fix is to keep Continuous mode but raise retry to 6, with
+          # a long interval (12s) so the evaluation window is ~84s — long
+          # enough to span the entire chaos period plus recovery.  This
+          # gives a binary indicator with realistic tolerance: the probe
+          # only fails when latency stays high across the whole window,
+          # not on a transient spike.
+          - name: check-http-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-http-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "LATENCY_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 8s
+              interval: 12s
+              retry: 6
+
+          # ── Rust cmdProbe: DNS resolve latency (Continuous) ────────
+          # Times Kubernetes service-name resolution. CoreDNS sits on the
+          # control plane but is sensitive to node pressure when workers
+          # are starved (colocate/adversarial). Independent signal from
+          # the application-layer HTTP probes.
+          - name: check-dns-latency
+            type: cmdProbe
+            mode: Continuous
+            cmdProbe/inputs:
+              command: /probe/check-dns-latency
+              comparator:
+                type: string
+                criteria: contains
+                value: "DNS_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            # retry:2 gives 3 attempts (9s window) so a single transient
+            # DNS delay doesn't fail the entire probe. Previous retry:0
+            # was too sensitive — any momentary spike caused failure.
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 2
+
+          # ── Rust cmdProbe: TCP connect latency (Edge) ──────────────
+          # Pre/post sample of TCP three-way handshake time. Distinguishes
+          # connection-setup degradation (kube-proxy, conntrack saturation)
+          # from application-layer slowness.
+          - name: check-tcp-connect
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-tcp-connect
+              comparator:
+                type: string
+                criteria: contains
+                value: "TCP_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            runProperties:
+              probeTimeout: 3s
+              interval: 5s
+              retry: 0
+
+          # ── Rust cmdProbe: Cart-flow user journey (Edge) ───────────
+          # Multi-route walk: homepage → product → cart → healthz. Fails
+          # if any route returns non-200 or exceeds its budget. Catches
+          # cascade failures where one downstream is degraded but single-
+          # route probes still pass. Edge mode keeps the per-tick cost
+          # bounded (4 sequential GETs) — pre/post chaos sampling only.
+          - name: check-cart-flow
+            type: cmdProbe
+            mode: Edge
+            cmdProbe/inputs:
+              command: /probe/check-cart-flow
+              comparator:
+                type: string
+                criteria: contains
+                value: "FLOW_OK"
+              source:
+                image: auto
+                imagePullSecrets:
+                  - name: chaosprobe-registry
+            # 4 sequential GETs at PROBE_TIMEOUT_MS=2s each = ~8s worst
+            # case; 10s probeTimeout leaves slack for kubelet/exec overhead.
+            # retry:1 gives the EOT check a second attempt if it races
+            # against the final chaos interval's recovery.
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 1

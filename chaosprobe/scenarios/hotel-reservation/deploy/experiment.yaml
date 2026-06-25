@@ -1,0 +1,43 @@
+# Deployment health check for the hotel-reservation scenario: a gentle pod-delete
+# on the frontend with a continuous HTTP availability probe, mirroring
+# scenarios/online-boutique/deploy/experiment.yaml. The `appns` below is also what
+# `chaosprobe provision scenarios/hotel-reservation/deploy/` uses as the target
+# namespace for every manifest in this directory (config/loader.py:_detect_namespace).
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: hotel-reservation-deploy-check
+spec:
+  engineState: active
+  appinfo:
+    appns: hotel-reservation
+    applabel: app=frontend
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "30"
+            - name: CHAOS_INTERVAL
+              value: "10"
+            - name: FORCE
+              value: "false"
+            - name: PODS_AFFECTED_PERC
+              value: "50"
+        probe:
+          - name: frontend-availability
+            type: httpProbe
+            mode: Continuous
+            httpProbe/inputs:
+              url: http://frontend.hotel-reservation.svc.cluster.local:5000
+              method:
+                get:
+                  criteria: ==
+                  responseCode: "200"
+            runProperties:
+              probeTimeout: 10s
+              interval: 5s
+              retry: 3

@@ -1,0 +1,181 @@
+\chapter{Introduction}\label{ch:intro}
+
+\section{Problem}\label{sec:problem}
+
+The placement literature says \textbf{where pods land matters}: locality lowers
+inter-service latency (NetMARKS, TraDE), interference makes co-location risky
+(Bubble-Up, Quasar), and schedulers from Borg to Medea encode spread- and
+packing heuristics precisely because topology is assumed to drive performance
+and availability. Chaos-engineering practice, meanwhile, evaluates resilience
+by injecting faults and \textbf{collapsing the outcome into an aggregate score}
+--- a single number per experiment (cf.\ the CSUR multi-vocal review: outcomes
+are defined solely against steady-state user-visible indicators).
+
+These two bodies of practice have not been connected: nobody has measured \emph{at
+which layer} a placement effect appears under a given fault class, whether it
+reaches the user-visible outcome, and whether an aggregate score can see it at
+all. If placement moves a kernel-level mechanism but not the user-visible
+outcome, a single score is the wrong instrument, and placement advice derived
+from it is unreliable.
+
+Consider the concrete decision this thesis instruments. An operator runs a
+ten-service microservice storefront on a small Kubernetes cluster and must
+choose how to place it: pack the services onto few nodes, or spread them across
+many. The packing intuition comes from the network-aware scheduling literature
+--- co-located services keep their calls node-local, and schedulers built on
+that observation report response-time reductions of up to 37\,\%
+\citep{wojciechowski2021netmarks}. The spreading intuition comes from the
+availability literature --- services in distinct failure domains survive the
+loss of any one of them \citep{garefalakis2018medea} --- and from the
+interference literature, which warns that co-location invites resource
+contention \citep{mars2011bubbleup,delimitrou2014quasar}.
+
+What does today's tooling tell this operator? The Kubernetes scheduler scores
+nodes on resource fit, not fault isolation --- a design inherited from Borg
+\citep{verma2015borg,burns2016borg} --- so the default placement answers a
+different question than the operator's. Chaos-engineering tools answer the
+resilience question directly, but with one number: inject a fault, probe the
+steady state, emit a score. Whether that score can actually \emph{discriminate}
+between placements --- whether its between-condition signal exceeds its
+run-to-run noise --- is, to our knowledge, unexamined; this thesis audits a
+layered scorecard's reliability for exactly that task and finds the availability
+layer insufficient in the regime studied (H5, \S\ref{sec:h5}).
+
+\section{Research question}\label{sec:rq}
+
+\begin{quote}
+\textbf{Under which chaos fault classes does pod placement measurably affect
+mechanism-level behaviour and user-visible outcomes in a Kubernetes
+microservice application, and when do aggregate resilience scores obscure
+those effects?}
+\end{quote}
+
+This is framed as a \textbf{fault-class-by-measurement-layer} study, not a
+placement ranking and not a refutation of the placement literature. A placement
+effect can appear at (a) the resilience-score layer, (b) a kernel/network
+mechanism layer, and/or (c) the user-visible layer, and these layers need not
+agree --- so the contribution is establishing \emph{at which layer} an effect
+appears under a given fault class, and whether it reaches the user. To answer it
+without the freedom to choose tests after seeing the data, the study is
+\textbf{pre-registered}: the hypotheses, the smallest effect sizes of interest,
+the per-cell sample sizes, and the analysis code were frozen
+before any confirmatory data was collected (\S\ref{sec:campaign}).
+
+The question is decomposed into a pre-registered confirmatory family plus a
+descriptive deliverable, each a falsifiable target:
+
+\begin{itemize}
+\item \textbf{Does placement dose the mechanism's latency face?} Whether the
+  east-west tail rises monotonically in the cross-node fraction (H1,
+  \S\ref{sec:h1}).
+\item \textbf{Is the conntrack mechanism placement-dependent, and does a DNS
+  intervention explain it?} (H2, \S\ref{sec:h2}.)
+\item \textbf{Does replication rescue availability under node failure, and only
+  when replicas are spread?} (H3, \S\ref{sec:h3}.)
+\item \textbf{Does a layered scorecard measure resilience more reliably than a
+  single aggregate score?} (H5, \S\ref{sec:h5}.)
+\item Descriptively, \textbf{what latency$\leftrightarrow$availability trade-off
+  does the placement frontier reveal?} (H4, \S\ref{sec:h4}.)
+\end{itemize}
+
+The reliability question (H5) is logically prior: if a single score could rank
+placements reliably, the layered measurement design would be a refinement.
+Because its availability layer cannot in this regime, the layered design is what
+produces the findings at all.
+
+The study at a glance: placement is manipulated through two orthogonal knobs ---
+the cross-node dependency-edge fraction $f$ (packing to spreading) and the
+replication degree $r$ (packed vs anti-affine) --- plus two interventional arms
+(a NodeLocal DNSCache toggle, executed, and the kube-proxy mode, de-scoped to
+ipvs and not run), realized by
+deployment-level mutation on the Online Boutique benchmark (ten polyglot gRPC
+microservices plus Redis) on a pinned cluster of eight 2-vCPU/4-GiB workers
+(Kubernetes v1.28.6, kube-proxy in ipvs mode). The evidence is three
+pre-registered campaigns --- C1 (eight complete-block \texttt{pod-delete} dose
+sessions), C2 (24 \texttt{node-drain} sessions), C3 (14 \texttt{pod-delete}
+cache-off/on sessions). Every quoted number traces to an archived run
+(Appendix~\ref{app:provenance}), and the single-replica baseline --- which makes
+\texttt{pod-delete} a pure churn fault --- is carried explicitly through every
+claim (Chapter~\ref{ch:threats}).
+
+\textbf{This thesis is reported as an in-development, iterative design study.} A
+first design iteration surfaced a construction limitation on the availability
+axis: at a single replica, \texttt{pod-delete} produces a total but
+placement-independent outage, so the availability tests (H3, H4, and H5's
+availability sub-score) cannot move regardless of placement. The design was
+\textbf{modified in response to this limitation} --- the availability axis was
+recomputed under \texttt{node-drain}, whose blast radius is placement-dependent
+--- and the corrected design resolves it (\S\ref{sec:design-fix}); a
+pre-registered confirmatory re-run is left as future work. \emph{Nothing from the original
+iteration is removed}: its valid findings (the latency dose-response and the
+conntrack mechanism) are reported in full, and the construction-limited
+availability results are reported together with their limitation. This
+iterate-and-disclose trajectory is itself part of the methodological
+contribution.
+
+\section{Contributions}\label{sec:contributions}
+
+The thesis makes three contributions, in priority order:
+
+\begin{enumerate}
+\item \textbf{A pre-registered, provenance-gated measurement methodology
+  (ChaosProbe).} A placement-aware chaos-evaluation framework --- a placement
+  solver driving the two knobs, a LitmusChaos experiment runner, cross-layer
+  probers (Prometheus mechanism metrics, route latency with a
+  dependent-vs-control confound split, EndpointSlice availability snapshots),
+  Locust load, and a Neo4j dependency graph from which the cross-node fraction
+  is computed --- run under a frozen pre-registration, a \texttt{doctor
+  --strict} provenance gate, and freeze-before-analysis, and able to
+  \emph{surface and correct its own construction limitations}
+  (\S\ref{sec:design-fix}). The method and its discipline are reusable on any
+  cluster/workload and stand independent of the empirical outcome.
+
+\item \textbf{A positively-established, precisely-bounded mechanism.} Placement
+  reproducibly moves a UDP-conntrack reconvergence signature --- individually
+  significant in every campaign --- and a NodeLocal DNSCache intervention
+  removes it. Under strict, Holm-corrected testing, however, this mechanism does
+  \emph{not} translate into the user-visible placement, availability, and
+  dose-response advantages the hypotheses predicted (no confirmatory hypothesis
+  is supported at its registered bar, \S\ref{sec:family-holm}). Bounding exactly
+  how far a real mechanism reaches --- and converting ``we observed effects''
+  into ``here is what survives a strict bar'' --- is the empirical contribution.
+
+\item \textbf{A reproducible campaign protocol with archived artifacts.}
+  Independent single-commit sessions as the unit of analysis, each gated by
+  \texttt{doctor --strict}, with every campaign's raw data frozen before its
+  analysis was written and every quoted number traceable to an archived run
+  (Appendix~\ref{app:provenance}).
+\end{enumerate}
+
+\textbf{What the candidate did versus what the tooling did.} \emph{Authored for
+this thesis}: the placement solver and the two-knob design; the three-layer
+measurement design with its dependent-vs-control route confound check; the
+cross-node-fraction metric and the EndpointSlice trough measurement; the layered
+scorecard; the pre-registration, the \texttt{doctor --strict} provenance gate,
+the discard-not-patch rule, and the freeze-before-analysis protocol; the
+churn-vs-node-failure fault-class framing; and every committed analysis script
+(the per-hypothesis drivers, the family Holm correction, figure generation).
+\emph{Integrated off-the-shelf}: LitmusChaos (fault execution),
+Prometheus/Locust (collection and load), Neo4j (graph storage), and the Online
+Boutique application. The science --- what to vary, what to measure, what to
+believe --- is the candidate's; the third-party components execute it.
+
+\section{Thesis outline}\label{sec:outline}
+
+Chapter~\ref{ch:related} positions the thesis against four bodies of literature
+--- resilience profiling, production resilience testing, scheduler/placement
+research, and measurement methodology --- and locates it at their empty
+intersection. Chapter~\ref{ch:chaosprobe} describes ChaosProbe and its
+provenance-capture design. Chapter~\ref{ch:methodology} defines the three-layer
+measurement design, the two fault classes, the pre-registered campaign protocol,
+the statistical methods, and the pinned cluster environment.
+Chapter~\ref{ch:results} reports H1--H5 bar-first with the family Holm capstone
+and per-claim provenance, an exploratory second-workload external-validity
+replication (\S\ref{sec:external-validity}), and a design-corrected re-analysis
+that addresses the availability-axis tests' construction limits
+(\S\ref{sec:design-fix}). Chapter~\ref{ch:discussion}
+interprets the results as a real-but-bounded mechanism and derives the
+operator-facing implications. Chapter~\ref{ch:threats} states the threats to
+validity and the boundary of every claim. Chapter~\ref{ch:conclusion} concludes
+and lays out future work. Appendix~\ref{app:provenance} contains the
+archived-run provenance tables.

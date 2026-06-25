@@ -1,0 +1,462 @@
+"""Tests for the `recommend` command (statistics-driven placement recommender)."""
+
+import json
+
+from click.testing import CliRunner
+
+from chaosprobe.commands.recommend_cmd import (
+    _find_comparison,
+    _fmt,
+    _recommend,
+    _samples_by_strategy,
+    recommend,
+)
+
+
+def _summary(strategies):
+    """Build a summary.json-shaped dict from {name: [iteration-dict, ...]}."""
+    return {"strategies": {name: {"iterations": iters} for name, iters in strategies.items()}}
+
+
+def _resilience(scores):
+    return [{"resilienceScore": s} for s in scores]
+
+
+def _recovery(values):
+    return [{"metrics": {"recovery": {"summary": {"meanRecovery_ms": v}}}} for v in values]
+
+
+def _multi_fault_summary(faults):
+    """Build a multi-fault summary from {label: {strat: [iteration-dict, ...]}}.
+
+    Populates both the per-fault ``faults`` view (bare strategy keys) and the
+    flat ``strategies`` view (``{label}__{strat}`` keys), matching what
+    ``chaosprobe run`` writes for a multi-fault matrix.
+    """
+    faults_view = {}
+    flat = {}
+    for label, strategies in faults.items():
+        faults_view[label] = {
+            "strategies": {name: {"iterations": iters} for name, iters in strategies.items()}
+        }
+        for name, iters in strategies.items():
+            flat[f"{label}__{name}"] = {"iterations": iters}
+    return {"faults": faults_view, "strategies": flat, "faultExperiments": list(faults)}
+
+
+# ---------------------------------------------------------------------------
+# _samples_by_strategy
+# ---------------------------------------------------------------------------
+
+
+class TestSamplesByStrategy:
+    def test_extracts_resilience_samples(self):
+        raw = _summary({"spread": _resilience([90, 92]), "colocate": _resilience([50])})
+        out = _samples_by_strategy(raw, "resilience")
+        assert out == {"spread": [90.0, 92.0], "colocate": [50.0]}
+
+    def test_extracts_recovery_via_nested_path(self):
+        raw = _summary({"fast": _recovery([1000, 1100])})
+        assert _samples_by_strategy(raw, "recovery") == {"fast": [1000.0, 1100.0]}
+
+    def test_skips_strategies_without_samples(self):
+        raw = _summary(
+            {
+                "good": _resilience([80]),
+                "empty": [],  # no iterations
+                "missing": [{"somethingElse": 1}],  # no resilienceScore
+            }
+        )
+        assert _samples_by_strategy(raw, "resilience") == {"good": [80.0]}
+
+    def test_skips_non_dict_strategy_and_iteration(self):
+        raw = {
+            "strategies": {
+                "bad": "not-a-dict",
+                "ok": {"iterations": ["not-a-dict", {"resilienceScore": 70}]},
+            }
+        }
+        assert _samples_by_strategy(raw, "resilience") == {"ok": [70.0]}
+
+    def test_skips_non_numeric_and_broken_path(self):
+        raw = {
+            "strategies": {
+                "s": {
+                    "iterations": [
+                        {"resilienceScore": "abc"},  # not floatable
+                        {"resilienceScore": 88},
+                    ]
+                },
+                # nested path walks into a non-dict -> _resolve_path returns None
+                "r": {"iterations": [{"metrics": "not-a-dict"}]},
+            }
+        }
+        assert _samples_by_strategy(raw, "resilience") == {"s": [88.0]}
+        assert _samples_by_strategy(raw, "recovery") == {}
+
+
+# ---------------------------------------------------------------------------
+# _find_comparison
+# ---------------------------------------------------------------------------
+
+
+class TestFindComparison:
+    def test_finds_pair_either_order(self):
+        pw = [{"a": "x", "b": "y", "p_raw": 0.1}]
+        assert _find_comparison(pw, "y", "x")["p_raw"] == 0.1
+
+    def test_returns_none_when_absent(self):
+        assert _find_comparison([{"a": "x", "b": "y"}], "x", "z") is None
+
+
+# ---------------------------------------------------------------------------
+# _recommend
+# ---------------------------------------------------------------------------
+
+
+class TestRecommend:
+    def test_clear_winner_is_significant(self):
+        samples = {
+            "spread": [95, 96, 97, 95, 96, 97],
+            "colocate": [40, 41, 42, 40, 41, 42],
+        }
+        result = _recommend(samples, higher_is_better=True, alpha=0.05)
+        assert result["recommended"] == "spread"
+        assert result["status"] == "significant"
+        assert result["decisiveComparison"]["significant"] is True
+        assert result["decisiveComparison"]["a"] == "spread"
+        assert result["decisiveComparison"]["b"] == "colocate"
+        # leader is first in the ranking and carries a CI
+        assert result["ranking"][0]["name"] == "spread"
+        assert result["ranking"][0]["ciLow"] is not None
+
+    def test_overlapping_means_is_tentative(self):
+        samples = {"spread": [80, 81, 82], "colocate": [79, 80, 81]}
+        result = _recommend(samples, higher_is_better=True, alpha=0.05)
+        assert result["recommended"] == "spread"  # higher mean
+        assert result["status"] == "tentative"
+        assert result["decisiveComparison"]["significant"] is False
+        assert "chaosprobe power" in result["rationale"]
+
+    def test_recovery_lower_is_better(self):
+        samples = {
+            "fast": [1000, 1050, 1010, 1020, 1030, 1040],
+            "slow": [3000, 3050, 3010, 3020, 3030, 3040],
+        }
+        result = _recommend(samples, higher_is_better=False, alpha=0.05)
+        assert result["recommended"] == "fast"
+        assert result["status"] == "significant"
+
+    def test_single_strategy(self):
+        result = _recommend({"only": [70, 80]}, higher_is_better=True, alpha=0.05)
+        assert result["recommended"] == "only"
+        assert result["status"] == "single-strategy"
+        assert result["decisiveComparison"] is None
+
+    def test_no_data(self):
+        result = _recommend({}, higher_is_better=True, alpha=0.05)
+        assert result["recommended"] is None
+        assert result["status"] == "no-data"
+        assert result["ranking"] == []
+
+    def test_exact_tie_breaks_on_name(self):
+        samples = {"bbb": [80, 81, 82], "aaa": [80, 81, 82]}
+        result = _recommend(samples, higher_is_better=True, alpha=0.05)
+        # equal means -> alphabetical tiebreak -> "aaa" leads
+        assert result["recommended"] == "aaa"
+        assert result["status"] == "tentative"
+
+
+# ---------------------------------------------------------------------------
+# _fmt
+# ---------------------------------------------------------------------------
+
+
+class TestFmt:
+    def test_formats_number(self):
+        assert _fmt(3.14159) == "3.14"
+
+    def test_none_becomes_dash(self):
+        assert _fmt(None) == "—"
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+class TestRecommendCli:
+    def _write(self, tmp_path, strategies):
+        path = tmp_path / "summary.json"
+        path.write_text(json.dumps(_summary(strategies)))
+        return str(path)
+
+    def test_human_output_names_recommendation(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"spread": _resilience([95, 96, 97]), "colocate": _resilience([40, 41, 42])},
+        )
+        result = CliRunner().invoke(recommend, ["-s", path])
+        assert result.exit_code == 0
+        assert "Recommended: spread" in result.output
+
+    def test_json_output_has_documented_keys(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"spread": _resilience([95, 96, 97]), "colocate": _resilience([40, 41, 42])},
+        )
+        result = CliRunner().invoke(recommend, ["-s", path, "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        for key in (
+            "recommended",
+            "metric",
+            "status",
+            "ranking",
+            "decisiveComparison",
+            "rationale",
+        ):
+            assert key in payload
+        assert payload["metric"] == "resilienceScore"
+        assert payload["source"] == path
+
+    def test_recovery_metric_and_alpha_honored(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"fast": _recovery([1000, 1010, 1020]), "slow": _recovery([3000, 3010, 3020])},
+        )
+        result = CliRunner().invoke(
+            recommend, ["-s", path, "--metric", "recovery", "--alpha", "0.01", "--json"]
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["metric"] == "meanRecovery_ms"
+        assert payload["recommended"] == "fast"
+
+    def test_no_data_human_output(self, tmp_path):
+        path = self._write(tmp_path, {"x": [{"nope": 1}]})
+        result = CliRunner().invoke(recommend, ["-s", path])
+        assert result.exit_code == 0
+        assert "No placement strategy has data" in result.output
+
+    def test_excludes_baseline_control_by_default(self, tmp_path):
+        # baseline (no-real-chaos control) has the top score but must not be
+        # recommended as a placement; the real leader 'spread' wins instead.
+        path = self._write(
+            tmp_path,
+            {
+                "baseline": _resilience([97, 98, 99]),
+                "spread": _resilience([80, 81, 82]),
+                "colocate": _resilience([40, 41, 42]),
+            },
+        )
+        result = CliRunner().invoke(recommend, ["-s", path])
+        assert result.exit_code == 0
+        assert "Recommended: spread" in result.output
+        assert "excluded control strategy: baseline" in result.output
+        # 'baseline' appears only in the exclusion note, never as a ranking row.
+        assert result.output.count("baseline") == 1
+
+    def test_include_control_flag_includes_baseline(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"baseline": _resilience([97, 98, 99]), "spread": _resilience([80, 81, 82])},
+        )
+        result = CliRunner().invoke(recommend, ["-s", path, "--include-control"])
+        assert result.exit_code == 0
+        assert "Recommended: baseline" in result.output
+        assert "excluded control" not in result.output
+
+    def test_json_excluded_controls_field(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"baseline": _resilience([97, 98, 99]), "spread": _resilience([80, 81, 82])},
+        )
+        default = json.loads(CliRunner().invoke(recommend, ["-s", path, "--json"]).output)
+        assert default["excludedControls"] == ["baseline"]
+        assert default["recommended"] == "spread"
+        included = json.loads(
+            CliRunner().invoke(recommend, ["-s", path, "--json", "--include-control"]).output
+        )
+        assert included["excludedControls"] == []
+        assert included["recommended"] == "baseline"
+
+    def test_missing_summary_file_errors(self):
+        result = CliRunner().invoke(recommend, ["-s", "/nonexistent/summary.json"])
+        assert result.exit_code != 0
+
+
+class TestRecommendMultiFault:
+    def _write(self, tmp_path, faults):
+        path = tmp_path / "summary.json"
+        path.write_text(json.dumps(_multi_fault_summary(faults)))
+        return str(path)
+
+    def test_per_fault_rankings_are_independent(self, tmp_path):
+        # colocate wins under fault A, spread under fault B — pooling them into
+        # one ranking (the bug) could not produce both per-fault verdicts.
+        path = self._write(
+            tmp_path,
+            {
+                "pod-delete": {
+                    "colocate": _resilience([95, 96, 97]),
+                    "spread": _resilience([50, 51, 52]),
+                },
+                "cpu-hog": {
+                    "colocate": _resilience([40, 41, 42]),
+                    "spread": _resilience([88, 89, 90]),
+                },
+            },
+        )
+        payload = json.loads(CliRunner().invoke(recommend, ["-s", path, "--json"]).output)
+        assert set(payload["byFault"]) == {"pod-delete", "cpu-hog"}
+        assert payload["byFault"]["pod-delete"]["recommended"] == "colocate"
+        assert payload["byFault"]["cpu-hog"]["recommended"] == "spread"
+        assert "recommended" not in payload  # nested under byFault, not top-level
+
+    def test_baseline_excluded_per_fault(self, tmp_path):
+        # baseline has the top score in both faults but must be excluded from
+        # each fault's ranking, leaving the real leader to win.
+        path = self._write(
+            tmp_path,
+            {
+                "pod-delete": {
+                    "baseline": _resilience([99, 99, 99]),
+                    "spread": _resilience([80, 81, 82]),
+                    "colocate": _resilience([40, 41, 42]),
+                },
+                "cpu-hog": {
+                    "baseline": _resilience([99, 99, 99]),
+                    "spread": _resilience([40, 41, 42]),
+                    "colocate": _resilience([80, 81, 82]),
+                },
+            },
+        )
+        payload = json.loads(CliRunner().invoke(recommend, ["-s", path, "--json"]).output)
+        for label in ("pod-delete", "cpu-hog"):
+            assert payload["byFault"][label]["excludedControls"] == ["baseline"]
+            assert payload["byFault"][label]["recommended"] != "baseline"
+        assert payload["byFault"]["pod-delete"]["recommended"] == "spread"
+        assert payload["byFault"]["cpu-hog"]["recommended"] == "colocate"
+
+    def test_include_control_keeps_baseline_per_fault(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {
+                "pod-delete": {
+                    "baseline": _resilience([99, 99, 99]),
+                    "spread": _resilience([80, 81, 82]),
+                },
+                "cpu-hog": {
+                    "baseline": _resilience([99, 99, 99]),
+                    "spread": _resilience([80, 81, 82]),
+                },
+            },
+        )
+        payload = json.loads(
+            CliRunner().invoke(recommend, ["-s", path, "--json", "--include-control"]).output
+        )
+        for label in ("pod-delete", "cpu-hog"):
+            assert payload["byFault"][label]["excludedControls"] == []
+            assert payload["byFault"][label]["recommended"] == "baseline"
+
+    def test_human_output_has_per_fault_sections(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {
+                "pod-delete": {
+                    "colocate": _resilience([95, 96, 97]),
+                    "spread": _resilience([50, 51, 52]),
+                },
+                "cpu-hog": {
+                    "colocate": _resilience([40, 41, 42]),
+                    "spread": _resilience([88, 89, 90]),
+                },
+            },
+        )
+        result = CliRunner().invoke(recommend, ["-s", path])
+        assert result.exit_code == 0
+        assert "Fault: pod-delete" in result.output
+        assert "Fault: cpu-hog" in result.output
+        assert "Recommended: colocate" in result.output
+        assert "Recommended: spread" in result.output
+
+    def test_recovery_metric_per_fault(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {
+                "pod-delete": {
+                    "fast": _recovery([1000, 1010, 1020]),
+                    "slow": _recovery([3000, 3010, 3020]),
+                },
+                "cpu-hog": {
+                    "fast": _recovery([1500, 1510, 1520]),
+                    "slow": _recovery([4000, 4010, 4020]),
+                },
+            },
+        )
+        payload = json.loads(
+            CliRunner().invoke(recommend, ["-s", path, "--metric", "recovery", "--json"]).output
+        )
+        assert payload["byFault"]["pod-delete"]["recommended"] == "fast"
+        assert payload["byFault"]["pod-delete"]["metric"] == "meanRecovery_ms"
+
+    def test_fault_without_samples_reports_no_data(self, tmp_path):
+        # One fault has data, the other none → the empty fault is shown with
+        # no-data status rather than omitted.
+        path = self._write(
+            tmp_path,
+            {
+                "pod-delete": {
+                    "spread": _resilience([80, 81, 82]),
+                    "colocate": _resilience([40, 41, 42]),
+                },
+                "cpu-hog": {"spread": [{"nope": 1}]},
+            },
+        )
+        payload = json.loads(CliRunner().invoke(recommend, ["-s", path, "--json"]).output)
+        assert payload["byFault"]["pod-delete"]["recommended"] == "spread"
+        assert payload["byFault"]["cpu-hog"]["status"] == "no-data"
+        assert payload["byFault"]["cpu-hog"]["recommended"] is None
+
+    def test_single_fault_summary_uses_flat_output(self, tmp_path):
+        # A summary with exactly one fault keeps the flat (non-byFault) shape
+        # and excludes the baseline control correctly.
+        summary = {
+            "faults": {
+                "pod-delete": {
+                    "strategies": {
+                        "baseline": {"iterations": _resilience([99, 99, 99])},
+                        "spread": {"iterations": _resilience([80, 81, 82])},
+                    }
+                }
+            },
+            "strategies": {
+                "baseline": {"iterations": _resilience([99, 99, 99])},
+                "spread": {"iterations": _resilience([80, 81, 82])},
+            },
+            "faultExperiments": ["pod-delete"],
+        }
+        path = tmp_path / "summary.json"
+        path.write_text(json.dumps(summary))
+        payload = json.loads(CliRunner().invoke(recommend, ["-s", str(path), "--json"]).output)
+        assert "byFault" not in payload
+        assert payload["recommended"] == "spread"
+        assert payload["excludedControls"] == ["baseline"]
+
+    def test_legacy_summary_without_faults_key_unchanged(self, tmp_path):
+        # Legacy summary (no `faults` key at all) → flat behavior, unchanged.
+        path = tmp_path / "summary.json"
+        path.write_text(
+            json.dumps(
+                _summary(
+                    {
+                        "spread": _resilience([95, 96, 97]),
+                        "colocate": _resilience([40, 41, 42]),
+                    }
+                )
+            )
+        )
+        payload = json.loads(CliRunner().invoke(recommend, ["-s", str(path), "--json"]).output)
+        assert "byFault" not in payload
+        assert payload["recommended"] == "spread"

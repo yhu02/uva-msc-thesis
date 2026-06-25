@@ -1,0 +1,136 @@
+\chapter{Discussion}\label{ch:discussion}
+
+\section{A real mechanism, bounded in reach}\label{sec:decoupling}
+
+The single thread that runs through all three campaigns is the
+\emph{mechanism}: placement reproducibly moves a UDP-conntrack reconvergence
+signature, and that effect is individually significant every time it is
+measured --- it is placement-dependent under churn (H2), it interacts with
+replication under node-drain (H3), and its scorecard sub-score is the one
+layer with near-perfect test-retest reliability (H5, ICC 0.994). What does
+\emph{not} hold, under pre-registered and Holm-corrected testing, is that this
+mechanism translates into the user-visible placement, availability, and
+dose-response advantages the hypotheses predicted: no confirmatory hypothesis
+clears its registered bar (\S\ref{sec:family-holm}). The contribution is
+therefore a real mechanism whose reach is rigorously bounded, not a placement
+prescription.
+
+Once \texttt{pod-delete} at $r{=}1$ is understood as a \emph{churn} fault, the
+bound is the expected shape rather than a surprise. The injected event is the
+disappearance and recreation of a service's only replica; during the kill
+window the service is simply gone, and every dependent request fails
+identically whether the surrounding services are packed on one node or spread
+across many, because the user-visible outcome is governed by availability
+dynamics --- the deletion-to-ready cycle of the single replica --- not by the
+topology around it. What placement \emph{does} govern is how much networking
+state the churn invalidates, which is exactly where H2's effect lives: at the
+kernel/network layer, not the user layer. The dose-response (H1) is the same
+story quantitatively --- a monotone, Holm-significant trend in the east-west
+tail that is nonetheless only $+13.35\,\%$ across the full cross-node range,
+below the $15\,\%$ SESOI: detectable, but too small to be the actionable
+placement lever the hypothesis sought.
+
+The bound is regime-specific in a diagnosable way, and the failure modes of a
+single aggregate score compound rather than cancel. Under churn the score is
+\textbf{noisy} --- the availability layer it leans on has little reproducible
+between-condition signal, which is exactly why the scorecard's availability
+sub-score is unreliable (H5, ICC 0.180 vs the mechanism layer's 0.994). Under
+node-drain it is \textbf{absent} --- the drain takes down the infrastructure the
+Litmus probes depend on, every probe returns \texttt{Unknown}, and the score is
+undefined just when the availability outcome is most dramatic, which is why H3
+measures availability from EndpointSlice troughs instead. A single-number
+instrument would need to be reliable in none of these ways; the layered
+scorecard's value (H5) is precisely that it separates the layer that
+\emph{does} carry reproducible signal (mechanism) from the one that does not
+(availability) rather than averaging them into one unreliable number.
+
+Even H3's one clearly-directional result --- anti-affine replication fully
+rescuing the user-route error rate under node-drain ($0.632 \rightarrow 0.0$)
+--- does not lift the hypothesis over its registered bar, because the
+co-primary trough-depth criterion could not adjudicate rescue on this placement
+(the $r{=}1$ depth coincides with the one-pod margin by construction). That is a
+measurement-design limit surfaced honestly, not evidence against rescue; it is
+recorded as a lesson for a future pre-registration rather than retuned after the
+fact. The consistent picture across H1--H5 is the same: where the mechanism is
+measured directly it is real and reproducible; where the hypotheses asked
+whether it reaches a user-visible, practically-significant outcome, the
+pre-registered answer is no.
+
+\section{The conntrack mechanism: attribution with protocol scoping}\label{sec:h2-mechanism}
+
+The conntrack-drop signature maps onto the reconvergence window the Kubernetes
+network-programming SLO defines, but the attribution must be protocol-scoped.
+Upstream maintainers document kube-proxy's \emph{active} conntrack flush on
+endpoint churn as \textbf{UDP-only} (kubernetes/kubernetes \#48370, \#108523,
+\#126130; TCP entries are deliberately never actively flushed --- \#100698,
+\#104098). The application's east-west traffic is gRPC/\textbf{TCP}, so two paths
+plausibly contribute to the observed drop: kernel-side teardown of TCP flows
+traversing the killed pod (connection close transitions entries into
+short-timeout conntrack states --- \texttt{close} 10\,s, \texttt{close\_wait}
+60\,s, \texttt{fin\_wait}/\texttt{time\_wait} 120\,s, versus five days for
+\texttt{ESTABLISHED} --- so FIN/RST teardown expires entries within $\le 120$\,s of
+the kill, with no kube-proxy involvement), and the UDP/DNS pool that
+kube-proxy's documented cleanup acts on, which churns as connection turnover
+drives DNS re-resolution.
+
+The DNS intervention (H2 arm b) settles which component placement controls.
+Enabling the NodeLocal DNSCache shrinks the during-churn drop by a 78\,\% median
+under the spread placement and \emph{also} collapses it to $\approx 0$ under the
+packed placement. The registered secondary predicted that the packed arm, which
+has no cross-node edges, would show no such cache effect if the drop were
+specifically cross-node DNS; that prediction fails (packed's effect is large),
+which pins the drop on the \emph{general} UDP/DNS pool rather than cross-node
+resolution and removes the drop under \emph{both} placements. The drop is
+therefore dominated by the DNS/UDP pool, exactly the traffic class the documented
+UDP-only cleanup targets.
+This also explains the \emph{reversed} placement direction (H2 arm a): the
+registered prediction was that spreading dependencies across nodes would drive
+more cross-node DNS churn and thus a larger drop, but the data shows the
+opposite --- packed exceeds spread in all 7 cache-off pairs. Co-locating a
+service's replicas on a single node \emph{concentrates} the per-node conntrack
+churn when \texttt{pod-delete} hits that node, so the per-node drop the metric
+measures is larger under packing than under a placement that distributes the
+same churn across nodes. Placement does matter for the conntrack drop,
+significantly; the sign is simply the opposite of the hypothesis, and the
+DNS-cache result identifies the mechanism behind it.
+
+What this does \textbf{not} establish is a full apportionment of the drop
+between TCP teardown and UDP cleanup from a single signature; that would need a
+steady-state, multi-iteration protocol-composition probe (\S\ref{sec:future-work}).
+The defensible attribution is: the signature is real, reproducible, and
+placement-dependent; the UDP/DNS pool is the component whose size placement
+controls and whose removal (the DNS cache) removes the drop; and conntrack
+behaviour is pinned to the measured environment, since it changed materially
+across Kubernetes v1.31--v1.32 (\S\ref{sec:environment}).
+
+\section{Practical implications}\label{sec:implications}
+
+\begin{itemize}
+\item \textbf{Do not trust a single aggregate score to rank placements.} Its
+  availability layer is unreliable under churn (H5: ICC 0.180) and undefined
+  under node-drain, and a naive single-aggregate baseline is barely reliable at
+  all (ICC 0.066). Audit a resilience score's reliability before using it to
+  choose anything.
+\item \textbf{Measure the layer your fault class perturbs.} Churn shows up in
+  conntrack reconvergence; node failure in EndpointSlice availability troughs. A
+  single user-layer or score-layer probe misses the signal that the layered
+  scorecard's mechanism sub-score captures reliably.
+\item \textbf{Placement advice is fault-class advice.} The mechanism is real but
+  its user-visible reach is bounded and regime-specific; ``spread for
+  resilience'' is meaningful only with the fault class and replication regime
+  attached, and even its sign can invert (the conntrack drop is larger, not
+  smaller, under packing here).
+\item \textbf{The DNS-cache intervention is the actionable lever.} It removes the
+  during-churn conntrack drop under both placements --- a concrete mitigation
+  the experiments confirmed, independent of placement.
+\end{itemize}
+
+Each implication inherits its result's scope (\S\ref{sec:generalizes}). The
+deepest one is methodological: the value of pre-registering the hypotheses,
+fixing the SESOIs against a measured noise floor, and Holm-correcting the family
+is that it converts ``we observed placement effects'' into the more useful and
+more honest ``here is exactly which effects survive a strict bar, and which do
+not.'' What is portable is the \emph{method}: manipulate placement, measure at
+the layer the fault class perturbs, control the user layer with
+dependent-vs-control routes, gate every number on provenance, and audit the
+resilience score's reliability before trusting it to rank anything.
