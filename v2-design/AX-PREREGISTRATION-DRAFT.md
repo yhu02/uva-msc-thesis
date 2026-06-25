@@ -1,14 +1,23 @@
-# ChaosProbe — Availability-Axis confirmatory study — pre-registration (**DRAFT, NOT FROZEN**)
+# ChaosProbe — Availability-Axis confirmatory study — pre-registration (**DRAFT — calibration complete, freeze pending**)
 
-> **Status: DRAFT — not yet binding.** This document specifies a *new,
-> separate* confirmatory study whose purpose is to make the availability-axis
-> findings — established only *exploratorily* in the thesis design-corrected
-> re-analysis — **confirmatory**. It becomes binding only after (1) the
-> open TBDs below are filled from a dedicated node-drain A/A calibration block,
+> **Status: DRAFT — TBDs filled, not yet frozen.** This document specifies a
+> *new, separate* confirmatory study whose purpose is to make the
+> availability-axis findings — established only *exploratorily* in the thesis
+> design-corrected re-analysis — **confirmatory**. It becomes binding only after
+> (1) the open TBDs are filled from a dedicated node-drain A/A calibration block,
 > (2) a freeze commit + git tag, and (3) a DOI deposit of the frozen state,
 > exactly as the original pre-registration was frozen
 > ([`01-PREREGISTRATION.md`](01-PREREGISTRATION.md), DOI
 > [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)).
+>
+> **Step (1) is COMPLETE (2026-06-25).** The node-drain A/A calibration block ran
+> (6 fixed-placement sessions, `results/ax-aa-nodedrain/`); every §6 TBD is filled
+> and the environment (§6.7) is chosen — see [`AX-AA-REPORT.md`](AX-AA-REPORT.md).
+> **The calibration retired AX-H3** (the availability outcomes are deterministic at
+> fixed placement, so its test-retest ICC is not a valid estimand — the §3
+> not-runnable hatch fired); the confirmatory family is now **two members (AX-H1,
+> AX-H2)**, availability reported descriptively via AX-H1 + AX-H4. Steps (2) freeze
+> commit + tag and (3) DOI deposit remain.
 >
 > **This document does NOT change anything in the thesis.** The frozen
 > confirmatory family (H1–H5) and its Holm verdict stand untouched; the
@@ -38,18 +47,21 @@ The thesis identified that three availability-side results were
 |---|---|---|
 | **H3** trough-depth co-primary | absolute 1-pod margin equals the realized r=1 depth → un-passable | **AX-H2**: node-drain (placement-dependent blast radius) + a **range-relative** margin and a continuous **integrated-outage** primary, frozen *before* data |
 | **H4** placement frontier | availability face degenerate under `pod-delete` | **AX-H1** (availability dose-response, now falsifiable) + **AX-H4** (non-degenerate frontier) |
-| **H5** availability sub-score ICC | 0.180 = *absence of signal* under `pod-delete`; and 1.0 *by construction* under deterministic node-drain placement | **AX-H3**: node-drain (supplies the outage) + a **dynamic** (duration-inclusive) sub-score read at **fixed placements** across replicate sessions, so within-condition variance is real run-to-run noise and the ICC is a valid test-retest estimate |
+| **H5** availability sub-score ICC | 0.180 = *absence of signal* under `pod-delete`; and 1.0 *by construction* under deterministic node-drain placement | **AX-H3** *(RETIRED at calibration)*: the A/A block showed the availability outcomes are deterministic at fixed placement even for the **dynamic** (duration-inclusive) sub-score — the within-condition variance the ICC needs is absent (the §3 not-runnable hatch). Availability is reported **descriptively** via AX-H1 + AX-H4 instead. See [`AX-AA-REPORT.md`](AX-AA-REPORT.md). |
 
 The design-fix demonstrated each effect is real *exploratorily*. This study
-registers them as falsifiable confirmatory predictions **before** collecting the
-fresh data that tests them.
+registers the **surviving** effects as falsifiable confirmatory predictions
+**before** collecting the fresh data that tests them; the calibration retired AX-H3
+(the third row) when its precondition — noise-like within-condition variance — was
+shown absent.
 
 ---
 
 ## 2. Confirmatory family and multiplicity
 
-- **Confirmatory family:** the single primary test of each of **AX-H1, AX-H2,
-  AX-H3**, **Holm-corrected** across this three-member family at α = 0.05.
+- **Confirmatory family:** the single primary test of each of **AX-H1 and AX-H2**,
+  **Holm-corrected** across this **two-member** family at α = 0.05 (m = 2). *(AX-H3
+  was a third member in the draft; the A/A calibration retired it — §3 AX-H3, §6.3.)*
 - **AX-H2's two continuous co-primaries** (integrated outage; user-route error
   rescue) are combined **both-must-pass (conjunction)**; AX-H2's single input to
   the outer Holm family is the max of the two p-values. A conjunction is
@@ -91,13 +103,14 @@ Fallback (if the solver gate forces nearest-achievable f): linear mixed-effects
 model on continuous achieved-f (session random effect, test on the negative
 slope) + Jonckheere–Terpstra for a descending trend.
 
-**SESOI.** **[TBD — filled from the node-drain A/A block, §6.]** A monotone trend
-with a total trough-depth reduction from f=0 to f=1 of **≥ [TBD], set no smaller
-than the availability-face A/A 95% noise band** and below the pilot's ~0.64
-absolute reduction, so a pilot-magnitude effect clears it with margin while
-instrument noise cannot. A statistically detectable but sub-SESOI trend is
-reported as below the bar, not as support. Planning value pending A/A: ≥ 0.25
-absolute trough-depth reduction.
+**SESOI (filled from the A/A block — [`AX-AA-REPORT.md`](AX-AA-REPORT.md) §6.1).**
+A monotone trend with a total fractional trough-depth reduction from f=0 to f=1 of
+**≥ 0.25**. The availability-face A/A 95% noise band for trough depth is **0** (the
+depth is deterministic at fixed placement), so the SESOI is a *substantive-effect*
+floor, not a noise floor: 0.25 sits well below the pilot's realized ~0.64 fractional
+reduction (calibration reproduced 1.00→0.36) so a pilot-magnitude effect clears it
+with margin. A statistically detectable but sub-SESOI trend is reported as below the
+bar, not as support.
 
 **Falsified by.** Non-monotone medians beyond noise (primary n.s. at the
 Holm-adjusted α), or a monotone reduction smaller than the SESOI.
@@ -112,7 +125,7 @@ re-analysis of the thesis's C2 data** (re-using C2 with a margin chosen after
 seeing it would be exploratory).
 
 **Design.** Between-subjects cells r1-packed, r3-packed, r3-anti-affine, each ×
-**[TBD n, §6]**, `node-drain` at the registered f, on the capacity-feasible
+**n = 8 sessions** (§6.4), `node-drain` at the registered f, on the capacity-feasible
 round-robin packing instrument (per-service replica packing, services round-robin
 across nodes — the M1b semantics).
 
@@ -138,7 +151,11 @@ its bootstrap CI so a reader sees whether the discrete depth face also moved.
 
 **Packing control (TOST).** Packed r=3 must fall within the A/A-derived
 equivalence band of r=1 on each continuous co-primary; falling outside flags the
-instrument (not a finding), as in the original V2-H3.
+instrument (not a finding), as in the original V2-H3. **A/A 95% equivalence bands
+(filled, [`AX-AA-REPORT.md`](AX-AA-REPORT.md) §6.2): ±166 pod·s (integrated
+outage), ±0.081 (user-route error).** The 0.302 user-error rescue margin clears its
+band 3.7×; the integrated-outage band is conservative (inflated by a rare
+duration quantum-jump at f-000).
 
 **Test (primary, in family).** ART-ANOVA interaction on the integrated-outage
 outcome; the conjunction additionally requires the ≥0.302 user-error rescue (with
@@ -149,7 +166,17 @@ input = max of the two co-primary p-values.
 user-error rescue failing its margin/interaction, with the packing control passing
 (instrument valid).
 
-### AX-H3 — Availability sub-score reliability (dynamic outage, fixed-placement replicates)
+### AX-H3 — Availability sub-score reliability (dynamic outage, fixed-placement replicates) — **RETIRED at calibration**
+
+> **RETIRED (2026-06-25), not a confirmatory family member.** The node-drain A/A
+> calibration block ([`AX-AA-REPORT.md`](AX-AA-REPORT.md) §6.3, F1) showed the
+> availability outcomes are **deterministic at fixed placement** — trough depth
+> between-session sd = 0 (ICC = 1.0), and the **dynamic** outage's within-condition
+> variance is zero at 3/5 conditions with only rare discrete duration quantum-jumps
+> at 2/5 (not noise-like). The §"Not-runnable hatch" below therefore fired: the
+> test-retest ICC is not a valid estimand, so AX-H3 is dropped and availability is
+> reported descriptively via AX-H1 (dose-response) + AX-H4 (frontier). The original
+> specification is retained below for the record. *Surviving-family Holm m = 2.*
 
 **Statement.** On fresh node-drain sessions, the layered-scorecard
 **availability** sub-score's condition-level test-retest **ICC ≥ 0.5**, and exceeds
@@ -217,8 +244,10 @@ with H4.
 **Reporting protocol (binding).** For each placement, report the **latency face**
 (pre-chaos east-west p95) vs the **availability face** (node-drain integrated
 outage + user-route error) with cluster-bootstrap CIs. Dominance declared only
-with margins (δ_latency, δ_outage, δ_error — **[TBD from A/A, §6]**, no smaller
-than the A/A 95% band). The pre-declared question: is the availability face
+with margins (**δ_latency = 6 ms, δ_outage = 166 pod·s, δ_error = 0.09** — filled
+from the A/A 95% bands, [`AX-AA-REPORT.md`](AX-AA-REPORT.md) §6.5; each ≥ its band
+so noise cannot manufacture a dominance). The pre-declared question: is the
+availability face
 **non-degenerate** (varies materially across placements — the limit being
 corrected), and does the frontier show a trade-off or a dominance ordering?
 Either is a real result; degeneracy is the failure mode under correction.
@@ -264,39 +293,43 @@ a second after a fix halts the campaign for instrument redesign (§7).
 
 ---
 
-## 6. Open TBDs to fill before freeze (the complete list)
+## 6. TBDs — **ALL FILLED from the node-drain A/A block (2026-06-25)**
 
-These are filled from §5's node-drain A/A block + a power analysis, then the
-document is frozen. **Until every item is filled and the freeze commit + DOI are
-made, this pre-registration is non-binding.**
+Filled from §5's node-drain A/A block ([`AX-AA-REPORT.md`](AX-AA-REPORT.md)); the
+remaining steps to bind the document are the freeze commit + tag and the DOI
+deposit (§8). All-pairs A/A 95% noise bands referenced below: trough depth **0**,
+user-route error **0.081**, east-west p95 **5.33 ms**, integrated outage **165.5
+pod·s** (integrated outage — and trough duration, not listed here — are
+quantum-jump-dominated, hence bimodal/not-noise-like; user error and east-west p95
+are smooth run-to-run noise).
 
-1. **AX-H1 SESOI** — minimum trough-depth reduction f=0→f=1 (≥ A/A 95% band).
-2. **AX-H2 margins** — the integrated-outage MDE check at the chosen n (the two
-   *continuous* co-primaries are what n must power; the demoted fractional-depth
-   secondary is descriptive, so n need not power it); the user-error margin (carry
-   0.302 unless the node-drain A/A band differs); the TOST equivalence band per
-   continuous co-primary.
-3. **AX-H3** — from the A/A block, confirm the **dynamic** availability sub-score
-   at **fixed placement** has (i) non-negligible within-condition (run-to-run)
-   variance and (ii) non-negligible, noise-like between-condition variance. If
-   within-condition variance is ~0 (still deterministic), between-condition
-   variance is ~0 (no contrast), or the within-f variance is structured by
-   placement, the ICC is not a valid test-retest estimand and AX-H3 is **not
-   runnable** — record that finding and report availability descriptively rather
-   than forcing it (the §3 not-runnable hatch). Fix the dynamic-sub-score
-   aggregation formula at freeze, blind to comparison data.
-4. **Per-cell n** — from the power analysis against the A/A variance and the
-   SESOIs/margins above (the original landed n=8; re-derive for node-drain).
-5. **AX-H4 δs** — δ_latency, δ_outage, δ_error from the A/A 95% bands.
-6. **Node-drain taint rules** — the analogue of the per-f-level pre-window
-   UDP-slope bands (D3), recomputed for the node-drain availability window if
-   any pre-window transient is observed in the A/A block.
-7. **Environment** — pinned cluster (8×2-vCPU/4-GiB, K8s v1.28.6, ipvs) for
-   comparability **vs.** a second infrastructure (managed cluster / different
-   kube-proxy mode / bare metal), which the thesis names as the single
-   highest-value remaining follow-up. **Recommended: run the primary on a second
-   infrastructure** so this study also discharges the external-validity threat;
-   record the choice before freeze.
+1. **AX-H1 SESOI — FILLED: ≥ 0.25 fractional trough-depth reduction** (band = 0
+   → a substantive-effect floor; realized pilot/calibration effect ~0.64). §3 AX-H1.
+2. **AX-H2 margins — FILLED:** user-error rescue margin **0.302** carried (A/A band
+   0.081, clears 3.7×); TOST equivalence bands **±166 pod·s** (integrated outage) /
+   **±0.081** (user error); the integrated-outage between-mode interaction is
+   over-powered at the chosen n (large depth-driven effect). §3 AX-H2.
+3. **AX-H3 — RESOLVED: NOT RUNNABLE → RETIRED.** The A/A block showed the dynamic
+   availability sub-score has **negligible, non-noise-like within-condition
+   variance** at fixed placement (depth between-session sd = 0, ICC = 1.0; duration
+   pinned to the chaos window with rare discrete quantum-jumps only). The §3
+   not-runnable hatch fired: the test-retest ICC is not a valid estimand. AX-H3 is
+   dropped from the confirmatory family (m = 2); availability is reported
+   descriptively via AX-H1 + AX-H4. §3 AX-H3 (RETIRED), [`AX-AA-REPORT.md`](AX-AA-REPORT.md) F1.
+4. **Per-cell n — FILLED:** **AX-H2 = 8 sessions/cell** (over-powered for both
+   co-primaries; Wilcoxon one-sided floor n≥7 at the Holm α); **AX-H1 = 6
+   complete-block sessions** (deterministic outcome → Page's L saturated). §Power.
+5. **AX-H4 δs — FILLED:** δ_latency **6 ms**, δ_error **0.09**, δ_outage **166
+   pod·s** (each ≥ its A/A band). §3 AX-H4.
+6. **Node-drain taint rules — FILLED: none added.** No availability-window
+   pre-chaos transient was observed (0 tainted iterations across the block); the
+   existing pipeline gates (`app_ready_timeout`, `pre_chaos_errors_high`) are
+   carried. The M2 D3 UDP pre-slope bands remain mechanism-context only, not the
+   availability taint.
+7. **Environment — RESOLVED: the pinned cluster** (8×{≤6}-vCPU, K8s v1.28.6, ipvs)
+   used for the A/A block, for comparability. The external-validity threat (a second
+   infrastructure) is **not** discharged by this study — it remains the named
+   highest-value follow-up (user decision, 2026-06-25).
 
 ---
 
@@ -307,10 +340,12 @@ Unchanged in discipline from [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md)
 `node-drain` and these deltas:
 
 - **Unit of analysis: the session** (one cluster lifetime, one commit).
-- **Fixed-placement replicates** for AX-H3 (one canonical recorded solver seed per
-  f-level, shared across replicate sessions; only order seed varies) — the only
-  structural change from the original session design, and the basis of AX-H3's
-  test-retest variance partition (§3). The same fixed-seed sessions serve AX-H1.
+- **Fixed-placement replicates** (one canonical recorded solver seed per f-level,
+  shared across replicate sessions; only order seed varies) — the only structural
+  change from the original session design. This was the basis of AX-H3's test-retest
+  variance partition; **with AX-H3 retired (§3, §6.3) the fixed-placement design now
+  serves AX-H1**, holding the per-f placement constant so the dose-response carries
+  no placement-draw confound.
 - **Complete-block sessions** for AX-H1 (all 5 f-levels, randomized recorded
   order; the per-f placement held to the fixed seed above).
 - **Gating:** every session passes `doctor --strict`; achieved-f misses > 0.05
@@ -329,11 +364,12 @@ Unchanged in discipline from [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md)
 
 ## 8. Freeze + deposit procedure (to make this binding)
 
-1. Run the §5 node-drain A/A block; fill every §6 TBD from it + the power
-   analysis (record decisions in an `AX-AA-REPORT.md`, mirroring `M2-AA-REPORT.md`).
-2. Resolve the §6.7 environment choice.
-3. Freeze: commit + annotated git tag (e.g. `ax-prereg-freeze`); flip this
-   document's status banner to FROZEN with the date and tag.
+1. ✅ **DONE (2026-06-25).** Ran the §5 node-drain A/A block; filled every §6 TBD
+   from it + the power analysis ([`AX-AA-REPORT.md`](AX-AA-REPORT.md)).
+2. ✅ **DONE (2026-06-25).** Resolved the §6.7 environment choice (pinned cluster).
+3. **Freeze (user-owned, next):** commit + annotated git tag (e.g.
+   `ax-prereg-freeze`); flip this document's status banner to FROZEN with the date
+   and tag.
 4. Deposit the frozen state + raw A/A data + gate artifacts under a DOI
    (`isSupplementTo` 10.5281/zenodo.20690836), as `FREEZE-DEPOSIT.md` did.
 5. Only then collect AX confirmatory data.
