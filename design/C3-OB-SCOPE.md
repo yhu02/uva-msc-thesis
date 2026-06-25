@@ -13,7 +13,7 @@ registered hypothesis, test, SESOI, or n.
   direction gates on both arms).
 - ✅ Campaign driver — `scripts/run_c3_dns_campaign.sh` (this change).
 - ⏳ **Cluster steps remain (user-gated):** the go/no-go smoke + cache-state
-  verification, then the full campaign run (~3 h/session ⇒ days), then deposit.
+  verification, then the full campaign run (~3 h/session ⇒ days), then archival.
   A dnsConfig-realization deviation must be logged before results are quoted.
 
 ## Registered design (what C3 must produce)
@@ -106,9 +106,9 @@ silent change).
 ## Sequence to "C3 done"
 
 build (1)→(2)→(3) each via PR+converge → cache-state verify → go/no-go smoke →
-log the dnsConfig deviation → run the campaign (strict-clean tree) → archive +
-DOI **before** analysis → run `c3_h2_dns.py` verdict → `max(p)` into the Holm
-family (with C1/C2) → C3 report + deposit (mirror C1/C2).
+log the dnsConfig deviation → run the campaign (strict-clean tree) → archive
+**before** analysis → run `c3_h2_dns.py` verdict → `max(p)` into the Holm
+family (with C1/C2) → C3 report (mirror C1/C2).
 
 ## Open items before build starts
 

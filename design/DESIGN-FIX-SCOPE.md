@@ -1,7 +1,7 @@
 # Design-corrected re-analysis — pre-declared scope (exploratory, outside the Holm family)
 
 **Status: pre-declared BEFORE the corrected analyses are run / the new data are
-looked at** (the deposit-before-analysis discipline, applied to a design fix).
+looked at** (the freeze-before-analysis discipline, applied to a design fix).
 This arm is **exploratory** — the confirmatory Holm family is frozen and closed;
 nothing here re-opens or re-scores it. It is reported as a *design-corrected
 follow-up*: the original confirmatory tests for the availability axis were
@@ -67,5 +67,5 @@ it. The thesis will report: the registered availability tests were
 construction-limited (un-passable margin / degenerate face / no-signal regime);
 a design-corrected, pre-declared follow-up under `node-drain` resolves each and
 finds [result]. The corrected arm is exploratory (no Holm membership, no
-multiplicity owed), deposited and provenance-gated to the same bar as the
+multiplicity owed), provenance-gated to the same bar as the
 confirmatory campaigns.

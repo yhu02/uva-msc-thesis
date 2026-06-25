@@ -15,9 +15,8 @@
 > **finalized at M2** placeholder from the M2 A/A variance estimates and
 > power analysis ([`M2-AA-REPORT.md`](M2-AA-REPORT.md)), and the **D7
 > hotelReservation live-gate result** (PASS, 2026-06-13; §Workloads). The
-> exact frozen state, raw A/A data, and gate artifacts are archived under DOI
-> [**10.5281/zenodo.20690836**](https://doi.org/10.5281/zenodo.20690836)
-> (published 2026-06-14; manifest [`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md)).
+> exact frozen state, raw A/A data, and gate artifacts are fixed at git tag
+> `prereg-freeze`.
 
 Design context, knobs, and instrumentation: [`00-DESIGN.md`](00-DESIGN.md).
 All earlier references (H1–H6) are to archived, `doctor --strict`-clean runs
@@ -425,7 +424,7 @@ variance, not a pipeline defect — no fix, no rerun** (D1; F1 in
   off target by >0.05), and the per-f-level pre-window UDP-slope band check
   above (D3).
 - **Versioning:** each campaign is archived (raw `summary.json`s + collector
-  raws + manifests + commit hash) and deposited with a DOI before its results
+  raws + manifests + commit hash) and frozen before its results
   are analyzed for writing.
 
 ## Workloads (added at the M2 freeze)
@@ -630,8 +629,8 @@ also applied to the body text above, so the document reads consistently.
 
 - **None.** Every TBD / "finalized at M2" marker in the draft is resolved
   above, and the D7 hotelReservation live-gate result (§Workloads) is
-  filled (PASS, 2026-06-13). The freeze waits only on the freeze commit +
-  DOI deposit — mechanics, not open questions.
+  filled (PASS, 2026-06-13). The freeze waits only on the freeze commit —
+  mechanics, not open questions.
 
 ## Deviations policy
 

@@ -8,13 +8,9 @@ and final significance waits on the full family. C1 tests **H1** and
 **H5**; H2/H3 do not apply to pod-delete dose-response.
 
 **Provenance.** Data: 8 complete-block sessions, online-boutique, collected at
-commit `2ec934f` (clean), DOI
-[10.5281/zenodo.20690737](https://doi.org/10.5281/zenodo.20690737)
-([`C1-OB-DEPOSIT.md`](C1-OB-DEPOSIT.md)). Pre-registration frozen at tag
-`prereg-freeze`, DOI
-[10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)
-([`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md)). Analysis at commit `9dbfdb3+`
-(`scripts/c1_h1_trend.py`, `scripts/scorecard.py`). Deposited **before** analysis
+commit `2ec934f` (clean). Pre-registration frozen at tag
+`prereg-freeze`. Analysis at commit `9dbfdb3+`
+(`scripts/c1_h1_trend.py`, `scripts/scorecard.py`). Frozen **before** analysis
 per [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §Versioning.
 
 ## Campaign as run

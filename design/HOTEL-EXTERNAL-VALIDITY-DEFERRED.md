@@ -8,8 +8,7 @@ replication-rescue, 24 sessions) **was run to data** — all 32 sessions
 [`C1-HOTEL-REPORT.md`](C1-HOTEL-REPORT.md) and
 [`C2-HOTEL-REPORT.md`](C2-HOTEL-REPORT.md); both **corroborate online-boutique**
 (C1: no dose-response, p=0.99; C2: `CONJUNCTION=False`, but a significant
-interaction with anti-affine directionally rescuing). Deposit staged
-(`c1-c2-hotel-manifest.sha256`).
+interaction with anti-affine directionally rescuing).
 
 > **⚠️ Correction (2026-06-22).** The "fundamental blocker" diagnosis below was
 > **wrong**. The per-iteration `app_ready_timeout` was NOT hotel's slow gRPC

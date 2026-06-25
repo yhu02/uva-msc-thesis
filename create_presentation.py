@@ -632,10 +632,10 @@ add_bullet_frame(
     [
         "• Hypotheses, smallest effect sizes of interest (SESOIs),",
         "   per-cell sample sizes, and the analysis CODE were frozen",
-        "   and deposited BEFORE any confirmatory data was collected",
+        "   BEFORE any confirmatory data was collected",
         "",
-        "• Frozen pre-registration deposited at its freeze commit",
-        "   (DOI 10.5281/zenodo.20690836, commit 20097c1)",
+        "• Frozen pre-registration at its freeze commit",
+        "   (tag prereg-freeze, commit 20097c1)",
         "",
         "• Each member carries a registered effect-size / reliability",
         "   bar — Holm-significance is necessary, not sufficient",
@@ -664,8 +664,8 @@ add_bullet_frame(
         "• Every session gated by doctor --strict: clean tree,",
         "   scenario-hash present, runMetadata present, git.dirty=false",
         "",
-        "• Deposit-before-analysis: each campaign's raw data is",
-        "   deposited under a DOI before its analysis is written",
+        "• Freeze-before-analysis: each campaign's raw data is",
+        "   frozen before its analysis is written",
         "",
         "• Every quoted number traces to an archived, hash-stamped",
         "   run (artifact-manifest.json, SHA-256 per file)",
@@ -785,8 +785,8 @@ add_text_box(
     0.95,
     "Authored: the placement solver and two-knob design; the three-layer measurement design with its "
     "dependent-vs-control route confound check; the cross-node-fraction metric and EndpointSlice trough; the "
-    "layered scorecard; the pre-registration, doctor --strict gate, discard-not-patch rule, deposit-before-"
-    "analysis protocol; and every analysis script.   Integrated off-the-shelf: LitmusChaos, Prometheus/Locust, "
+    "layered scorecard; the pre-registration, doctor --strict gate, discard-not-patch rule, and "
+    "every analysis script.   Integrated off-the-shelf: LitmusChaos, Prometheus/Locust, "
     "Neo4j, and the Online Boutique application execute the science — they do not define it.",
     font_size=12.5,
     color=TRANS_WHITE,
@@ -904,18 +904,17 @@ slide = new_slide()
 slide_title(
     slide,
     "Campaigns & Hypotheses",
-    "Three pre-registered campaigns, each deposited under a DOI before analysis",
+    "Three pre-registered campaigns, each frozen before analysis",
 )
 
 camp = [
-    ["Campaign", "Fault class", "Design", "Sess.", "Tests", "DOI"],
+    ["Campaign", "Fault class", "Design", "Sess.", "Tests"],
     [
         "C1 dose-response",
         "churn (pod-delete)",
         "complete-block f∈{0,.25,.5,.75,1}, r=1, 5×3 iters",
         "8",
         "H1, H4, H5",
-        "20690737",
     ],
     [
         "C2 replication rescue",
@@ -923,7 +922,6 @@ camp = [
         "r∈{1,3} × mode (packed/anti-affine), 3 cells",
         "24",
         "H3",
-        "20726729",
     ],
     [
         "C3 placement + DNS",
@@ -931,7 +929,6 @@ camp = [
         "f∈{0,1} × dnsCache off/on, 7 matched pairs",
         "14",
         "H2",
-        "20748970",
     ],
 ]
 add_table(
@@ -941,7 +938,7 @@ add_table(
     12.1,
     2.0,
     len(camp),
-    6,
+    5,
     camp,
     header_color=ACCENT_BLUE,
     font_size=11,
@@ -1445,7 +1442,7 @@ add_text_box(
     0.75,
     "Honest scope: this does NOT re-open the frozen confirmatory verdicts. It shows H3's not-supported and "
     "H4's degenerate results were partly construction artifacts whose underlying effects are real once "
-    "availability can move — exploratory, outside the Holm family, deposited to the same bar.",
+    "availability can move — exploratory, outside the Holm family, held to the same bar.",
     font_size=12,
     bold=True,
     color=TRANS_WHITE,
@@ -1516,7 +1513,7 @@ add_text_box(
     "A second, structurally different workload reproduces both the below-SESOI dose-response and the "
     "conjunction-false rescue verdict: the mechanism (spreading shrinks the blast radius, speeds recovery) is "
     "robust on both applications; the strong placement and margin-clearing claims hold on neither. The "
-    "strongest available evidence the finding is not an artifact of one topology. (DOI 10.5281/zenodo.20792129)",
+    "strongest available evidence the finding is not an artifact of one topology.",
     font_size=12,
     color=TRANS_WHITE,
 )
@@ -1576,7 +1573,7 @@ add_bullet_frame(
         "",
         "• doctor --strict gate on every session; discard-not-patch",
         "",
-        "• Deposit-before-analysis under DOIs; every number traces",
+        "• Pre-registration frozen before analysis; every number traces",
         "   to a hash-stamped archived run",
         "",
         "• Dependent-vs-control route split controls the user layer",
@@ -1616,8 +1613,8 @@ add_bullet_frame(
         "2. A positively-established, precisely-bounded mechanism",
         "    — real conntrack signature, DNS cache removes it,",
         "    does not reach the user at the registered bar",
-        "3. A reproducible campaign protocol with DOI-deposited",
-        "    artifacts (deposit-before-analysis)",
+        "3. A reproducible campaign protocol with",
+        "    hash-stamped, pre-registered artifacts",
     ],
     font_size=12.5,
     color=LIGHT_GRAY,
@@ -1757,7 +1754,7 @@ add_text_box(
     6.5,
     12.1,
     0.4,
-    "Raw data, pre-registration, and analysis code deposited under DOIs · every number traces to an archived run",
+    "Raw data, pre-registration, and analysis code committed and hash-stamped · every number traces to an archived run",
     font_size=12,
     color=MID_GRAY,
     alignment=PP_ALIGN.CENTER,

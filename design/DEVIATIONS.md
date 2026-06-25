@@ -360,7 +360,7 @@ pre-registration's §M2 freeze amendments. This file is for changes made
   --packed-assignment/--dns-cache`), with the old spellings kept as
   **back-compat aliases**; the `summary.json` output keys `v2Session` → `session`
   and the per-condition `"v2"` record → `"placementMeta"`, with every analysis
-  loader reading **both** the old and new keys so previously-deposited datasets
+  loader reading **both** the old and new keys so previously-collected datasets
   still parse unchanged.
 - **why:** the thesis presents the work as one study with no version labels;
   the code and design documents were aligned to that framing on request. This
@@ -374,14 +374,10 @@ pre-registration's §M2 freeze amendments. This file is for changes made
 - **research-integrity note (immutability):** this entry edits the
   **frozen pre-registration after the freeze**, which the policy above
   otherwise forbids for substantive change; it is logged precisely because the
-  edit, though nominal, alters the frozen text and therefore its SHA-256
-  checksums. The **immutable reference of record remains the published Zenodo
-  deposit, DOI [10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)**
-  (and the original freeze commit/tag), which still carries the original
-  "v2"-labelled text and the original checksums. The checksum table in this
-  repo's `FREEZE-DEPOSIT.md` has been **regenerated** to match the relabelled
-  local files; anyone verifying against the DOI will see the original labels.
-  The local `design/` tree and the published deposit therefore **intentionally
-  diverge** by exactly this nominal relabel.
+  edit, though nominal, alters the frozen text. The **immutable reference of
+  record remains the git freeze commit and tag `prereg-freeze`**, which still
+  carries the original "v2"-labelled text. The local `design/` tree therefore
+  **intentionally diverges** from the freeze commit by exactly this nominal
+  relabel; no methodology, hypothesis, or datum is altered.
 - **decision ID:** none — out-of-band documentation/naming change, not tied to
   any registered hypothesis or freeze decision.

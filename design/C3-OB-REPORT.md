@@ -3,9 +3,7 @@
 **Campaign:** C3 placement-dependence + DNS intervention on online-boutique;
 14 sessions (7 cache-off, 7 cache-on), `r = 1`, placements `f-000` (packed
 round-robin) / `f-100` (spread), pod-delete churn, 3 iterations per placement.
-Data deposited **before** this write-up at DOI
-[10.5281/zenodo.20748970](https://doi.org/10.5281/zenodo.20748970)
-([`C3-OB-DEPOSIT.md`](C3-OB-DEPOSIT.md)); all 14 sessions accepted, untainted,
+Data frozen **before** this write-up; all 14 sessions accepted, untainted,
 `git.dirty = false`, `archive_run.py --strict` 14/14. This report closes the
 confirmatory family: with C3 landed, all four members (H1/H2/H3/H5) now have
 a primary p-value, so the registered **Holm correction across the family** is

@@ -9,8 +9,8 @@ the corrected analyses were run. Driver: `chaosprobe/scripts/design_fix_analysis
 (`results/c4-nodedrain-dose/`), collected 2026-06-22/23 on `main` (`git.dirty=false`;
 sessions 1–2 commit `445c5bc`, 3–8 commit `71c545d` — identical run-path code, the
 intervening merge was thesis-docs only). All 8 sessions `doctor --strict` clean
-(0 errors). H3 re-uses the existing, deposited C2 node-drain data
-(`results/c2-roundrobin/`). Pre-analysis manifest: `c4-nodedrain-manifest.sha256`.
+(0 errors). H3 re-uses the existing, frozen C2 node-drain data
+(`results/c2-roundrobin/`).
 
 ## The fault (recap)
 

@@ -12,15 +12,9 @@ mechanism (H2, C3).
 collected on the **round-robin packed instrument** at commit `e533d5b` on a
 **strict-clean tree** (`runMetadata.git.dirty = false` in every session;
 `archive_run.py --strict` blesses all 24). A SHA-256 manifest of all 48 raw
-files (24 `summary.json` + 24 `f-050.json`) was computed **before** analysis and
-is committed at
-[`c2-roundrobin-manifest.sha256`](c2-roundrobin-manifest.sha256). Pre-registration
-frozen at tag `prereg-freeze`, DOI
-[10.5281/zenodo.20690836](https://doi.org/10.5281/zenodo.20690836)
-([`FREEZE-DEPOSIT.md`](FREEZE-DEPOSIT.md)). Analysis: `scripts/c2_h3_anova.py` at
-`e533d5b`. Deposit DOI
-[10.5281/zenodo.20726729](https://doi.org/10.5281/zenodo.20726729)
-([`C2-OB-DEPOSIT.md`](C2-OB-DEPOSIT.md)) — deposited **before** write-up per
+files (24 `summary.json` + 24 `f-050.json`) was computed **before** analysis.
+Pre-registration frozen at tag `prereg-freeze`. Analysis: `scripts/c2_h3_anova.py` at
+`e533d5b`, committed **before** write-up per
 [`01-PREREGISTRATION.md`](01-PREREGISTRATION.md) §Versioning.
 
 > An earlier collection of this campaign was **discarded and superseded** (it
@@ -139,10 +133,8 @@ p-hacking and is not done.
 - **n = 8 per cell, single iteration per session.** The TOST equivalence CIs are
   correspondingly wide; the packed≈r1 control verdicts should be read as
   indicative at this n.
-- **Deposited** at DOI
-  [10.5281/zenodo.20726729](https://doi.org/10.5281/zenodo.20726729) (raw run,
-  before write-up); provenance also anchored by commit `e533d5b`, tag
-  `prereg-freeze`, and the committed raw manifest.
+- **Provenance** anchored by commit `e533d5b`, tag
+  `prereg-freeze` (the raw SHA-256 manifest was computed before write-up).
 - **Depth-margin construction limit** (above): the registered absolute-1-pod
   depth margin is near-unmeetable under the round-robin spread; a reader may
   weigh the depth co-primary's "not met" in that light. The error co-primary

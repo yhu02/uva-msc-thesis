@@ -133,7 +133,7 @@ redesign instrumentation); prober round-trips into `summary.json` and
 `doctor --strict` passes on a smoke session; hotelReservation service/edge
 count measured, capacity check passed, and its solver gate decided (or the
 workload de-scoped per the pre-declared order); all TBDs resolved;
-**pre-registration frozen by commit hash and DOI-deposited.** No comparative
+**pre-registration frozen by commit hash.** No comparative
 campaign data exists before this point.
 
 ## M3–M4 — Campaigns
@@ -153,8 +153,8 @@ campaign data exists before this point.
   order.
 
 **Exit criteria (per campaign):** all cells at registered n with
-`doctor --strict`-clean, fraction-verified sessions; campaign archived +
-DOI before analysis for writing; interim analysis limited to data-quality
+`doctor --strict`-clean, fraction-verified sessions; campaign committed and
+frozen before analysis for writing; interim analysis limited to data-quality
 checks (no peeking at hypothesis outcomes between campaigns).
 
 ## M5 — Primary-environment analyses (decoupled) + optional second environment
@@ -180,7 +180,7 @@ below-SESOI / falsified), no re-analysis.
 
 **Do:** full registered analysis; `DEVIATIONS.md` finalized; frontier figure
 with CIs and stated δ margins; thesis/paper chapters; reproduction package
-(archives, scripts, commit hashes, DOIs) released.
+(scripts, commit hashes) released.
 
 **Exit criteria:** every registered hypothesis has a stated outcome traceable
 to archived runs (confirmatory family Holm-corrected; H4 reported

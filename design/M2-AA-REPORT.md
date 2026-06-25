@@ -261,4 +261,4 @@ The H3 margin should not be set tighter than the band on this account.
 | All TBDs resolved | ✅ D1–D7 decided (all per recommendation, 2026-06-12); every TBD filled in the prereg M2-amendments |
 | Power analyses against each SESOI | ✅ this report (H1 under the D4-selected supplementary extraction) |
 | PREREG wording amendments (M1b carry-overs + D1–D4 scoping + block-design instantiation) | ✅ landed in the prereg M2 freeze-amendments section |
-| Pre-registration frozen by commit hash + DOI-deposited | ⏳ blocked on D1–D7 |
+| Pre-registration frozen by commit hash | ⏳ blocked on D1–D7 |

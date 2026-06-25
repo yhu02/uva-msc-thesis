@@ -1,9 +1,8 @@
 # Reproducing the thesis results
 
-> **Raw artifacts (public):** every archived run quoted by the thesis is
-> published at **DOI [10.5281/zenodo.20639146](https://doi.org/10.5281/zenodo.20639146)**
-> (17 tamper-evident archives + the conntrack probe bundle, CC-BY-4.0) —
-> the same tarballs that live in `chaosprobe/dist/` locally.
+> **Raw artifacts:** every archived run quoted by the thesis is one of the
+> 17 tamper-evident archives + the conntrack probe bundle that live in
+> `chaosprobe/dist/` locally.
 
 This document lists the exact configuration used to produce the numbers reported in the MSc thesis defence. Following these steps on a comparable cluster should reproduce the two mechanism-metric findings (conntrack flush, CPU throttling) and the contention-vs-churn attribution. The aggregate resilience score is **not** expected to reproduce a stable strategy ordering — its non-reproducibility is itself a headline finding (M4), so a reproducing run is judged on the mechanism metrics below, not on a strategy leaderboard.
 
