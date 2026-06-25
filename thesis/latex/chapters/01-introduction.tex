@@ -105,8 +105,8 @@ placement-independent outage, so the availability tests (H3, H4, and H5's
 availability sub-score) cannot move regardless of placement. The design was
 \textbf{modified in response to this limitation} --- the availability axis was
 recomputed under \texttt{node-drain}, whose blast radius is placement-dependent
---- and the corrected design resolves it (\S\ref{sec:design-fix}), with a
-pre-registered confirmatory re-run underway. \emph{Nothing from the original
+--- and the corrected design resolves it (\S\ref{sec:design-fix}); a
+pre-registered confirmatory re-run is left as future work. \emph{Nothing from the original
 iteration is removed}: its valid findings (the latency dose-response and the
 conntrack mechanism) are reported in full, and the construction-limited
 availability results are reported together with their limitation. This
