@@ -263,19 +263,43 @@ side (§6.4). Second, the tail-first reporting convention shapes the
 measurement design: ChaosProbe's route probers report p50/p95/p99 per route,
 and every latency claim in Chapter 5 is a tail claim (p95), not a mean claim.
 
-Finally, what is *not* in the literature. Our searches — general web search,
-arXiv, Semantic Scholar, and Google Scholar's surfaced results, with the
-coverage limits disclosed in [references.md §8](../references.md) — found no
-peer-reviewed paper that frames `pod-delete` as a churn fault distinct from
-contention faults, none that identifies conntrack/EndpointSlice reconvergence
-as the dominant mechanism under pod-delete on small clusters, and none that
-empirically compares six or more placement strategies under chaos. The
-closest works, surveyed above, operate at a different layer (etcd
-corruption), a different scope (cloud-edge environments without placement
-comparison), or with a different method (analytical modeling). We state this
-as the result of a bounded search rather than as proof of absence: ACM DL,
-IEEE Xplore, and recent USENIX proceedings were not exhaustively swept, and
-practitioner venues (KubeCon, SRECon, Linux Plumbers) may document parts of
-the kill-cycle mechanism outside the peer-reviewed record. Within those
-bounds, the churn-versus-contention mechanism framing appears to be a novel
-contribution.
+Finally, what is *not* in the literature. Two search passes — an initial sweep
+(general web search, arXiv, Semantic Scholar, Google Scholar; coverage limits in
+[references.md §8](../references.md)) and a later adversarial novelty sweep that
+additionally targeted the ACM Digital Library, IEEE Xplore, and USENIX
+proceedings *by mechanism and synonym* rather than this thesis's own vocabulary —
+found no peer-reviewed study that (i) treats `pod-delete` churn as
+**mechanistically** distinct from resource-contention faults, (ii) empirically
+establishes conntrack/EndpointSlice reconvergence as the **dominant,
+placement-dependent** mechanism under churn on small clusters, or (iii)
+empirically compares six or more placement strategies under injected chaos. Each
+claim is deliberately narrow:
+
+- On (i), a *name-level* distinction between `pod-delete` and `pod-cpu-hog`
+  already exists in chaos tooling (LitmusChaos, Harness group both under "pod
+  faults"), and microservice fault taxonomies already separate resource faults
+  from communication faults; what is unanticipated is the **mechanism-signature**
+  differentiation under chaos, not the act of naming the two faults apart.
+- On (ii), the reconvergence *mechanism itself is documented prior art* — upstream
+  Kubernetes issues (#48719, #100698, #104098, #113203) and the official
+  kube-proxy reconvergence write-up describe it directly, and this thesis cites
+  them as such ([references.md §4](../references.md)). The contribution is the
+  empirical, placement-controlled flush *measurement* and its small-cluster
+  scope, **not** the discovery of the mechanism. The published window magnitudes
+  are large-cluster, UDP/DNS-skewed, or version-regression artifacts, so they are
+  cited for the mechanism's existence and never generalized to this environment.
+
+The closest placement-and-resilience works, surveyed above, operate at a
+different layer (etcd corruption), a different scope (cloud-edge benchmarking
+without placement comparison), with a different method (analytical modeling), or
+— for the locality-aware schedulers NetMARKS and TraDE — demonstrate the
+*opposite* of the layered decoupling: a locality win that *does* reach the user,
+measured under normal dynamics with no fault injection. We state all of this as
+the result of a bounded search rather than proof of absence: the full-text
+proceedings of NSDI/OSDI/ATC/SREcon were not exhaustively swept, and practitioner
+venues (KubeCon, SRECon, Linux Plumbers) may document parts of the kill-cycle
+mechanism outside the peer-reviewed record. Within those bounds, three contributions appear
+to be novel: the mechanism-signature framing of churn versus contention; the
+placement-controlled conntrack-flush *measurement* and its small-cluster scope;
+and the layered decoupling of that mechanism from the user-visible layer under
+chaos.

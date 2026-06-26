@@ -235,15 +235,31 @@ measurement design: the route probers report p50/p95/p99 per route, and every
 latency claim in Chapter~\ref{ch:results} is a tail claim (p95), not a mean
 claim --- in particular the east-west p95 that is H1's dose-response outcome.
 
-Finally, what is \emph{not} in the literature. Our searches --- general web
-search, arXiv, Semantic Scholar, and Google Scholar's surfaced results --- found
-no peer-reviewed paper that frames \texttt{pod-delete} as a churn fault distinct
-from contention faults, none that identifies conntrack/EndpointSlice
-reconvergence as the dominant mechanism under pod-delete on small clusters, and
-none that manipulates a continuous placement knob under chaos while auditing the
-resilience score's reliability. We state this as the result of a bounded search
-rather than proof of absence: ACM DL, IEEE Xplore, and recent USENIX proceedings
-were not exhaustively swept, and practitioner venues (KubeCon, SRECon, Linux
-Plumbers) may document parts of the kill-cycle mechanism outside the
-peer-reviewed record. Within those bounds, the churn-versus-contention mechanism
-framing appears to be a novel contribution.
+Finally, what is \emph{not} in the literature. Two search passes --- an initial
+sweep (general web search, arXiv, Semantic Scholar, Google Scholar) and a later
+adversarial novelty sweep that additionally targeted the ACM Digital Library,
+IEEE Xplore, and USENIX proceedings \emph{by mechanism and synonym} rather than
+this thesis's own vocabulary --- found no peer-reviewed study that treats
+\texttt{pod-delete} churn as \emph{mechanistically} distinct from
+resource-contention faults, that empirically establishes
+conntrack/EndpointSlice reconvergence as the \emph{dominant, placement-dependent}
+mechanism under churn on small clusters, or that manipulates a continuous
+placement knob under chaos while auditing the resilience score's reliability.
+Each claim is narrow. The reconvergence \emph{mechanism itself is documented
+prior art} --- upstream Kubernetes issues (\#48719, \#100698, \#104098,
+\#113203) and the official kube-proxy reconvergence write-up describe it
+directly, and this thesis cites them as such; the contribution is the empirical,
+placement-controlled flush \emph{measurement} and its small-cluster scope, not
+the discovery of the mechanism, and the published window magnitudes
+(large-cluster, UDP/DNS-skewed, or version-regression artifacts) are never
+generalized to this environment. Likewise a \emph{name-level} churn-vs-contention
+distinction already exists in chaos tooling and microservice fault taxonomies;
+what is unanticipated is the mechanism-signature differentiation. We state this
+as the result of a bounded search rather than proof of absence: the full-text
+proceedings of NSDI/OSDI/ATC/SREcon were not exhaustively swept, and practitioner
+venues (KubeCon, SRECon, Linux Plumbers) may document parts of the kill-cycle
+mechanism outside the peer-reviewed record. Within those bounds, three contributions appear
+to be novel: the mechanism-signature framing of churn versus contention; the
+placement-controlled conntrack-flush \emph{measurement} and its small-cluster
+scope; and the layered decoupling of that mechanism from the user-visible layer
+under chaos.

@@ -108,9 +108,12 @@ report "no placement effect under CPU hogs" without this analysis would be
 reporting a property of the fault, not of placement.
 
 A terminological note: the *churn-versus-contention* distinction used
-throughout this thesis is our own framing, not an established taxonomy —
-our literature search found no peer-reviewed work that classifies
-`pod-delete` as a churn fault distinct from contention faults (§2.5). We
+throughout this thesis is our own framing, not an established taxonomy. A
+name-level separation of the two faults already exists in chaos tooling
+(`pod-delete` vs `pod-cpu-hog`) and a name-level separation of resource from
+communication faults exists in microservice fault taxonomies; what our
+literature search found no peer-reviewed work establishing is the
+*mechanism-signature* distinction between them under chaos (§2.5). We
 adopt it because the mechanisms differ categorically: a churn fault
 perturbs *identity and networking state* (endpoints, conntrack, DNS) and
 its user-visible damage is bounded by availability dynamics, while a

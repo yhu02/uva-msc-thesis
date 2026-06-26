@@ -325,6 +325,35 @@ This is the **exact mechanism** ChaosProbe's data is exposing. Cite alongside
 - [#104098 — Kubernetes doesn't clear conntrack entry for TCP](https://github.com/kubernetes/kubernetes/issues/104098)
 - [#113203 — Connections stuck in conntrack when externalTrafficPolicy is "local"](https://github.com/kubernetes/kubernetes/issues/113203)
 
+### kubernetes/kubernetes Issue #48719 — empty→non-empty reconvergence blackhole (TCP)
+> *New connections to a Service can hang when its endpoints transition from
+> empty to non-empty.* Maintainer-tracked issue, kubernetes/kubernetes.
+
+- [GitHub Issue #48719](https://github.com/kubernetes/kubernetes/issues/48719)
+
+**Relevance — the empty→non-empty face of the reconvergence window.** When a
+Service goes from empty to non-empty endpoints (a fresh pod becomes Ready after
+churn), a client SYN can race ahead of kube-proxy's NAT-rule installation; the
+resulting un-NATted conntrack entry blackholes SYN retries until the full
+connection timeout. This is the *establishment*-side counterpart to the
+*teardown*-side staleness in #100698/#104098 — together they bracket the
+reconvergence window on the gRPC/**TCP** path the thesis measures. Documents the
+**mechanism's existence**, not its placement dependence: cite as prior art for
+the window, not for H2's placement-controlled flush.
+
+### kube-proxy reconvergence — official Kubernetes blog (2019)
+> *kube-proxy Subtleties: Debugging an Intermittent Connection Reset.*
+> kubernetes.io blog, 2019-03-29.
+
+- [kube-proxy Subtleties: Debugging an Intermittent Connection Reset (kubernetes.io, 2019-03-29)](https://kubernetes.io/blog/2019/03/29/kube-proxy-subtleties-debugging-an-intermittent-connection-reset/)
+
+**Relevance:** The authoritative first-party narrative attributing intermittent
+connection resets to the conntrack/kube-proxy reconvergence pathway — the
+canonical citable confirmation that this disruption mechanism is recognized
+upstream. Pairs with the issue-tracker references above; the window magnitudes
+it discusses are large-cluster/older-version artifacts and are **not** quoted as
+applicable to this thesis's pinned v1.28.6 small-cluster environment.
+
 ### kubernetes/kubernetes Issues #48370, #108523, #126130, #129982 — active conntrack flush is UDP-only
 > The kube-proxy conntrack-cleanup family of issues documenting *which*
 > protocol's entries kube-proxy actively deletes on endpoint churn.
@@ -671,18 +700,34 @@ describing it.
 
 ## 8. Coverage gaps and notes
 
-The Google Scholar pass surfaced **no peer-reviewed paper** that:
-- frames pod-delete as a churn-based fault distinct from contention-based ones, or
-- identifies kube-proxy / conntrack / EndpointSlice reconvergence as the
-  dominant resilience-degrading mechanism under pod-delete on small clusters, or
+A two-pass search (an initial Scholar/arXiv/Semantic-Scholar sweep, then a
+later adversarial novelty sweep by mechanism and synonym) surfaced **no
+peer-reviewed paper** that:
+- frames pod-delete churn as **mechanistically** distinct from contention-based
+  faults — a *name-level* split already exists in chaos tooling
+  (`pod-delete` vs `pod-cpu-hog`) and microservice fault taxonomies, so the
+  unanticipated part is the mechanism-signature differentiation, or
+- empirically establishes kube-proxy / conntrack / EndpointSlice reconvergence
+  as the **dominant, placement-dependent** resilience-degrading mechanism under
+  pod-delete on small clusters, or
 - empirically compares 6+ placement strategies under chaos.
 
-The closest peer-reviewed work — Mutiny! (DSN 2024), Liu et al. (arXiv 2025),
-Yang et al. (arXiv 2024) — works at a different layer (etcd corruption), a
-different scope (cloud-edge fault types without placement comparison), or uses
-modeling rather than empirical measurement. The **churn-vs-contention
-mechanism explanation appears to be a genuinely novel contribution** to the
-peer-reviewed literature. This is worth stating explicitly on slide 4.
+The reconvergence **mechanism itself is documented prior art** in the upstream
+issue tracker and the official kube-proxy blog (§4: #48719, #100698, #104098,
+#113203, kubernetes.io 2019) — non-peer-reviewed but authoritative — so the
+contribution is the empirical, placement-controlled flush *measurement* and its
+small-cluster scope, **not** the discovery of the mechanism; published window
+magnitudes there are large-cluster / UDP-DNS / version-regression artifacts and
+are not generalized to this environment. The closest peer-reviewed work —
+Mutiny! (DSN 2024), Liu et al. (arXiv 2025), Yang et al. (arXiv 2024) — works at
+a different layer (etcd corruption), a different scope (cloud-edge fault types
+without placement comparison), or uses modeling rather than empirical
+measurement; and the locality-aware schedulers NetMARKS and TraDE show the
+*opposite* of the layered decoupling (a locality win that reaches the user,
+fault-free). The three **genuinely novel contributions** to the
+peer-reviewed literature appear to be the mechanism-signature framing of churn
+vs contention, the placement-controlled conntrack-flush measurement and its
+small-cluster scope, and the layered decoupling under chaos.
 
 **Removed unverifiable docstring citations:**
 
@@ -696,11 +741,13 @@ METIS — are all verifiable above.
 **Database coverage notes for the thesis report:**
 - Searches went through general web search, arXiv, Semantic Scholar, and
   Google Scholar's surfaced results.
-- For full peer-reviewed coverage, additionally search the ACM Digital
-  Library, IEEE Xplore, and USENIX OSDI/NSDI/ATC 2023–2025 proceedings
-  manually before finalising the thesis report. The marginal value is
-  expected to be low — Scholar would have caught major peer-reviewed
-  competitors if they existed.
+- The later adversarial novelty sweep additionally covered the ACM Digital
+  Library, IEEE Xplore, and USENIX proceedings via Semantic Scholar / arXiv /
+  web indexing and surfaced no pre-empting study; the **full-text** proceedings
+  of NSDI/OSDI/ATC/SREcon were still not exhaustively read, so a behind-paywall
+  camera-ready cannot be 100% excluded. The marginal value is expected to be
+  low — indexing would have caught major peer-reviewed competitors if they
+  existed.
 - Industry talks (Linux Plumbers Conference, KubeCon + CloudNativeCon, SRECon)
   may contain documentation of the kill-cycle disruption mechanism that this
   bibliography does not include. Worth scanning those video archives for
