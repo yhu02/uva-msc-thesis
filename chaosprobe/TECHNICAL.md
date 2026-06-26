@@ -339,7 +339,7 @@ Each tick execs the original probe's exact command per node (`conntrack -L 2>/de
 
 #### fraction_solver.py (M1a)
 
-Fraction-targeting placement solver + reachable-set enumerator — the M1a solver-feasibility spike of the design ([`design/00-DESIGN.md`](../design/00-DESIGN.md) §2.3, M1a). Single source of truth for the dependency-graph extraction and the cross-node-fraction computation (`scripts/cross_node_fraction.py` imports from here).
+Fraction-targeting placement solver + reachable-set enumerator — the M1a solver-feasibility spike of the design ([`docs/design/00-DESIGN.md`](../docs/design/00-DESIGN.md) §2.3, M1a). Single source of truth for the dependency-graph extraction and the cross-node-fraction computation (`scripts/cross_node_fraction.py` imports from here).
 
 | Function | Purpose |
 |---|---|
@@ -354,7 +354,7 @@ Fraction-targeting placement solver + reachable-set enumerator — the M1a solve
 
 #### affinity_engine.py (M1b)
 
-Replica-level affinity placement engine — the M1b engine build of the design ([`design/00-DESIGN.md`](../design/00-DESIGN.md) §2.2 / Knob B §2.3, M1b). Placement is expressed as scheduler constraints and the achieved placement is **verified from live pods, never assumed**. Supported cells (`r = 2` deliberately unsupported per DESIGN §2.3):
+Replica-level affinity placement engine — the M1b engine build of the design ([`docs/design/00-DESIGN.md`](../docs/design/00-DESIGN.md) §2.2 / Knob B §2.3, M1b). Placement is expressed as scheduler constraints and the achieved placement is **verified from live pods, never assumed**. Supported cells (`r = 2` deliberately unsupported per DESIGN §2.3):
 
 | (r, mode) | Patch emitted |
 |---|---|

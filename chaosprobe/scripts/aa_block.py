@@ -4,7 +4,7 @@
 Companion to the canonical A/A analysis (``scripts/m2_aa_analysis.py``,
 which owns the delta metrics, the pairing, the per-unit
 null tests and the liveAchievedF identity check).  Per the D4
-consolidation (``design/M2-AA-REPORT.md`` §Decisions,
+consolidation (``docs/design/M2-AA-REPORT.md`` §Decisions,
 §Instrumentation gaps) there is ONE per-iteration extraction — this
 script imports it from the canonical module
 (:func:`m2_aa_analysis.extract_iteration` /

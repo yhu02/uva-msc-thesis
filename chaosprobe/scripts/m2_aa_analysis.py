@@ -78,7 +78,7 @@ What it does
 Delta metrics (D4 consolidation)
 --------------------------------
 The metric forms implement the D4 metric form of the M2 report
-(``design/M2-AA-REPORT.md`` §Decisions, §Instrumentation gaps):
+(``docs/design/M2-AA-REPORT.md`` §Decisions, §Instrumentation gaps):
 one canonical A/A extraction whose forms match the tests —
 the supplementary (median-over-routes, pre-chaos, taint-excluded)
 operationalization won D4, and H2 is on **absolute** UDP
@@ -324,7 +324,7 @@ def east_west_p95(latency: Dict[str, Any], phase: str) -> Optional[float]:
     """Median across east-west routes of the route p95 in one phase, or None.
 
     The D4-winning H1 operationalization (median over routes — robust
-    to single-route excursions; see design/M2-AA-REPORT.md D4).
+    to single-route excursions; see docs/design/M2-AA-REPORT.md D4).
     """
     routes = (((latency or {}).get("phases") or {}).get(phase) or {}).get("routes") or {}
     vals = [
@@ -1234,7 +1234,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "M2 A/A calibration analysis (§A/A, amended in #261; "
-            "metric forms per the D4 consolidation, design/M2-AA-REPORT.md): "
+            "metric forms per the D4 consolidation, docs/design/M2-AA-REPORT.md): "
             "pairs identical-cell placement sessions, computes per-level per-metric deltas "
             "at the analysis unit (session-condition medians over untainted "
             "iterations) with Wilcoxon/sign null tests (any p < alpha => 'A/A "

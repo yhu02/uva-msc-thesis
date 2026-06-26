@@ -4,7 +4,7 @@
 > a finding; until the design is settled, every choice here is open to
 > revision. All earlier evidence cited below is
 > by hypothesis number (H1–H6) from
-> [`chaosprobe/docs/explanation/hypotheses.md`](../chaosprobe/docs/explanation/hypotheses.md)
+> [`chaosprobe/docs/explanation/hypotheses.md`](../../chaosprobe/docs/explanation/hypotheses.md)
 > and refers to archived, `doctor --strict`-clean runs only. **The earlier numeric
 > literals are quoted in exactly one place — the §10 mapping table — and cited
 > by reference everywhere else** (here and in the companion documents), so a
