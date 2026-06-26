@@ -1,17 +1,20 @@
-# LaTeX port of the thesis (Overleaf-ready scaffold)
+# Thesis manuscript (LaTeX, Overleaf-ready)
 
-This directory is a hand-written LaTeX port of the canonical Markdown
-manuscript in [`thesis/`](../) (`00-abstract.md` … `09-appendix-provenance.md`;
-`10-defense.md` is a viva sheet, not a chapter, and is not ported). The
-Markdown remains the source of truth for wording: **no content changes** were
-made in the port.
+This directory is the **canonical thesis manuscript**. It began as a hand-written
+LaTeX port of an earlier Markdown draft, but was then developed into the current
+confirmatory study (dose-response knobs, the interventional DNS arm, the C1/C2/C3
+campaigns) beyond what that draft contained; the superseded Markdown draft has
+since been removed, so **this LaTeX is now the single source of truth for the
+manuscript wording.** Numbers and claims still trace to the sources of truth
+listed in [`../README.md`](../README.md).
 
-## ⚠️ COMPILE-UNVERIFIED
+## Compilation
 
-This port was produced on a machine with **no TeX toolchain and no pandoc** —
-it has **never been compiled**. The only mechanical gate it passed is a
-brace/`\begin`–`\end` environment-pairing check. Expect minor fixups on the
-first Overleaf compile (overfull boxes in the wide provenance table, BibTeX
+A built PDF is committed as `Yvo-Hu-MSc-thesis.pdf`, and `main.tex` reports a
+clean `tectonic`/XeLaTeX build. Changes made without a local TeX toolchain are
+gated only by a brace/`\begin`–`\end` environment-pairing check, so **re-compile
+on Overleaf after editing** and treat the first compile as a review pass. Expect
+minor cosmetics (overfull boxes in the wide provenance table, BibTeX
 warnings for the handful of author-less `@misc` entries, and similar
 cosmetics). Treat the first compile as a review pass.
 
@@ -43,9 +46,9 @@ set and its regeneration commands.
 | File | Contents |
 |---|---|
 | `main.tex` | report class (11pt, a4paper); title page (supervisor/date are `\newcommand` TODO placeholders); abstract; TOC; chapter inputs; bibliography |
-| `chapters/01-introduction.tex` … `chapters/08-conclusion.tex` | one file per chapter, ported 1:1 from `thesis/01-…md` … `thesis/08-…md` |
+| `chapters/01-introduction.tex` … `chapters/08-conclusion.tex` | one file per chapter |
 | `appendix/a-provenance.tex` | run provenance for the primary study: the C1/C2/C3 campaign table, the claims→campaigns map, and integrity anchors |
-| `references.bib` | derived from [`references.md`](../../references.md); papers as `@article`/`@inproceedings` with DOI, web/issue/KEP/blog sources as `@misc` with `howpublished` + `url` + access date 2026-06-11 |
+| `references.bib` | derived from [`references.md`](../../references.md); papers as `@article`/`@inproceedings` with DOI, web/issue/KEP/blog sources as `@misc` with `howpublished` + `url` + a per-entry access date in the `note` field (most 2026-06-11) |
 
 ## Porting conventions
 
@@ -69,6 +72,6 @@ set and its regeneration commands.
   `\nocite{*}` in `main.tex` prints the full `references.bib` (the annotated
   bibliography source), so identifier-only works still appear in the
   bibliography.
-- The thesis title in `main.tex` is taken from the defense script
-  (`presentation_script.md`), since `thesis/README.md` carries no title line;
-  supervisor, examiner, programme, and date are TODO placeholders.
+- The thesis title is set in `main.tex` (`\thesistitle`); supervisor, examiner,
+  programme, and date remain `\newcommand` TODO placeholders to fill before
+  submission.

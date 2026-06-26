@@ -2,7 +2,8 @@
 % source of truth). Author lists use the initials given there; entries whose
 % authors references.md does not name carry a `key` field so natbib can
 % render a label (they are referenced in the text by identifier links).
-% Web resources (@misc) carry an access date of 2026-06-11.
+% Web resources (@misc) carry a per-entry access date in the `note` field
+% (most 2026-06-11; later additions dated when added).
 
 % ----------------------------------------------------------------------
 % 1. Pod placement / scheduler lineage
@@ -193,6 +194,23 @@
   howpublished = {GitHub issue, kubernetes/kubernetes},
   url          = {https://github.com/kubernetes/kubernetes/issues/100698},
   note         = {Accessed 2026-06-11},
+}
+
+@misc{k8s-issue-48719,
+  author       = {{Kubernetes Community}},
+  title        = {New connections to a Service can hang when its endpoints transition from empty to non-empty (kubernetes/kubernetes issue \#48719)},
+  howpublished = {GitHub issue, kubernetes/kubernetes},
+  url          = {https://github.com/kubernetes/kubernetes/issues/48719},
+  note         = {Accessed 2026-06-26},
+}
+
+@misc{k8s-kubeproxy-subtleties,
+  author       = {Yongkun Gui},
+  title        = {kube-proxy Subtleties: Debugging an Intermittent Connection Reset},
+  howpublished = {Kubernetes blog, kubernetes.io},
+  year         = {2019},
+  url          = {https://kubernetes.io/blog/2019/03/29/kube-proxy-subtleties-debugging-an-intermittent-connection-reset/},
+  note         = {Accessed 2026-06-26},
 }
 
 @misc{k8s-issue-93143,
