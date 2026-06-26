@@ -1,6 +1,6 @@
 """Fraction-targeting placement solver (M1a — solver-feasibility spike).
 
-Implements the greedy edge-cut assignment sketched in ``design/00-DESIGN.md``
+Implements the greedy edge-cut assignment sketched in ``docs/design/00-DESIGN.md``
 §2.3 and the quantization-study enumerator (M1a):
 given the service dependency graph (inter-service edges + call-volume
 weights), choose a service→node assignment whose **cross-node call fraction**
@@ -756,7 +756,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m chaosprobe.placement.fraction_solver",
         description=(
             "M1a fraction-targeting placement solver + reachable-set enumerator "
-            "(design/00-DESIGN.md §2.3, M1a). Derives the weighted "
+            "(docs/design/00-DESIGN.md §2.3, M1a). Derives the weighted "
             "inter-service dependency graph from a run's summary.json, then either "
             "solves for a target cross-node fraction (--target) or enumerates the "
             "reachable fraction set for the given node count (--enumerate)."

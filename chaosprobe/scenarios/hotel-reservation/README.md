@@ -1,6 +1,6 @@
 # DeathStarBench hotelReservation — ChaosProbe's second workload
 
-The second workload pinned by [design/00-DESIGN.md §7](../../../design/00-DESIGN.md):
+The second workload pinned by [docs/design/00-DESIGN.md §7](../../../docs/design/00-DESIGN.md):
 DSB `hotelReservation` is the lightest DeathStarBench application and the only
 realistic candidate at this cluster scale — a deliberately *different* topology
 (deep frontend fan-out + per-service datastore pairs) and RPC stack (Go gRPC

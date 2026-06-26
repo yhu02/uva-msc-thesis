@@ -1,6 +1,6 @@
 """Replica-level affinity placement engine (M1b).
 
-Implements DESIGN §2.2 / Knob B of ``design/00-DESIGN.md``: placement is
+Implements DESIGN §2.2 / Knob B of ``docs/design/00-DESIGN.md``: placement is
 expressed as **replica-level affinity constraints** the scheduler satisfies —
 never assumed — for ``r ∈ {1, 3}`` replicas crossed with a binary packing
 mode (M1b build item):
