@@ -3,7 +3,8 @@
 Decomposes the H2 conntrack signal by protocol, answering which entries
 actually change during the `pod-delete` kill cycle — kube-proxy's active
 cleanup is UDP-only upstream, while the workload's east-west traffic is
-gRPC/TCP (see `references.md` §4 and `thesis/06-discussion.md` §6.3).
+gRPC/TCP (see `references.md` §4 and the discussion chapter,
+`thesis/latex/chapters/06-discussion.tex`).
 
 ## Method
 

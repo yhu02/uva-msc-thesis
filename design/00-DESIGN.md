@@ -46,9 +46,9 @@ figure and reporting protocol, not a falsifiable hypothesis), and
 **H6** (the kube-proxy iptables arm) is an **exploratory secondary**,
 labeled as such and outside the family.
 
-The earlier limitations chapter ([`thesis/07-threats.md`](../thesis/07-threats.md),
-[`thesis/08-conclusion.md`](../thesis/08-conclusion.md) §8.2) is treated here
-as the requirements list: single-replica design → replication-degree knob;
+The earlier limitations chapter (the threats and conclusion chapters of the
+earlier exploratory draft, since removed — recoverable from git history) is
+treated here as the requirements list: single-replica design → replication-degree knob;
 strategy bundles → continuous fraction knob; mechanism consistency without
 causal proof → interventional arms; one environment → second-environment
 replication arm; unstable aggregate score → layered scorecard with a
@@ -60,11 +60,12 @@ head-to-head reliability evaluation.
 
 The earlier mutator implements **per-service deterministic `nodeSelector` pinning**:
 each service's pods are pinned to exactly one node. This has a structural
-consequence documented in §8.2 of the conclusion: *all replicas of a service
+consequence documented in §8.2 of the earlier exploratory draft's conclusion
+(since removed; recoverable from git history): *all replicas of a service
 land on the same node*, so multi-replica anti-affinity is impossible — the
 E1 pilot (3 replicas × node-drain) was **deliberately skipped as structurally
-null** (piloted, never run as a campaign; see
-[`thesis/08-conclusion.md`](../thesis/08-conclusion.md)) precisely because
+null** (piloted, never run as a campaign; documented in the earlier exploratory
+draft, since removed) precisely because
 draining the target node would kill all 3 `productcatalogservice` replicas
 under **every** strategy, making the experiment uninformative by
 construction. This study's first engineering deliverable removes that cap.
@@ -146,7 +147,8 @@ denominator precisely because the packed arm's pool is too small for a
 ratio — but only for part (b)). Family input: max(p_a, p_b). If spread's
 UDP drop persists largely unchanged with the cache on, the UDP/DNS account
 of H2's placement dependence is wrong. This is the mechanism *proof* step
-the earlier study explicitly deferred ("H2 flush apportionment", §8.2).
+the earlier study explicitly deferred ("H2 flush apportionment", §8.2 of the
+removed exploratory draft).
 
 **Arm 2 — kube-proxy ipvs vs iptables (exploratory secondary, H6).** The earlier study
 ran ipvs only and flagged mechanism behaviour as environment-contingent
